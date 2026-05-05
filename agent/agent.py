@@ -30,6 +30,7 @@ from heartbeat       import HeartbeatMonitor
 from login_monitor   import LoginMonitor
 from cron_monitor    import CronMonitor
 from process_monitor import ProcessMonitor
+from fim_monitor     import FIMMonitor
 
 
 def setup_logging(level_name: str):
@@ -66,6 +67,7 @@ def main():
         LoginMonitor(cfg),
         CronMonitor(cfg),
         ProcessMonitor(cfg),
+        FIMMonitor(cfg),
     ]
 
     for m in monitors:

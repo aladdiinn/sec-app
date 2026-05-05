@@ -41,7 +41,7 @@
 /* ── Reset ──────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { font-size: 14px; scroll-behavior: smooth; }
+html { font-size: 13px; scroll-behavior: smooth; }
 
 body {
   font-family: 'Inter', system-ui, sans-serif;
@@ -95,7 +95,7 @@ button { cursor: pointer; font-family: inherit; }
 }
 
 .brand-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: .3px;
@@ -124,7 +124,7 @@ button { cursor: pointer; font-family: inherit; }
   padding: 9px 12px;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   background: none;
   border: none;
@@ -232,7 +232,7 @@ button { cursor: pointer; font-family: inherit; }
 }
 
 .page-title {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -.3px;
@@ -271,7 +271,7 @@ button { cursor: pointer; font-family: inherit; }
 }
 
 .card-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -324,14 +324,14 @@ button { cursor: pointer; font-family: inherit; }
 .stat-card--yellow .stat-icon { background: rgba(245,158,11,.15); color: var(--accent-yellow); }
 
 .stat-value {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1;
 }
 
 .stat-label {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: .6px;

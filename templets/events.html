@@ -68,10 +68,15 @@
         return `<span class="badge ${map[s] || 'badge-gray'}">${s}</span>`;
     }
 
-    async function loadEvents() {
-        currentOffset = 0;
-        fetchEvents();
-    }
+    // Check URL params for filters (from servers page)
+    document.addEventListener('DOMContentLoaded', () => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('server_id')) {
+            // We don't have a server dropdown, but we can store it in a variable for fetchEvents
+            window._filter_server_id = params.get('server_id');
+        }
+        loadEvents();
+    });
 
     async function fetchEvents() {
         const wrap = document.getElementById('events-wrap');
@@ -80,7 +85,8 @@
 
         let url = `/api/events?limit=${PAGE_SIZE}&offset=${currentOffset}`;
         if (type) url += `&event_type=${type}`;
-        if (sev) url += `&severity=${sev}`;
+        if (sev)  url += `&severity=${sev}`;
+        if (window._filter_server_id) url += `&server_id=${window._filter_server_id}`;
 
         wrap.innerHTML = '<div class="center-spinner"><div class="spinner"></div></div>';
 

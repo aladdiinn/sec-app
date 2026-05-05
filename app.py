@@ -410,6 +410,7 @@ def ingest_event():
     VALID_TYPES = {
         "login", "logout", "cron_change", "new_process",
         "process_ended", "heartbeat", "ssh_login", "failed_login",
+        "file_change",
     }
     if event_type not in VALID_TYPES:
         return jsonify({"error": f"Invalid event_type. Use one of: {VALID_TYPES}"}), 400
@@ -519,14 +520,35 @@ def get_events():
 @app.route("/api/servers", methods=["GET"])
 @jwt_required
 def get_servers():
-    servers = Server.query.order_by(Server.registered_at.desc()).all()
+    status_filter   = request.args.get("status")
+    severity_filter = request.args.get("severity")
+
+    servers = Server.query.all()
     timeout = datetime.now(timezone.utc) - timedelta(seconds=int(os.getenv("HEARTBEAT_TIMEOUT", 120)))
 
     result = []
     for s in servers:
+        # 1. Calculate Status
         status = "offline"
         if s.last_seen:
             status = "online" if s.last_seen.replace(tzinfo=timezone.utc) >= timeout else "offline"
+
+        if status_filter and status != status_filter:
+            continue
+
+        # 2. Calculate Server Severity (highest severity of unresolved alerts)
+        unresolved_alerts = s.alerts.filter_by(is_resolved=False).all()
+        max_sev_val = 0 # 0: info, 1: warning, 2: critical
+        max_sev_name = "info"
+        
+        for a in unresolved_alerts:
+            val = 2 if a.severity == "critical" else 1
+            if val > max_sev_val:
+                max_sev_val = val
+                max_sev_name = a.severity
+        
+        if severity_filter and max_sev_name != severity_filter:
+            continue
 
         result.append({
             "id": s.id,
@@ -534,9 +556,14 @@ def get_servers():
             "ip_address": s.ip_address,
             "os_info": s.os_info,
             "status": status,
+            "severity": max_sev_name,
+            "severity_val": max_sev_val,
             "last_seen": s.last_seen.isoformat() if s.last_seen else None,
             "registered_at": s.registered_at.isoformat(),
         })
+
+    # Sort: Severity (Critical > Warning > Info)
+    result.sort(key=lambda x: x["severity_val"], reverse=True)
 
     return jsonify(result)
 

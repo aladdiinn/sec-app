@@ -9,22 +9,37 @@
             <h1 class="page-title">Servers</h1>
             <p class="page-subtitle">All monitored servers and their status</p>
         </div>
-        <div style="display:flex; gap:10px">
-            <button class="btn btn-primary" onclick="showAddServerModal()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-                Add Server
-            </button>
-            <button class="btn btn-ghost" onclick="loadServers()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="23 4 23 10 17 10" />
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                </svg>
-                Refresh
-            </button>
+    <!-- Filters -->
+    <div class="card" style="margin-bottom:16px">
+        <div class="filter-row">
+            <div class="form-group">
+                <label class="form-label">Status</label>
+                <select id="filter-status" class="form-input" onchange="loadServers()">
+                    <option value="">All</option>
+                    <option value="online">Online</option>
+                    <option value="offline">Offline</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Severity</label>
+                <select id="filter-severity" class="form-input" onchange="loadServers()">
+                    <option value="">All</option>
+                    <option value="critical">Critical</option>
+                    <option value="warning">Warning</option>
+                    <option value="info">Normal</option>
+                </select>
+            </div>
+            <div class="form-group" style="align-self:flex-end">
+                <button class="btn btn-ghost" onclick="loadServers()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10" />
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                    </svg>
+                    Refresh
+                </button>
+            </div>
         </div>
+    </div>
     </div>
 
     <div class="card">
@@ -90,24 +105,37 @@
         return new Date(iso).toLocaleDateString();
     }
 
+    function severityBadge(s) {
+        const map = { critical: 'badge-red', warning: 'badge-yellow', info: 'badge-blue' };
+        return `<span class="badge ${map[s] || 'badge-gray'}">${s}</span>`;
+    }
+
     async function loadServers() {
         const wrap = document.getElementById('servers-wrap');
+        const status = document.getElementById('filter-status').value;
+        const severity = document.getElementById('filter-severity').value;
+
+        let url = `/api/servers?_t=${Date.now()}`;
+        if (status) url += `&status=${status}`;
+        if (severity) url += `&severity=${severity}`;
+
         try {
-            const data = await apiFetch('/api/servers');
+            const data = await apiFetch(url);
             if (!data.length) {
-                wrap.innerHTML = '<div class="empty-state"><p>No servers registered yet. Run install.sh on a target server.</p></div>';
+                wrap.innerHTML = '<div class="empty-state"><p>No servers found matching these filters.</p></div>';
                 return;
             }
             wrap.innerHTML = `
         <table class="data-table">
           <thead><tr>
-            <th>Status</th><th>Hostname</th><th>IP Address</th>
+            <th>Status</th><th>Severity</th><th>Hostname</th><th>IP Address</th>
             <th>OS</th><th>Last Seen</th><th>Registered</th>
           </tr></thead>
           <tbody>
             ${data.map(s => `
-              <tr>
+              <tr onclick="window.location.href='/events?server_id=${s.id}'" style="cursor:pointer">
                 <td>${statusBadge(s.status)}</td>
+                <td>${severityBadge(s.severity)}</td>
                 <td><strong class="mono">${s.hostname}</strong></td>
                 <td class="mono">${s.ip_address || '—'}</td>
                 <td style="color:var(--text-secondary)">${s.os_info || '—'}</td>
@@ -122,7 +150,17 @@
         }
     }
 
-    loadServers();
+    // Check URL params for filters (from dashboard)
+    document.addEventListener('DOMContentLoaded', () => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('status')) {
+            document.getElementById('filter-status').value = params.get('status');
+        }
+        if (params.has('severity')) {
+            document.getElementById('filter-severity').value = params.get('severity');
+        }
+        loadServers();
+    });
     setInterval(loadServers, 15000);
 
     /* ── Modal & Setup Logic ────────────────────────────── */
