@@ -243,7 +243,7 @@ def auth_me():
 # API — AGENT REGISTRATION
 # ──────────────────────────────────────────────────────────────────────────────
 
-@app.route("/agents/register", methods=["POST"])
+@app.route("/api/agents/register", methods=["POST"])
 @agent_key_required
 def register_agent():
     data = request.get_json(force=True)
@@ -321,7 +321,7 @@ HOSTNAME_VAL=$(hostname -f 2>/dev/null || hostname)
 IP_VAL=$(hostname -I 2>/dev/null | awk '{{print $1}}' || echo 'unknown')
 OS_INFO="$(uname -s) $(uname -r)"
 
-REG_RES=$(curl -s -X POST "$BACKEND_URL/agents/register" \\
+REG_RES=$(curl -s -X POST "$BACKEND_URL/api/agents/register" \
   -H "Content-Type: application/json" \\
   -H "X-API-Key: $API_KEY" \\
   -d "{{\\"hostname\\":\\"$HOSTNAME_VAL\\",\\"ip_address\\":\\"$IP_VAL\\",\\"os_info\\":\\"$OS_INFO\\"}}")
@@ -390,7 +390,7 @@ def setup_agent_files():
 ALERT_TRIGGERS = {"failed_login", "cron_change", "ssh_login"}
 CRITICAL_KEYWORDS = ["root", "sudo", "passwd", "/etc/shadow", "chmod 777"]
 
-@app.route("/events", methods=["POST"])
+@app.route("/api/events", methods=["POST"])
 def ingest_event():
     agent_token = request.headers.get("X-Agent-Token", "")
     if not agent_token:
@@ -470,7 +470,7 @@ def ingest_event():
     return jsonify({"id": event.id, "message": "Event recorded"}), 201
 
 
-@app.route("/events", methods=["GET"])
+@app.route("/api/events", methods=["GET"])
 @jwt_required
 def get_events():
     server_id  = request.args.get("server_id", type=int)
@@ -516,7 +516,7 @@ def get_events():
 # API — SERVERS
 # ──────────────────────────────────────────────────────────────────────────────
 
-@app.route("/servers", methods=["GET"])
+@app.route("/api/servers", methods=["GET"])
 @jwt_required
 def get_servers():
     servers = Server.query.order_by(Server.registered_at.desc()).all()
@@ -541,7 +541,7 @@ def get_servers():
     return jsonify(result)
 
 
-@app.route("/servers/stats", methods=["GET"])
+@app.route("/api/servers/stats", methods=["GET"])
 @jwt_required
 def server_stats():
     total = Server.query.count()
@@ -563,7 +563,7 @@ def server_stats():
 # API — ALERTS
 # ──────────────────────────────────────────────────────────────────────────────
 
-@app.route("/alerts", methods=["GET"])
+@app.route("/api/alerts", methods=["GET"])
 @jwt_required
 def get_alerts():
     server_id   = request.args.get("server_id", type=int)
@@ -607,7 +607,7 @@ def get_alerts():
     })
 
 
-@app.route("/alerts/<int:alert_id>/resolve", methods=["PATCH"])
+@app.route("/api/alerts/<int:alert_id>/resolve", methods=["PATCH"])
 @jwt_required
 def resolve_alert(alert_id):
     alert = Alert.query.get_or_404(alert_id)

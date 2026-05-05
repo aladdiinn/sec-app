@@ -35,7 +35,7 @@ def send_event(
         "raw_data":    raw_data or {},
     }
     data    = json.dumps(payload).encode("utf-8")
-    url     = cfg["backend_url"] + "/events"
+    url     = cfg["backend_url"] + "/api/events"
     token   = cfg["agent_token"]
 
     for attempt in range(1, MAX_RETRIES + 1):

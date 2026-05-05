@@ -93,7 +93,7 @@
     async function loadServers() {
         const wrap = document.getElementById('servers-wrap');
         try {
-            const data = await apiFetch('/servers');
+            const data = await apiFetch('/api/servers');
             if (!data.length) {
                 wrap.innerHTML = '<div class="empty-state"><p>No servers registered yet. Run install.sh on a target server.</p></div>';
                 return;

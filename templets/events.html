@@ -78,7 +78,7 @@
         const type = document.getElementById('filter-type').value;
         const sev = document.getElementById('filter-sev').value;
 
-        let url = `/events?limit=${PAGE_SIZE}&offset=${currentOffset}`;
+        let url = `/api/events?limit=${PAGE_SIZE}&offset=${currentOffset}`;
         if (type) url += `&event_type=${type}`;
         if (sev) url += `&severity=${sev}`;
 

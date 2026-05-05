@@ -148,7 +148,7 @@
 
     async function loadStats() {
         try {
-            const data = await apiFetch('/servers/stats');
+            const data = await apiFetch('/api/servers/stats');
             document.getElementById('stat-total').textContent = data.total_servers;
             document.getElementById('stat-online').textContent = data.online_servers;
             document.getElementById('stat-alerts').textContent = data.open_alerts;
@@ -165,7 +165,7 @@
 
     async function loadRecentEvents() {
         try {
-            const data = await apiFetch('/events?limit=10');
+            const data = await apiFetch('/api/events?limit=10');
             const wrap = document.getElementById('recent-events-wrap');
             if (!data.items.length) {
                 wrap.innerHTML = '<div class="empty-state"><p>No events yet</p></div>';
@@ -196,7 +196,7 @@
 
     async function loadOpenAlerts() {
         try {
-            const data = await apiFetch('/alerts?is_resolved=false&limit=8');
+            const data = await apiFetch('/api/alerts?is_resolved=false&limit=8');
             const el = document.getElementById('open-alerts-list');
             document.getElementById('open-alerts-count').textContent = data.total;
             if (!data.items.length) {
@@ -222,7 +222,7 @@
     async function resolveAlert(id, btn) {
         btn.disabled = true;
         try {
-            await apiFetch(`/alerts/${id}/resolve`, { method: 'PATCH' });
+            await apiFetch(`/api/alerts/${id}/resolve`, { method: 'PATCH' });
             loadAll();
         } catch (e) { btn.disabled = false; alert('Failed to resolve alert'); }
     }

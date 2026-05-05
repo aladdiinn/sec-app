@@ -65,7 +65,7 @@
     async function resolveAlert(id, btn) {
         btn.disabled = true;
         try {
-            await apiFetch(`/alerts/${id}/resolve`, { method: 'PATCH' });
+            await apiFetch(`/api/alerts/${id}/resolve`, { method: 'PATCH' });
             loadAlerts();
         } catch (e) {
             btn.disabled = false;
@@ -78,7 +78,7 @@
         const sev = document.getElementById('filter-sev').value;
         const status = document.getElementById('filter-status').value;
 
-        let url = '/alerts?limit=100';
+        let url = '/api/alerts?limit=100';
         if (sev) url += `&severity=${sev}`;
         if (status !== '') url += `&is_resolved=${status}`;
 
