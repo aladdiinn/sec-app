@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from database import db, init_db
 from models import User, Server, Event, Alert
 from sqlalchemy import func # type: ignore
+from sqlalchemy.exc import IntegrityError # type: ignore
 
 load_dotenv()
 
@@ -134,15 +135,22 @@ def seed_admin():
 
     # Check if admin already exists
     if not User.query.filter_by(email=admin_email).first():
-        admin = User(
-            email=admin_email,
-            hashed_password=generate_password_hash(admin_pass),
-            full_name="Default Admin",
-            is_admin=True,
-        )
-        db.session.add(admin)
-        db.session.commit()
-        logger.info(f"Default admin created: {admin_email}")
+        try:
+            admin = User(
+                email=admin_email,
+                hashed_password=generate_password_hash(admin_pass),
+                full_name="Default Admin",
+                is_admin=True,
+            )
+            db.session.add(admin)
+            db.session.commit()
+            logger.info(f"Default admin created: {admin_email}")
+        except IntegrityError:
+            db.session.rollback()
+            logger.info(f"Admin already exists (handled IntegrityError): {admin_email}")
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error seeding admin: {str(e)}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
