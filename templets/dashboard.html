@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page fade-up">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Dashboard</h1>
+            <p class="page-subtitle">Real-time security overview — auto-refreshes every 15 seconds</p>
+        </div>
+        <button class="btn btn-ghost" onclick="loadAll()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+            Refresh
+        </button>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="stats-grid">
+        <div class="stat-card stat-card--blue">
+            <div class="stat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <rect x="2" y="2" width="20" height="8" rx="2" />
+                    <rect x="2" y="14" width="20" height="8" rx="2" />
+                </svg></div>
+            <div class="stat-body">
+                <div class="stat-value" id="stat-total">—</div>
+                <div class="stat-label">Total Servers</div>
+            </div>
+        </div>
+        <div class="stat-card stat-card--green">
+            <div class="stat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <path d="M1.7 6.7A10 10 0 0 1 22 12" />
+                    <path d="M5 12.7A6 6 0 0 1 18.3 12" />
+                    <path d="M8.8 15.7A2 2 0 0 1 15.2 15" />
+                    <circle cx="12" cy="18" r="1" />
+                </svg></div>
+            <div class="stat-body">
+                <div class="stat-value" id="stat-online">—</div>
+                <div class="stat-label">Online</div>
+            </div>
+        </div>
+        <div class="stat-card stat-card--red">
+            <div class="stat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <path
+                        d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                    <line x1="12" y1="9" x2="12" y2="13" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg></div>
+            <div class="stat-body">
+                <div class="stat-value" id="stat-alerts">—</div>
+                <div class="stat-label">Open Alerts</div>
+            </div>
+        </div>
+        <div class="stat-card stat-card--yellow">
+            <div class="stat-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                </svg></div>
+            <div class="stat-body">
+                <div class="stat-value" id="stat-events">—</div>
+                <div class="stat-label">Total Events</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live event feed + open alerts -->
+    <div class="dashboard-grid">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Live Event Feed</h3>
+                <span class="badge badge-blue" id="live-badge">LIVE</span>
+            </div>
+            <div id="live-feed" class="live-feed">
+                <div class="empty-state">
+                    <p>Waiting for events…</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Open Alerts</h3>
+                <span class="badge badge-red" id="open-alerts-count">0</span>
+            </div>
+            <div id="open-alerts-list">
+                <div class="empty-state">
+                    <p>No open alerts 🎉</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent events table -->
+    <div class="card" style="margin-top:20px">
+        <div class="card-header">
+            <h3 class="card-title">Recent Events</h3>
+        </div>
+        <div id="recent-events-wrap">
+            <div class="center-spinner">
+                <div class="spinner"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const MAX_FEED = 30;
+    let feedItems = [];
+
+    function severityBadge(s) {
+        const map = { info: 'badge-blue', warning: 'badge-yellow', critical: 'badge-red' };
+        return `<span class="badge ${map[s] || 'badge-gray'}">${s}</span>`;
+    }
+
+    function relTime(iso) {
+        const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+        if (diff < 60) return `${diff}s ago`;
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        return `${Math.floor(diff / 3600)}h ago`;
+    }
+
+    function renderFeed() {
+        const el = document.getElementById('live-feed');
+        if (!feedItems.length) {
+            el.innerHTML = '<div class="empty-state"><p>Waiting for events…</p></div>';
+            return;
+        }
+        el.innerHTML = feedItems.map(e => `
+      <div class="feed-item feed-item--${e.severity}">
+        <div class="feed-top">
+          <span class="feed-hostname">${e.hostname || 'srv-' + e.server_id}</span>
+          ${severityBadge(e.severity)}
+        </div>
+        <div class="feed-desc">${e.description}</div>
+        <div class="feed-meta">
+          <span class="mono">${e.event_type}</span>
+          <span>${relTime(e.created_at)}</span>
+        </div>
+      </div>
+    `).join('');
+    }
+
+    async function loadStats() {
+        try {
+            const data = await apiFetch('/servers/stats');
+            document.getElementById('stat-total').textContent = data.total_servers;
+            document.getElementById('stat-online').textContent = data.online_servers;
+            document.getElementById('stat-alerts').textContent = data.open_alerts;
+            document.getElementById('stat-events').textContent = data.total_events;
+            const badge = document.getElementById('nav-alert-count');
+            if (data.open_alerts > 0) {
+                badge.textContent = data.open_alerts;
+                badge.style.display = 'inline-flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        } catch (e) { console.error('Stats error:', e); }
+    }
+
+    async function loadRecentEvents() {
+        try {
+            const data = await apiFetch('/events?limit=10');
+            const wrap = document.getElementById('recent-events-wrap');
+            if (!data.items.length) {
+                wrap.innerHTML = '<div class="empty-state"><p>No events yet</p></div>';
+                return;
+            }
+            wrap.innerHTML = `
+        <table class="data-table">
+          <thead><tr>
+            <th>Time</th><th>Server</th><th>Type</th><th>Severity</th><th>Description</th>
+          </tr></thead>
+          <tbody>
+            ${data.items.map(e => `
+              <tr>
+                <td class="mono" style="font-size:11px;color:var(--text-secondary)">${new Date(e.created_at).toLocaleString()}</td>
+                <td><strong>${e.hostname}</strong></td>
+                <td><span class="mono">${e.event_type}</span></td>
+                <td>${severityBadge(e.severity)}</td>
+                <td style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.description}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`;
+            // Also seed live feed
+            feedItems = data.items.slice(0, MAX_FEED);
+            renderFeed();
+        } catch (e) { console.error('Events error:', e); }
+    }
+
+    async function loadOpenAlerts() {
+        try {
+            const data = await apiFetch('/alerts?is_resolved=false&limit=8');
+            const el = document.getElementById('open-alerts-list');
+            document.getElementById('open-alerts-count').textContent = data.total;
+            if (!data.items.length) {
+                el.innerHTML = '<div class="empty-state"><p>No open alerts 🎉</p></div>';
+                return;
+            }
+            el.innerHTML = data.items.map(a => `
+        <div class="alert-item alert-item--${a.severity}">
+          <div class="alert-top">
+            <span class="alert-title">${a.title}</span>
+            ${severityBadge(a.severity)}
+          </div>
+          <p class="alert-msg">${a.message.substring(0, 100)}${a.message.length > 100 ? '…' : ''}</p>
+          <div style="display:flex;justify-content:space-between;margin-top:6px">
+            <span class="alert-time">${relTime(a.created_at)}</span>
+            <button class="btn btn-ghost" style="padding:3px 10px;font-size:11px" onclick="resolveAlert(${a.id},this)">Resolve</button>
+          </div>
+        </div>
+      `).join('');
+        } catch (e) { console.error('Alerts error:', e); }
+    }
+
+    async function resolveAlert(id, btn) {
+        btn.disabled = true;
+        try {
+            await apiFetch(`/alerts/${id}/resolve`, { method: 'PATCH' });
+            loadAll();
+        } catch (e) { btn.disabled = false; alert('Failed to resolve alert'); }
+    }
+
+    function loadAll() {
+        loadStats();
+        loadRecentEvents();
+        loadOpenAlerts();
+    }
+
+    // WebSocket live push
+    if (window._socket) {
+        window._socket.on('new_event', function (ev) {
+            feedItems.unshift(ev);
+            if (feedItems.length > MAX_FEED) feedItems.pop();
+            renderFeed();
+            loadStats();
+        });
+        window._socket.on('alert_resolved', function () {
+            loadOpenAlerts();
+            loadStats();
+        });
+    }
+
+    loadAll();
+    setInterval(loadAll, 15000);
+</script>
+{% endblock %}

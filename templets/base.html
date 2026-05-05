@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}SecurePulse{% endblock %} — Security Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233b82f6'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>" />
+    <link rel="stylesheet" href="/static/css/main.css" />
+    {% block extra_css %}{% endblock %}
+</head>
+
+<body>
+    {% if not hide_nav %}
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="brand-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                </div>
+                <div>
+                    <div class="brand-name">SecurePulse</div>
+                    <div class="brand-sub">Security Monitor</div>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="/dashboard" class="nav-item {% if active == 'dashboard' %}nav-item--active{% endif %}">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7" />
+                        <rect x="14" y="3" width="7" height="7" />
+                        <rect x="14" y="14" width="7" height="7" />
+                        <rect x="3" y="14" width="7" height="7" />
+                    </svg>
+                    Dashboard
+                </a>
+                <a href="/servers" class="nav-item {% if active == 'servers' %}nav-item--active{% endif %}">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="2" width="20" height="8" rx="2" />
+                        <rect x="2" y="14" width="20" height="8" rx="2" />
+                        <line x1="6" y1="6" x2="6.01" y2="6" />
+                        <line x1="6" y1="18" x2="6.01" y2="18" />
+                    </svg>
+                    Servers
+                </a>
+                <a href="/events" class="nav-item {% if active == 'events' %}nav-item--active{% endif %}">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                    </svg>
+                    Events
+                </a>
+                <a href="/alerts" class="nav-item {% if active == 'alerts' %}nav-item--active{% endif %}">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path
+                            d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <line x1="12" y1="9" x2="12" y2="13" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                    </svg>
+                    Alerts
+                    <span class="nav-badge" id="nav-alert-count" style="display:none"></span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="sidebar-user">
+                    <div class="user-avatar" id="user-avatar">A</div>
+                    <div class="user-info">
+                        <div class="user-name" id="user-name">Admin</div>
+                        <div class="user-email" id="user-email">admin@securepulse.local</div>
+                    </div>
+                </div>
+                <button class="nav-item logout-btn" onclick="logout()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                        <polyline points="16 17 21 12 16 7" />
+                        <line x1="21" y1="12" x2="9" y2="12" />
+                    </svg>
+                    Logout
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <main class="main-content">
+        {% endif %}
+
+            {% block content %}{% endblock %}
+
+        {% if not hide_nav %}
+        </main>
+    </div>
+    {% endif %}
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/static/js/auth.js"></script>
+    {% if not hide_nav %}
+    <script src="/static/js/realtime.js"></script>
+    {% endif %}
+    {% block extra_js %}{% endblock %}
+</body>
+
+</html>

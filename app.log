@@ -1,0 +1,635 @@
+2026-05-05 18:34:47,727 [INFO] securepulse: Default admin created: admin@securepulse.local
+2026-05-05 18:34:47,729 [INFO] securepulse: Starting SecurePulse on port 5000 (debug=False)
+2026-05-05 18:34:47,761 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.10.179:5000
+2026-05-05 18:34:47,761 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2026-05-05 18:34:57,497 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 18:34:57] "[32mGET / HTTP/1.1[0m" 302 -
+2026-05-05 18:34:57,731 [ERROR] app: Exception on /login [GET]
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\app.py", line 147, in login_page
+    return render_template("login.html")
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 151, in render_template
+    return _render(app, template, context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 132, in _render
+    rv = template.render(context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 1295, in render
+    self.environment.handle_exception()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\login.html", line 1, in top-level template code
+    {% extends "base.html" %}
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\base.html", line 96, in template
+    {% block content %}{% endblock %}
+    ^^^^^^^^^^^^^^^^^^^^^
+jinja2.exceptions.TemplateAssertionError: block 'content' defined twice
+2026-05-05 18:34:57,748 [ERROR] securepulse: Internal error: 500 Internal Server Error: The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.
+2026-05-05 18:34:57,749 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 18:34:57] "[35m[1mGET /login HTTP/1.1[0m" 500 -
+2026-05-05 18:34:57,909 [ERROR] app: Exception on /favicon.ico [GET]
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\routing\map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 802, in handle_user_exception
+    return self.handle_http_exception(e)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 777, in handle_http_exception
+    return self.ensure_sync(handler)(e)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\app.py", line 523, in not_found
+    return render_template("404.html"), 404
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 151, in render_template
+    return _render(app, template, context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 132, in _render
+    rv = template.render(context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 1295, in render
+    self.environment.handle_exception()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\404.html", line 1, in top-level template code
+    {% extends "base.html" %}
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\base.html", line 96, in template
+    {% block content %}{% endblock %}
+    ^^^^^^^^^^^^^^^^^^^^^
+jinja2.exceptions.TemplateAssertionError: block 'content' defined twice
+2026-05-05 18:34:57,923 [ERROR] securepulse: Internal error: 500 Internal Server Error: The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.
+2026-05-05 18:34:57,925 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 18:34:57] "[35m[1mGET /favicon.ico HTTP/1.1[0m" 500 -
+2026-05-05 18:34:59,890 [ERROR] app: Exception on /login [GET]
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\app.py", line 147, in login_page
+    return render_template("login.html")
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 151, in render_template
+    return _render(app, template, context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 132, in _render
+    rv = template.render(context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 1295, in render
+    self.environment.handle_exception()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\login.html", line 1, in top-level template code
+    {% extends "base.html" %}
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\base.html", line 96, in template
+    {% block content %}{% endblock %}
+    ^^^^^^^^^^^^^^^^^^^^^
+jinja2.exceptions.TemplateAssertionError: block 'content' defined twice
+2026-05-05 18:34:59,896 [ERROR] securepulse: Internal error: 500 Internal Server Error: The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.
+2026-05-05 18:34:59,896 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 18:34:59] "[35m[1mGET /login HTTP/1.1[0m" 500 -
+2026-05-05 18:34:59,946 [ERROR] app: Exception on /favicon.ico [GET]
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\routing\map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 802, in handle_user_exception
+    return self.handle_http_exception(e)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 777, in handle_http_exception
+    return self.ensure_sync(handler)(e)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\app.py", line 523, in not_found
+    return render_template("404.html"), 404
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 151, in render_template
+    return _render(app, template, context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 132, in _render
+    rv = template.render(context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 1295, in render
+    self.environment.handle_exception()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\404.html", line 1, in top-level template code
+    {% extends "base.html" %}
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\base.html", line 96, in template
+    {% block content %}{% endblock %}
+    ^^^^^^^^^^^^^^^^^^^^^
+jinja2.exceptions.TemplateAssertionError: block 'content' defined twice
+2026-05-05 18:34:59,957 [ERROR] securepulse: Internal error: 500 Internal Server Error: The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.
+2026-05-05 18:34:59,959 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 18:34:59] "[35m[1mGET /favicon.ico HTTP/1.1[0m" 500 -
+2026-05-05 18:35:00,645 [ERROR] app: Exception on /login [GET]
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\app.py", line 147, in login_page
+    return render_template("login.html")
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 151, in render_template
+    return _render(app, template, context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 132, in _render
+    rv = template.render(context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 1295, in render
+    self.environment.handle_exception()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\login.html", line 1, in top-level template code
+    {% extends "base.html" %}
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\base.html", line 96, in template
+    {% block content %}{% endblock %}
+    ^^^^^^^^^^^^^^^^^^^^^
+jinja2.exceptions.TemplateAssertionError: block 'content' defined twice
+2026-05-05 18:35:00,650 [ERROR] securepulse: Internal error: 500 Internal Server Error: The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.
+2026-05-05 18:35:00,653 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 18:35:00] "[35m[1mGET /login HTTP/1.1[0m" 500 -
+2026-05-05 18:35:00,703 [ERROR] app: Exception on /favicon.ico [GET]
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\routing\map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 802, in handle_user_exception
+    return self.handle_http_exception(e)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 777, in handle_http_exception
+    return self.ensure_sync(handler)(e)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\app.py", line 523, in not_found
+    return render_template("404.html"), 404
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 151, in render_template
+    return _render(app, template, context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 132, in _render
+    rv = template.render(context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 1295, in render
+    self.environment.handle_exception()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\404.html", line 1, in top-level template code
+    {% extends "base.html" %}
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\base.html", line 96, in template
+    {% block content %}{% endblock %}
+    ^^^^^^^^^^^^^^^^^^^^^
+jinja2.exceptions.TemplateAssertionError: block 'content' defined twice
+2026-05-05 18:35:00,709 [ERROR] securepulse: Internal error: 500 Internal Server Error: The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.
+2026-05-05 18:35:00,710 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 18:35:00] "[35m[1mGET /favicon.ico HTTP/1.1[0m" 500 -
+2026-05-05 18:35:00,896 [ERROR] app: Exception on /login [GET]
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\app.py", line 147, in login_page
+    return render_template("login.html")
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 151, in render_template
+    return _render(app, template, context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 132, in _render
+    rv = template.render(context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 1295, in render
+    self.environment.handle_exception()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\login.html", line 1, in top-level template code
+    {% extends "base.html" %}
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\base.html", line 96, in template
+    {% block content %}{% endblock %}
+    ^^^^^^^^^^^^^^^^^^^^^
+jinja2.exceptions.TemplateAssertionError: block 'content' defined twice
+2026-05-05 18:35:00,906 [ERROR] securepulse: Internal error: 500 Internal Server Error: The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.
+2026-05-05 18:35:00,907 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 18:35:00] "[35m[1mGET /login HTTP/1.1[0m" 500 -
+2026-05-05 18:35:00,973 [ERROR] app: Exception on /favicon.ico [GET]
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\routing\map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 802, in handle_user_exception
+    return self.handle_http_exception(e)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\app.py", line 777, in handle_http_exception
+    return self.ensure_sync(handler)(e)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\app.py", line 523, in not_found
+    return render_template("404.html"), 404
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 151, in render_template
+    return _render(app, template, context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\flask\templating.py", line 132, in _render
+    rv = template.render(context)
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 1295, in render
+    self.environment.handle_exception()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\404.html", line 1, in top-level template code
+    {% extends "base.html" %}
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "c:\Users\Test\OneDrive\Desktop\security-dash\templets\base.html", line 96, in template
+    {% block content %}{% endblock %}
+    ^^^^^^^^^^^^^^^^^^^^^
+jinja2.exceptions.TemplateAssertionError: block 'content' defined twice
+2026-05-05 18:35:00,984 [ERROR] securepulse: Internal error: 500 Internal Server Error: The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.
+2026-05-05 18:35:00,985 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 18:35:00] "[35m[1mGET /favicon.ico HTTP/1.1[0m" 500 -
+2026-05-05 18:50:13,775 [INFO] securepulse: Starting SecurePulse on port 5000 (debug=False)
+2026-05-05 18:50:30,509 [INFO] securepulse: Starting SecurePulse on port 5000 (debug=False)
+2026-05-05 18:50:30,510 [WARNING] werkzeug: Werkzeug appears to be used in a production deployment. Consider switching to a production web server instead.
+2026-05-05 18:50:30,519 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.10.179:5000
+2026-05-05 18:50:30,520 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2026-05-05 18:50:54,856 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:50:54] "GET /login HTTP/1.1" 200 -
+2026-05-05 18:50:54,939 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:50:54] "GET /static/css/main.css HTTP/1.1" 200 -
+2026-05-05 18:50:54,943 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:50:54] "GET /static/js/auth.js HTTP/1.1" 200 -
+2026-05-05 18:53:06,949 [INFO] securepulse: Starting SecurePulse on port 5000 (debug=False)
+2026-05-05 18:53:06,965 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.10.179:5000
+2026-05-05 18:53:06,965 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2026-05-05 18:53:13,637 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:13] "[32mGET / HTTP/1.1[0m" 302 -
+2026-05-05 18:53:13,763 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:13] "GET /login HTTP/1.1" 200 -
+2026-05-05 18:53:13,924 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:13] "GET /static/css/main.css HTTP/1.1" 200 -
+2026-05-05 18:53:13,927 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:13] "GET /static/js/auth.js HTTP/1.1" 200 -
+2026-05-05 18:53:21,440 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:21] "POST /auth/login HTTP/1.1" 200 -
+2026-05-05 18:53:21,461 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:21] "GET /dashboard HTTP/1.1" 200 -
+2026-05-05 18:53:21,475 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:21] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:53:21,479 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:21] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:21,479 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:21] "GET /static/js/realtime.js HTTP/1.1" 200 -
+2026-05-05 18:53:21,566 [INFO] securepulse: WebSocket client connected: RH2DH2eJWqHUVAyAAAAB
+2026-05-05 18:53:25,485 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:25] "GET /servers HTTP/1.1" 200 -
+2026-05-05 18:53:25,496 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:25] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:53:25,499 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:25] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:25,500 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:25] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:25,535 [INFO] securepulse: WebSocket client disconnected: RH2DH2eJWqHUVAyAAAAB
+2026-05-05 18:53:25,543 [INFO] securepulse: WebSocket client connected: 4ca4bVFIOxOa8q24AAAD
+2026-05-05 18:53:26,357 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:26] "GET /events HTTP/1.1" 200 -
+2026-05-05 18:53:26,368 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:26] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:53:26,371 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:26] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:26,372 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:26] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:26,397 [INFO] securepulse: WebSocket client disconnected: 4ca4bVFIOxOa8q24AAAD
+2026-05-05 18:53:26,410 [INFO] securepulse: WebSocket client connected: m_7TvwgaZ84r32MhAAAF
+2026-05-05 18:53:27,265 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:27] "GET /alerts HTTP/1.1" 200 -
+2026-05-05 18:53:27,275 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:27] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:53:27,277 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:27] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:27,278 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:27] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:27,308 [INFO] securepulse: WebSocket client disconnected: m_7TvwgaZ84r32MhAAAF
+2026-05-05 18:53:27,316 [INFO] securepulse: WebSocket client connected: InfIoE-bYmUjx9cDAAAH
+2026-05-05 18:53:28,175 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:28] "GET /servers HTTP/1.1" 200 -
+2026-05-05 18:53:28,187 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:28] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:53:28,187 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:28] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:28,190 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:28] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:28,213 [INFO] securepulse: WebSocket client disconnected: InfIoE-bYmUjx9cDAAAH
+2026-05-05 18:53:28,226 [INFO] securepulse: WebSocket client connected: 1dPgBksqKRkWzkVyAAAJ
+2026-05-05 18:53:28,603 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:28] "GET /dashboard HTTP/1.1" 200 -
+2026-05-05 18:53:28,616 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:28] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:53:28,618 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:28] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:28,620 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:28] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:28,658 [INFO] securepulse: WebSocket client disconnected: 1dPgBksqKRkWzkVyAAAJ
+2026-05-05 18:53:28,679 [INFO] securepulse: WebSocket client connected: 5uhtM5KeiWRNBdf6AAAL
+2026-05-05 18:53:34,043 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:34] "GET /events?limit=10 HTTP/1.1" 200 -
+2026-05-05 18:53:34,050 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:34] "GET /alerts?is_resolved=false&limit=8 HTTP/1.1" 200 -
+2026-05-05 18:53:34,085 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:34] "GET /servers/stats HTTP/1.1" 200 -
+2026-05-05 18:53:37,491 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:37] "GET /servers HTTP/1.1" 200 -
+2026-05-05 18:53:37,503 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:37] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:53:37,505 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:37] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:37,508 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:37] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:37,534 [INFO] securepulse: WebSocket client disconnected: 5uhtM5KeiWRNBdf6AAAL
+2026-05-05 18:53:37,546 [INFO] securepulse: WebSocket client connected: _iNsdWXYCuStfxbpAAAN
+2026-05-05 18:53:38,092 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:38] "GET /events HTTP/1.1" 200 -
+2026-05-05 18:53:38,105 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:38] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:53:38,106 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:38] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:38,107 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:38] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:38,130 [INFO] securepulse: WebSocket client disconnected: _iNsdWXYCuStfxbpAAAN
+2026-05-05 18:53:38,144 [INFO] securepulse: WebSocket client connected: gLMzfwyi0VO2roN3AAAP
+2026-05-05 18:53:38,955 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:38] "GET /dashboard HTTP/1.1" 200 -
+2026-05-05 18:53:38,968 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:38] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:53:38,969 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:38] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:38,971 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:53:38] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:53:38,995 [INFO] securepulse: WebSocket client disconnected: gLMzfwyi0VO2roN3AAAP
+2026-05-05 18:53:39,009 [INFO] securepulse: WebSocket client connected: s4-OkhcCBV_EqGqTAAAR
+2026-05-05 18:56:01,070 [INFO] securepulse: Starting SecurePulse on port 5000 (debug=False)
+2026-05-05 18:56:01,077 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.10.179:5000
+2026-05-05 18:56:01,078 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2026-05-05 18:56:03,273 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:03] "GET /servers HTTP/1.1" 200 -
+2026-05-05 18:56:03,451 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:03] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:03,462 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:03] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:03,463 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:03] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:03,507 [INFO] securepulse: WebSocket client connected: YhmEVCqvAxJjkK1TAAAB
+2026-05-05 18:56:04,834 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:04] "GET /events HTTP/1.1" 200 -
+2026-05-05 18:56:04,844 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:04] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:04,847 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:04] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:04,848 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:04] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:04,872 [INFO] securepulse: WebSocket client disconnected: YhmEVCqvAxJjkK1TAAAB
+2026-05-05 18:56:04,878 [INFO] securepulse: WebSocket client connected: 1buYhhgrxX-dzRTsAAAD
+2026-05-05 18:56:05,498 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:05] "GET /alerts HTTP/1.1" 200 -
+2026-05-05 18:56:05,509 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:05] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:05,512 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:05] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:05,513 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:05] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:05,529 [INFO] securepulse: WebSocket client disconnected: 1buYhhgrxX-dzRTsAAAD
+2026-05-05 18:56:05,538 [INFO] securepulse: WebSocket client connected: POFthz1fbNpKgansAAAF
+2026-05-05 18:56:05,997 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:05] "GET /servers HTTP/1.1" 200 -
+2026-05-05 18:56:06,008 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:06] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:06,010 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:06] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:06,011 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:06] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:06,028 [INFO] securepulse: WebSocket client disconnected: POFthz1fbNpKgansAAAF
+2026-05-05 18:56:06,038 [INFO] securepulse: WebSocket client connected: klXdvrnnYgbE83qwAAAH
+2026-05-05 18:56:06,648 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:06] "GET /dashboard HTTP/1.1" 200 -
+2026-05-05 18:56:06,660 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:06] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:06,662 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:06] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:06,663 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:06] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:06,692 [INFO] securepulse: WebSocket client disconnected: klXdvrnnYgbE83qwAAAH
+2026-05-05 18:56:06,697 [INFO] securepulse: WebSocket client connected: CSTD9g1RD9zAmsAKAAAJ
+2026-05-05 18:56:07,407 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:07] "GET /servers HTTP/1.1" 200 -
+2026-05-05 18:56:07,417 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:07] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:07,420 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:07] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:07,421 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:07] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:07,440 [INFO] securepulse: WebSocket client disconnected: CSTD9g1RD9zAmsAKAAAJ
+2026-05-05 18:56:07,445 [INFO] securepulse: WebSocket client connected: VtYC0Qh3AjLyr-9GAAAL
+2026-05-05 18:56:09,006 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:09] "GET /dashboard HTTP/1.1" 200 -
+2026-05-05 18:56:09,016 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:09] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:09,019 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:09] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:09,020 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:09] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:09,041 [INFO] securepulse: WebSocket client disconnected: VtYC0Qh3AjLyr-9GAAAL
+2026-05-05 18:56:09,057 [INFO] securepulse: WebSocket client connected: Sgt0Bgstc2R5X0e2AAAN
+2026-05-05 18:56:12,851 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:12] "GET /alerts HTTP/1.1" 200 -
+2026-05-05 18:56:12,864 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:12] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:12,864 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:12] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:12,865 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:12] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:12,887 [INFO] securepulse: WebSocket client disconnected: Sgt0Bgstc2R5X0e2AAAN
+2026-05-05 18:56:12,897 [INFO] securepulse: WebSocket client connected: 3H_Fo3_YHMwjiSB_AAAP
+2026-05-05 18:56:14,092 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:14] "GET /events HTTP/1.1" 200 -
+2026-05-05 18:56:14,103 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:14] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:14,105 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:14] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:14,106 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:14] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:14,127 [INFO] securepulse: WebSocket client disconnected: 3H_Fo3_YHMwjiSB_AAAP
+2026-05-05 18:56:14,133 [INFO] securepulse: WebSocket client connected: ucgyl2R27dXmbsErAAAR
+2026-05-05 18:56:14,724 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:14] "GET /events HTTP/1.1" 200 -
+2026-05-05 18:56:14,731 [INFO] securepulse: WebSocket client disconnected: ucgyl2R27dXmbsErAAAR
+2026-05-05 18:56:14,736 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:14] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:14,738 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:14] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:14,739 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:14] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:14,757 [INFO] securepulse: WebSocket client connected: mA4-6UJx7dGX4aHlAAAT
+2026-05-05 18:56:15,072 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:15] "GET /servers HTTP/1.1" 200 -
+2026-05-05 18:56:15,082 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:15] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:15,083 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:15] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:15,086 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:15] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:15,112 [INFO] securepulse: WebSocket client disconnected: mA4-6UJx7dGX4aHlAAAT
+2026-05-05 18:56:15,115 [INFO] securepulse: WebSocket client connected: t_1YslUnkhRkE8JWAAAV
+2026-05-05 18:56:15,436 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:15] "GET /dashboard HTTP/1.1" 200 -
+2026-05-05 18:56:15,448 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:15] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:15,448 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:15] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:15,449 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:15] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:15,474 [INFO] securepulse: WebSocket client disconnected: t_1YslUnkhRkE8JWAAAV
+2026-05-05 18:56:15,479 [INFO] securepulse: WebSocket client connected: 2qeDPnjQF2qmteN5AAAX
+2026-05-05 18:56:22,118 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:22] "GET /alerts HTTP/1.1" 200 -
+2026-05-05 18:56:22,129 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:22] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:22,131 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:22] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:22,133 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:22] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:22,162 [INFO] securepulse: WebSocket client disconnected: 2qeDPnjQF2qmteN5AAAX
+2026-05-05 18:56:22,173 [INFO] securepulse: WebSocket client connected: 2fJ6CEodunZlbZy8AAAZ
+2026-05-05 18:56:23,546 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:23] "GET /events HTTP/1.1" 200 -
+2026-05-05 18:56:23,556 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:23] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:23,558 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:23] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:23,560 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:23] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:23,583 [INFO] securepulse: WebSocket client disconnected: 2fJ6CEodunZlbZy8AAAZ
+2026-05-05 18:56:23,588 [INFO] securepulse: WebSocket client connected: JZSc_Tpyn0II6ix_AAAb
+2026-05-05 18:56:24,470 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:24] "GET /servers HTTP/1.1" 200 -
+2026-05-05 18:56:24,481 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:24] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:24,483 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:24] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:24,486 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:24] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:24,511 [INFO] securepulse: WebSocket client disconnected: JZSc_Tpyn0II6ix_AAAb
+2026-05-05 18:56:24,516 [INFO] securepulse: WebSocket client connected: 2pgIhSzJPitezqXeAAAd
+2026-05-05 18:56:25,229 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:25] "GET /dashboard HTTP/1.1" 200 -
+2026-05-05 18:56:25,240 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:25] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:25,242 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:25] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:25,244 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:25] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:25,268 [INFO] securepulse: WebSocket client disconnected: 2pgIhSzJPitezqXeAAAd
+2026-05-05 18:56:25,275 [INFO] securepulse: WebSocket client connected: uG0hyraVyQqfXUGUAAAf
+2026-05-05 18:56:25,971 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:25] "GET /servers HTTP/1.1" 200 -
+2026-05-05 18:56:25,982 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:25] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 18:56:25,985 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:25] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:25,986 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:25] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 18:56:26,014 [INFO] securepulse: WebSocket client disconnected: uG0hyraVyQqfXUGUAAAf
+2026-05-05 18:56:26,019 [INFO] securepulse: WebSocket client connected: BYam9KuUKUn8KOP5AAAh
+2026-05-05 18:56:41,792 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:41] "GET /servers HTTP/1.1" 200 -
+2026-05-05 18:56:56,803 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 18:56:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:00:09,082 [INFO] securepulse: Starting SecurePulse on port 5000 (debug=False)
+2026-05-05 19:00:09,082 [WARNING] werkzeug: Werkzeug appears to be used in a production deployment. Consider switching to a production web server instead.
+2026-05-05 19:00:09,095 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.10.179:5000
+2026-05-05 19:00:09,096 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2026-05-05 19:00:56,845 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:00:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:01:56,804 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:01:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:02:56,806 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:02:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:03:56,813 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:03:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:04:56,796 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:04:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:05:56,808 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:05:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:06:55,283 [INFO] securepulse: Starting SecurePulse on port 5000 (debug=False)
+2026-05-05 19:06:55,291 [INFO] werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.10.179:5000
+2026-05-05 19:06:55,292 [INFO] werkzeug: [33mPress CTRL+C to quit[0m
+2026-05-05 19:06:56,797 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:06:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:06:58,458 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:06:58] "GET /dashboard HTTP/1.1" 200 -
+2026-05-05 19:06:58,584 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:06:58] "GET /static/css/main.css HTTP/1.1" 200 -
+2026-05-05 19:06:58,585 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:06:58] "GET /static/js/auth.js HTTP/1.1" 200 -
+2026-05-05 19:06:58,586 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:06:58] "GET /static/js/realtime.js HTTP/1.1" 200 -
+2026-05-05 19:06:58,611 [INFO] securepulse: WebSocket client connected: E3Aqc9wCL_MIPKsUAAAB
+2026-05-05 19:06:59,854 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:06:59] "GET /dashboard HTTP/1.1" 200 -
+2026-05-05 19:06:59,863 [INFO] securepulse: WebSocket client disconnected: E3Aqc9wCL_MIPKsUAAAB
+2026-05-05 19:06:59,865 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:06:59] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 19:06:59,866 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:06:59] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 19:06:59,869 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:06:59] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 19:06:59,892 [INFO] securepulse: WebSocket client connected: Iq8ro2HGXxbnWyq9AAAD
+2026-05-05 19:07:02,326 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:07:02] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:07:02,337 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:07:02] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 19:07:02,338 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:07:02] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 19:07:02,340 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:07:02] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 19:07:02,365 [INFO] securepulse: WebSocket client disconnected: Iq8ro2HGXxbnWyq9AAAD
+2026-05-05 19:07:02,369 [INFO] securepulse: WebSocket client connected: KmbagXlTnItEm2o2AAAF
+2026-05-05 19:07:17,796 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:07:17] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:07:32,790 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:07:32] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:07:47,792 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:07:47] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:08:02,356 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:08:02] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:08:17,354 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:08:17] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:08:32,358 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:08:32] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:08:47,363 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:08:47] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:09:02,356 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:09:02] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:09:17,356 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:09:17] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:09:32,802 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:09:32] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:09:47,806 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:09:47] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:10:02,800 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:10:02] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:10:17,793 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:10:17] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:10:56,802 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:10:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:11:56,803 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:11:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:12:56,793 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:12:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:14:18,727 [INFO] securepulse: WebSocket client disconnected: KmbagXlTnItEm2o2AAAF
+2026-05-05 19:14:18,741 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:14:18] "[35m[1mGET /socket.io/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiZW1haWwiOiJhZG1pbkBzZWN1cmVwdWxzZS5sb2NhbCIsImlzX2FkbWluIjp0cnVlLCJleHAiOjE3NzgwNzM4MDEsImlhdCI6MTc3Nzk4NzQwMX0.oBtHdctkCmlrwE_rSJ2E-Yykm73PmaP3YfYGuWcP7fo&EIO=4&transport=websocket HTTP/1.1[0m" 500 -
+2026-05-05 19:14:18,749 [ERROR] werkzeug: Error on request:
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\serving.py", line 370, in run_wsgi
+    execute(self.server.app)
+    ~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\serving.py", line 336, in execute
+    write(b"")
+    ~~~~~^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\serving.py", line 261, in write
+    assert status_set is not None, "write() before start_response"
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: write() before start_response
+2026-05-05 19:16:05,349 [INFO] werkzeug: 127.0.0.1 - - [05/May/2026 19:16:05] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:16:16,748 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:16] "[32mGET / HTTP/1.1[0m" 302 -
+2026-05-05 19:16:16,830 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:16] "GET /login HTTP/1.1" 200 -
+2026-05-05 19:16:16,851 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:16] "GET /static/css/main.css HTTP/1.1" 200 -
+2026-05-05 19:16:16,854 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:16] "GET /static/js/auth.js HTTP/1.1" 200 -
+2026-05-05 19:16:27,687 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:27] "POST /auth/login HTTP/1.1" 200 -
+2026-05-05 19:16:27,702 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:27] "GET /dashboard HTTP/1.1" 200 -
+2026-05-05 19:16:27,717 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:27] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 19:16:27,719 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:27] "GET /static/js/realtime.js HTTP/1.1" 200 -
+2026-05-05 19:16:27,720 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:27] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 19:16:27,800 [INFO] securepulse: WebSocket client connected: X9CpG-Jil28bkyRrAAAH
+2026-05-05 19:16:32,127 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:32] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:16:32,143 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:32] "[36mGET /static/css/main.css HTTP/1.1[0m" 304 -
+2026-05-05 19:16:32,143 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:32] "[36mGET /static/js/auth.js HTTP/1.1[0m" 304 -
+2026-05-05 19:16:32,144 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:32] "[36mGET /static/js/realtime.js HTTP/1.1[0m" 304 -
+2026-05-05 19:16:32,200 [INFO] securepulse: WebSocket client disconnected: X9CpG-Jil28bkyRrAAAH
+2026-05-05 19:16:32,206 [INFO] securepulse: WebSocket client connected: hlm9u4BykUiGVE1rAAAJ
+2026-05-05 19:16:47,799 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:16:47] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:17:02,797 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:17:02] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:17:17,793 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:17:17] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:17:32,789 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:17:32] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:17:47,791 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:17:47] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:18:02,789 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:18:02] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:18:17,797 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:18:17] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:18:56,806 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:18:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:19:56,814 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:19:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:20:56,806 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:20:56] "GET /servers HTTP/1.1" 200 -
+2026-05-05 19:22:18,918 [INFO] securepulse: WebSocket client disconnected: hlm9u4BykUiGVE1rAAAJ
+2026-05-05 19:22:18,936 [INFO] werkzeug: 192.168.10.179 - - [05/May/2026 19:22:18] "[35m[1mGET /socket.io/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiZW1haWwiOiJhZG1pbkBzZWN1cmVwdWxzZS5sb2NhbCIsImlzX2FkbWluIjp0cnVlLCJleHAiOjE3NzgwNzUxODcsImlhdCI6MTc3Nzk4ODc4N30.Bj4Tc8dSorG4tDEfNpqIIZw_bMGS7xwiEUw5f92fcbE&EIO=4&transport=websocket HTTP/1.1[0m" 500 -
+2026-05-05 19:22:18,940 [ERROR] werkzeug: Error on request:
+Traceback (most recent call last):
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\serving.py", line 370, in run_wsgi
+    execute(self.server.app)
+    ~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\serving.py", line 336, in execute
+    write(b"")
+    ~~~~~^^^^^
+  File "C:\Users\Test\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\werkzeug\serving.py", line 261, in write
+    assert status_set is not None, "write() before start_response"
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: write() before start_response

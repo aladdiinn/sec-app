@@ -1,0 +1,32 @@
+[Unit]
+Description=SecurePulse Security Monitoring Agent
+Documentation=https://github.com/your-org/securepulse
+After=network-online.target syslog.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /opt/securepulse-agent/agent.py
+WorkingDirectory=/opt/securepulse-agent
+Restart=always
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=securepulse-agent
+
+# Config file path
+Environment="SP_CONFIG_FILE=/etc/securepulse-agent.conf"
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/log
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

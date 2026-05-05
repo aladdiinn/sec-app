@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% set active = 'servers' %}
+{% block title %}Servers{% endblock %}
+
+{% block content %}
+<div class="page fade-up">
+    <div class="page-header">
+        <div>
+            <h1 class="page-title">Servers</h1>
+            <p class="page-subtitle">All monitored servers and their status</p>
+        </div>
+        <div style="display:flex; gap:10px">
+            <button class="btn btn-primary" onclick="showAddServerModal()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                Add Server
+            </button>
+            <button class="btn btn-ghost" onclick="loadServers()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                </svg>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div id="servers-wrap">
+            <div class="center-spinner">
+                <div class="spinner"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Server Modal -->
+<div class="modal-overlay" id="add-server-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 class="modal-title">Add New Server</h2>
+            <button class="modal-close" onclick="closeAddServerModal()">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px">
+                Run this one-liner command on your target Linux server as <strong>root</strong> to automatically install and register the SecurePulse agent.
+            </p>
+            
+            <div class="code-box">
+                <pre id="setup-command">curl -sSL {{ request.url_root.rstrip('/') }}/setup | sudo bash</pre>
+                <button class="btn btn-ghost btn-xs code-box-copy" onclick="copySetupCommand()">
+                    Copy
+                </button>
+            </div>
+
+            <div style="background:rgba(59,130,246,0.05); padding:12px; border-radius:var(--radius-sm); border:1px solid rgba(59,130,246,0.1)">
+                <h4 style="font-size:12px; color:var(--accent-blue); margin-bottom:4px">Requirements:</h4>
+                <ul style="font-size:11px; color:var(--text-secondary); padding-left:16px">
+                    <li>Root/Sudo access on the target server</li>
+                    <li>Python 3.x installed</li>
+                    <li>Outgoing internet/network access to this dashboard</li>
+                </ul>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeAddServerModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    function statusBadge(s) {
+        const map = { online: 'badge-green', offline: 'badge-red', unknown: 'badge-gray' };
+        const dot = s === 'online' ? '<span class="pulse-dot online"></span>' : '';
+        return `<span class="badge ${map[s] || 'badge-gray'}">${dot} ${s}</span>`;
+    }
+
+    function relTime(iso) {
+        if (!iso) return '—';
+        const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+        if (diff < 60) return `${diff}s ago`;
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+        return new Date(iso).toLocaleDateString();
+    }
+
+    async function loadServers() {
+        const wrap = document.getElementById('servers-wrap');
+        try {
+            const data = await apiFetch('/servers');
+            if (!data.length) {
+                wrap.innerHTML = '<div class="empty-state"><p>No servers registered yet. Run install.sh on a target server.</p></div>';
+                return;
+            }
+            wrap.innerHTML = `
+        <table class="data-table">
+          <thead><tr>
+            <th>Status</th><th>Hostname</th><th>IP Address</th>
+            <th>OS</th><th>Last Seen</th><th>Registered</th>
+          </tr></thead>
+          <tbody>
+            ${data.map(s => `
+              <tr>
+                <td>${statusBadge(s.status)}</td>
+                <td><strong class="mono">${s.hostname}</strong></td>
+                <td class="mono">${s.ip_address || '—'}</td>
+                <td style="color:var(--text-secondary)">${s.os_info || '—'}</td>
+                <td style="color:var(--text-secondary);font-size:12px">${relTime(s.last_seen)}</td>
+                <td style="color:var(--text-secondary);font-size:12px">${new Date(s.registered_at).toLocaleDateString()}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`;
+        } catch (e) {
+            wrap.innerHTML = `<div class="empty-state"><p>Failed to load servers: ${e.message}</p></div>`;
+        }
+    }
+
+    loadServers();
+    setInterval(loadServers, 15000);
+
+    /* ── Modal & Setup Logic ────────────────────────────── */
+    function showAddServerModal() {
+        document.getElementById('add-server-overlay').classList.add('modal-overlay--active');
+    }
+
+    function closeAddServerModal() {
+        document.getElementById('add-server-overlay').classList.remove('modal-overlay--active');
+    }
+
+    function copySetupCommand() {
+        const cmd = document.getElementById('setup-command').textContent;
+        navigator.clipboard.writeText(cmd).then(() => {
+            const btn = document.querySelector('.code-box-copy');
+            const originalText = btn.textContent;
+            btn.textContent = 'Copied!';
+            btn.style.color = 'var(--accent-green)';
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.style.color = '';
+            }, 2000);
+        });
+    }
+</script>
+{% endblock %}
