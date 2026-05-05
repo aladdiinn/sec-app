@@ -387,7 +387,7 @@ def setup_agent_files():
 # API — EVENTS (agent ingest + dashboard query)
 # ──────────────────────────────────────────────────────────────────────────────
 
-ALERT_TRIGGERS = {"failed_login", "cron_change", "ssh_login"}
+ALERT_TRIGGERS = {"failed_login", "cron_change", "ssh_login", "file_change"}
 CRITICAL_KEYWORDS = ["root", "sudo", "passwd", "/etc/shadow", "chmod 777"]
 
 @app.route("/api/events", methods=["POST"])
@@ -443,6 +443,7 @@ def ingest_event():
             "failed_login": "Failed Login Detected",
             "cron_change":  "Cron Job Modified",
             "ssh_login":    "SSH Login",
+            "file_change":  "File Integrity Violation",
         }
         title = alert_titles.get(event_type, "Security Event") + f" on {server.hostname}"
         alert = Alert(

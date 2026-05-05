@@ -247,7 +247,7 @@
         });
     }
 
-    loadAll();
+    document.addEventListener('DOMContentLoaded', loadAll);
     setInterval(loadAll, 15000);
 </script>
 {% endblock %}

@@ -118,7 +118,7 @@
         window._socket.on('alert_resolved', loadAlerts);
     }
 
-    loadAlerts();
+    document.addEventListener('DOMContentLoaded', loadAlerts);
     setInterval(loadAlerts, 15000);
 </script>
 {% endblock %}

@@ -26,6 +26,7 @@
                     <option value="new_process">new_process</option>
                     <option value="process_ended">process_ended</option>
                     <option value="heartbeat">heartbeat</option>
+                    <option value="file_change">file_change</option>
                 </select>
             </div>
             <div class="form-group">
@@ -68,11 +69,15 @@
         return `<span class="badge ${map[s] || 'badge-gray'}">${s}</span>`;
     }
 
+    async function loadEvents() {
+        currentOffset = 0;
+        fetchEvents();
+    }
+
     // Check URL params for filters (from servers page)
     document.addEventListener('DOMContentLoaded', () => {
         const params = new URLSearchParams(window.location.search);
         if (params.has('server_id')) {
-            // We don't have a server dropdown, but we can store it in a variable for fetchEvents
             window._filter_server_id = params.get('server_id');
         }
         loadEvents();
@@ -141,7 +146,6 @@
         window._socket.on('new_event', () => fetchEvents());
     }
 
-    loadEvents();
     setInterval(loadEvents, 15000);
 </script>
 {% endblock %}
