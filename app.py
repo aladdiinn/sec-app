@@ -69,7 +69,7 @@ app.config["JWT_EXPIRE_HOURS"] = 24
 app.config["AGENT_API_KEY"] = os.getenv("AGENT_API_KEY", "change-me-secret-key")
 
 db.init_app(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 @app.route('/favicon.ico')
 def favicon():
@@ -552,10 +552,20 @@ def ingest_event():
     if event_type not in VALID_TYPES:
         return jsonify({"error": f"Invalid event_type. Use one of: {VALID_TYPES}"}), 400
 
+    # ── Heartbeat: just update last_seen, skip creating a DB event record ──
+    if event_type == "heartbeat":
+        server.last_seen = datetime.now(timezone.utc)
+        server.status = "online"
+        db.session.commit()
+        return jsonify({"message": "Heartbeat received"}), 200
+
     for kw in CRITICAL_KEYWORDS:
         if kw in description.lower():
             severity = "critical"
             break
+
+    # raw_data must be stored as JSON string — psycopg3 cannot serialize dicts to Text
+    raw_data_str = json.dumps(raw_data) if raw_data is not None else None
 
     event = Event(
         server_id=server.id,
@@ -563,7 +573,7 @@ def ingest_event():
         severity=severity,
         source=source,
         description=description,
-        raw_data=raw_data,
+        raw_data=raw_data_str,
     )
     db.session.add(event)
     db.session.flush()  # Ensure event.id is available
