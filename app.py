@@ -69,7 +69,7 @@ app.config["JWT_EXPIRE_HOURS"] = 24
 app.config["AGENT_API_KEY"] = os.getenv("AGENT_API_KEY", "change-me-secret-key")
 
 db.init_app(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading", logger=False, engineio_logger=False)
 
 @app.route('/favicon.ico')
 def favicon():

@@ -1,33 +1,33 @@
 # gunicorn.conf.py — SecurePulse Production Config
-# 
-# IMPORTANT: Flask-SocketIO with WebSockets requires an async worker.
-# Use eventlet or geventwebsocket, NOT the default sync worker.
+#
+# Python 3.14 does NOT support eventlet or gevent yet.
+# Use gthread worker which handles WebSocket via threading (Flask-SocketIO threading mode).
 #
 # Run with:
 #   gunicorn --config gunicorn.conf.py app:app
+#
+# Or directly:
+#   gunicorn --worker-class gthread --workers 1 --threads 8 --bind 0.0.0.0:5000 --timeout 120 app:app
 
-import multiprocessing
-
-# ── Worker class: MUST be eventlet for SocketIO/WebSocket support ──
-worker_class = "eventlet"
-workers = 1          # eventlet handles concurrency internally; >1 causes issues
-threads = 1
+# ── Worker class: gthread for Python 3.14 + Flask-SocketIO threading mode ──
+worker_class = "gthread"
+workers = 1        # Must be 1 for SocketIO session consistency
+threads = 8        # 8 threads handle concurrent requests + WebSocket connections
 
 # ── Bind ───────────────────────────────────────────────────────────
 bind = "0.0.0.0:5000"
 
 # ── Timeouts ───────────────────────────────────────────────────────
-# WebSocket connections are long-lived; increase timeout significantly
-timeout = 120
-keepalive = 65
+# WebSocket connections are long-lived; must be high
+timeout = 300
+keepalive = 75
 graceful_timeout = 30
 
 # ── Logging ────────────────────────────────────────────────────────
 accesslog = "/home/ubuntu/sec-app/logs/access.log"
 errorlog  = "/home/ubuntu/sec-app/logs/error.log"
 loglevel  = "info"
-access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s'
 
 # ── Misc ───────────────────────────────────────────────────────────
-preload_app = False   # Disable preload — SocketIO needs per-worker init
+preload_app = True
 daemon = False
