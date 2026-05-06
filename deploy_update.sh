@@ -16,7 +16,7 @@ set -euo pipefail
 
 APP_DIR="/home/ubuntu/sec-app"
 AGENT_DIR="/opt/securepulse-agent"
-VENV="$APP_DIR/venv"
+VENV="/home/ubuntu/venv"
 PYTHON="$VENV/bin/python3"
 PIP="$VENV/bin/pip"
 GUNICORN="$VENV/bin/gunicorn"
@@ -56,8 +56,8 @@ Type=simple
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/sec-app
-Environment="PATH=/home/ubuntu/sec-app/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/ubuntu/sec-app/venv/bin/gunicorn \
+Environment="PATH=/home/ubuntu/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/ubuntu/venv/bin/gunicorn \
     --worker-class eventlet \
     --workers 1 \
     --bind 0.0.0.0:5000 \
