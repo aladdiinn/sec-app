@@ -41,6 +41,54 @@
   /* ── Expose globally so page scripts can listen ────────── */
   window._socket = socket;
 
+  /* ── Critical Alert Notifications ──────────────────────── */
+  var originalTitle = document.title;
+  var flashInterval = null;
+
+  socket.on('new_event', function (ev) {
+    if (ev.severity === 'critical') {
+      playAlertSound();
+      startTitleFlash();
+    }
+  });
+
+  function playAlertSound() {
+    // Basic browser beep using AudioContext
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = 523.25; // C5
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.5);
+    } catch (e) { console.warn('Audio alert failed:', e); }
+  }
+
+  function startTitleFlash() {
+    if (flashInterval) return;
+    var isFlash = false;
+    flashInterval = setInterval(function () {
+      document.title = isFlash ? originalTitle : '🔴 CRITICAL ALERT';
+      isFlash = !isFlash;
+    }, 1000);
+
+    // Stop flashing when user clicks anywhere or refocuses
+    var stopFlash = function () {
+      clearInterval(flashInterval);
+      flashInterval = null;
+      document.title = originalTitle;
+      window.removeEventListener('click', stopFlash);
+      window.removeEventListener('focus', stopFlash);
+    };
+    window.addEventListener('click', stopFlash);
+    window.addEventListener('focus', stopFlash);
+  }
+
   /* ── Optional visual indicator ──────────────────────────── */
   function updateConnectionBadge(connected) {
     var badge = document.getElementById('live-badge');

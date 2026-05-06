@@ -69,7 +69,7 @@
 <script>
     // Redirect if already logged in
     if (localStorage.getItem('sp_token')) {
-        window.location.href = '/dashboard';
+        window.location.href = '/dashboard?_cb=' + Date.now();
     }
 
     function togglePw() {
@@ -102,7 +102,7 @@
                 id: data.user_id, email: data.email,
                 full_name: data.full_name, is_admin: data.is_admin,
             }));
-            window.location.href = '/dashboard';
+            window.location.href = '/dashboard?_cb=' + Date.now();
         } catch (ex) {
             err.textContent = ex.message;
             err.style.display = 'flex';

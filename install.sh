@@ -109,7 +109,6 @@ cat > "$CONFIG_FILE" <<EOF
 [agent]
 backend_url        = $BACKEND_URL
 agent_token        = $AGENT_TOKEN
-heartbeat_interval = 60
 poll_interval      = 5
 log_level          = INFO
 EOF

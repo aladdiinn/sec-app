@@ -64,7 +64,7 @@ class Event(db.Model):
                             nullable=False, index=True)
     event_type  = db.Column(db.String(64), nullable=False, index=True)
     # event_type values: login | logout | cron_change | new_process |
-    #                    process_ended | heartbeat | ssh_login | failed_login
+    #                    process_ended | ssh_login | failed_login
     severity    = db.Column(db.String(16), default="info")  # info | warning | critical
     source      = db.Column(db.String(128), nullable=True)
     description = db.Column(db.Text, nullable=False)
@@ -103,3 +103,42 @@ class Alert(db.Model):
 
     def __repr__(self):
         return f"<Alert {self.alert_type} server={self.server_id}>"
+
+
+class AuditLog(db.Model):
+    __tablename__ = "audit_logs"
+
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    action     = db.Column(db.String(255), nullable=False)
+    target     = db.Column(db.String(255), nullable=True)
+    timestamp  = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    user = db.relationship("User", backref="audit_logs")
+
+    def __repr__(self):
+        return f"<AuditLog {self.action} by user={self.user_id}>"
+
+
+class AlertRule(db.Model):
+    __tablename__ = "alert_rules"
+
+    id         = db.Column(db.Integer, primary_key=True)
+    name       = db.Column(db.String(255), nullable=False)
+    event_type = db.Column(db.String(64), nullable=False)
+    threshold  = db.Column(db.Integer, default=1)
+    window     = db.Column(db.Integer, default=60)  # seconds
+    severity   = db.Column(db.String(16), default="warning")
+    is_active  = db.Column(db.Boolean, default=True)
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self):
+        return f"<AlertRule {self.name}>"

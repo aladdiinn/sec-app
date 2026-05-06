@@ -1,14 +1,12 @@
 {% extends "base.html" %}
 {% set active = 'events' %}
-{% block title %}Events{% endblock %}
+{% block page_title %}Events{% endblock %}
+{% block page_sub %}All security events logged by agents{% endblock %}
 
 {% block content %}
 <div class="page fade-up">
     <div class="page-header">
-        <div>
-            <h1 class="page-title">Events</h1>
-            <p class="page-subtitle">Security events from all monitored servers</p>
-        </div>
+        
     </div>
 
     <!-- Filters -->
@@ -25,7 +23,6 @@
                     <option value="cron_change">cron_change</option>
                     <option value="new_process">new_process</option>
                     <option value="process_ended">process_ended</option>
-                    <option value="heartbeat">heartbeat</option>
                     <option value="file_change">file_change</option>
                 </select>
             </div>

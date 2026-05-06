@@ -26,7 +26,7 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config          import load_config
-from heartbeat       import HeartbeatMonitor
+from config          import load_config
 from login_monitor   import LoginMonitor
 from cron_monitor    import CronMonitor
 from process_monitor import ProcessMonitor
@@ -35,12 +35,16 @@ from fim_monitor     import FIMMonitor
 
 def setup_logging(level_name: str):
     level = getattr(logging, level_name.upper(), logging.INFO)
+    log_path = "/var/log/securepulse-agent.log"
+    if not os.path.exists(os.path.dirname(log_path)):
+        log_path = "securepulse-agent.log"  # Fallback to current directory
+
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)-8s] %(name)s: %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler("/var/log/securepulse-agent.log", mode="a"),
+            logging.FileHandler(log_path, mode="a"),
         ],
     )
 
@@ -58,12 +62,10 @@ def main():
     logger.info("=" * 60)
     logger.info("SecurePulse Agent starting")
     logger.info(f"  Backend : {cfg['backend_url']}")
-    logger.info(f"  Heartbeat interval : {cfg['heartbeat_interval']}s")
     logger.info("=" * 60)
 
     # ── Start monitor threads ───────────────────────────────
     monitors = [
-        HeartbeatMonitor(cfg),
         LoginMonitor(cfg),
         CronMonitor(cfg),
         ProcessMonitor(cfg),

@@ -1,14 +1,22 @@
 {% extends "base.html" %}
 {% set active = 'servers' %}
-{% block title %}Servers{% endblock %}
+{% block page_title %}Servers{% endblock %}
+{% block page_sub %}All monitored servers and their status{% endblock %}
+
+{% block topbar_actions %}
+<button class="tb-btn primary" onclick="showAddServerModal()">
+    <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    Add Server
+</button>
+<button class="tb-btn" onclick="loadServers()">
+    <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+    Refresh
+</button>
+{% endblock %}
+
 
 {% block content %}
 <div class="page fade-up">
-    <div class="page-header">
-        <div>
-            <h1 class="page-title">Servers</h1>
-            <p class="page-subtitle">All monitored servers and their status</p>
-        </div>
     <!-- Filters -->
     <div class="card" style="margin-bottom:16px">
         <div class="filter-row">
@@ -39,7 +47,6 @@
                 </button>
             </div>
         </div>
-    </div>
     </div>
 
     <div class="card">
@@ -129,11 +136,11 @@
         <table class="data-table">
           <thead><tr>
             <th>Status</th><th>Severity</th><th>Hostname</th><th>IP Address</th>
-            <th>OS</th><th>Last Seen</th><th>Registered</th>
+            <th>OS</th><th>Last Seen</th><th>Registered</th><th style="text-align:right">Actions</th>
           </tr></thead>
           <tbody>
             ${data.map(s => `
-              <tr onclick="window.location.href='/events?server_id=${s.id}'" style="cursor:pointer">
+              <tr onclick="window.location.href='/servers/${s.id}'" style="cursor:pointer">
                 <td>${statusBadge(s.status)}</td>
                 <td>${severityBadge(s.severity)}</td>
                 <td><strong class="mono">${s.hostname}</strong></td>
@@ -141,6 +148,9 @@
                 <td style="color:var(--text-secondary)">${s.os_info || '—'}</td>
                 <td style="color:var(--text-secondary);font-size:12px">${relTime(s.last_seen)}</td>
                 <td style="color:var(--text-secondary);font-size:12px">${new Date(s.registered_at).toLocaleDateString()}</td>
+                <td style="text-align:right">
+                    <button class="btn btn-ghost" style="padding:4px 8px; font-size:11px" onclick="event.stopPropagation(); exportReport(${s.id})">Export PDF</button>
+                </td>
               </tr>
             `).join('')}
           </tbody>
@@ -162,6 +172,15 @@
         loadServers();
     });
     setInterval(loadServers, 15000);
+
+    function exportReport(serverId) {
+        const token = getToken();
+        if (!token) {
+            alert('Authentication error');
+            return;
+        }
+        window.open(`/api/servers/${serverId}/export-report?token=${token}`, '_blank');
+    }
 
     /* ── Modal & Setup Logic ────────────────────────────── */
     function showAddServerModal() {

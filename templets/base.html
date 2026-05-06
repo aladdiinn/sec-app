@@ -1,100 +1,131 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{% block title %}SecurePulse{% endblock %} — Security Monitor</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-        rel="stylesheet" />
+    <title>{% block title %}SecurePulse{% endblock %} — Security Operations Center</title>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233b82f6'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>" />
     <link rel="stylesheet" href="/static/css/main.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     {% block extra_css %}{% endblock %}
 </head>
-
 <body>
     {% if not hide_nav %}
-    <div class="app-layout">
+    <div class="app">
         <!-- Sidebar -->
         <aside class="sidebar">
-            <div class="sidebar-brand">
-                <div class="brand-icon">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                    </svg>
+            <div class="sb-brand">
+                <div class="sb-logo">
+                    <div class="sb-logo-icon">
+                        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    </div>
+                    <div>
+                        <div class="sb-name">SecurePulse</div>
+                        <div class="sb-sub">SOC Platform</div>
+                    </div>
                 </div>
-                <div>
-                    <div class="brand-name">SecurePulse</div>
-                    <div class="brand-sub">Security Monitor</div>
+                <div class="sb-user">
+                    <div class="sb-avatar" id="user-avatar">A</div>
+                    <div class="sb-user-info">
+                        <div class="sb-user-name" id="user-name">Admin</div>
+                        <div class="sb-user-role" id="user-email" style="text-overflow:ellipsis;overflow:hidden">IT Security Manager</div>
+                    </div>
                 </div>
             </div>
 
-            <nav class="sidebar-nav">
-                <a href="/dashboard" class="nav-item {% if active == 'dashboard' %}nav-item--active{% endif %}">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="3" y="3" width="7" height="7" />
-                        <rect x="14" y="3" width="7" height="7" />
-                        <rect x="14" y="14" width="7" height="7" />
-                        <rect x="3" y="14" width="7" height="7" />
-                    </svg>
+            <div class="sb-section">Main</div>
+            <nav class="sb-nav">
+                <a href="/dashboard" class="nav-item {% if active == 'dashboard' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
                     Dashboard
                 </a>
-                <a href="/servers" class="nav-item {% if active == 'servers' %}nav-item--active{% endif %}">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="2" y="2" width="20" height="8" rx="2" />
-                        <rect x="2" y="14" width="20" height="8" rx="2" />
-                        <line x1="6" y1="6" x2="6.01" y2="6" />
-                        <line x1="6" y1="18" x2="6.01" y2="18" />
-                    </svg>
+                <a href="/servers" class="nav-item {% if active == 'servers' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
                     Servers
+                    <span class="nav-badge green" id="srv-count" style="display:none">0</span>
                 </a>
-                <a href="/events" class="nav-item {% if active == 'events' %}nav-item--active{% endif %}">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                    </svg>
+                <a href="/events" class="nav-item {% if active == 'events' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                     Events
                 </a>
-                <a href="/alerts" class="nav-item {% if active == 'alerts' %}nav-item--active{% endif %}">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path
-                            d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                        <line x1="12" y1="9" x2="12" y2="13" />
-                        <line x1="12" y1="17" x2="12.01" y2="17" />
-                    </svg>
+                <a href="/alerts" class="nav-item {% if active == 'alerts' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                     Alerts
-                    <span class="nav-badge" id="nav-alert-count" style="display:none"></span>
+                    <span class="nav-badge" id="alert-nav-count" style="display:none">0</span>
                 </a>
             </nav>
 
-            <div class="sidebar-footer">
-                <div class="sidebar-user">
-                    <div class="user-avatar" id="user-avatar">A</div>
-                    <div class="user-info">
-                        <div class="user-name" id="user-name">Admin</div>
-                        <div class="user-email" id="user-email">admin@securepulse.local</div>
-                    </div>
-                </div>
-                <button class="nav-item logout-btn" onclick="logout()">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                        <polyline points="16 17 21 12 16 7" />
-                        <line x1="21" y1="12" x2="9" y2="12" />
-                    </svg>
-                    Logout
+            <div class="sb-section">Security</div>
+            <nav class="sb-nav">
+                <a href="/logins" class="nav-item {% if active == 'logins' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    Users / Logins
+                </a>
+                <a href="/cron-jobs" class="nav-item {% if active == 'cron_jobs' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    Cron Jobs
+                </a>
+                <a href="/processes" class="nav-item {% if active == 'processes' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/></svg>
+                    Processes
+                </a>
+                <a href="/audit-log" class="nav-item {% if active == 'audit_log' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Audit Log
+                </a>
+            </nav>
+
+            <div class="sb-section">System</div>
+            <nav class="sb-nav">
+                <a href="/settings" class="nav-item {% if active == 'settings' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
+                    Settings
+                </a>
+                <button class="nav-item" onclick="logout()" style="width:100%;text-align:left;background:none;border:none">
+                    <svg viewBox="0 0 24 24" stroke="var(--red)"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+                    <span style="color:var(--red)">Logout</span>
                 </button>
+            </nav>
+
+            <div class="sb-bottom">
+                <div class="sb-time" id="sb-clock">--:--:--</div>
+                <div class="sb-date" id="sb-date">Loading...</div>
+                <div class="sb-status">
+                    <div class="pulse"></div>
+                    All systems operational
+                </div>
             </div>
         </aside>
 
         <!-- Main content -->
-        <main class="main-content">
-        {% endif %}
+        <div class="main">
+            <!-- Topbar -->
+            <div class="topbar">
+                <div>
+                    <div class="topbar-title">{% block page_title %}Security Operations Center{% endblock %}</div>
+                    <div class="topbar-sub">{% block page_sub %}Real-time monitoring — auto-refreshes every 15s{% endblock %}</div>
+                </div>
+                <div style="display:flex; gap:10px; margin-left:20px">
+                    {% block topbar_actions %}{% endblock %}
+                </div>
+                <div class="topbar-search">
+                    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input type="text" placeholder="Search servers, events…"/>
+                </div>
+                <div class="tb-timeframe">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                    <span id="tb-date-range">Today</span>
+                </div>
+            </div>
+    {% endif %}
 
             {% block content %}{% endblock %}
 
-        {% if not hide_nav %}
-        </main>
+    {% if not hide_nav %}
+        </div>
     </div>
     {% endif %}
 
@@ -102,8 +133,32 @@
     <script src="/static/js/auth.js"></script>
     {% if not hide_nav %}
     <script src="/static/js/realtime.js"></script>
+    <script>
+        function updateClock(){
+            const now = new Date();
+            const timeEl = document.getElementById('sb-clock');
+            if (timeEl) timeEl.textContent = now.toLocaleTimeString('en-GB',{hour12:false});
+            const dateEl = document.getElementById('sb-date');
+            if (dateEl) dateEl.textContent = now.toLocaleDateString('en-GB',{weekday:'short',day:'2-digit',month:'short',year:'numeric'});
+            const rangeEl = document.getElementById('tb-date-range');
+            if (rangeEl) rangeEl.textContent = now.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
+        
+        // Setup realtime badge updates manually here if needed, or rely on realtime.js
+        window.addEventListener('load', () => {
+            const token = getToken();
+            if(!token) return;
+            fetch('/api/servers/stats', { headers: { 'Authorization': 'Bearer ' + token } })
+                .then(r => r.json())
+                .then(d => {
+                    const c = document.getElementById('srv-count');
+                    if (c && d.total_servers) { c.textContent = d.total_servers; c.style.display = 'inline-block'; }
+                }).catch(e=>null);
+        });
+    </script>
     {% endif %}
     {% block extra_js %}{% endblock %}
 </body>
-
 </html>

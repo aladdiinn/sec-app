@@ -12,22 +12,31 @@ import time
 import hashlib
 import logging
 import threading
+import platform
 
 from sender import send_event
 
 logger = logging.getLogger("sp_agent.fim_monitor")
 
 # Critical targets to monitor
-FIM_TARGETS = [
-    "/etc/passwd",
-    "/etc/shadow",
-    "/etc/sudoers",
-    "/etc/sudoers.d",
-    "/bin",
-    "/sbin",
-    "/usr/bin",
-    "/usr/sbin",
-]
+if platform.system() == "Windows":
+    FIM_TARGETS = [
+        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32\\drivers\\etc\\hosts"),
+        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32\\drivers\\etc\\networks"),
+        # Add local config if exists
+        "securepulse-agent.conf",
+    ]
+else:
+    FIM_TARGETS = [
+        "/etc/passwd",
+        "/etc/shadow",
+        "/etc/sudoers",
+        "/etc/sudoers.d",
+        "/bin",
+        "/sbin",
+        "/usr/bin",
+        "/usr/sbin",
+    ]
 
 POLL_INTERVAL = 15  # seconds
 
@@ -50,12 +59,20 @@ def _get_file_metadata(path: str) -> dict:
         st = os.stat(path)
         return {
             "hash": _sha256(path) if os.path.isfile(path) else "directory",
-            "mode": oct(st.st_mode & 0o777),  # simple permissions string
-            "uid":  st.st_uid,
-            "gid":  st.st_gid,
+            "mode": _get_mode_string(st.st_mode),
+            "uid":  getattr(st, "st_uid", 0),
+            "gid":  getattr(st, "st_gid", 0),
         }
     except (OSError, IOError):
         return {}
+
+
+def _get_mode_string(st_mode):
+    """Platform-independent mode string."""
+    if platform.system() == "Windows":
+        # Windows doesn't use octal permissions the same way
+        return "win_attr_" + str(st_mode)
+    return oct(st_mode & 0o777)
 
 
 def _collect_fim_snapshot(targets: list[str]) -> dict[str, dict]:
@@ -133,7 +150,11 @@ class FIMMonitor(threading.Thread):
             
         severity = "warning"
         # Escalate for highly sensitive files
-        CRITICAL_FILES = ["/etc/shadow", "/etc/sudoers", "/etc/passwd"]
+        if platform.system() == "Windows":
+            CRITICAL_FILES = ["hosts", "SAM", "SYSTEM"]
+        else:
+            CRITICAL_FILES = ["/etc/shadow", "/etc/sudoers", "/etc/passwd"]
+            
         if any(cf in path for cf in CRITICAL_FILES):
             severity = "critical"
 

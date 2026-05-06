@@ -7,12 +7,20 @@ import os
 import json
 import logging
 import secrets
+import time
+import requests
+import io
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+except ImportError:
+    pass
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 
 from flask import (
     Flask, render_template, request, jsonify,
-    redirect, url_for, session, g
+    redirect, url_for, session, g, send_file
 )
 from flask_socketio import SocketIO, emit, join_room # type: ignore
 import jwt # type: ignore
@@ -20,7 +28,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 
 from database import db, init_db
-from models import User, Server, Event, Alert
+from models import User, Server, Event, Alert, AuditLog, AlertRule
 from sqlalchemy import func # type: ignore
 from sqlalchemy.exc import IntegrityError # type: ignore
 
@@ -115,6 +123,22 @@ def jwt_required(f):
     return decorated
 
 
+def login_required(f):
+    """Decorator — validates session token for frontend pages, redirects to login if missing."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "token" not in session:
+            return redirect(url_for("login_page"))
+        try:
+            # We don't necessarily need to decode it here, just check if it exists and is valid
+            decode_jwt(session["token"])
+        except:
+            session.clear()
+            return redirect(url_for("login_page"))
+        return f(*args, **kwargs)
+    return decorated
+
+
 def agent_key_required(f):
     """Decorator — validates X-API-Key header for agent endpoints."""
     @wraps(f)
@@ -126,7 +150,68 @@ def agent_key_required(f):
     return decorated
 
 
+def audit_log_action(action_name):
+    """Decorator to log actions to AuditLog."""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            # Execute the actual function
+            response = f(*args, **kwargs)
+            
+            # Extract status code
+            status_code = 200
+            if isinstance(response, tuple):
+                status_code = response[1] if len(response) > 1 else 200
+            elif hasattr(response, 'status_code'):
+                status_code = response.status_code
+
+            # Only log if successful
+            if 200 <= status_code < 300:
+                user_id = None
+                if getattr(g, "user", None):
+                    user_id = g.user.id
+                elif hasattr(g, "login_user_id"):
+                    user_id = g.login_user_id
+
+                if user_id:
+                    target = request.path
+                    if "target_override" in g:
+                        target = g.target_override
+                        
+                    log = AuditLog(user_id=user_id, action=action_name, target=target)
+                    db.session.add(log)
+                    db.session.commit()
+            return response
+        return decorated_function
+    return decorator
+
+
+
 # ─── Bootstrap DB ────────────────────────────────────────────────────────────
+
+@app.before_request
+def load_logged_in_user():
+    token = session.get("token")
+    if token:
+        try:
+            payload = decode_jwt(token)
+            g.user = User.query.get(int(payload["sub"]))
+        except:
+            g.user = None
+    else:
+        g.user = None
+
+# Proxy for current_user to maintain compatibility with my previous edits
+class UserProxy:
+    def __getattr__(self, name):
+        if g.user:
+            return getattr(g.user, name)
+        return None
+    def __bool__(self):
+        return g.user is not None
+
+current_user = UserProxy()
+
 
 def seed_admin():
     """Create default admin user if not exists."""
@@ -175,22 +260,54 @@ def login_page():
 
 @app.route("/dashboard")
 def dashboard_page():
-    return render_template("dashboard.html")
+    return render_template("dashboard.html", active='dashboard')
 
 
 @app.route("/servers")
 def servers_page():
-    return render_template("servers.html")
+    return render_template("servers.html", active='servers')
 
 
 @app.route("/events")
 def events_page():
-    return render_template("events.html")
+    return render_template("events.html", active='events')
 
 
 @app.route("/alerts")
 def alerts_page():
-    return render_template("alerts.html")
+    return render_template("alerts.html", user=current_user)
+
+
+@app.route("/logins")
+def logins_page():
+    return render_template("logins.html", user=current_user)
+
+
+@app.route("/cron-jobs")
+def cron_jobs_page():
+    return render_template("cron_jobs.html", user=current_user)
+
+
+@app.route("/processes")
+def processes_page():
+    return render_template("processes.html", user=current_user)
+
+
+@app.route("/audit-log")
+def audit_log_page():
+    return render_template("audit_log.html", user=current_user)
+
+
+@app.route("/settings")
+def settings_page():
+    return render_template("settings.html", user=current_user)
+
+
+@app.route("/servers/<int:id>")
+def server_detail_page(id):
+    server = Server.query.get_or_404(id)
+    return render_template("server_detail.html", user=current_user, server=server)
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -198,6 +315,7 @@ def alerts_page():
 # ──────────────────────────────────────────────────────────────────────────────
 
 @app.route("/auth/login", methods=["POST"])
+@audit_log_action("User Login")
 def auth_login():
     data = request.get_json(force=True)
     email    = data.get("email", "").strip().lower()
@@ -214,6 +332,9 @@ def auth_login():
         return jsonify({"error": "Account is disabled"}), 403
 
     token = create_jwt(user.id, user.email, user.is_admin)
+    session["token"] = token  # Store in session for server-side routes
+    g.login_user_id = user.id  # For audit logging
+    g.target_override = email
     return jsonify({
         "access_token": token,
         "token_type": "bearer",
@@ -333,7 +454,6 @@ cat > "/etc/securepulse-agent.conf" <<EOF
 [agent]
 backend_url        = $BACKEND_URL
 agent_token        = $AGENT_TOKEN
-heartbeat_interval = 60
 poll_interval      = 5
 log_level          = INFO
 EOF
@@ -405,17 +525,16 @@ def ingest_event():
     description = data.get("description", "")
     severity    = data.get("severity", "info")
     source      = data.get("source")
-    raw_data    = json.dumps(data.get("raw_data")) if data.get("raw_data") else None
+    raw_data    = data.get("raw_data")
 
     VALID_TYPES = {
         "login", "logout", "cron_change", "new_process",
-        "process_ended", "heartbeat", "ssh_login", "failed_login",
+        "process_ended", "ssh_login", "failed_login",
         "file_change",
     }
     if event_type not in VALID_TYPES:
         return jsonify({"error": f"Invalid event_type. Use one of: {VALID_TYPES}"}), 400
 
-    # Auto-escalate severity for critical keywords
     for kw in CRITICAL_KEYWORDS:
         if kw in description.lower():
             severity = "critical"
@@ -455,6 +574,33 @@ def ingest_event():
             message=description,
         )
         db.session.add(alert)
+        
+    # Brute force detection logic
+    if event_type == "failed_login":
+        ip = raw_data.get("ip") if isinstance(raw_data, dict) else None
+        if ip and ip not in ("127.0.0.1", "localhost", "::1"):
+            now_ts = time.time()
+            if ip not in brute_force_cache:
+                brute_force_cache[ip] = []
+            brute_force_cache[ip] = [t for t in brute_force_cache[ip] if now_ts - t < 60]
+            brute_force_cache[ip].append(now_ts)
+            
+            if len(brute_force_cache[ip]) >= 5:
+                active_brute_force_ips[ip] = {
+                    "count": len(brute_force_cache[ip]),
+                    "target": server.hostname,
+                    "last_seen": now_ts
+                }
+                if len(brute_force_cache[ip]) == 5:
+                    alert = Alert(
+                        server_id=server.id,
+                        event_id=event.id,
+                        alert_type="brute_force",
+                        severity="critical",
+                        title=f"Brute-Force Attack from {ip}",
+                        message=f"5+ failed logins within 60s from {ip}"
+                    )
+                    db.session.add(alert)
 
     db.session.commit()
 
@@ -472,12 +618,20 @@ def ingest_event():
     return jsonify({"id": event.id, "message": "Event recorded"}), 201
 
 
+# Global caches for features
+geoip_cache = {}
+brute_force_cache = {} # IP -> [timestamps...]
+active_brute_force_ips = {} # IP -> {"count": X, "target": Y, "last_seen": Z}
+
+
+
 @app.route("/api/events", methods=["GET"])
 @jwt_required
 def get_events():
     server_id  = request.args.get("server_id", type=int)
     event_type = request.args.get("event_type")
     severity   = request.args.get("severity")
+    days       = request.args.get("days", type=int)
     limit      = min(request.args.get("limit", 100, type=int), 500)
     offset     = request.args.get("offset", 0, type=int)
 
@@ -485,9 +639,15 @@ def get_events():
     if server_id:
         query = query.filter_by(server_id=server_id)
     if event_type:
-        query = query.filter_by(event_type=event_type)
+        if "," in event_type:
+            query = query.filter(Event.event_type.in_(event_type.split(",")))
+        else:
+            query = query.filter_by(event_type=event_type)
     if severity:
         query = query.filter_by(severity=severity)
+    if days:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        query = query.filter(Event.created_at >= cutoff)
 
     total = query.count()
     events = query.order_by(Event.created_at.desc()).limit(limit).offset(offset).all()
@@ -507,6 +667,7 @@ def get_events():
                 "severity": e.severity,
                 "source": e.source,
                 "description": e.description,
+                "raw_data": e.raw_data,
                 "created_at": e.created_at.isoformat(),
             }
             for e in events
@@ -569,6 +730,67 @@ def get_servers():
     return jsonify(result)
 
 
+@app.route("/api/servers/<int:server_id>/export-report")
+@jwt_required
+def export_report(server_id):
+    server = Server.query.get_or_404(server_id)
+    
+    # 1. Gather stats for the report
+    total_events = Event.query.filter_by(server_id=server_id).count()
+    crit_alerts = Alert.query.filter_by(server_id=server_id, severity='critical', is_resolved=False).count()
+    recent_events = Event.query.filter_by(server_id=server_id).order_by(Event.created_at.desc()).limit(10).all()
+    
+    # 2. Generate PDF using reportlab
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    # Header
+    p.setFont("Helvetica-Bold", 20)
+    p.drawString(50, height - 50, f"SecurePulse Security Report — {server.hostname}")
+    
+    p.setFont("Helvetica", 10)
+    p.drawString(50, height - 70, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    p.line(50, height - 75, width - 50, height - 75)
+    
+    # Server Info
+    p.setFont("Helvetica-Bold", 14)
+    p.drawString(50, height - 100, "Server Information")
+    p.setFont("Helvetica", 11)
+    p.drawString(50, height - 120, f"IP Address: {server.ip_address}")
+    p.drawString(50, height - 135, f"OS: {server.os_info or 'Unknown'}")
+    p.drawString(50, height - 150, f"Last Seen: {server.last_seen.strftime('%Y-%m-%d %H:%M:%S') if server.last_seen else 'N/A'}")
+    
+    # Security Summary
+    p.setFont("Helvetica-Bold", 14)
+    p.drawString(50, height - 180, "Security Summary (Last 24h)")
+    p.setFont("Helvetica", 11)
+    p.drawString(50, height - 200, f"Total Events Logged: {total_events}")
+    p.drawString(50, height - 215, f"Unresolved Critical Alerts: {crit_alerts}")
+    
+    # Recent Events
+    p.setFont("Helvetica-Bold", 14)
+    p.drawString(50, height - 245, "Recent Security Events")
+    p.setFont("Helvetica", 9)
+    y = height - 265
+    for e in recent_events:
+        time_str = e.created_at.strftime('%H:%M:%S')
+        p.drawString(50, y, f"[{time_str}] {e.severity.upper()} — {e.event_type}: {e.description[:100]}")
+        y -= 15
+        if y < 50: break
+        
+    p.showPage()
+    p.save()
+    
+    buffer.seek(0)
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=f"report_{server.hostname}_{datetime.now().strftime('%Y%m%d')}.pdf",
+        mimetype='application/pdf'
+    )
+
+
 @app.route("/api/servers/stats", methods=["GET"])
 @jwt_required
 def server_stats():
@@ -586,6 +808,113 @@ def server_stats():
         "open_alerts": open_alerts,
     })
 
+
+@app.route("/api/dashboard/trend", methods=["GET"])
+@jwt_required
+def dashboard_trend():
+    """Returns hourly event counts for the last 24 hours."""
+    now = datetime.now(timezone.utc)
+    twenty_four_hours_ago = now - timedelta(hours=24)
+    
+    # Query for events in the last 24h
+    events = Event.query.filter(Event.created_at >= twenty_four_hours_ago).all()
+    
+    # Initialize buckets
+    buckets = {}
+    for i in range(25):
+        dt = (now - timedelta(hours=i)).replace(minute=0, second=0, microsecond=0)
+        buckets[dt.isoformat()] = {"info": 0, "warning": 0, "critical": 0}
+        
+    for e in events:
+        hour_dt = e.created_at.replace(minute=0, second=0, microsecond=0).isoformat()
+        if hour_dt in buckets:
+            buckets[hour_dt][e.severity] += 1
+            
+    # Convert to sorted list
+    sorted_keys = sorted(buckets.keys())
+    result = {
+        "labels": [datetime.fromisoformat(k).strftime("%H:%M") for k in sorted_keys],
+        "info": [buckets[k]["info"] for k in sorted_keys],
+        "warning": [buckets[k]["warning"] for k in sorted_keys],
+        "critical": [buckets[k]["critical"] for k in sorted_keys],
+    }
+    return jsonify(result)
+
+
+@app.route("/api/dashboard/active-servers", methods=["GET"])
+@jwt_required
+def active_servers():
+    """Returns top 3 servers by event count in last 24h."""
+    now = datetime.now(timezone.utc)
+    twenty_four_hours_ago = now - timedelta(hours=24)
+    
+    stats = db.session.query(
+        Event.server_id, func.count(Event.id).label("count")
+    ).filter(Event.created_at >= twenty_four_hours_ago).group_by(Event.server_id).order_by(func.count(Event.id).desc()).limit(3).all()
+    
+    result = []
+    for server_id, count in stats:
+        server = Server.query.get(server_id)
+        if server:
+            result.append({
+                "id": server.id,
+                "hostname": server.hostname,
+                "event_count": count
+            })
+    return jsonify(result)
+
+@app.route("/api/dashboard/geoip", methods=["GET"])
+@jwt_required
+def get_geoip_data():
+    events = Event.query.filter(Event.event_type.in_(["ssh_login", "failed_login"])).order_by(Event.created_at.desc()).limit(200).all()
+    ips = {}
+    for e in events:
+        try:
+            raw = json.loads(e.raw_data) if isinstance(e.raw_data, str) else e.raw_data
+            ip = raw.get("ip") if raw else None
+            if ip and ip not in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+                if ip not in ips:
+                    ips[ip] = { "count": 1, "last_seen": e.created_at, "status": e.event_type }
+                else:
+                    ips[ip]["count"] += 1
+        except:
+            pass
+
+    results = []
+    for ip, data in ips.items():
+        if ip not in geoip_cache:
+            try:
+                res = requests.get(f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,lat,lon", timeout=3)
+                if res.status_code == 200:
+                    geoip_cache[ip] = res.json()
+            except Exception as ex:
+                logger.error(f"GeoIP error for {ip}: {ex}")
+                geoip_cache[ip] = {"status": "fail"}
+                
+        geo = geoip_cache.get(ip, {})
+        if geo.get("status") == "success":
+            results.append({
+                "ip": ip,
+                "count": data["count"],
+                "event_type": data["status"],
+                "lat": geo.get("lat"),
+                "lon": geo.get("lon"),
+                "country": geo.get("country"),
+                "countryCode": geo.get("countryCode")
+            })
+            
+    return jsonify(results)
+
+@app.route("/api/dashboard/brute-force", methods=["GET"])
+@jwt_required
+def get_brute_force():
+    now_ts = time.time()
+    # Expire after 10 mins
+    expired = [ip for ip, data in active_brute_force_ips.items() if now_ts - data["last_seen"] > 600]
+    for ip in expired:
+        del active_brute_force_ips[ip]
+        
+    return jsonify([{"ip": k, **v} for k, v in active_brute_force_ips.items()])
 
 # ──────────────────────────────────────────────────────────────────────────────
 # API — ALERTS
@@ -637,6 +966,7 @@ def get_alerts():
 
 @app.route("/api/alerts/<int:alert_id>/resolve", methods=["PATCH"])
 @jwt_required
+@audit_log_action("Resolve Alert")
 def resolve_alert(alert_id):
     alert = Alert.query.get_or_404(alert_id)
     if alert.is_resolved:
@@ -646,7 +976,30 @@ def resolve_alert(alert_id):
     db.session.commit()
 
     socketio.emit("alert_resolved", {"alert_id": alert_id}, room="dashboard")
-    return jsonify({"id": alert.id, "is_resolved": True})
+    g.target_override = f"Alert #{alert_id}: {alert.title}"
+    
+    return jsonify({
+        "id": alert.id,
+        "is_resolved": True
+    })
+
+
+@app.route("/api/audit-logs", methods=["GET"])
+@jwt_required
+def get_audit_logs():
+    logs = AuditLog.query.order_by(AuditLog.timestamp.desc()).limit(100).all()
+    return jsonify({
+        "items": [
+            {
+                "id": l.id,
+                "user_email": l.user.email,
+                "action": l.action,
+                "target": l.target,
+                "timestamp": l.timestamp.isoformat()
+            }
+            for l in logs
+        ]
+    })
 
 
 # ──────────────────────────────────────────────────────────────────────────────
