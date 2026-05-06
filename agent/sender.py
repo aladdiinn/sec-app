@@ -71,3 +71,17 @@ def send_event(
 
     logger.error(f"Gave up sending event after {MAX_RETRIES} attempts: {event_type}")
     return False
+
+
+def check_connectivity(cfg: dict) -> bool:
+    """Checks if the agent can communicate with the backend."""
+    url = cfg["backend_url"] + "/favicon.ico" # Lightweight check
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status == 204 or resp.status == 200:
+                logger.info("Connectivity check: SUCCESS")
+                return True
+    except Exception as e:
+        logger.error(f"Connectivity check: FAILED - {e}")
+    return False

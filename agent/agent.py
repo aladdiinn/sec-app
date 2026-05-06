@@ -31,6 +31,7 @@ from login_monitor   import LoginMonitor
 from cron_monitor    import CronMonitor
 from process_monitor import ProcessMonitor
 from fim_monitor     import FIMMonitor
+from heartbeat_monitor import HeartbeatMonitor
 
 
 def setup_logging(level_name: str):
@@ -60,9 +61,13 @@ def main():
     setup_logging(cfg["log_level"])
     logger = logging.getLogger("sp_agent")
     logger.info("=" * 60)
-    logger.info("SecurePulse Agent starting")
     logger.info(f"  Backend : {cfg['backend_url']}")
     logger.info("=" * 60)
+
+    # ── Check connectivity ──────────────────────────────────
+    from sender import check_connectivity
+    if not check_connectivity(cfg):
+        logger.warning("Agent may not be able to reach backend! Check SP_BACKEND_URL.")
 
     # ── Start monitor threads ───────────────────────────────
     monitors = [
@@ -70,6 +75,7 @@ def main():
         CronMonitor(cfg),
         ProcessMonitor(cfg),
         FIMMonitor(cfg),
+        HeartbeatMonitor(cfg),
     ]
 
     for m in monitors:

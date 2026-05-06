@@ -98,6 +98,23 @@ def decode_jwt(token: str) -> dict:
     )
 
 
+def log_audit(action: str, target: str = None):
+    """Logs an administrative action to the audit_logs table."""
+    try:
+        user_id = getattr(g, "user_id", None)
+        log = AuditLog(
+            user_id=user_id,
+            action=action,
+            target=target,
+            timestamp=datetime.now(timezone.utc)
+        )
+        db.session.add(log)
+        db.session.commit()
+    except Exception as e:
+        logger.error(f"Failed to log audit action: {e}")
+        db.session.rollback()
+
+
 def jwt_required(f):
     """Decorator — validates Bearer token from Authorization header or session."""
     @wraps(f)
@@ -530,7 +547,7 @@ def ingest_event():
     VALID_TYPES = {
         "login", "logout", "cron_change", "new_process",
         "process_ended", "ssh_login", "failed_login",
-        "file_change",
+        "file_change", "heartbeat",
     }
     if event_type not in VALID_TYPES:
         return jsonify({"error": f"Invalid event_type. Use one of: {VALID_TYPES}"}), 400
