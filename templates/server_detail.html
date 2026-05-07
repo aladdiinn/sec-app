@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% set active = 'servers' %}
+{% block title %}Server Detail — {{ server.hostname }}{% endblock %}
+{% block page_title %}<span class="mono">{{ server.hostname }}</span> <span class="badge {{ 'badge-green' if server.status == 'online' else 'badge-red' }}" style="margin-left:8px; vertical-align:middle; font-size:10px">{{ server.status.upper() }}</span>{% endblock %}
+{% block page_sub %}IP Address: {{ server.ip_address }} · Server ID: {{ server.id }}{% endblock %}
+
+{% block topbar_actions %}
+<div style="display:flex; gap:12px">
+    <button class="btn btn-glass" style="border-color:var(--accent-red); color:var(--accent-red)" id="btn-isolate" onclick="isolateHost()">
+        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" style="margin-right:8px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Isolate Host
+    </button>
+    <button class="tb-btn primary" onclick="exportReport()">
+        <svg viewBox="0 0 24 24"><path d="M18 8h1a4 4 0 010 8h-1"/><path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+        Export Report
+    </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="page fade-up">
+    <div style="margin-bottom:16px;">
+        <button class="btn btn-ghost" style="padding:6px 12px; font-size:11px" onclick="window.location.href='/servers'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            Back to Servers
+        </button>
+    {% if server.status == 'isolated' %}
+    <div class="card glass fade-in" style="background:rgba(239, 68, 68, 0.1); border:1px solid var(--accent-red); margin-bottom:24px">
+        <div style="display:flex; align-items:center; gap:16px; padding:16px">
+            <div class="stat-icon red" style="width:40px; height:40px">
+                <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </div>
+            <div>
+                <h4 style="color:var(--accent-red); margin:0">HOST ISOLATED</h4>
+                <p style="font-size:12px; color:var(--text-secondary); margin:4px 0 0 0">This asset has been programmatically contained due to a high-severity incident. All non-management traffic is blocked.</p>
+            </div>
+            <button class="btn btn-glass" style="margin-left:auto; font-size:11px" onclick="reconnectHost()">Restore Connectivity</button>
+        </div>
+    </div>
+    {% endif %}
+    </div>
+
+    <!-- Server Overview Stats -->
+    <div class="stats-grid">
+        <div class="stat-card stat-card--blue">
+            <div class="stat-body">
+                <div class="stat-value" id="server-total-events">—</div>
+                <div class="stat-label">Total Events</div>
+            </div>
+        </div>
+        <div class="stat-card stat-card--red">
+            <div class="stat-body">
+                <div class="stat-value" id="server-open-alerts">—</div>
+                <div class="stat-label">Open Alerts</div>
+            </div>
+        </div>
+        <div class="stat-card stat-card--yellow">
+            <div class="stat-body">
+                <div class="stat-value" id="server-last-login">—</div>
+                <div class="stat-label">Last Activity</div>
+            </div>
+        </div>
+        <div class="stat-card stat-card--green">
+            <div class="stat-body">
+                <div class="stat-value" style="font-size:14px; font-family:monospace">{{ server.agent_token[:8] }}...</div>
+                <div class="stat-label">Agent Token</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="dashboard-grid">
+        <!-- Event History -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Recent Events</h3>
+            </div>
+            <div id="server-events-list" class="live-feed" style="max-height:500px">
+                <div class="center-spinner"><div class="spinner"></div></div>
+            </div>
+        </div>
+
+        <!-- Alerts History -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Alert History</h3>
+            </div>
+            <div id="server-alerts-list" class="live-feed" style="max-height:500px">
+                <div class="center-spinner"><div class="spinner"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const serverId = {{ server.id }};
+
+    async function loadServerData() {
+        try {
+            // Load Events
+            const eventsData = await apiFetch(`/api/events?server_id=${serverId}&limit=30`);
+            const eventsEl = document.getElementById('server-events-list');
+            document.getElementById('server-total-events').textContent = eventsData.total;
+            
+            if (eventsData.items.length > 0) {
+                document.getElementById('server-last-login').textContent = relTime(eventsData.items[0].created_at);
+                eventsEl.innerHTML = eventsData.items.map(e => `
+                    <div class="feed-item feed-item--${e.severity}">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
+                            <span class="mono" style="font-weight:600">${e.event_type}</span>
+                            <span style="font-size:10px; color:var(--text-muted)">${new Date(e.created_at).toLocaleString()}</span>
+                        </div>
+                        <p style="font-size:12px; color:var(--text-secondary)">${e.description}</p>
+                    </div>
+                `).join('');
+            } else {
+                eventsEl.innerHTML = '<div class="empty-state"><p>No events recorded</p></div>';
+            }
+
+            // Load Alerts
+            const alertsData = await apiFetch(`/api/alerts?server_id=${serverId}&limit=20`);
+            const alertsEl = document.getElementById('server-alerts-list');
+            document.getElementById('server-open-alerts').textContent = alertsData.items.filter(a => !a.is_resolved).length;
+
+            if (alertsData.items.length > 0) {
+                alertsEl.innerHTML = alertsData.items.map(a => `
+                    <div class="alert-item alert-item--${a.severity}" style="opacity: ${a.is_resolved ? 0.6 : 1}">
+                        <div class="alert-top">
+                            <span class="alert-title">${a.title}</span>
+                            <span class="badge ${a.is_resolved ? 'badge-gray' : 'badge-red'}">${a.is_resolved ? 'Resolved' : 'Open'}</span>
+                        </div>
+                        <p class="alert-msg">${a.message}</p>
+                        <div style="display:flex; justify-content:space-between; margin-top:6px">
+                            <span class="alert-time">${relTime(a.created_at)}</span>
+                            ${!a.is_resolved ? `<button class="btn btn-ghost" style="padding:3px 10px; font-size:11px" onclick="resolveDetailAlert(${a.id}, this)">Resolve</button>` : ''}
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                alertsEl.innerHTML = '<div class="empty-state"><p>No alerts recorded</p></div>';
+            }
+
+        } catch (e) { console.error('Server detail error:', e); }
+    }
+
+    async function resolveDetailAlert(id, btn) {
+        btn.disabled = true;
+        try {
+            await apiFetch(`/api/alerts/${id}/resolve`, { method: 'PATCH' });
+            loadServerData();
+        } catch (e) { btn.disabled = false; alert('Failed to resolve alert'); }
+    }
+
+    function relTime(iso) {
+        const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+        if (diff < 60) return `${diff}s ago`;
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        return `${Math.floor(diff / 3600)}h ago`;
+    }
+
+    async function isolateHost() {
+        if (!confirm("CRITICAL ACTION: Are you sure you want to isolate this host? This will block all non-management traffic.")) return;
+        
+        const btn = document.getElementById('btn-isolate');
+        btn.disabled = true;
+        btn.innerText = "Isolating...";
+        
+        try {
+            await apiFetch(`/api/servers/${serverId}/isolate`, { method: 'POST' });
+            showToast('Host isolation triggered', 'success');
+            setTimeout(() => window.location.reload(), 1500);
+        } catch (e) { 
+            btn.disabled = false;
+            btn.innerText = "Isolate Host";
+            showToast('Isolation failed', 'error'); 
+        }
+    }
+
+    async function reconnectHost() {
+        if (!confirm("Are you sure you want to restore connectivity for this host?")) return;
+        try {
+            // Reusing a simple update or creating a specific endpoint
+            await apiFetch(`/api/servers/${serverId}/reconnect`, { method: 'POST' });
+            showToast('Host connectivity restored', 'success');
+            setTimeout(() => window.location.reload(), 1000);
+        } catch (e) { showToast('Restore failed', 'error'); }
+    }
+
+    function exportReport() {
+        const token = getToken();
+        if (!token) {
+            alert('Authentication error');
+            return;
+        }
+        window.open(`/api/servers/${serverId}/export-report?token=${token}`, '_blank');
+    }
+
+    document.addEventListener('DOMContentLoaded', loadServerData);
+</script>
+{% endblock %}

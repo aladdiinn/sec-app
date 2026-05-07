@@ -1,0 +1,296 @@
+{% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block page_title %}SOC Command Center{% endblock %}
+{% block page_sub %}Real-time security intelligence & threat detection{% endblock %}
+
+{% block content %}
+<div class="dashboard-grid fade-in">
+    <!-- Row 1: KPI Stats -->
+    <div class="stat-card glass glass-hover">
+        <div class="stat-header">
+            <div class="stat-icon blue">
+                <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+            </div>
+            <span class="badge badge-info">Active</span>
+        </div>
+        <div class="stat-info">
+            <div class="stat-value" id="kpi-total">0</div>
+            <div class="stat-label">Total Endpoints</div>
+        </div>
+    </div>
+
+    <div class="stat-card glass glass-hover">
+        <div class="stat-header">
+            <div class="stat-icon green">
+                <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            </div>
+            <span class="badge badge-success" id="kpi-online-badge">0 Online</span>
+        </div>
+        <div class="stat-info">
+            <div class="stat-value" id="kpi-online">0</div>
+            <div class="stat-label">System Health</div>
+        </div>
+    </div>
+
+    <div class="stat-card glass glass-hover">
+        <div class="stat-header">
+            <div class="stat-icon red">
+                <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </div>
+            <span class="badge badge-critical" id="kpi-alerts-badge">0 High</span>
+        </div>
+        <div class="stat-info">
+            <div class="stat-value" id="kpi-alerts">0</div>
+            <div class="stat-label">Critical Alerts</div>
+        </div>
+    </div>
+
+    <div class="stat-card glass glass-hover">
+        <div class="stat-header">
+            <div class="stat-icon orange">
+                <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
+            <div class="pulse" style="width:8px; height:8px; border-radius:50%; background:var(--accent-orange)"></div>
+        </div>
+        <div class="stat-info">
+            <div class="stat-value" id="kpi-events">0</div>
+            <div class="stat-label">Events Processed</div>
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-grid fade-in" style="grid-template-columns: 2fr 1fr; grid-template-rows: auto auto;">
+    <!-- Threat Map -->
+    <div class="card glass" style="grid-row: span 2;">
+        <div class="card-header">
+            <h2 class="card-title">Global Threat Visualization</h2>
+            <div style="display:flex; gap:10px">
+                <span class="badge badge-info">Real-time</span>
+                <button class="btn btn-glass" style="padding:4px 8px" onclick="loadGeoIP()">Refresh Map</button>
+            </div>
+        </div>
+        <div id="threat-map" style="height:450px; border-radius:var(--radius-md); background:var(--bg-deep);"></div>
+    </div>
+
+    <!-- Severity Distribution -->
+    <div class="card glass">
+        <div class="card-header">
+            <h2 class="card-title">Severity Distribution</h2>
+        </div>
+        <div style="height:200px; position:relative;">
+            <canvas id="sev-donut"></canvas>
+            <div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); text-align:center">
+                <div id="donut-total" style="font-size:24px; font-weight:700; font-family:var(--font-heading)">0</div>
+                <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Total</div>
+            </div>
+        </div>
+        <div style="margin-top:20px; display:grid; grid-template-columns: 1fr 1fr; gap:10px">
+            <div class="glass" style="padding:10px; border-radius:var(--radius-sm); text-align:center">
+                <div style="font-size:10px; color:var(--text-muted)">Critical</div>
+                <div id="leg-crit" style="color:var(--accent-red); font-weight:700">0</div>
+            </div>
+            <div class="glass" style="padding:10px; border-radius:var(--radius-sm); text-align:center">
+                <div style="font-size:10px; color:var(--text-muted)">Warning</div>
+                <div id="leg-warn" style="color:var(--accent-orange); font-weight:700">0</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Brute Force -->
+    <div class="card glass">
+        <div class="card-header">
+            <h2 class="card-title">Active Brute-Force</h2>
+            <span class="badge badge-critical">Intercepted</span>
+        </div>
+        <div id="brute-force-list" style="display:flex; flex-direction:column; gap:12px">
+            <div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">No active attacks detected</div>
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-grid fade-in" style="grid-template-columns: 1fr 2fr;">
+    <!-- Live Activity Feed -->
+    <div class="card glass">
+        <div class="card-header">
+            <h2 class="card-title">Live Activity</h2>
+            <div class="pulse" style="width:6px; height:6px; border-radius:50%; background:var(--accent-cyan)"></div>
+        </div>
+        <div id="live-feed" style="display:flex; flex-direction:column; gap:16px">
+            <div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">Waiting for events...</div>
+        </div>
+    </div>
+
+    <!-- Recent Alerts -->
+    <div class="card glass">
+        <div class="card-header">
+            <h2 class="card-title">Recent Security Alerts</h2>
+            <a href="/alerts" class="btn btn-glass" style="padding:4px 12px">View All</a>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Severity</th>
+                    <th>Alert</th>
+                    <th>Source</th>
+                    <th>Time</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="open-alerts-list">
+                <!-- Populated by JS -->
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let sevDonut = null;
+let map = null;
+let markers = [];
+
+function initCharts() {
+    const ctx = document.getElementById('sev-donut').getContext('2d');
+    sevDonut = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Info', 'Warning', 'Critical'],
+            datasets: [{
+                data: [0, 0, 0],
+                backgroundColor: ['#3b82f6', '#f59e0b', '#ef4444'],
+                borderWidth: 0,
+                hoverOffset: 8
+            }]
+        },
+        options: {
+            cutout: '80%',
+            plugins: { legend: { display: false } },
+            responsive: true,
+            maintainAspectRatio: false
+        }
+    });
+}
+
+function initMap() {
+    if (map) return;
+    map = L.map('threat-map', {
+        attributionControl: false,
+        zoomControl: false
+    }).setView([20, 0], 2);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19
+    }).addTo(map);
+}
+
+async function loadGeoIP() {
+    initMap();
+    try {
+        const data = await apiFetch('/api/dashboard/geoip');
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+
+        data.forEach(p => {
+            if (p.lat && p.lon) {
+                const color = p.severity === 'critical' ? 'var(--accent-red)' : 'var(--accent-blue)';
+                const marker = L.circleMarker([p.lat, p.lon], {
+                    radius: 6,
+                    fillColor: color,
+                    color: 'white',
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                }).addTo(map);
+                
+                marker.bindTooltip(`<b>${p.ip}</b><br>${p.city}, ${p.country}`, {
+                    direction: 'top'
+                });
+                markers.push(marker);
+            }
+        });
+    } catch (e) { console.error('Map error:', e); }
+}
+
+async function loadDashboard() {
+    try {
+        const stats = await apiFetch('/api/servers/stats');
+        document.getElementById('kpi-total').textContent = stats.total_servers;
+        document.getElementById('kpi-online').textContent = Math.round((stats.online_servers / (stats.total_servers || 1)) * 100) + '%';
+        document.getElementById('kpi-online-badge').textContent = stats.online_servers + ' Online';
+        document.getElementById('kpi-alerts').textContent = stats.open_alerts;
+        document.getElementById('kpi-alerts-badge').textContent = stats.open_alerts + ' Active';
+        document.getElementById('kpi-events').textContent = (stats.total_events || 0).toLocaleString();
+
+        const eventsData = await apiFetch('/api/events?limit=100');
+        const items = eventsData.items || [];
+        
+        const info = items.filter(e => e.severity === 'info').length;
+        const warn = items.filter(e => e.severity === 'warning').length;
+        const crit = items.filter(e => e.severity === 'critical').length;
+        
+        sevDonut.data.datasets[0].data = [info, warn, crit];
+        sevDonut.update();
+        document.getElementById('donut-total').textContent = items.length;
+        document.getElementById('leg-warn').textContent = warn;
+        document.getElementById('leg-crit').textContent = crit;
+
+        // Feed
+        const feedEl = document.getElementById('live-feed');
+        feedEl.innerHTML = items.slice(0, 5).map(e => `
+            <div style="display:flex; gap:12px; align-items:center">
+                <div style="width:8px; height:8px; border-radius:50%; background:var(--accent-${e.severity === 'critical' ? 'red' : e.severity === 'warning' ? 'orange' : 'blue'})"></div>
+                <div style="flex:1">
+                    <div style="font-size:13px; font-weight:500">${e.description.slice(0, 40)}...</div>
+                    <div style="font-size:11px; color:var(--text-muted)">${e.hostname || 'System'} · ${new Date(e.created_at).toLocaleTimeString()}</div>
+                </div>
+            </div>
+        `).join('');
+
+        // Alerts
+        const alertsData = await apiFetch('/api/alerts?is_resolved=false&limit=5');
+        const alertList = document.getElementById('open-alerts-list');
+        alertList.innerHTML = alertsData.items.map(a => `
+            <tr>
+                <td><span class="badge badge-${a.severity === 'critical' ? 'critical' : 'warning'}">${a.severity}</span></td>
+                <td style="font-weight:600">${a.title}</td>
+                <td>${a.hostname || 'Unknown'}</td>
+                <td style="color:var(--text-muted)">${new Date(a.created_at).toLocaleTimeString()}</td>
+                <td><button class="btn btn-glass" style="padding:4px 8px" onclick="resolveAlert(${a.id})">Resolve</button></td>
+            </tr>
+        `).join('');
+
+        // Brute Force
+        const bruteData = await apiFetch('/api/dashboard/brute-force');
+        const bruteList = document.getElementById('brute-force-list');
+        if (bruteData.length > 0) {
+            bruteList.innerHTML = bruteData.map(b => `
+                <div class="glass" style="padding:12px; border-radius:var(--radius-sm); border-left: 3px solid var(--accent-red)">
+                    <div style="display:flex; justify-content:space-between">
+                        <span style="font-family:var(--font-mono); font-weight:700; color:var(--accent-red)">${b.ip}</span>
+                        <span style="font-size:11px; color:var(--text-muted)">${b.count} attempts</span>
+                    </div>
+                    <div style="font-size:11px; color:var(--text-muted); margin-top:4px">Target: ${b.target}</div>
+                </div>
+            `).join('');
+        }
+
+    } catch (e) { console.error('Dashboard load error:', e); }
+}
+
+async function resolveAlert(id) {
+    try {
+        await apiFetch(`/api/alerts/${id}/resolve`, { method: 'PATCH' });
+        showToast('Alert resolved successfully', 'success');
+        loadDashboard();
+    } catch (e) { showToast('Failed to resolve alert', 'error'); }
+}
+
+window.addEventListener('load', () => {
+    initCharts();
+    loadDashboard();
+    loadGeoIP();
+    setInterval(loadDashboard, 10000);
+});
+</script>
+{% endblock %}

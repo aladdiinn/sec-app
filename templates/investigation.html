@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% set active = 'incidents' %}
+{% block page_title %}Case Investigation: <span class="mono">{{ case.title }}</span>{% endblock %}
+{% block page_sub %}Visualizing relationships between servers, events, and alerts for Case #{{ case.id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    #graph-container {
+        width: 100%;
+        height: 600px;
+        background: rgba(10, 15, 30, 0.4);
+        border: 1px solid var(--border-glass);
+        border-radius: var(--radius-lg);
+        position: relative;
+        overflow: hidden;
+    }
+    .node circle {
+        stroke: var(--border-glass);
+        stroke-width: 2px;
+    }
+    .node text {
+        font-size: 11px;
+        fill: var(--text-secondary);
+        pointer-events: none;
+        user-select: none;
+    }
+    .link {
+        stroke: var(--border-glass);
+        stroke-opacity: 0.4;
+        stroke-width: 1.5px;
+    }
+    .node.case circle { fill: var(--accent-blue); }
+    .node.alert circle { fill: var(--accent-orange); }
+    .node.event circle { fill: var(--accent-cyan); }
+    .node.server circle { fill: var(--accent-green); }
+    
+    .tooltip {
+        position: absolute;
+        padding: 12px;
+        background: rgba(15, 23, 42, 0.95);
+        border: 1px solid var(--border-glass);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 12px;
+        pointer-events: none;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        z-index: 10;
+        display: none;
+        backdrop-filter: blur(10px);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <div style="display:grid; grid-template-columns: 1fr 350px; gap:24px">
+        <!-- Relationship Graph -->
+        <div class="card glass" style="padding:0; overflow:hidden">
+            <div style="padding:16px 24px; border-bottom:1px solid var(--border-glass); display:flex; justify-content:space-between; align-items:center">
+                <h3 class="card-title" style="margin:0">Relationship Topology</h3>
+                <div style="display:flex; gap:12px; font-size:11px">
+                    <span style="display:flex; align-items:center; gap:4px"><div style="width:8px; height:8px; border-radius:50%; background:var(--accent-blue)"></div> Case</span>
+                    <span style="display:flex; align-items:center; gap:4px"><div style="width:8px; height:8px; border-radius:50%; background:var(--accent-orange)"></div> Alert</span>
+                    <span style="display:flex; align-items:center; gap:4px"><div style="width:8px; height:8px; border-radius:50%; background:var(--accent-cyan)"></div> Event</span>
+                    <span style="display:flex; align-items:center; gap:4px"><div style="width:8px; height:8px; border-radius:50%; background:var(--accent-green)"></div> Server</span>
+                </div>
+            </div>
+            <div id="graph-container">
+                <div id="tooltip" class="tooltip"></div>
+                <svg id="investigation-graph"></svg>
+            </div>
+        </div>
+
+        <!-- Case Sidebar -->
+        <div style="display:flex; flex-direction:column; gap:24px">
+            <div class="card glass">
+                <h3 class="card-title">Case Metadata</h3>
+                <div style="display:flex; flex-direction:column; gap:16px; margin-top:20px">
+                    <div>
+                        <div class="stat-label">Status</div>
+                        <div style="margin-top:4px"><span class="badge badge-info">{{ case.status.upper() }}</span></div>
+                    </div>
+                    <div>
+                        <div class="stat-label">Priority</div>
+                        <div style="margin-top:4px"><span class="badge badge-{{ 'critical' if case.priority == 'critical' else 'warning' }}">{{ case.priority.upper() }}</span></div>
+                    </div>
+                    <div>
+                        <div class="stat-label">Assignee</div>
+                        <div style="margin-top:4px; color:var(--text-primary)">{{ case.assignee.full_name if case.assignee else 'Unassigned' }}</div>
+                    </div>
+                    <div>
+                        <div class="stat-label">SLA Countdown</div>
+                        <div id="case-sla-timer" style="margin-top:4px; font-weight:700; color:var(--accent-red); font-family:var(--font-mono)">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card glass">
+                <h3 class="card-title">Actions</h3>
+                <div style="display:flex; flex-direction:column; gap:12px; margin-top:20px">
+                    <button class="btn btn-primary" style="width:100%" onclick="resolveCase()">Resolve Case</button>
+                    <button class="btn btn-glass" style="width:100%" onclick="window.print()">Export Findings</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+    const caseId = {{ case.id }};
+    const svg = d3.select("#investigation-graph");
+    const tooltip = document.getElementById("tooltip");
+    
+    async function initGraph() {
+        const container = document.getElementById('graph-container');
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        
+        svg.attr("width", width).attr("height", height);
+        
+        const data = await apiFetch(`/api/cases/${caseId}/details`);
+        
+        // SLA Timer logic
+        if (data.case.due_at) {
+            const due = new Date(data.case.due_at);
+            const updateSLA = () => {
+                const diff = due - new Date();
+                const el = document.getElementById('case-sla-timer');
+                if (diff <= 0) { el.innerText = "SLA EXPIRED"; return; }
+                const h = Math.floor(diff / 3600000);
+                const m = Math.floor((diff % 3600000) / 60000);
+                const s = Math.floor((diff % 60000) / 1000);
+                el.innerText = `${h}h ${m}m ${s}s`;
+            };
+            updateSLA();
+            setInterval(updateSLA, 1000);
+        }
+
+        const simulation = d3.forceSimulation(data.nodes)
+            .force("link", d3.forceLink(data.links).id(d => d.id).distance(100))
+            .force("charge", d3.forceManyBody().strength(-300))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(data.links)
+            .enter().append("line")
+            .attr("class", "link");
+
+        const node = svg.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(data.nodes)
+            .enter().append("g")
+            .attr("class", d => `node ${d.type}`)
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+        node.append("circle")
+            .attr("r", d => d.type === 'case' ? 20 : 12)
+            .on("mouseover", (event, d) => {
+                tooltip.style.display = "block";
+                tooltip.innerHTML = `
+                    <div style="font-weight:700; color:var(--accent-blue); margin-bottom:4px">${d.type.toUpperCase()}</div>
+                    <div style="font-size:14px">${d.label}</div>
+                    ${d.severity ? `<div style="margin-top:8px"><span class="badge badge-${d.severity}">${d.severity.toUpperCase()}</span></div>` : ''}
+                    ${d.mitre_tactic ? `<div style="margin-top:4px; font-size:10px; color:var(--text-muted)">MITRE: ${d.mitre_tactic}</div>` : ''}
+                `;
+            })
+            .on("mousemove", (event) => {
+                tooltip.style.left = (event.pageX + 15) + "px";
+                tooltip.style.top = (event.pageY - 15) + "px";
+            })
+            .on("mouseout", () => {
+                tooltip.style.display = "none";
+            })
+            .on("click", (event, d) => {
+                if (d.type === 'server') window.location.href = `/servers/${d.id.split('_')[1]}`;
+            });
+
+        node.append("text")
+            .attr("dy", d => d.type === 'case' ? 35 : 25)
+            .attr("text-anchor", "middle")
+            .text(d => d.label);
+
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        });
+
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+    }
+
+    async function resolveCase() {
+        if (!confirm("Are you sure you want to resolve this case?")) return;
+        try {
+            await apiFetch(`/api/cases/${caseId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: 'resolved' })
+            });
+            showToast('Case resolved', 'success');
+            setTimeout(() => window.location.href = '/incidents', 1000);
+        } catch (e) { showToast('Failed to resolve case', 'error'); }
+    }
+
+    window.addEventListener('load', initGraph);
+</script>
+{% endblock %}

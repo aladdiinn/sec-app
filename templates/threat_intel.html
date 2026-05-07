@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% set active = 'threat-intel' %}
+{% block page_title %}Threat Intelligence{% endblock %}
+{% block page_sub %}Manage indicators of compromise, IOC feeds, and threat actor data{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <!-- KPI Row -->
+    <div class="stats-grid" style="margin-bottom:24px">
+        <div class="card glass" style="display:flex; align-items:center; gap:16px; padding:20px">
+            <div class="stat-icon red"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+            <div><div class="stat-value" id="stat-total-ioc">—</div><div class="stat-label">Total IOCs</div></div>
+        </div>
+        <div class="card glass" style="display:flex; align-items:center; gap:16px; padding:20px">
+            <div class="stat-icon orange"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+            <div><div class="stat-value" id="stat-ip-ioc">—</div><div class="stat-label">Malicious IPs</div></div>
+        </div>
+        <div class="card glass" style="display:flex; align-items:center; gap:16px; padding:20px">
+            <div class="stat-icon purple"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
+            <div><div class="stat-value" id="stat-critical-ioc">—</div><div class="stat-label">Critical Severity</div></div>
+        </div>
+        <div class="card glass" style="padding:20px; display:flex; flex-direction:column; gap:8px">
+            <button class="btn btn-primary" onclick="showAddModal()" style="width:100%">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="white" fill="none" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add IOC
+            </button>
+            <button class="btn btn-glass" onclick="showBulkModal()" style="width:100%">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" style="margin-right:6px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Bulk Import
+            </button>
+        </div>
+    </div>
+
+    <!-- Search + Filter -->
+    <div class="card glass" style="margin-bottom:24px; padding:16px 24px">
+        <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap">
+            <input id="search-ioc" type="text" class="glass" placeholder="Search by IP, domain, hash..." style="flex:1; min-width:200px; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)" oninput="filterIOCs()">
+            <select id="filter-type" class="glass" style="padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)" onchange="filterIOCs()">
+                <option value="">All Types</option>
+                <option value="ip">IP Address</option>
+                <option value="domain">Domain</option>
+                <option value="hash">File Hash</option>
+                <option value="url">URL</option>
+                <option value="email">Email</option>
+            </select>
+            <select id="filter-severity" class="glass" style="padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)" onchange="filterIOCs()">
+                <option value="">All Severities</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- IOC Table -->
+    <div class="card glass">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
+            <h3 class="card-title">Indicators of Compromise</h3>
+            <span id="ioc-count-label" style="font-size:12px; color:var(--text-muted)"></span>
+        </div>
+        <div id="ioc-table-wrap" style="overflow-x:auto">
+            <table style="width:100%; border-collapse:collapse; font-size:13px">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border-glass)">
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-size:11px; font-weight:600; text-transform:uppercase">Type</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-size:11px; font-weight:600; text-transform:uppercase">Value</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-size:11px; font-weight:600; text-transform:uppercase">Severity</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-size:11px; font-weight:600; text-transform:uppercase">Source</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-size:11px; font-weight:600; text-transform:uppercase">Added</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-size:11px; font-weight:600; text-transform:uppercase">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="ioc-tbody">
+                    <tr><td colspan="6" style="text-align:center; padding:40px; color:var(--text-muted)">Loading threat indicators...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Add IOC Modal -->
+<div id="modal-overlay" onclick="closeModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:999; backdrop-filter:blur(4px)"></div>
+
+<div id="add-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:40px; border-radius:var(--radius-lg); z-index:1000; width:480px; box-shadow:0 30px 80px rgba(0,0,0,0.9)">
+    <h2 class="card-title" style="font-size:22px; margin-bottom:24px">Add IOC</h2>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px">
+        <div>
+            <label class="stat-label" style="display:block; margin-bottom:6px">Type *</label>
+            <select id="ioc-type" class="glass" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+                <option value="ip">IP Address</option>
+                <option value="domain">Domain</option>
+                <option value="hash">File Hash (MD5/SHA256)</option>
+                <option value="url">URL</option>
+                <option value="email">Email</option>
+            </select>
+        </div>
+        <div>
+            <label class="stat-label" style="display:block; margin-bottom:6px">Severity *</label>
+            <select id="ioc-severity" class="glass" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium" selected>Medium</option>
+                <option value="low">Low</option>
+            </select>
+        </div>
+    </div>
+    <div style="margin-bottom:16px">
+        <label class="stat-label" style="display:block; margin-bottom:6px">Indicator Value *</label>
+        <input id="ioc-value" type="text" class="glass" placeholder="e.g. 192.168.1.1, malware.com, abc123..." style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+    </div>
+    <div style="margin-bottom:28px">
+        <label class="stat-label" style="display:block; margin-bottom:6px">Source</label>
+        <input id="ioc-source" type="text" class="glass" placeholder="e.g. MISP, AlienVault OTX, Manual" value="manual" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+    </div>
+    <div style="display:flex; gap:12px; justify-content:flex-end">
+        <button class="btn btn-glass" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="addIOC()">Add Indicator</button>
+    </div>
+</div>
+
+<!-- Bulk Import Modal -->
+<div id="bulk-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:40px; border-radius:var(--radius-lg); z-index:1000; width:520px; box-shadow:0 30px 80px rgba(0,0,0,0.9)">
+    <h2 class="card-title" style="font-size:22px; margin-bottom:8px">Bulk Import IOCs</h2>
+    <p style="color:var(--text-muted); font-size:13px; margin-bottom:20px">Paste a list of indicators (one per line). Format: <code style="color:var(--accent-cyan)">value,type,severity,source</code></p>
+    <div style="margin-bottom:16px">
+        <label class="stat-label" style="display:block; margin-bottom:6px">Default Type</label>
+        <select id="bulk-type" class="glass" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+            <option value="ip">IP Address</option>
+            <option value="domain">Domain</option>
+            <option value="hash">File Hash</option>
+        </select>
+    </div>
+    <textarea id="bulk-data" class="glass" rows="10" placeholder="192.168.1.1&#10;malware.example.com&#10;d41d8cd98f00b204e9800998ecf8427e" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm); font-family:var(--font-mono); font-size:12px; resize:vertical"></textarea>
+    <div style="display:flex; gap:12px; justify-content:flex-end; margin-top:20px">
+        <button class="btn btn-glass" onclick="closeBulkModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="bulkImport()" id="btn-bulk-import">Import</button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let allIOCs = [];
+
+    const sevMap = { critical: 'badge-critical', high: 'badge-warning', medium: 'badge-info', low: 'badge-success' };
+    const typeIcons = {
+        ip: '🌐', domain: '🔗', hash: '🔑', url: '📎', email: '📧'
+    };
+
+    async function loadIOCs() {
+        try {
+            allIOCs = await apiFetch('/api/threat-intel');
+            document.getElementById('stat-total-ioc').textContent = allIOCs.length;
+            document.getElementById('stat-ip-ioc').textContent = allIOCs.filter(i => i.indicator_type === 'ip').length;
+            document.getElementById('stat-critical-ioc').textContent = allIOCs.filter(i => i.severity === 'critical').length;
+            renderTable(allIOCs);
+        } catch (e) { console.error('Failed to load IOCs:', e); }
+    }
+
+    function renderTable(iocs) {
+        const tbody = document.getElementById('ioc-tbody');
+        document.getElementById('ioc-count-label').textContent = `${iocs.length} indicator${iocs.length !== 1 ? 's' : ''}`;
+        if (!iocs.length) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--text-muted)">No indicators found. Add IOCs to enable threat detection.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = iocs.map(i => `
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.2s" onmouseover="this.style.background='rgba(255,255,255,0.03)'" onmouseout="this.style.background=''">
+                <td style="padding:12px">
+                    <span style="font-size:16px; margin-right:6px">${typeIcons[i.indicator_type] || '❓'}</span>
+                    <code style="font-size:11px; color:var(--accent-cyan)">${i.indicator_type.toUpperCase()}</code>
+                </td>
+                <td style="padding:12px; font-family:var(--font-mono); font-size:12px; color:var(--text-primary)">${i.value}</td>
+                <td style="padding:12px"><span class="badge ${sevMap[i.severity] || 'badge-info'}">${i.severity.toUpperCase()}</span></td>
+                <td style="padding:12px; font-size:12px; color:var(--text-secondary)">${i.source || '—'}</td>
+                <td style="padding:12px; font-size:12px; color:var(--text-muted)">${new Date(i.created_at).toLocaleDateString()}</td>
+                <td style="padding:12px">
+                    <button class="btn btn-glass" style="padding:4px 10px; font-size:11px; border-color:var(--accent-red); color:var(--accent-red)" onclick="deleteIOC(${i.id}, '${i.value}')">Remove</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    function filterIOCs() {
+        const q = document.getElementById('search-ioc').value.toLowerCase();
+        const type = document.getElementById('filter-type').value;
+        const sev = document.getElementById('filter-severity').value;
+        const filtered = allIOCs.filter(i =>
+            (!q || i.value.toLowerCase().includes(q) || (i.source || '').toLowerCase().includes(q)) &&
+            (!type || i.indicator_type === type) &&
+            (!sev || i.severity === sev)
+        );
+        renderTable(filtered);
+    }
+
+    function showAddModal() {
+        document.getElementById('modal-overlay').style.display = 'block';
+        document.getElementById('add-modal').style.display = 'block';
+    }
+
+    function closeModal() {
+        document.getElementById('modal-overlay').style.display = 'none';
+        document.getElementById('add-modal').style.display = 'none';
+    }
+
+    function showBulkModal() {
+        document.getElementById('modal-overlay').style.display = 'block';
+        document.getElementById('bulk-modal').style.display = 'block';
+    }
+
+    function closeBulkModal() {
+        document.getElementById('modal-overlay').style.display = 'none';
+        document.getElementById('bulk-modal').style.display = 'none';
+    }
+
+    async function addIOC() {
+        const value = document.getElementById('ioc-value').value.trim();
+        if (!value) { showToast('Indicator value is required', 'error'); return; }
+        try {
+            await apiFetch('/api/threat-intel', {
+                method: 'POST',
+                body: JSON.stringify({
+                    indicator_type: document.getElementById('ioc-type').value,
+                    value,
+                    severity: document.getElementById('ioc-severity').value,
+                    source: document.getElementById('ioc-source').value || 'manual'
+                })
+            });
+            showToast('IOC added successfully', 'success');
+            document.getElementById('ioc-value').value = '';
+            closeModal();
+            loadIOCs();
+        } catch (e) { showToast('Failed to add IOC: ' + e.message, 'error'); }
+    }
+
+    async function bulkImport() {
+        const raw = document.getElementById('bulk-data').value.trim();
+        const defaultType = document.getElementById('bulk-type').value;
+        if (!raw) { showToast('No data to import', 'error'); return; }
+
+        const btn = document.getElementById('btn-bulk-import');
+        btn.disabled = true;
+        btn.textContent = 'Importing...';
+
+        const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+        let added = 0, failed = 0;
+
+        for (const line of lines) {
+            const parts = line.split(',');
+            const value = parts[0].trim();
+            const type = (parts[1] || defaultType).trim();
+            const severity = (parts[2] || 'medium').trim();
+            const source = (parts[3] || 'bulk-import').trim();
+            try {
+                await apiFetch('/api/threat-intel', {
+                    method: 'POST',
+                    body: JSON.stringify({ indicator_type: type, value, severity, source })
+                });
+                added++;
+            } catch { failed++; }
+        }
+
+        showToast(`Import complete: ${added} added, ${failed} failed`, added > 0 ? 'success' : 'error');
+        btn.disabled = false;
+        btn.textContent = 'Import';
+        closeBulkModal();
+        loadIOCs();
+    }
+
+    async function deleteIOC(id, value) {
+        if (!confirm(`Remove indicator "${value}"?`)) return;
+        try {
+            await apiFetch(`/api/threat-intel/${id}`, { method: 'DELETE' });
+            showToast('IOC removed', 'success');
+            loadIOCs();
+        } catch (e) { showToast('Failed to remove IOC', 'error'); }
+    }
+
+    window.addEventListener('load', loadIOCs);
+</script>
+{% endblock %}

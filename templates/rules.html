@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% set active = 'rules' %}
+{% block page_title %}Detection Rules{% endblock %}
+{% block page_sub %}Author, manage, and hot-reload YAML-based Sigma-style detection signatures{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+
+    <!-- Stats Bar -->
+    <div class="stats-grid" style="margin-bottom:24px">
+        <div class="card glass" style="display:flex; align-items:center; gap:16px; padding:20px">
+            <div class="stat-icon blue"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+            <div><div class="stat-value" id="stat-total-rules">—</div><div class="stat-label">Total Rules</div></div>
+        </div>
+        <div class="card glass" style="display:flex; align-items:center; gap:16px; padding:20px">
+            <div class="stat-icon red"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg></div>
+            <div><div class="stat-value" id="stat-critical-rules">—</div><div class="stat-label">Critical Severity</div></div>
+        </div>
+        <div class="card glass" style="display:flex; align-items:center; gap:16px; padding:20px">
+            <div class="stat-icon purple"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
+            <div><div class="stat-value" id="stat-mitre-rules">—</div><div class="stat-label">MITRE Mapped</div></div>
+        </div>
+        <div class="card glass" style="display:flex; align-items:center; gap:16px; padding:20px">
+            <button class="btn btn-primary" style="width:100%" onclick="showNewRuleModal()">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="white" stroke-width="2.5" fill="none" style="margin-right:8px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New Rule
+            </button>
+        </div>
+    </div>
+
+    <!-- Rules Table -->
+    <div class="card glass">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
+            <h3 class="card-title">Active Detection Signatures</h3>
+            <button class="btn btn-glass" onclick="reloadRules()" style="padding:6px 16px; font-size:12px">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" style="margin-right:6px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Hot Reload
+            </button>
+        </div>
+        <div id="rules-table" style="overflow-x:auto">
+            <table style="width:100%; border-collapse:collapse; font-size:13px">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border-glass)">
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-weight:600; font-size:11px; text-transform:uppercase">#</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-weight:600; font-size:11px; text-transform:uppercase">Rule Name</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-weight:600; font-size:11px; text-transform:uppercase">Event Type</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-weight:600; font-size:11px; text-transform:uppercase">Severity</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-weight:600; font-size:11px; text-transform:uppercase">Condition</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-weight:600; font-size:11px; text-transform:uppercase">MITRE</th>
+                        <th style="text-align:left; padding:10px; color:var(--text-muted); font-weight:600; font-size:11px; text-transform:uppercase">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="rules-tbody">
+                    <tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text-muted)">Loading rules...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- New Rule Modal -->
+<div id="rule-modal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:999; backdrop-filter:blur(4px)"></div>
+<div id="rule-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:40px; border-radius:var(--radius-lg); z-index:1000; width:560px; max-height:90vh; overflow-y:auto; box-shadow:0 30px 80px rgba(0,0,0,0.9)">
+    <h2 class="card-title" style="font-size:22px; margin-bottom:8px">Create Detection Rule</h2>
+    <p style="color:var(--text-muted); font-size:13px; margin-bottom:28px">Define a Sigma-style signature to detect security events in real time.</p>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px">
+        <div>
+            <label class="stat-label" style="display:block; margin-bottom:6px">Rule Name *</label>
+            <input id="r-name" type="text" class="glass" placeholder="e.g. Suspicious Root Login" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+        </div>
+        <div>
+            <label class="stat-label" style="display:block; margin-bottom:6px">Event Type *</label>
+            <select id="r-event-type" class="glass" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+                <option value="failed_login">failed_login</option>
+                <option value="ssh_login">ssh_login</option>
+                <option value="cron_change">cron_change</option>
+                <option value="file_change">file_change</option>
+                <option value="new_process">new_process</option>
+                <option value="login">login</option>
+                <option value="logout">logout</option>
+            </select>
+        </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px">
+        <div>
+            <label class="stat-label" style="display:block; margin-bottom:6px">Severity</label>
+            <select id="r-severity" class="glass" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+                <option value="warning">Warning</option>
+                <option value="critical">Critical</option>
+                <option value="info">Info</option>
+            </select>
+        </div>
+        <div>
+            <label class="stat-label" style="display:block; margin-bottom:6px">Condition Operator</label>
+            <select id="r-operator" class="glass" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+                <option value="contains">contains</option>
+                <option value="equals">equals</option>
+                <option value="regex">regex</option>
+            </select>
+        </div>
+    </div>
+
+    <div style="margin-bottom:16px">
+        <label class="stat-label" style="display:block; margin-bottom:6px">Match Value * <span style="color:var(--text-muted)">(matched against event description)</span></label>
+        <input id="r-value" type="text" class="glass" placeholder='e.g. "root", "sudo su", "/etc/shadow"' style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px">
+        <div>
+            <label class="stat-label" style="display:block; margin-bottom:6px">MITRE Tactic</label>
+            <select id="r-mitre-tactic" class="glass" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+                <option value="">— None —</option>
+                <option value="Initial Access">Initial Access</option>
+                <option value="Execution">Execution</option>
+                <option value="Persistence">Persistence</option>
+                <option value="Privilege Escalation">Privilege Escalation</option>
+                <option value="Defense Evasion">Defense Evasion</option>
+                <option value="Credential Access">Credential Access</option>
+                <option value="Discovery">Discovery</option>
+                <option value="Lateral Movement">Lateral Movement</option>
+                <option value="Collection">Collection</option>
+                <option value="Command and Control">Command and Control</option>
+                <option value="Exfiltration">Exfiltration</option>
+                <option value="Impact">Impact</option>
+            </select>
+        </div>
+        <div>
+            <label class="stat-label" style="display:block; margin-bottom:6px">MITRE Technique (e.g. T1078)</label>
+            <input id="r-mitre-technique" type="text" class="glass" placeholder="e.g. T1078.001" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm)">
+        </div>
+    </div>
+
+    <div style="margin-bottom:28px">
+        <label class="stat-label" style="display:block; margin-bottom:6px">Alert Message</label>
+        <textarea id="r-message" class="glass" placeholder="Message to display when this rule triggers..." rows="3" style="width:100%; padding:10px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-sm); resize:vertical"></textarea>
+    </div>
+
+    <div style="display:flex; gap:12px; justify-content:flex-end">
+        <button class="btn btn-glass" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveRule()">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="white" fill="none" style="margin-right:6px"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+            Save Rule
+        </button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function loadRules() {
+        const tbody = document.getElementById('rules-tbody');
+        try {
+            const rules = await apiFetch('/api/rules');
+            document.getElementById('stat-total-rules').textContent = rules.length;
+            document.getElementById('stat-critical-rules').textContent = rules.filter(r => r.severity === 'critical').length;
+            document.getElementById('stat-mitre-rules').textContent = rules.filter(r => r.mitre_tactic).length;
+
+            if (!rules.length) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text-muted)">No detection rules found. Create your first rule.</td></tr>';
+                return;
+            }
+
+            const sevColors = { critical: 'badge-critical', warning: 'badge-warning', info: 'badge-info' };
+
+            tbody.innerHTML = rules.map(r => `
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.05); transition: background 0.2s" onmouseover="this.style.background='rgba(255,255,255,0.03)'" onmouseout="this.style.background=''">
+                    <td style="padding:12px; color:var(--text-muted); font-family:var(--font-mono)">${r.id}</td>
+                    <td style="padding:12px">
+                        <div style="font-weight:600; color:var(--text-primary)">${r.name}</div>
+                        <div style="font-size:11px; color:var(--text-muted); margin-top:2px">${r.message || ''}</div>
+                    </td>
+                    <td style="padding:12px"><code style="color:var(--accent-cyan); font-size:12px">${r.event_type}</code></td>
+                    <td style="padding:12px"><span class="badge ${sevColors[r.severity] || 'badge-info'}">${r.severity.toUpperCase()}</span></td>
+                    <td style="padding:12px; font-size:12px; color:var(--text-secondary)">
+                        <code style="font-size:11px">${r.condition.field} <span style="color:var(--accent-blue)">${r.condition.operator}</span> "${r.condition.value}"</code>
+                    </td>
+                    <td style="padding:12px">
+                        ${r.mitre_tactic ? `
+                            <span class="badge" style="background:rgba(139,92,246,0.1); color:#a78bfa; border:1px solid rgba(139,92,246,0.3); font-size:10px">${r.mitre_tactic}</span>
+                            ${r.mitre_technique ? `<div style="font-size:10px; color:var(--text-muted); margin-top:4px">${r.mitre_technique}</div>` : ''}
+                        ` : '<span style="color:var(--text-muted); font-size:12px">—</span>'}
+                    </td>
+                    <td style="padding:12px">
+                        <button class="btn btn-glass" style="padding:4px 10px; font-size:11px; border-color:var(--accent-red); color:var(--accent-red)" onclick="deleteRule(${r.id}, '${r.name}')">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+        } catch (e) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:40px; color:var(--accent-red)">Error loading rules: ${e.message}</td></tr>`;
+        }
+    }
+
+    function showNewRuleModal() {
+        document.getElementById('rule-modal').style.display = 'block';
+        document.getElementById('rule-modal-overlay').style.display = 'block';
+    }
+
+    function closeModal() {
+        document.getElementById('rule-modal').style.display = 'none';
+        document.getElementById('rule-modal-overlay').style.display = 'none';
+    }
+
+    async function saveRule() {
+        const name = document.getElementById('r-name').value.trim();
+        const value = document.getElementById('r-value').value.trim();
+        if (!name || !value) { showToast('Rule name and match value are required', 'error'); return; }
+
+        const payload = {
+            name,
+            event_type: document.getElementById('r-event-type').value,
+            severity: document.getElementById('r-severity').value,
+            condition: {
+                field: 'description',
+                operator: document.getElementById('r-operator').value,
+                value
+            },
+            mitre_tactic: document.getElementById('r-mitre-tactic').value || null,
+            mitre_technique: document.getElementById('r-mitre-technique').value || null,
+            message: document.getElementById('r-message').value || `Rule triggered: ${name}`,
+        };
+
+        try {
+            const res = await apiFetch('/api/rules', { method: 'POST', body: JSON.stringify(payload) });
+            showToast(`Rule saved! ${res.total_rules} total rules active.`, 'success');
+            closeModal();
+            loadRules();
+        } catch (e) { showToast('Failed to save rule: ' + e.message, 'error'); }
+    }
+
+    async function deleteRule(id, name) {
+        if (!confirm(`Delete rule "${name}"? This will remove it from the YAML file.`)) return;
+        try {
+            await apiFetch(`/api/rules/${id}`, { method: 'DELETE' });
+            showToast(`Rule "${name}" deleted`, 'success');
+            loadRules();
+        } catch (e) { showToast('Failed to delete rule', 'error'); }
+    }
+
+    async function reloadRules() {
+        try {
+            const res = await apiFetch('/api/rules/reload', { method: 'POST' });
+            showToast(`Rules hot-reloaded: ${res.total_rules} active`, 'success');
+            loadRules();
+        } catch (e) { showToast('Reload failed', 'error'); }
+    }
+
+    document.getElementById('rule-modal-overlay').onclick = closeModal;
+    window.addEventListener('load', loadRules);
+</script>
+{% endblock %}

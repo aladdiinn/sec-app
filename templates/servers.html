@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% set active = 'servers' %}
+{% block page_title %}Asset Inventory{% endblock %}
+{% block page_sub %}Comprehensive visibility into managed infrastructure assets{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <!-- Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px">
+        <div style="display:flex; gap:16px">
+            <select id="filter-status" class="glass" style="padding:10px 20px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="loadServers()">
+                <option value="">All Statuses</option>
+                <option value="online">Online</option>
+                <option value="offline">Offline</option>
+            </select>
+        </div>
+        <button class="btn btn-primary" onclick="showAddServerModal()">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="white" stroke-width="2.5" fill="none"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            Add New Asset
+        </button>
+    </div>
+
+    <div id="servers-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:24px">
+        <!-- Asset Cards -->
+    </div>
+</div>
+
+<!-- Add Server Modal -->
+<div id="add-server-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:40px; border-radius:var(--radius-lg); z-index:1000; width:500px; box-shadow:0 30px 80px rgba(0,0,0,0.9)">
+    <h2 class="card-title" style="font-size:24px; margin-bottom:12px">Onboard Asset</h2>
+    <p style="font-size:14px; color:var(--text-secondary); margin-bottom:24px">Execute the following command on your target server to initialize the monitoring agent.</p>
+    
+    <div style="background:var(--bg-deep); border:1px solid var(--border-glass); padding:16px; border-radius:var(--radius-md); position:relative; margin-bottom:24px">
+        <code id="setup-command" style="font-family:var(--font-mono); color:var(--accent-cyan); font-size:12px; word-break:break-all">curl -sSL {{ request.url_root.rstrip('/') }}/setup | sudo bash</code>
+        <button class="btn btn-glass" style="position:absolute; top:8px; right:8px; padding:4px 10px; font-size:11px" onclick="copySetupCommand()">Copy</button>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:12px">
+        <button class="btn btn-glass" onclick="closeAddServerModal()">Close</button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function loadServers() {
+        const grid = document.getElementById('servers-grid');
+        const status = document.getElementById('filter-status').value;
+        let url = `/api/servers`;
+        if (status) url += `?status=${status}`;
+
+        try {
+            const data = await apiFetch(url);
+            if (!data.length) {
+                grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:60px">No assets found in the inventory.</div>';
+                return;
+            }
+
+            grid.innerHTML = data.map(s => `
+                <div class="card glass glass-hover fade-in" style="cursor:pointer" onclick="window.location.href='/servers/${s.id}'">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px">
+                        <div class="stat-icon ${s.status === 'online' ? 'green' : 'red'}" style="width:48px; height:48px">
+                            <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                        </div>
+                        <span class="badge badge-${s.status === 'online' ? 'success' : 'critical'}">${s.status.toUpperCase()}</span>
+                    </div>
+                    
+                    <h3 class="card-title" style="font-size:20px; margin-bottom:4px">${s.hostname}</h3>
+                    <p style="font-family:var(--font-mono); font-size:12px; color:var(--accent-blue); margin-bottom:16px">${s.ip_address || 'Unassigned IP'}</p>
+                    
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; border-top: 1px solid var(--border-glass); padding-top:16px; margin-top:auto">
+                        <div>
+                            <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Risk Level</div>
+                            <div style="font-size:13px; font-weight:700; color:var(--accent-${s.severity === 'critical' ? 'red' : 'green'})">${s.severity.toUpperCase()}</div>
+                        </div>
+                        <div>
+                            <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Last Seen</div>
+                            <div style="font-size:13px; color:var(--text-primary)">${new Date(s.last_seen || s.registered_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        } catch (e) { console.error('Asset load error:', e); }
+    }
+
+    function showAddServerModal() {
+        document.getElementById('add-server-modal').style.display = 'block';
+    }
+
+    function closeAddServerModal() {
+        document.getElementById('add-server-modal').style.display = 'none';
+    }
+
+    function copySetupCommand() {
+        const cmd = document.getElementById('setup-command').innerText;
+        navigator.clipboard.writeText(cmd).then(() => showToast('Command copied to clipboard', 'success'));
+    }
+
+    window.addEventListener('load', loadServers);
+</script>
+{% endblock %}

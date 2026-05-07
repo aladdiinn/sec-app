@@ -1,0 +1,52 @@
+rules:
+- condition:
+    field: description
+    operator: contains
+    value: sudo
+  event_type: new_process
+  message: Potential unauthorized sudo command execution
+  mitre_tactic: Privilege Escalation
+  mitre_technique: T1548.003
+  name: Unauthorized Sudo Usage
+  severity: warning
+- condition:
+    field: description
+    operator: contains
+    value: /etc/shadow
+  event_type: file_change
+  message: 'Critical system file modification detected: /etc/shadow'
+  mitre_tactic: Credential Access
+  mitre_technique: T1003.008
+  name: Sensitive File Access
+  severity: critical
+- condition:
+    field: description
+    operator: contains
+    value: user root
+  event_type: ssh_login
+  message: Root login attempt detected via SSH
+  mitre_tactic: Initial Access
+  mitre_technique: T1078
+  name: SSH Root Login Attempt
+  severity: critical
+- condition:
+    field: description
+    operator: regex
+    value: bash -i >& /dev/tcp/.* 0>&1
+  event_type: new_process
+  message: Potential reverse shell detected
+  mitre_tactic: Execution
+  mitre_technique: T1059.004
+  name: Reverse Shell Pattern
+  severity: critical
+- condition:
+    field: description
+    operator: contains
+    value: root
+  event_type: new_process
+  is_active: true
+  message: Root-level command execution detected
+  mitre_tactic: Privilege Escalation
+  mitre_technique: T1548
+  name: 'Test: Root Command Execution'
+  severity: critical

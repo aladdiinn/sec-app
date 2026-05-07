@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% set active = 'cron_jobs' %}
+{% block page_title %}Cron Jobs{% endblock %}
+{% block page_sub %}Track cron job modifications{% endblock %}
+
+{% block content %}
+<style>
+    .diff-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 8px;
+    }
+    .diff-box {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 10px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        white-space: pre-wrap;
+        overflow-x: auto;
+    }
+    .diff-box.old { border-left: 3px solid var(--accent-red); opacity: 0.7; }
+    .diff-box.new { border-left: 3px solid var(--accent-green); }
+    .diff-header {
+        font-size: 10px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }
+</style>
+
+<div class="page fade-up">
+    <div class="page-header">
+        
+    </div>
+
+    <div class="card">
+        <div id="cron-wrap">
+            <div class="center-spinner">
+                <div class="spinner"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function loadCronJobs() {
+        const wrap = document.getElementById('cron-wrap');
+
+        try {
+            const data = await apiFetch(`/api/events?event_type=cron_change&limit=20`);
+            const items = data.items;
+
+            if (!items.length) {
+                wrap.innerHTML = '<div class="empty-state"><p>No cron changes detected</p></div>';
+                return;
+            }
+
+            wrap.innerHTML = items.map(e => {
+                const raw = typeof e.raw_data === 'string' ? JSON.parse(e.raw_data) : e.raw_data;
+                const oldVal = raw.old_content || ' (empty) ';
+                const newVal = raw.new_content || ' (empty) ';
+                
+                return `
+                    <div class="card" style="margin-bottom:16px; border-left:3px solid var(--accent-yellow)">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+                            <div>
+                                <span style="font-weight:600; color:var(--text-primary)">${e.hostname}</span>
+                                <span style="font-size:11px; color:var(--text-muted); margin-left:8px">${new Date(e.created_at).toLocaleString()}</span>
+                            </div>
+                            <span class="badge badge-yellow">Change Detected</span>
+                        </div>
+                        <div class="diff-container">
+                            <div>
+                                <div class="diff-header">Before</div>
+                                <div class="diff-box old">${oldVal}</div>
+                            </div>
+                            <div>
+                                <div class="diff-header">After</div>
+                                <div class="diff-box new">${newVal}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } catch (e) { 
+            console.error('Cron error:', e); 
+            wrap.innerHTML = '<div class="empty-state"><p>Error loading data</p></div>';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadCronJobs);
+</script>
+{% endblock %}

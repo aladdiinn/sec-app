@@ -50,7 +50,6 @@ ExecStart=$GUNICORN \\
     --threads 8 \\
     --bind 0.0.0.0:5000 \\
     --timeout 300 \\
-    --keepalive 75 \\
     --access-logfile $LOG_DIR/access.log \\
     --error-logfile $LOG_DIR/error.log \\
     --log-level info \\

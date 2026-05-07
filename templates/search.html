@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% set active = 'search' %}
+{% block page_title %}Unified Search{% endblock %}
+{% block page_sub %}Pivot and drill down across all events, alerts, and cases in real time{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <!-- Search Bar -->
+    <div class="card glass" style="margin-bottom:28px; padding:24px">
+        <div style="position:relative">
+            <svg viewBox="0 0 24 24" width="20" height="20" stroke="var(--text-muted)" fill="none" style="position:absolute; left:16px; top:50%; transform:translateY(-50%)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="search-input" type="text" class="glass" placeholder='Search events, alerts, cases... e.g. "root", "brute", "Credential Access"'
+                style="width:100%; padding:14px 16px 14px 50px; font-size:16px; color:var(--text-primary); border:1px solid var(--border-glass); border-radius:var(--radius-md)"
+                onkeydown="if(event.key==='Enter') doSearch()">
+        </div>
+        <div style="display:flex; gap:12px; margin-top:16px; flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="doSearch()" id="btn-search">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="white" fill="none" style="margin-right:6px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                Search
+            </button>
+            <div style="display:flex; gap:8px; margin-left:auto">
+                <button class="btn btn-glass" onclick="setScopeAndSearch('events')" id="scope-events" style="font-size:12px">Events Only</button>
+                <button class="btn btn-glass" onclick="setScopeAndSearch('alerts')" id="scope-alerts" style="font-size:12px">Alerts Only</button>
+                <button class="btn btn-glass" onclick="setScopeAndSearch('cases')" id="scope-cases" style="font-size:12px">Cases Only</button>
+                <button class="btn btn-primary" onclick="setScopeAndSearch('all')" id="scope-all" style="font-size:12px">All</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Summary -->
+    <div id="search-summary" style="margin-bottom:16px; font-size:13px; color:var(--text-muted)"></div>
+
+    <!-- Results -->
+    <div id="search-results" style="display:flex; flex-direction:column; gap:24px"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let currentScope = 'all';
+
+    function setScopeAndSearch(scope) {
+        currentScope = scope;
+        ['events','alerts','cases','all'].forEach(s => {
+            const btn = document.getElementById(`scope-${s}`);
+            btn.className = s === scope ? 'btn btn-primary' : 'btn btn-glass';
+            btn.style.fontSize = '12px';
+        });
+        doSearch();
+    }
+
+    async function doSearch() {
+        const q = document.getElementById('search-input').value.trim();
+        const resultsEl = document.getElementById('search-results');
+        const summaryEl = document.getElementById('search-summary');
+        if (!q) { resultsEl.innerHTML = ''; summaryEl.textContent = ''; return; }
+
+        resultsEl.innerHTML = '<div class="card glass" style="text-align:center; padding:40px; color:var(--text-muted)">Searching...</div>';
+        try {
+            const data = await apiFetch(`/api/search?q=${encodeURIComponent(q)}&scope=${currentScope}&limit=30`);
+            summaryEl.textContent = `Found ${data.total} result(s) for "${q}"`;
+
+            let html = '';
+
+            if (data.alerts.length) {
+                html += renderSection('Alerts', data.alerts, a => `
+                    <div class="card glass fade-in" style="border-left:3px solid var(--accent-${a.severity==='critical'?'red':a.severity==='warning'?'orange':'blue'}); cursor:pointer"
+                         onclick="window.location.href='/incidents'">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start">
+                            <div>
+                                <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px">
+                                    <span class="badge badge-${a.severity}">${a.severity.toUpperCase()}</span>
+                                    ${a.score ? `<span style="font-size:11px; font-family:var(--font-mono); color:var(--accent-orange)">Score: ${a.score}/100</span>` : ''}
+                                    ${a.mitre_tactic ? `<span class="badge" style="background:rgba(139,92,246,0.1); color:#a78bfa; border:1px solid rgba(139,92,246,0.3); font-size:10px">${a.mitre_tactic}</span>` : ''}
+                                </div>
+                                <div style="font-weight:600; color:var(--text-primary); margin-bottom:4px">${a.title}</div>
+                                <div style="font-size:12px; color:var(--text-secondary)">${a.description}</div>
+                            </div>
+                            <div style="text-align:right; font-size:11px; color:var(--text-muted)">
+                                <div>${a.hostname}</div>
+                                <div>${new Date(a.created_at).toLocaleString()}</div>
+                                ${a.case_id ? `<span class="badge badge-info" style="margin-top:4px">Case #${a.case_id}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `);
+            }
+
+            if (data.events.length) {
+                html += renderSection('Events', data.events, e => `
+                    <div class="card glass fade-in" style="border-left:3px solid var(--accent-${e.severity==='critical'?'red':e.severity==='warning'?'orange':'blue'})">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start">
+                            <div>
+                                <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px">
+                                    <code style="color:var(--accent-cyan); font-size:12px">${e.title}</code>
+                                    <span class="badge badge-${e.severity==='critical'?'critical':e.severity==='warning'?'warning':'info'}">${e.severity.toUpperCase()}</span>
+                                </div>
+                                <div style="font-size:13px; color:var(--text-primary); margin-bottom:4px">${e.description}</div>
+                            </div>
+                            <div style="text-align:right; font-size:11px; color:var(--text-muted)">
+                                <div>${e.hostname}</div>
+                                <div>${new Date(e.created_at).toLocaleString()}</div>
+                            </div>
+                        </div>
+                    </div>
+                `);
+            }
+
+            if (data.cases.length) {
+                html += renderSection('Cases', data.cases, c => `
+                    <div class="card glass fade-in" style="cursor:pointer" onclick="window.location.href='/investigate/${c.id}'">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start">
+                            <div>
+                                <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px">
+                                    <span class="badge badge-${c.severity==='critical'?'critical':'warning'}">Case #${c.id}</span>
+                                    <span class="badge badge-info">${c.status.toUpperCase()}</span>
+                                </div>
+                                <div style="font-weight:600; color:var(--text-primary); margin-bottom:4px">${c.title}</div>
+                                <div style="font-size:12px; color:var(--text-secondary)">${c.description}</div>
+                            </div>
+                            <div style="text-align:right; font-size:11px; color:var(--text-muted)">
+                                ${c.due_at ? `<div style="color:var(--accent-orange)">Due: ${new Date(c.due_at).toLocaleString()}</div>` : ''}
+                                <div>${c.created_at ? new Date(c.created_at).toLocaleDateString() : ''}</div>
+                            </div>
+                        </div>
+                    </div>
+                `);
+            }
+
+            if (!html) html = '<div class="card glass" style="text-align:center; padding:40px; color:var(--text-muted)">No results found. Try a different query.</div>';
+            resultsEl.innerHTML = html;
+        } catch (e) {
+            resultsEl.innerHTML = `<div class="card glass" style="text-align:center; padding:40px; color:var(--accent-red)">Search failed: ${e.message}</div>`;
+        }
+    }
+
+    function renderSection(title, items, renderFn) {
+        return `
+            <div>
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px">
+                    <h3 style="margin:0; font-size:14px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.1em">${title}</h3>
+                    <span class="badge badge-info">${items.length}</span>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px">
+                    ${items.map(renderFn).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    document.getElementById('search-input').addEventListener('keyup', e => {
+        if (e.key === 'Enter') doSearch();
+    });
+
+    // Check for ?q= in URL on load
+    const urlQ = new URLSearchParams(window.location.search).get('q');
+    if (urlQ) {
+        document.getElementById('search-input').value = urlQ;
+        doSearch();
+    }
+</script>
+{% endblock %}

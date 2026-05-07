@@ -46,10 +46,20 @@
   var flashInterval = null;
 
   socket.on('new_event', function (ev) {
+    if (typeof showToast === 'function') {
+      showToast(`${ev.severity.toUpperCase()}: ${ev.description}`, ev.severity);
+    }
     if (ev.severity === 'critical') {
       playAlertSound();
       startTitleFlash();
     }
+  });
+
+  socket.on('new_alert', function (alert) {
+    if (typeof showToast === 'function') {
+      showToast(`NEW ALERT: ${alert.title}`, 'error');
+    }
+    playAlertSound();
   });
 
   function playAlertSound() {

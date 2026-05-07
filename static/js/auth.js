@@ -25,14 +25,9 @@
     localStorage.removeItem('sp_user');
   }
 
-  /* ── Redirect to login if no token ────────────────────── */
-  (function guardPage() {
-    const publicPaths = ['/login'];
-    if (publicPaths.includes(window.location.pathname)) return;
-    if (!getToken()) {
-      window.location.href = '/login';
-    }
-  })();
+  /* ── Server handles routing redirects ────────────────────── */
+  // Removed guardPage() to prevent infinite loops. The backend's @login_required decorator
+  // properly handles redirecting unauthenticated users to /login.
 
   /* ── Populate sidebar user info ────────────────────────── */
   document.addEventListener('DOMContentLoaded', function () {

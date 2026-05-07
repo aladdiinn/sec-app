@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% set active = 'alerts' %}
+{% block page_title %}Security Incidents{% endblock %}
+{% block page_sub %}Active and prioritized security alerts requiring attention{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <!-- Search and Filters -->
+    <div class="card glass" style="margin-bottom:24px">
+        <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-end">
+            <div style="flex:1; min-width:200px">
+                <label class="stat-label" style="display:block; margin-bottom:8px">Severity</label>
+                <select id="filter-sev" class="glass" style="width:100%; padding:10px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="loadAlerts()">
+                    <option value="">All Severities</option>
+                    <option value="critical">Critical</option>
+                    <option value="warning">Warning</option>
+                    <option value="info">Info</option>
+                </select>
+            </div>
+            <div style="flex:1; min-width:200px">
+                <label class="stat-label" style="display:block; margin-bottom:8px">Status</label>
+                <select id="filter-status" class="glass" style="width:100%; padding:10px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="loadAlerts()">
+                    <option value="false">Open Incidents</option>
+                    <option value="true">Resolved</option>
+                    <option value="">All</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="loadAlerts()">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="white" stroke-width="2" fill="none"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <div id="alerts-list" style="display:flex; flex-direction:column; gap:16px">
+        <!-- Alert Items -->
+    </div>
+</div>
+
+<!-- Case Promotion Modal (Simple) -->
+<div id="case-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:32px; border-radius:var(--radius-lg); z-index:1000; width:400px; box-shadow:0 20px 60px rgba(0,0,0,0.8)">
+    <h2 class="card-title" style="margin-bottom:16px">Promote to Case</h2>
+    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:20px">This will group the alert into a new investigation case for tracking.</p>
+    <div style="margin-bottom:20px">
+        <label class="stat-label">Case Title</label>
+        <input type="text" id="case-title" class="glass" style="width:100%; padding:10px; margin-top:8px; color:var(--text-primary); border:1px solid var(--border-glass)">
+    </div>
+    <div style="display:flex; gap:12px; justify-content:flex-end">
+        <button class="btn btn-glass" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="btn-confirm-promote">Confirm Promotion</button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let currentAlertId = null;
+
+    function severityBadge(s) {
+        const map = { critical: 'badge-critical', warning: 'badge-warning', info: 'badge-info' };
+        return `<span class="badge ${map[s] || 'badge-info'}">${s.toUpperCase()}</span>`;
+    }
+
+    async function loadAlerts() {
+        const el = document.getElementById('alerts-list');
+        const sev = document.getElementById('filter-sev').value;
+        const status = document.getElementById('filter-status').value;
+
+        let url = '/api/alerts?limit=100';
+        if (sev) url += `&severity=${sev}`;
+        if (status !== '') url += `&is_resolved=${status}`;
+
+        el.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-muted)">Loading incidents...</div>';
+
+        try {
+            const data = await apiFetch(url);
+            if (!data.items.length) {
+                el.innerHTML = '<div class="card glass"><div style="text-align:center; padding:40px; color:var(--text-muted)">No active incidents found. Everything looks safe.</div></div>';
+                return;
+            }
+
+            el.innerHTML = data.items.map(a => `
+                <div class="card glass fade-in" style="border-left: 4px solid var(--accent-${a.severity === 'critical' ? 'red' : a.severity === 'warning' ? 'orange' : 'blue'})">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start">
+                        <div style="flex:1">
+                            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
+                                ${severityBadge(a.severity)}
+                                <span style="font-size:12px; color:var(--text-muted)">Alert #${a.id}</span>
+                                ${a.score ? `
+                                    <span title="Risk Score" style="display:inline-flex; align-items:center; gap:4px; font-size:11px; font-family:var(--font-mono); font-weight:700; padding:2px 8px; border-radius:4px; background:${a.score >= 80 ? 'rgba(239,68,68,0.15)' : a.score >= 50 ? 'rgba(234,179,8,0.15)' : 'rgba(59,130,246,0.15)'}; color:${a.score >= 80 ? 'var(--accent-red)' : a.score >= 50 ? 'var(--accent-orange)' : 'var(--accent-blue)'}; border:1px solid ${a.score >= 80 ? 'rgba(239,68,68,0.3)' : a.score >= 50 ? 'rgba(234,179,8,0.3)' : 'rgba(59,130,246,0.3)'}">
+                                        <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" fill="none"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                                        Score: ${a.score}/100
+                                    </span>
+                                ` : ''}
+                                ${a.auto_promoted ? `<span class="badge" style="background:rgba(16,185,129,0.1); color:var(--accent-green); border:1px solid rgba(16,185,129,0.3); font-size:10px">⚡ AUTO-ESCALATED</span>` : ''}
+                            </div>
+                            <h3 class="card-title" style="font-size:18px; margin-bottom:8px">${a.title}</h3>
+                            <p style="color:var(--text-secondary); margin-bottom:12px">${a.message}</p>
+                            
+                            ${a.case_id ? `
+                                <div style="display:flex; gap:12px; margin-bottom:12px">
+                                    <div id="sla-box-${a.id}" class="badge" style="background:rgba(239, 68, 68, 0.1); color:var(--accent-red); border:1px solid rgba(239, 68, 68, 0.3); display:flex; align-items:center; gap:6px">
+                                        <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                        <span id="sla-text-${a.id}">Loading SLA...</span>
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            ${a.mitre_tactic ? `
+                                <div style="display:flex; gap:8px; margin-bottom:12px">
+                                    <span class="badge" style="background:rgba(139, 92, 246, 0.1); color:#a78bfa; border:1px solid rgba(139, 92, 246, 0.3)">
+                                        <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" style="margin-right:4px"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                                        ${a.mitre_tactic} (${a.mitre_technique})
+                                    </span>
+                                </div>
+                            ` : ''}
+                            <div style="display:flex; gap:20px; font-size:12px; color:var(--text-muted)">
+                                <span>Host: <strong style="color:var(--text-primary)">${a.hostname}</strong></span>
+                                <span>Time: ${new Date(a.created_at).toLocaleString()}</span>
+                                <span>Type: <code style="color:var(--accent-cyan)">${a.alert_type}</code></span>
+                            </div>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:8px">
+                            ${!a.is_resolved ? `
+                                <button class="btn btn-primary" style="padding:6px 16px" onclick="resolveAlert(${a.id})">Resolve</button>
+                                ${!a.case_id ? `
+                                    <button class="btn btn-glass" style="padding:6px 16px" onclick="openPromoteModal(${a.id}, '${a.title}')">Promote to Case</button>
+                                ` : `
+                                    <button class="btn btn-glass" style="padding:6px 16px; border-color:var(--accent-blue); color:var(--accent-blue)" onclick="window.location.href='/investigate/${a.case_id}'">
+                                        <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" style="margin-right:4px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                                        Investigate Case #${a.case_id}
+                                    </button>
+                                `}
+                            ` : `<span class="badge badge-success">Resolved</span>`}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            
+            // Post-process SLA timers
+            data.items.filter(a => a.case_id).forEach(a => updateSLADisplay(a.id, a.case_id));
+        } catch (e) {
+            el.innerHTML = `<div class="card glass"><div style="text-align:center; padding:40px; color:var(--accent-red)">Failed to load incidents: ${e.message}</div></div>`;
+        }
+    }
+
+    async function resolveAlert(id) {
+        try {
+            await apiFetch(`/api/alerts/${id}/resolve`, { method: 'PATCH' });
+            showToast('Incident resolved', 'success');
+            loadAlerts();
+        } catch (e) { showToast('Error resolving incident', 'error'); }
+    }
+
+    async function updateSLADisplay(alertId, caseId) {
+        try {
+            const data = await apiFetch(`/api/cases`); // We could optimize this to a single fetch
+            const caseObj = data.find(c => c.id === caseId);
+            if (!caseObj || !caseObj.due_at) return;
+
+            const due = new Date(caseObj.due_at);
+            const updateTimer = () => {
+                const diff = due - new Date();
+                const textEl = document.getElementById(`sla-text-${alertId}`);
+                const boxEl = document.getElementById(`sla-box-${alertId}`);
+                if (!textEl) return;
+
+                if (diff <= 0) {
+                    textEl.innerText = 'SLA EXPIRED';
+                    boxEl.style.background = 'rgba(239, 68, 68, 0.2)';
+                    return;
+                }
+
+                const h = Math.floor(diff / 3600000);
+                const m = Math.floor((diff % 3600000) / 60000);
+                textEl.innerText = `SLA: ${h}h ${m}m remaining`;
+                
+                if (h < 4) {
+                    boxEl.style.color = 'var(--accent-red)';
+                    boxEl.style.borderColor = 'var(--accent-red)';
+                } else {
+                    boxEl.style.color = 'var(--accent-orange)';
+                    boxEl.style.borderColor = 'var(--accent-orange)';
+                }
+            };
+            
+            updateTimer();
+            setInterval(updateTimer, 60000);
+        } catch (e) { console.error('SLA error:', e); }
+    }
+
+    function openPromoteModal(id, title) {
+        currentAlertId = id;
+        document.getElementById('case-title').value = `Investigation: ${title}`;
+        document.getElementById('case-modal').style.display = 'block';
+    }
+
+    function closeModal() {
+        document.getElementById('case-modal').style.display = 'none';
+    }
+
+    document.getElementById('btn-confirm-promote').onclick = async () => {
+        const title = document.getElementById('case-title').value;
+        try {
+            const res = await apiFetch(`/api/alerts/${currentAlertId}/promote`, {
+                method: 'POST',
+                body: JSON.stringify({ title })
+            });
+            showToast(`Case #${res.case_id} created`, 'success');
+            closeModal();
+            loadAlerts();
+        } catch (e) { showToast('Promotion failed', 'error'); }
+    };
+
+    window.addEventListener('load', loadAlerts);
+</script>
+{% endblock %}
