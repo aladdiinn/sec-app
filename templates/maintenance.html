@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% set active = 'maintenance' %}
+{% block page_title %}Maintenance Management{% endblock %}
+{% block page_sub %}Manage server maintenance windows and suppression states{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <div id="maintenance-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap:20px">
+        <div class="center-spinner"><div class="spinner"></div></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function loadMaintenance() {
+        const grid = document.getElementById('maintenance-grid');
+        try {
+            const data = await apiFetch('/api/servers/maintenance');
+            if (data.length === 0) {
+                grid.innerHTML = '<div class="card glass" style="grid-column:1/-1; text-align:center; padding:60px">No servers currently in maintenance.</div>';
+                return;
+            }
+
+            grid.innerHTML = data.map(s => `
+                <div class="card glass fade-in">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:15px">
+                        <div>
+                            <h3 class="card-title">${s.hostname}</h3>
+                            <p class="text-meta">${s.ip_address}</p>
+                        </div>
+                        <span class="badge badge-warning">MAINTENANCE</span>
+                    </div>
+                    <div style="margin-bottom:20px; padding:12px; background:rgba(245,158,11,0.1); border-radius:6px; border:1px solid rgba(245,158,11,0.2)">
+                        <div class="text-meta" style="color:var(--amber)">STATUS</div>
+                        <div style="font-size:13px; font-weight:600">
+                            ${s.is_maintenance ? 'Permanent Suppression' : 'Timed Suppression'}
+                        </div>
+                        ${s.maintenance_until ? `
+                            <div class="text-meta" style="margin-top:8px">UNTIL</div>
+                            <div style="font-size:12px">${new Date(s.maintenance_until).toLocaleString()}</div>
+                        ` : ''}
+                    </div>
+                    <div style="display:flex; gap:10px">
+                        <button class="btn btn-primary" style="flex:1" onclick="window.location.href='/servers/${s.id}'">Manage</button>
+                        <button class="btn btn-glass" style="flex:1; border-color:var(--red); color:var(--red)" onclick="stopMaintenance(${s.id})">Stop Maintenance</button>
+                    </div>
+                </div>
+            `).join('');
+        } catch (e) { showToast('Error loading maintenance data', 'error'); }
+    }
+
+    async function stopMaintenance(id) {
+        try {
+            await apiFetch(\`/api/servers/\${id}\`, {
+                method: 'PATCH',
+                body: JSON.stringify({ is_maintenance: false, maintenance_hours: 0 })
+            });
+            showToast('Maintenance stopped', 'success');
+            loadMaintenance();
+        } catch (e) { showToast('Failed to stop maintenance', 'error'); }
+    }
+
+    window.addEventListener('load', loadMaintenance);
+</script>
+{% endblock %}

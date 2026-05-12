@@ -20,22 +20,26 @@
             <div class="stat-icon purple"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
             <div><div class="stat-value" id="stat-mitre-rules">—</div><div class="stat-label">MITRE Mapped</div></div>
         </div>
+        {% if session.get('user_role') != 'normal' %}
         <div class="card glass" style="display:flex; align-items:center; gap:16px; padding:20px">
             <button class="btn btn-primary" style="width:100%" onclick="showNewRuleModal()">
                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="white" stroke-width="2.5" fill="none" style="margin-right:8px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 New Rule
             </button>
         </div>
+        {% endif %}
     </div>
 
     <!-- Rules Table -->
     <div class="card glass">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
             <h3 class="card-title">Active Detection Signatures</h3>
+            {% if session.get('user_role') != 'normal' %}
             <button class="btn btn-glass" onclick="reloadRules()" style="padding:6px 16px; font-size:12px">
                 <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" style="margin-right:6px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                 Hot Reload
             </button>
+            {% endif %}
         </div>
         <div id="rules-table" style="overflow-x:auto">
             <table style="width:100%; border-collapse:collapse; font-size:13px">
@@ -184,7 +188,7 @@
                         ` : '<span style="color:var(--text-muted); font-size:12px">—</span>'}
                     </td>
                     <td style="padding:12px">
-                        <button class="btn btn-glass" style="padding:4px 10px; font-size:11px; border-color:var(--accent-red); color:var(--accent-red)" onclick="deleteRule(${r.id}, '${r.name}')">Delete</button>
+                        \${window.USER_ROLE !== 'normal' ? \`<button class="btn btn-glass" style="padding:4px 10px; font-size:11px; border-color:var(--accent-red); color:var(--accent-red)" onclick="deleteRule(\${r.id}, '\${r.name}')">Delete</button>\` : '<span style="color:var(--text-muted)">Read-only</span>'}
                     </td>
                 </tr>
             `).join('');

@@ -6,7 +6,7 @@
 {% block content %}
 <div class="dashboard-grid fade-in">
     <!-- Row 1: KPI Stats -->
-    <div class="stat-card glass glass-hover">
+    <div class="stat-card glass glass-hover" onclick="window.location.href='/assets'" style="cursor:pointer">
         <div class="stat-header">
             <div class="stat-icon blue">
                 <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
@@ -19,7 +19,7 @@
         </div>
     </div>
 
-    <div class="stat-card glass glass-hover">
+    <div class="stat-card glass glass-hover" onclick="window.location.href='/assets'" style="cursor:pointer">
         <div class="stat-header">
             <div class="stat-icon green">
                 <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
@@ -32,7 +32,7 @@
         </div>
     </div>
 
-    <div class="stat-card glass glass-hover">
+    <div class="stat-card glass glass-hover" onclick="window.location.href='/incidents'" style="cursor:pointer">
         <div class="stat-header">
             <div class="stat-icon red">
                 <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -45,16 +45,16 @@
         </div>
     </div>
 
-    <div class="stat-card glass glass-hover">
+    <div class="stat-card glass glass-hover" onclick="window.location.href='/assets?filter=maintenance'" style="cursor:pointer">
         <div class="stat-header">
             <div class="stat-icon orange">
-                <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
             </div>
-            <div class="pulse" style="width:8px; height:8px; border-radius:50%; background:var(--accent-orange)"></div>
+            <span class="badge badge-warning" id="kpi-maint-badge">0 Servers</span>
         </div>
         <div class="stat-info">
-            <div class="stat-value" id="kpi-events">0</div>
-            <div class="stat-label">Events Processed</div>
+            <div class="stat-value" id="kpi-maint">0</div>
+            <div class="stat-label">In Maintenance</div>
         </div>
     </div>
 </div>
@@ -86,12 +86,12 @@
         </div>
         <div style="margin-top:20px; display:grid; grid-template-columns: 1fr 1fr; gap:10px">
             <div class="glass" style="padding:10px; border-radius:var(--radius-sm); text-align:center">
-                <div style="font-size:10px; color:var(--text-muted)">Critical</div>
-                <div id="leg-crit" style="color:var(--accent-red); font-weight:700">0</div>
+                <div class="text-meta">Critical</div>
+                <div id="leg-crit" style="color:var(--red); font-weight:700">0</div>
             </div>
             <div class="glass" style="padding:10px; border-radius:var(--radius-sm); text-align:center">
-                <div style="font-size:10px; color:var(--text-muted)">Warning</div>
-                <div id="leg-warn" style="color:var(--accent-orange); font-weight:700">0</div>
+                <div class="text-meta">Warning</div>
+                <div id="leg-warn" style="color:var(--amber); font-weight:700">0</div>
             </div>
         </div>
     </div>
@@ -220,7 +220,8 @@ async function loadDashboard() {
         document.getElementById('kpi-online-badge').textContent = stats.online_servers + ' Online';
         document.getElementById('kpi-alerts').textContent = stats.open_alerts;
         document.getElementById('kpi-alerts-badge').textContent = stats.open_alerts + ' Active';
-        document.getElementById('kpi-events').textContent = (stats.total_events || 0).toLocaleString();
+        document.getElementById('kpi-maint').textContent = stats.maintenance_servers;
+        document.getElementById('kpi-maint-badge').textContent = stats.maintenance_servers + ' Active';
 
         const eventsData = await apiFetch('/api/events?limit=100');
         const items = eventsData.items || [];
@@ -242,7 +243,7 @@ async function loadDashboard() {
                 <div style="width:8px; height:8px; border-radius:50%; background:var(--accent-${e.severity === 'critical' ? 'red' : e.severity === 'warning' ? 'orange' : 'blue'})"></div>
                 <div style="flex:1">
                     <div style="font-size:13px; font-weight:500">${e.description.slice(0, 40)}...</div>
-                    <div style="font-size:11px; color:var(--text-muted)">${e.hostname || 'System'} · ${new Date(e.created_at).toLocaleTimeString()}</div>
+                    <div class="text-meta" style="margin-top:2px">${e.hostname || 'System'} · ${new Date(e.created_at).toLocaleTimeString()}</div>
                 </div>
             </div>
         `).join('');
@@ -255,7 +256,7 @@ async function loadDashboard() {
                 <td><span class="badge badge-${a.severity === 'critical' ? 'critical' : 'warning'}">${a.severity}</span></td>
                 <td style="font-weight:600">${a.title}</td>
                 <td>${a.hostname || 'Unknown'}</td>
-                <td style="color:var(--text-muted)">${new Date(a.created_at).toLocaleTimeString()}</td>
+                <td class="text-meta">${new Date(a.created_at).toLocaleTimeString()}</td>
                 <td><button class="btn btn-glass" style="padding:4px 8px" onclick="resolveAlert(${a.id})">Resolve</button></td>
             </tr>
         `).join('');
@@ -265,12 +266,12 @@ async function loadDashboard() {
         const bruteList = document.getElementById('brute-force-list');
         if (bruteData.length > 0) {
             bruteList.innerHTML = bruteData.map(b => `
-                <div class="glass" style="padding:12px; border-radius:var(--radius-sm); border-left: 3px solid var(--accent-red)">
+                <div class="glass" style="padding:10px; border-radius:var(--radius-sm); border-left: 3px solid var(--red)">
                     <div style="display:flex; justify-content:space-between">
-                        <span style="font-family:var(--font-mono); font-weight:700; color:var(--accent-red)">${b.ip}</span>
-                        <span style="font-size:11px; color:var(--text-muted)">${b.count} attempts</span>
+                        <span style="font-family:var(--mono); font-weight:700; color:var(--red)">${b.ip}</span>
+                        <span class="text-meta">${b.count} attempts</span>
                     </div>
-                    <div style="font-size:11px; color:var(--text-muted); margin-top:4px">Target: ${b.target}</div>
+                    <div class="text-sub" style="margin-top:3px">Target: ${b.target}</div>
                 </div>
             `).join('');
         }

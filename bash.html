@@ -1,0 +1,938 @@
+bash
+
+cat > /mnt/user-data/outputs/securepulse_new_features_guide.html << 'HTMLEOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SecurePulse — New Features Build Guide</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#040d1a; --bg2:#071526; --bg3:#0a1e35; --bg4:#0d2040;
+  --cyan:#00c8ff; --cyan2:rgba(0,200,255,0.12); --cyan3:rgba(0,200,255,0.05);
+  --green:#00ff88; --red:#ff3b5c; --amber:#ffb020; --purple:#a855f7;
+  --border:rgba(0,200,255,0.18); --border2:rgba(0,200,255,0.35);
+  --text:#c8e8f8; --text2:rgba(200,232,248,0.55); --text3:rgba(200,232,248,0.28);
+  --orb:'Orbitron',monospace; --mono:'Share Tech Mono',monospace; --raj:'Rajdhani',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--raj);font-size:15px;line-height:1.6;overflow-x:hidden;}
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,200,255,0.01) 3px,rgba(0,200,255,0.01) 4px);pointer-events:none;z-index:1000;}
+.sweep{position:fixed;top:0;left:0;right:0;height:1.5px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);animation:sweepDown 6s linear infinite;z-index:999;pointer-events:none;}
+@keyframes sweepDown{from{top:0;opacity:0}5%{opacity:1}95%{opacity:.6}to{top:100vh;opacity:0}}
+
+/* TOPBAR */
+.topbar{position:sticky;top:0;background:rgba(4,13,26,.96);border-bottom:1px solid var(--border);padding:14px 36px;display:flex;align-items:center;justify-content:space-between;backdrop-filter:blur(12px);z-index:900;}
+.logo{display:flex;align-items:center;gap:12px;}
+.logo-icon{width:36px;height:36px;background:var(--cyan2);border:1.5px solid var(--border2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;position:relative;}
+.logo-pulse{position:absolute;inset:-5px;border-radius:10px;border:1px solid rgba(0,200,255,.2);animation:lpulse 2.5s ease-in-out infinite;}
+@keyframes lpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.1)}}
+.logo-text{font-family:var(--orb);font-size:12px;letter-spacing:3px;color:var(--cyan);}
+.logo-sub{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;}
+.topbar-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.t-pill{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:var(--cyan3);}
+.t-pill span{color:var(--cyan);}
+.t-pill.amber span{color:var(--amber);}
+
+/* HERO */
+.hero{padding:50px 36px 30px;text-align:center;position:relative;}
+.hero::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:700px;height:200px;background:radial-gradient(ellipse,rgba(0,200,255,.06) 0%,transparent 70%);pointer-events:none;}
+.hero h1{font-family:var(--orb);font-size:24px;letter-spacing:4px;color:#fff;margin-bottom:8px;}
+.hero h1 span{color:var(--cyan);}
+.hero-sub{font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:2px;margin-bottom:24px;}
+.chip-row{display:flex;justify-content:center;flex-wrap:wrap;gap:8px;margin-bottom:32px;}
+.chip{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:5px 14px;border-radius:20px;border:1px solid;}
+.chip.cyan{color:var(--cyan);border-color:rgba(0,200,255,.3);background:rgba(0,200,255,.06);}
+.chip.amber{color:var(--amber);border-color:rgba(255,176,32,.3);background:rgba(255,176,32,.06);}
+.chip.green{color:var(--green);border-color:rgba(0,255,136,.3);background:rgba(0,255,136,.06);}
+.chip.purple{color:var(--purple);border-color:rgba(168,85,247,.3);background:rgba(168,85,247,.06);}
+.chip.red{color:var(--red);border-color:rgba(255,59,92,.3);background:rgba(255,59,92,.06);}
+
+/* CONTAINER */
+.container{max-width:1100px;margin:0 auto;padding:0 28px 60px;}
+
+/* SECTION HEADER */
+.sec-hdr{display:flex;align-items:center;gap:14px;margin-bottom:22px;padding-bottom:12px;border-bottom:1px solid var(--border);position:relative;}
+.sec-hdr::after{content:'';position:absolute;bottom:-1px;left:0;width:140px;height:1px;background:var(--cyan);}
+.sec-icon{width:42px;height:42px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+.sec-title{font-family:var(--orb);font-size:13px;letter-spacing:3px;color:#fff;}
+.sec-sub{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;margin-top:3px;}
+
+/* FEATURE BLOCK — FULL WIDTH */
+.feat-block{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px 28px;margin-bottom:18px;position:relative;overflow:hidden;}
+.feat-block::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
+.feat-block.amber-block{border-color:rgba(255,176,32,.25);}
+.feat-block.amber-block::before{background:linear-gradient(90deg,transparent,var(--amber),transparent);}
+.feat-block.purple-block{border-color:rgba(168,85,247,.25);}
+.feat-block.purple-block::before{background:linear-gradient(90deg,transparent,var(--purple),transparent);}
+.feat-block.green-block{border-color:rgba(0,255,136,.2);}
+.feat-block.green-block::before{background:linear-gradient(90deg,transparent,var(--green),transparent);}
+
+.feat-num{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;margin-bottom:4px;}
+.feat-title{font-family:var(--orb);font-size:14px;letter-spacing:2px;color:#fff;margin-bottom:10px;}
+.feat-desc{font-family:var(--raj);font-size:14px;color:var(--text2);margin-bottom:16px;line-height:1.7;}
+
+/* GRID INSIDE FEAT */
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;}
+.info-grid.three{grid-template-columns:1fr 1fr 1fr;}
+.info-box{background:var(--bg);border:1px solid rgba(0,200,255,.1);border-radius:8px;padding:14px 16px;}
+.ib-label{font-family:var(--mono);font-size:8px;letter-spacing:2px;color:var(--cyan);margin-bottom:8px;}
+.ib-label.amber{color:var(--amber);}
+.ib-label.green{color:var(--green);}
+.ib-label.purple{color:var(--purple);}
+.ib-text{font-family:var(--raj);font-size:13px;color:var(--text2);line-height:1.6;}
+.ib-code{font-family:var(--mono);font-size:11px;color:var(--text);line-height:1.8;}
+
+/* ROLE TABLE */
+.role-table{width:100%;border-collapse:collapse;margin-top:8px;}
+.role-table th{font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--cyan);text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);}
+.role-table td{font-family:var(--raj);font-size:13px;color:var(--text2);padding:10px 12px;border-bottom:1px solid rgba(0,200,255,.07);vertical-align:top;}
+.role-table tr:hover td{background:var(--cyan3);}
+.role-name{font-family:var(--mono);font-size:11px;font-weight:bold;}
+.role-name.super{color:#ff3b5c;}
+.role-name.admin{color:var(--amber);}
+.role-name.normal{color:var(--green);}
+.perm-yes{color:var(--green);font-family:var(--mono);font-size:11px;}
+.perm-no{color:var(--text3);font-family:var(--mono);font-size:11px;}
+.perm-ltd{color:var(--amber);font-family:var(--mono);font-size:11px;}
+
+/* FLOW STEPS */
+.flow{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
+.flow-step{display:flex;align-items:flex-start;gap:12px;}
+.flow-num{width:24px;height:24px;border-radius:50%;background:var(--cyan2);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9px;color:var(--cyan);flex-shrink:0;margin-top:2px;}
+.flow-num.amber{background:rgba(255,176,32,.1);border-color:rgba(255,176,32,.3);color:var(--amber);}
+.flow-num.green{background:rgba(0,255,136,.08);border-color:rgba(0,255,136,.25);color:var(--green);}
+.flow-num.purple{background:rgba(168,85,247,.1);border-color:rgba(168,85,247,.3);color:var(--purple);}
+.flow-text{font-family:var(--raj);font-size:13px;color:var(--text2);line-height:1.6;}
+.flow-text strong{color:var(--text);font-weight:600;}
+
+/* UI MOCKUP WIREFRAME */
+.mockup{background:#040d1a;border:1px solid var(--border);border-radius:10px;padding:18px;margin-top:16px;overflow:hidden;}
+.mockup-title{font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--cyan);margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+.mockup-title::before{content:'';display:inline-block;width:6px;height:6px;background:var(--cyan);border-radius:50%;}
+
+/* User Management Mockup */
+.um-layout{display:grid;grid-template-columns:200px 1fr;gap:14px;min-height:260px;}
+.um-sidebar{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 0;}
+.um-nav-item{padding:8px 14px;font-family:var(--mono);font-size:10px;letter-spacing:.5px;color:var(--text2);display:flex;align-items:center;gap:8px;}
+.um-nav-item.active{background:var(--cyan2);color:var(--cyan);border-left:2px solid var(--cyan);}
+.um-main{display:flex;flex-direction:column;gap:10px;}
+.um-header-row{display:flex;justify-content:space-between;align-items:center;}
+.um-page-title{font-family:var(--orb);font-size:11px;letter-spacing:2px;color:#fff;}
+.um-btn{font-family:var(--mono);font-size:9px;letter-spacing:1px;padding:6px 14px;border:1px solid var(--border2);border-radius:4px;color:var(--cyan);background:var(--cyan2);}
+.um-table-hdr{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 120px;gap:10px;padding:6px 12px;background:var(--bg3);border-radius:4px;}
+.um-col-hdr{font-family:var(--mono);font-size:8px;letter-spacing:2px;color:var(--text3);}
+.um-row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 120px;gap:10px;padding:9px 12px;border-bottom:1px solid rgba(0,200,255,.07);align-items:center;}
+.um-name{font-family:var(--mono);font-size:11px;color:var(--text);}
+.um-email{font-family:var(--mono);font-size:10px;color:var(--text2);}
+.role-badge{font-family:var(--mono);font-size:9px;padding:2px 8px;border-radius:3px;border:1px solid;display:inline-block;}
+.role-badge.super{color:#ff3b5c;border-color:rgba(255,59,92,.35);}
+.role-badge.admin{color:var(--amber);border-color:rgba(255,176,32,.35);}
+.role-badge.normal{color:var(--green);border-color:rgba(0,255,136,.35);}
+.um-status-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:5px;}
+.um-status-dot.on{background:var(--green);}
+.um-status-dot.off{background:var(--text3);}
+.um-action{font-family:var(--mono);font-size:9px;color:var(--cyan);letter-spacing:1px;}
+
+/* Project Page Mockup */
+.proj-layout{display:flex;flex-direction:column;gap:14px;}
+.proj-topbar-mock{display:flex;justify-content:space-between;align-items:center;}
+.proj-title-mock{font-family:var(--orb);font-size:12px;letter-spacing:2px;color:#fff;}
+.proj-btn{font-family:var(--mono);font-size:9px;letter-spacing:1px;padding:7px 14px;border:1px solid var(--border2);border-radius:4px;color:var(--cyan);background:var(--cyan2);}
+.proj-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.proj-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;position:relative;overflow:hidden;cursor:pointer;}
+.proj-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
+.proj-card:hover{border-color:rgba(0,200,255,.4);background:var(--bg3);}
+.proj-card-name{font-family:var(--orb);font-size:11px;color:#fff;letter-spacing:1px;margin-bottom:6px;}
+.proj-card-meta{font-family:var(--mono);font-size:9px;color:var(--text2);margin-bottom:8px;}
+.proj-card-stat{display:flex;gap:8px;flex-wrap:wrap;}
+.proj-stat-chip{font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:3px;border:1px solid;}
+
+/* New Project Modal */
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:20px;max-width:520px;margin:10px auto;}
+.modal-title{font-family:var(--orb);font-size:12px;letter-spacing:2px;color:var(--cyan);margin-bottom:16px;}
+.modal-field{margin-bottom:12px;}
+.modal-label{font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--text2);margin-bottom:5px;}
+.modal-input{background:rgba(0,200,255,.05);border:1px solid rgba(0,200,255,.2);border-radius:5px;padding:8px 12px;width:100%;font-family:var(--mono);font-size:11px;color:var(--text);display:flex;align-items:center;gap:8px;}
+.modal-input.search{border-color:rgba(0,200,255,.3);}
+.ep-list{background:var(--bg);border:1px solid var(--border);border-radius:5px;margin-top:6px;}
+.ep-item{display:flex;justify-content:space-between;align-items:center;padding:7px 12px;border-bottom:1px solid rgba(0,200,255,.07);}
+.ep-name{font-family:var(--mono);font-size:10px;color:var(--text);}
+.ep-status{font-family:var(--mono);font-size:8px;color:var(--red);border:1px solid rgba(255,59,92,.3);border-radius:3px;padding:1px 5px;}
+.ep-add-btn{font-family:var(--mono);font-size:8px;color:var(--cyan);border:1px solid rgba(0,200,255,.3);border-radius:3px;padding:1px 6px;}
+.modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;}
+.modal-cancel{font-family:var(--mono);font-size:10px;color:var(--text2);border:1px solid var(--border);border-radius:4px;padding:6px 14px;}
+.modal-save{font-family:var(--mono);font-size:10px;color:var(--cyan);border:1px solid rgba(0,200,255,.4);border-radius:4px;padding:6px 14px;background:var(--cyan2);}
+
+/* Project Dashboard Mockup */
+.proj-dash{display:flex;flex-direction:column;gap:10px;}
+.proj-dash-topbar{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);}
+.proj-dash-name{font-family:var(--orb);font-size:13px;color:#fff;letter-spacing:2px;}
+.proj-dash-sub{font-family:var(--mono);font-size:9px;color:var(--text2);letter-spacing:1px;}
+.back-btn{font-family:var(--mono);font-size:9px;color:var(--cyan);border:1px solid var(--border);border-radius:3px;padding:3px 8px;}
+.proj-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.ps-card{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px;position:relative;overflow:hidden;}
+.ps-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
+.ps-num{font-family:var(--orb);font-size:18px;color:var(--cyan);}
+.ps-lbl{font-family:var(--mono);font-size:8px;letter-spacing:1.5px;color:var(--text2);margin-top:3px;}
+.proj-ep-list{background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.proj-ep-hdr{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px;padding:8px 14px;background:var(--bg3);}
+.proj-ep-col{font-family:var(--mono);font-size:8px;letter-spacing:2px;color:var(--text3);}
+.proj-ep-row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(0,200,255,.07);align-items:center;}
+.proj-ep-name{font-family:var(--mono);font-size:10px;color:var(--text);}
+.proj-ep-ip{font-family:var(--mono);font-size:10px;color:var(--cyan);}
+
+/* PROMPT SECTION */
+.prompt-wrap{background:#020a14;border:1px solid var(--border);border-radius:8px;padding:18px 20px;font-family:var(--mono);font-size:11.5px;line-height:1.9;color:#7ab8d4;margin-top:16px;}
+.pk{color:var(--cyan);font-weight:bold;}
+.pv{color:#d0eeff;}
+.pc{color:rgba(100,180,220,.3);font-style:italic;}
+.pa{color:var(--amber);}
+.pg{color:var(--green);}
+.copy-btn{margin-top:12px;padding:7px 20px;background:rgba(0,200,255,.08);border:1px solid rgba(0,200,255,.3);border-radius:5px;color:var(--cyan);font-family:var(--mono);font-size:10px;letter-spacing:2px;cursor:pointer;display:inline-block;transition:background .2s;}
+.copy-btn:hover{background:rgba(0,200,255,.18);}
+
+/* FOOTER */
+.footer{border-top:1px solid var(--border);padding:28px 36px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--text3);letter-spacing:2px;}
+.dot-live{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:6px;vertical-align:middle;animation:dlive 1.5s ease infinite;}
+@keyframes dlive{0%,100%{opacity:1}50%{opacity:.2}}
+
+hr.divider{border:none;border-top:1px solid var(--border);margin:40px 0;}
+</style>
+</head>
+<body>
+<div class="sweep"></div>
+
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-icon">🛡<div class="logo-pulse"></div></div>
+    <div>
+      <div class="logo-text">SECUREPULSE</div>
+      <div class="logo-sub">NEW FEATURES BUILD GUIDE v2</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="t-pill">7 MISSING FEATURES: <span>DOCUMENTED</span></div>
+    <div class="t-pill">USER MGMT: <span>DOCUMENTED</span></div>
+    <div class="t-pill amber">PROJECT PAGE: <span>DOCUMENTED</span></div>
+  </div>
+</div>
+
+<div class="hero">
+  <h1>9 <span>NEW FEATURES</span> — COMPLETE BUILD GUIDE</h1>
+  <div class="hero-sub">DEEP EXPLANATION · UI WIREFRAMES · ROLE PERMISSIONS · DEVELOPER PROMPTS</div>
+  <div class="chip-row">
+    <span class="chip amber">⚠ 7 Previously Missing Features</span>
+    <span class="chip green">👥 User Management + Roles</span>
+    <span class="chip cyan">📁 Project Page + Per-Project Dashboard</span>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ===== PART A: 7 MISSING FEATURES ===== -->
+<div class="sec-hdr" style="margin-bottom:28px;">
+  <div class="sec-icon" style="background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.3);">⚠</div>
+  <div>
+    <div class="sec-title">PART A — 7 MISSING FEATURES</div>
+    <div class="sec-sub">FROM REQUIREMENTS DOCUMENT — NOT YET IN YOUR APP</div>
+  </div>
+</div>
+
+<!-- #21 -->
+<div class="feat-block amber-block">
+  <div class="feat-num">#21 — INVESTIGATION & FORENSICS</div>
+  <div class="feat-title">GRAPH-BASED RELATIONSHIP VIEW</div>
+  <div class="feat-desc">A visual node-graph that maps every entity involved in an attack: Users → Hosts → IPs → Alerts. Instead of reading a list of events, analysts see the attack as a connected web — instantly understanding who connected where, when, and what it triggered.</div>
+  <div class="info-grid three">
+    <div class="info-box">
+      <div class="ib-label">HOW IT WORKS</div>
+      <div class="ib-text">Build with D3.js force-directed graph. Nodes = entities (IP, Host, User, Alert). Edges = relationships (logged-into, triggered, connected-to). Colour: red = malicious, orange = isolated, cyan = normal. Clicking a node shows its event list in a side panel.</div>
+    </div>
+    <div class="info-box">
+      <div class="ib-label amber">WHERE TO PUT IT</div>
+      <div class="ib-text">Inside the Case Investigation view (when analyst clicks "Investigate Case #34"). Add a tab toggle: [Events List] [Relationship Graph]. The graph auto-builds from the case's event data — no manual input needed.</div>
+    </div>
+    <div class="info-box">
+      <div class="ib-label green">REAL EXAMPLE</div>
+      <div class="ib-text">Case #34 graph shows: IP 198.51.100.42 → (6 failed logins) → e2e-test-server → (triggered) → brute-force alert → (fired) → Auto-Isolate playbook → HOST ISOLATED. One visual, full attack story.</div>
+    </div>
+  </div>
+  <div class="prompt-wrap" id="p21">
+<span class="pc">// FEATURE #21 — GRAPH RELATIONSHIP VIEW</span><br>
+<span class="pk">WHERE:</span> <span class="pv">Case investigation detail view — add tab: [Timeline] [Graph View]</span><br>
+<span class="pk">LIBRARY:</span> <span class="pv">D3.js v7 force-directed graph (or vis.js Network)</span><br>
+<span class="pk">NODES:</span><br>
+<span class="pv">• IP address node → red if in IOC list, cyan if clean<br>
+• Host node → orange if ISOLATED, red if CRITICAL risk, green if INFO<br>
+• User node → yellow if anomalous activity<br>
+• Alert node → red=critical, amber=warning diamond shape<br>
+• Playbook node → purple hexagon</span><br>
+<span class="pk">EDGES (connections):</span><br>
+<span class="pv">• IP → Host: "ssh_login" or "failed_login" with count label<br>
+• Host → Alert: "triggered" with rule name<br>
+• Alert → Playbook: "fired" if auto-executed<br>
+• Playbook → Host: "isolated" action</span><br>
+<span class="pk">INTERACTIONS:</span><br>
+<span class="pv">• Click node → side panel shows: all events for that entity, timestamps, linked alerts<br>
+• Hover edge → tooltip shows: event count, first/last seen, event types<br>
+• Double-click IP node → pivot to Threat Intel IOC search for that IP<br>
+• Zoom/pan with mouse wheel + drag</span><br>
+<span class="pk">DATA SOURCE:</span> <span class="pv">Pull from existing Case events API — same data as Timeline tab, rendered as graph</span><br>
+<span class="pk">STYLE:</span> <span class="pv">Dark bg #040d1a, node labels in Share Tech Mono 10px, cyan glow on selected node, animated edges (dashed line moving in direction of attack flow)</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('p21',this)">COPY PROMPT #21</button>
+</div>
+
+<!-- #24 -->
+<div class="feat-block amber-block">
+  <div class="feat-num">#24 — RESPONSE & CONTAINMENT</div>
+  <div class="feat-title">ACCOUNT DISABLE / PASSWORD RESET</div>
+  <div class="feat-desc">When a user account is identified as compromised, analysts can disable the account or force a password reset directly from the SecurePulse incident view — without logging into Active Directory, Okta, or any other identity provider separately.</div>
+  <div class="info-grid">
+    <div class="info-box">
+      <div class="ib-label">HOW IT WORKS</div>
+      <div class="flow">
+        <div class="flow-step"><div class="flow-num amber">1</div><div class="flow-text">Analyst opens Incident/Case detail. Sees "Affected User: jake@company.com" identified in events.</div></div>
+        <div class="flow-step"><div class="flow-num amber">2</div><div class="flow-text">Clicks <strong>"Disable Account"</strong> button in Actions panel. SecurePulse calls your AD/LDAP/Okta API to disable the user.</div></div>
+        <div class="flow-step"><div class="flow-num amber">3</div><div class="flow-text">Confirmation banner: "Account jake@company.com disabled at 02:15AM by analyst A". Logged in Audit Trail.</div></div>
+        <div class="flow-step"><div class="flow-num amber">4</div><div class="flow-text"><strong>"Force Password Reset"</strong> similarly calls the identity provider's reset API. User gets a reset email on next login attempt.</div></div>
+      </div>
+    </div>
+    <div class="info-box">
+      <div class="ib-label amber">WHERE TO PUT IT</div>
+      <div class="ib-text" style="margin-bottom:10px;">1. Incident/Case detail → right sidebar "Response Actions" panel<br><br>2. Also add as a Playbook action step so it can be automated<br><br>3. Settings → Integrations → "Identity Provider" config section (where you enter Okta/AD credentials)</div>
+      <div class="ib-label green" style="margin-top:10px;">ALSO ADD AS PLAYBOOK ACTION</div>
+      <div class="ib-text">In Playbook Builder, add action type: "disable_account" with parameter: "affected_user_from_event". Allows fully automated response: detect compromise → isolate host AND disable user simultaneously.</div>
+    </div>
+  </div>
+  <div class="prompt-wrap" id="p24">
+<span class="pc">// FEATURE #24 — ACCOUNT DISABLE / PASSWORD RESET</span><br>
+<span class="pk">WHERE TO ADD IN UI:</span><br>
+<span class="pv">1. Incident detail page → right sidebar → new "RESPONSE ACTIONS" collapsible panel<br>
+2. Playbook Builder → add new action type in action dropdown<br>
+3. Settings → Integrations → new "Identity Provider" section</span><br><br>
+<span class="pk">UI COMPONENTS:</span><br>
+<span class="pv">• "Affected Accounts" section in incident detail — auto-populated from event usernames<br>
+• Per user row: [Username] [Last login] [DISABLE ACCOUNT] [FORCE PASSWORD RESET] buttons<br>
+• Buttons: outlined style, red border for disable, amber border for reset<br>
+• Confirmation modal before executing: "This will disable access for jake@company.com. Confirm?"<br>
+• Success/failure toast notification after API call<br>
+• Disabled account shows "ACCOUNT DISABLED" badge on the user row</span><br><br>
+<span class="pk">BACKEND:</span><br>
+<span class="pv">• POST /api/response/disable-account {userId, incidentId}<br>
+• Calls configured identity provider (Okta API / LDAP / Azure AD Graph API)<br>
+• Logs action to audit trail: {actor, action:"account_disabled", target:userId, timestamp, incidentId}<br>
+• Returns success/failure with provider response</span><br><br>
+<span class="pk">SETTINGS CONFIG (Settings → Integrations → Identity Provider):</span><br>
+<span class="pv">• Provider type: [Okta / Azure AD / LDAP / Google Workspace]<br>
+• API endpoint, Client ID, Client Secret fields<br>
+• Test Connection button<br>
+• "On Compromise" toggle: auto-disable vs manual approval</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('p24',this)">COPY PROMPT #24</button>
+</div>
+
+<!-- #25 -->
+<div class="feat-block amber-block">
+  <div class="feat-num">#25 — RESPONSE & CONTAINMENT</div>
+  <div class="feat-title">FIREWALL RULE PUSH</div>
+  <div class="feat-desc">Block malicious IPs or domains at the firewall level directly from SecurePulse. Instead of logging into your firewall console separately, one click in the SOC pushes a DENY rule to your perimeter firewall, AWS security group, or cloud WAF.</div>
+  <div class="info-grid">
+    <div class="info-box">
+      <div class="ib-label">WHERE TO ADD "BLOCK IP" BUTTON</div>
+      <div class="flow">
+        <div class="flow-step"><div class="flow-num">1</div><div class="flow-text"><strong>Threat Intel page</strong> — IOC row → "BLOCK IP" action button (next to REMOVE button)</div></div>
+        <div class="flow-step"><div class="flow-num">2</div><div class="flow-text"><strong>Incident detail</strong> → source IP in event row → "Block this IP" quick action</div></div>
+        <div class="flow-step"><div class="flow-num">3</div><div class="flow-text"><strong>Playbook Builder</strong> → add "block_ip" as action type for automated blocking</div></div>
+      </div>
+    </div>
+    <div class="info-box">
+      <div class="ib-label amber">WHAT HAPPENS WHEN BLOCKED</div>
+      <div class="ib-text">• IP row shows "BLOCKED" badge in Threat Intel<br>• Shows which firewalls it's blocked on: [AWS SG ✓] [Perimeter FW ✓]<br>• Audit log entry: "IP 198.51.100.42 blocked on Palo Alto by analyst A at 02:18AM"<br>• "Unblock" button available for reversal<br>• Block auto-expires after configurable TTL (e.g., 30 days)</div>
+    </div>
+  </div>
+  <div class="prompt-wrap" id="p25">
+<span class="pc">// FEATURE #25 — FIREWALL RULE PUSH</span><br>
+<span class="pk">UI ADDITIONS:</span><br>
+<span class="pv">• Threat Intel page → IOC table → add "BLOCK" button in Actions column (red outlined, Mono font)<br>
+• Incident detail → source_ip field → add "⊘ Block IP" quick link<br>
+• After blocking: show "BLOCKED ON: [FW-01] [AWS-SG]" tag on IOC row</span><br><br>
+<span class="pk">BLOCK ACTION MODAL:</span><br>
+<span class="pv">• Title: "BLOCK IP: 198.51.100.42"<br>
+• Checkboxes for each configured firewall: [✓ Perimeter Firewall] [✓ AWS Security Group us-east-1] [✓ Azure NSG]<br>
+• TTL selector: 1hr / 24hr / 7days / Permanent<br>
+• Reason field (required, logged to audit trail)<br>
+• CONFIRM BLOCK button → calls each selected firewall's API</span><br><br>
+<span class="pk">BACKEND:</span><br>
+<span class="pv">• POST /api/response/block-ip {ip, firewalls:[], ttl, reason, incidentId}<br>
+• Parallel calls to each firewall API (Palo Alto PAN-OS / Cisco ASA / AWS EC2 ModifySecurityGroup / pfSense)<br>
+• Store block record: {ip, blocked_by, blocked_at, ttl, firewalls, status}<br>
+• Schedule auto-unblock job if TTL set<br>
+• Log to audit trail with all details</span><br><br>
+<span class="pk">SETTINGS (Settings → Integrations → Firewalls):</span><br>
+<span class="pv">• Add firewall: Name, Type (Palo Alto/Cisco/AWS/pfSense/Custom), API endpoint, credentials<br>
+• Test Connection button per firewall<br>
+• Default TTL setting</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('p25',this)">COPY PROMPT #25</button>
+</div>
+
+<!-- #32 -->
+<div class="feat-block amber-block">
+  <div class="feat-num">#32 — PLATFORM & INTEGRATION</div>
+  <div class="feat-title">SINGLE SIGN-ON (SSO) + MFA</div>
+  <div class="feat-desc">Analysts log into SecurePulse using their existing company identity (Okta, Microsoft, Google) instead of separate credentials. Multi-factor authentication is enforced for all users — no exceptions. This is critical for a security product.</div>
+  <div class="info-grid">
+    <div class="info-box">
+      <div class="ib-label">LOGIN PAGE CHANGES</div>
+      <div class="flow">
+        <div class="flow-step"><div class="flow-num">1</div><div class="flow-text">Add SSO buttons below existing form: <strong>[Login with Okta]</strong> <strong>[Login with Microsoft]</strong> <strong>[Login with Google]</strong> — each with provider logo</div></div>
+        <div class="flow-step"><div class="flow-num">2</div><div class="flow-text">Clicking SSO button → redirects to provider's auth page → user authenticates + MFA there → redirected back with JWT token</div></div>
+        <div class="flow-step"><div class="flow-num">3</div><div class="flow-text">SecurePulse maps provider groups/roles to internal roles (Admin/Normal) via Settings config</div></div>
+      </div>
+    </div>
+    <div class="info-box">
+      <div class="ib-label amber">MFA ENFORCEMENT</div>
+      <div class="ib-text" style="margin-bottom:10px;">For non-SSO (local) accounts:<br>• After password login → TOTP prompt (Google Authenticator / Authy)<br>• QR code setup on first login<br>• Backup codes generated and downloadable<br>• Superuser can see who has MFA enabled in User Management</div>
+      <div class="ib-label amber">SETTINGS CONFIG</div>
+      <div class="ib-text">Settings → Security → SSO/MFA:<br>• Enable/disable each SSO provider<br>• Client ID, Client Secret, Tenant ID per provider<br>• "Enforce MFA for all users" toggle (Superuser only)<br>• Session timeout: 1hr / 8hr / 24hr</div>
+    </div>
+  </div>
+  <div class="prompt-wrap" id="p32">
+<span class="pc">// FEATURE #32 — SSO / MFA</span><br>
+<span class="pk">LOGIN PAGE ADDITIONS:</span><br>
+<span class="pv">• Divider line: "OR LOGIN WITH" between existing form and SSO buttons<br>
+• SSO buttons row (full width, outlined cyan style, provider icon + name):<br>
+  [🔵 Continue with Microsoft] [🟠 Continue with Okta] [🔴 Continue with Google]<br>
+• Each button calls /auth/sso/{provider} which initiates SAML/OIDC flow<br>
+• On return: validate JWT, create session, redirect to Dashboard</span><br><br>
+<span class="pk">MFA FLOW (local accounts):</span><br>
+<span class="pv">• After successful password auth → intermediate screen: "MFA VERIFICATION"<br>
+• TOTP input: 6-digit code field, Share Tech Mono font, auto-submit on 6 digits<br>
+• "Use backup code instead" link<br>
+• First login: show QR code setup screen with secret + verify step</span><br><br>
+<span class="pk">SETTINGS → SECURITY → SSO/MFA:</span><br>
+<span class="pv">• Toggle per provider (Okta / Microsoft / Google)<br>
+• Config fields: Client ID, Client Secret, Redirect URI (auto-filled), Tenant ID<br>
+• SAML: Metadata URL or Entity ID + IdP certificate upload<br>
+• "Test SSO" button<br>
+• MFA Settings: enforce_all toggle, allowed_methods: [TOTP, SMS, Hardware Key]<br>
+• Session timeout dropdown</span><br><br>
+<span class="pk">BACKEND:</span><br>
+<span class="pv">• SAML SP library (e.g., passport-saml for Node / python3-saml for Python)<br>
+• OIDC: standard OAuth2 code flow, store refresh tokens securely<br>
+• Map provider attributes → user role via configurable attribute mapping<br>
+• Enforce MFA check on every session creation</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('p32',this)">COPY PROMPT #32</button>
+</div>
+
+<!-- #33 -->
+<div class="feat-block amber-block">
+  <div class="feat-num">#33 — PLATFORM & INTEGRATION</div>
+  <div class="feat-title">HIGH AVAILABILITY & DISASTER RECOVERY</div>
+  <div class="feat-desc">SecurePulse itself must never go down. HA means multiple instances run simultaneously — if one crashes, others continue without interruption. DR defines how fast you recover (RTO) and how much data you can afford to lose (RPO).</div>
+  <div class="info-grid">
+    <div class="info-box">
+      <div class="ib-label">KEY CONCEPTS EXPLAINED</div>
+      <div class="ib-text"><strong>RPO (Recovery Point Objective)</strong> = max data loss acceptable. RPO of 1 min = you can lose max 1 minute of events if a disaster happens. Achieved by: database replication every minute.<br><br><strong>RTO (Recovery Time Objective)</strong> = max downtime acceptable. RTO of 30 sec = service must be back within 30 seconds of failure. Achieved by: load balancer + standby replica auto-promotion.</div>
+    </div>
+    <div class="info-box">
+      <div class="ib-label amber">SYSTEM HEALTH PAGE (UI to BUILD)</div>
+      <div class="ib-text">New page: Settings → System Health:<br>• Uptime counter (live, since last restart)<br>• Active replicas: list of nodes with status [PRIMARY] [REPLICA-1] [REPLICA-2]<br>• Replication lag: current ms lag<br>• Last DR test: date + result (PASS/FAIL)<br>• "Run DR Test" button (Superuser only)<br>• Alert if replication lag > threshold</div>
+    </div>
+  </div>
+  <div class="prompt-wrap" id="p33">
+<span class="pc">// FEATURE #33 — HIGH AVAILABILITY & DR</span><br>
+<span class="pk">INFRASTRUCTURE (DevOps layer):</span><br>
+<span class="pv">• Deploy minimum 2 app instances behind load balancer (nginx/AWS ALB)<br>
+• Database: PostgreSQL primary + 1 streaming replica (or managed: AWS RDS Multi-AZ)<br>
+• Redis: Sentinel or Cluster mode for session/cache HA<br>
+• Target RPO: ≤ 1 minute (sync replication or near-sync)<br>
+• Target RTO: ≤ 30 seconds (auto-failover via load balancer health checks)</span><br><br>
+<span class="pk">SYSTEM HEALTH PAGE (Settings → System Health):</span><br>
+<span class="pv">• Page title: "SYSTEM HEALTH" — Orbitron font, same cyber style<br>
+• Uptime widget: live counter in HH:MM:SS (Orbitron, cyan)<br>
+• Nodes table: [Node Name] [Region] [Role] [Status] [Last Heartbeat] [CPU%] [Mem%]<br>
+• DB Replication section: Primary node, replica nodes, replication lag in ms<br>
+• "RUN DR FAILOVER TEST" button — Superuser only — sends test traffic to replica<br>
+• DR test history log: last 5 tests with timestamp + result<br>
+• Alert banner if: replication lag > 5s, any node down, health check failing</span><br><br>
+<span class="pk">HEALTH API:</span><br>
+<span class="pv">• GET /api/system/health → returns {uptime, nodes:[], db:{primary, replicas[], lag_ms}, last_dr_test}<br>
+• Websocket or 10s polling to keep data live<br>
+• POST /api/system/dr-test (Superuser only) → triggers failover test</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('p33',this)">COPY PROMPT #33</button>
+</div>
+
+<!-- #34 -->
+<div class="feat-block amber-block">
+  <div class="feat-num">#34 — COLLABORATION & WORKFLOW</div>
+  <div class="feat-title">ANALYST COLLABORATION TOOLS</div>
+  <div class="feat-desc">Multiple analysts can work the same incident without confusion. Comment threads, @mentions, and task assignments inside each Case/Incident — like GitHub Issues but for security incidents.</div>
+  <div class="info-grid">
+    <div class="info-box">
+      <div class="ib-label">WHAT TO BUILD IN CASE DETAIL VIEW</div>
+      <div class="flow">
+        <div class="flow-step"><div class="flow-num purple">1</div><div class="flow-text"><strong>Assigned To:</strong> dropdown at top of incident — assign to any analyst. Shows their avatar/initials.</div></div>
+        <div class="flow-step"><div class="flow-num purple">2</div><div class="flow-text"><strong>Comment Thread:</strong> Chronological list of analyst notes below the event timeline. Each comment: avatar, name, timestamp, text.</div></div>
+        <div class="flow-step"><div class="flow-num purple">3</div><div class="flow-text"><strong>@mentions:</strong> Typing @ in comment box shows dropdown of analysts. Mentioned analyst gets in-app notification.</div></div>
+        <div class="flow-step"><div class="flow-num purple">4</div><div class="flow-text"><strong>Status updates:</strong> New / In Progress / Pending Review / Resolved — dropdown on incident header.</div></div>
+      </div>
+    </div>
+    <div class="info-box">
+      <div class="ib-label purple">NOTIFICATIONS SYSTEM</div>
+      <div class="ib-text" style="margin-bottom:10px;">• Bell icon in top bar with badge count<br>• Notification types: @mention in comment, assigned to you, SLA warning on your case, case status changed<br>• Click notification → navigates to that case<br>• Mark all read button</div>
+      <div class="ib-label purple">AUDIT TRAIL INTEGRATION</div>
+      <div class="ib-text">All comments and status changes automatically logged to Audit Trail. Cannot be deleted. Format: "analyst@securepulse.local commented on Case #34 at 02:20AM: [first 50 chars preview]"</div>
+    </div>
+  </div>
+  <div class="prompt-wrap" id="p34">
+<span class="pc">// FEATURE #34 — ANALYST COLLABORATION TOOLS</span><br>
+<span class="pk">CASE DETAIL PAGE ADDITIONS:</span><br>
+<span class="pv">• Header row: add "ASSIGNED TO" dropdown (shows analyst list with avatars)<br>
+• Status dropdown: [NEW] [IN PROGRESS] [PENDING REVIEW] [RESOLVED] — replace or augment existing<br>
+• New tab in case detail: [Events] [Graph] [Comments (N)]</span><br><br>
+<span class="pk">COMMENTS PANEL:</span><br>
+<span class="pv">• Comment list (newest at bottom, oldest at top)<br>
+• Each comment: circular avatar (initials, cyan bg), analyst name (Mono), timestamp, comment text (Rajdhani)<br>
+• Comment input at bottom: textarea with "@mention" autocomplete dropdown, "POST" button<br>
+• System comments (auto-generated): "Status changed to IN PROGRESS by analyst@..." in italic muted style<br>
+• "Playbook executed: Auto-Isolate Host" auto-comment with timestamp</span><br><br>
+<span class="pk">NOTIFICATIONS (top bar bell icon):</span><br>
+<span class="pv">• Bell icon with red badge count (unread notifications)<br>
+• Dropdown panel: scrollable list of notifications, newest first<br>
+• Each notification: icon (mention/assign/sla/status), text, time ago, "Mark read" X<br>
+• Clicking notification navigates to that Case<br>
+• "MARK ALL READ" button at top of dropdown</span><br><br>
+<span class="pk">BACKEND:</span><br>
+<span class="pv">• POST /api/cases/{id}/comments {text, mentioned_users[]}<br>
+• GET /api/cases/{id}/comments → paginated list<br>
+• POST /api/notifications/mark-read {ids[]}<br>
+• WebSocket push for real-time new comment notification<br>
+• Parse @username in comment text → create notification for each mentioned user</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('p34',this)">COPY PROMPT #34</button>
+</div>
+
+<!-- #35 -->
+<div class="feat-block amber-block">
+  <div class="feat-num">#35 — COLLABORATION & WORKFLOW</div>
+  <div class="feat-title">EXTERNAL TICKET SYNC (JIRA / SERVICENOW)</div>
+  <div class="feat-desc">Bi-directional sync between SecurePulse incidents and your ITSM ticketing system. CRITICAL incidents auto-create Jira tickets. When the ticket is resolved in Jira, the incident auto-closes in SecurePulse. Status always stays in sync.</div>
+  <div class="info-grid">
+    <div class="info-box">
+      <div class="ib-label">THE FLOW</div>
+      <div class="flow">
+        <div class="flow-step"><div class="flow-num">1</div><div class="flow-text">CRITICAL incident created in SecurePulse → Jira issue auto-created (SEC-2847) → stored with incident</div></div>
+        <div class="flow-step"><div class="flow-num">2</div><div class="flow-text">Incident detail shows: "Jira: <strong>SEC-2847</strong> [Open]" with clickable link to Jira</div></div>
+        <div class="flow-step"><div class="flow-num">3</div><div class="flow-text">Analyst resolves SEC-2847 in Jira → Jira webhook fires → SecurePulse auto-closes the incident</div></div>
+        <div class="flow-step"><div class="flow-num">4</div><div class="flow-text">Status changes sync both ways: SP "In Progress" → Jira "In Progress" and vice versa</div></div>
+      </div>
+    </div>
+    <div class="info-box">
+      <div class="ib-label amber">SETTINGS CONFIG</div>
+      <div class="ib-text" style="margin-bottom:10px;">Settings → Integrations → ITSM:<br>• Provider: [Jira Cloud] [Jira Server] [ServiceNow] [Zendesk]<br>• Jira: URL, Project Key, API token, Issue type<br>• Sync rules: "Auto-create ticket for CRITICAL alerts"<br>• Field mapping: SP severity → Jira priority<br>• Test Connection + Test Webhook buttons</div>
+      <div class="ib-label purple">INCIDENT DETAIL UI</div>
+      <div class="ib-text">New section in incident sidebar:<br>"LINKED TICKET" panel:<br>• Ticket ID + status badge (from Jira)<br>• Last synced timestamp<br>• "Open in Jira" link button<br>• "Create Ticket Manually" if not auto-created<br>• "Unlink" option</div>
+    </div>
+  </div>
+  <div class="prompt-wrap" id="p35">
+<span class="pc">// FEATURE #35 — EXTERNAL TICKET SYNC</span><br>
+<span class="pk">INCIDENT DETAIL UI CHANGES:</span><br>
+<span class="pv">• Right sidebar: add "LINKED TICKET" section after Response Actions<br>
+• Shows: ticket ID (e.g., SEC-2847), status from Jira, last synced time<br>
+• "OPEN IN JIRA ↗" button — opens Jira URL in new tab<br>
+• "CREATE TICKET" button if no ticket linked yet<br>
+• Sync status indicator: green dot = in sync, amber dot = sync pending, red = sync error</span><br><br>
+<span class="pk">SETTINGS → INTEGRATIONS → ITSM:</span><br>
+<span class="pv">• Provider dropdown: Jira Cloud / Jira Server / ServiceNow / Zendesk<br>
+• Jira config: Base URL, Project Key (e.g., SEC), Issue Type (Bug/Task), API Token, User email<br>
+• Auto-create rules: trigger severity dropdown [Critical only / Critical+Warning / All]<br>
+• Status mapping table: SP status → Jira status (editable rows)<br>
+• Webhook URL (read-only, auto-generated) — copy to paste in Jira webhook settings<br>
+• "VERIFY CONNECTION" + "SEND TEST TICKET" buttons</span><br><br>
+<span class="pk">BACKEND:</span><br>
+<span class="pv">• On CRITICAL incident create: POST to Jira /rest/api/3/issue with incident details<br>
+• Store: {incident_id, jira_ticket_id, jira_url, jira_status, last_synced}<br>
+• Webhook endpoint: POST /api/webhooks/jira → receives Jira status updates → updates SP incident<br>
+• Bi-directional: SP status change → PATCH Jira issue status via transition API<br>
+• Retry queue for failed sync attempts with exponential backoff</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('p35',this)">COPY PROMPT #35</button>
+</div>
+
+<hr class="divider">
+
+<!-- ===== PART B: USER MANAGEMENT ===== -->
+<div class="sec-hdr" style="margin-bottom:28px;">
+  <div class="sec-icon" style="background:rgba(0,255,136,.1);border:1px solid rgba(0,255,136,.3);">👥</div>
+  <div>
+    <div class="sec-title">PART B — USER MANAGEMENT</div>
+    <div class="sec-sub">3 ROLES · CREATE / LIST / MODIFY USERS · SIDEBAR INTEGRATION</div>
+  </div>
+</div>
+
+<div class="feat-block green-block">
+  <div class="feat-num">NEW FEATURE — SETTINGS / USER MANAGEMENT</div>
+  <div class="feat-title">USER MANAGEMENT + ROLE-BASED ACCESS CONTROL</div>
+  <div class="feat-desc">A full user administration system with 3 roles. Only Superusers can create/modify users. Each role has specific permissions — what pages they see, what actions they can take, and what data they access.</div>
+
+  <!-- ROLE PERMISSION TABLE -->
+  <div class="info-box" style="margin-bottom:16px;">
+    <div class="ib-label green">THE 3 ROLES — FULL PERMISSION BREAKDOWN</div>
+    <table class="role-table">
+      <thead>
+        <tr>
+          <th>PERMISSION</th>
+          <th><span class="role-name super">SUPERUSER</span></th>
+          <th><span class="role-name admin">ADMIN</span></th>
+          <th><span class="role-name normal">NORMAL USER</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>View Dashboard</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td></tr>
+        <tr><td>View Assets</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td></tr>
+        <tr><td>View Incidents</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td></tr>
+        <tr><td>Resolve / Promote Incidents</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-ltd">⚠ OWN ONLY</span></td></tr>
+        <tr><td>Isolate / Restore Hosts</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ NO</span></td></tr>
+        <tr><td>Create/Edit Detection Rules</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ VIEW ONLY</span></td></tr>
+        <tr><td>Manage Playbooks</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ VIEW ONLY</span></td></tr>
+        <tr><td>Add / Remove IOCs (Threat Intel)</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ VIEW ONLY</span></td></tr>
+        <tr><td>Block IP / Disable Account</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ NO</span></td></tr>
+        <tr><td>View Reports</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-ltd">⚠ VIEW ONLY</span></td></tr>
+        <tr><td>Generate / Export Reports</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ NO</span></td></tr>
+        <tr><td>View Audit Log</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ NO</span></td></tr>
+        <tr><td>Access Settings</td><td><span class="perm-yes">✓ FULL</span></td><td><span class="perm-ltd">⚠ LIMITED</span></td><td><span class="perm-no">✗ NO</span></td></tr>
+        <tr><td>Create / Delete Users</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ NO</span></td><td><span class="perm-no">✗ NO</span></td></tr>
+        <tr><td>Modify User Roles</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ NO</span></td><td><span class="perm-no">✗ NO</span></td></tr>
+        <tr><td>Project Management</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-ltd">⚠ ASSIGNED ONLY</span></td></tr>
+        <tr><td>System Health / DR Test</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ NO</span></td><td><span class="perm-no">✗ NO</span></td></tr>
+        <tr><td>SSO / MFA Config</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-no">✗ NO</span></td><td><span class="perm-no">✗ NO</span></td></tr>
+        <tr><td>Manage API Keys</td><td><span class="perm-yes">✓ YES</span></td><td><span class="perm-ltd">⚠ VIEW ONLY</span></td><td><span class="perm-no">✗ NO</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- UI MOCKUP -->
+  <div class="mockup">
+    <div class="mockup-title">USER MANAGEMENT PAGE — UI WIREFRAME</div>
+    <div class="um-layout">
+      <div class="um-sidebar">
+        <div class="um-nav-item">⚙ Settings</div>
+        <div class="um-nav-item active">👥 User Management</div>
+        <div class="um-nav-item">🔐 SSO / MFA</div>
+        <div class="um-nav-item">🔗 Integrations</div>
+        <div class="um-nav-item">📡 System Health</div>
+        <div class="um-nav-item">🔑 API Keys</div>
+      </div>
+      <div class="um-main">
+        <div class="um-header-row">
+          <div class="um-page-title">USER MANAGEMENT</div>
+          <div class="um-btn">+ CREATE USER</div>
+        </div>
+        <div class="um-table-hdr">
+          <span class="um-col-hdr">USER</span>
+          <span class="um-col-hdr">ROLE</span>
+          <span class="um-col-hdr">STATUS</span>
+          <span class="um-col-hdr">LAST LOGIN</span>
+          <span class="um-col-hdr">ACTIONS</span>
+        </div>
+        <div class="um-row">
+          <div><div class="um-name">admin</div><div class="um-email">admin@securepulse.local</div></div>
+          <span class="role-badge super">SUPERUSER</span>
+          <span><span class="um-status-dot on"></span><span style="font-family:var(--mono);font-size:10px;color:var(--green);">ACTIVE</span></span>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--text2);">Just now</span>
+          <span class="um-action">EDIT ROLE</span>
+        </div>
+        <div class="um-row">
+          <div><div class="um-name">analyst1</div><div class="um-email">analyst1@securepulse.local</div></div>
+          <span class="role-badge admin">ADMIN</span>
+          <span><span class="um-status-dot on"></span><span style="font-family:var(--mono);font-size:10px;color:var(--green);">ACTIVE</span></span>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--text2);">2h ago</span>
+          <span class="um-action">EDIT ROLE</span>
+        </div>
+        <div class="um-row">
+          <div><div class="um-name">analyst2</div><div class="um-email">analyst2@securepulse.local</div></div>
+          <span class="role-badge normal">NORMAL USER</span>
+          <span><span class="um-status-dot off"></span><span style="font-family:var(--mono);font-size:10px;color:var(--text2);">INACTIVE</span></span>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--text2);">3d ago</span>
+          <span class="um-action">EDIT ROLE</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="prompt-wrap" id="pum">
+<span class="pc">// USER MANAGEMENT + ROLE-BASED ACCESS CONTROL</span><br>
+<span class="pk">SIDEBAR ADDITION:</span><br>
+<span class="pv">In Settings sidebar (or as a separate sidebar item visible only to Superuser): add "USER MANAGEMENT" nav item with 👥 icon. Visible only to SUPERUSER role.</span><br><br>
+<span class="pk">USER MANAGEMENT PAGE LAYOUT:</span><br>
+<span class="pv">• Page title: "USER MANAGEMENT" — Orbitron font<br>
+• Sub: "Manage analyst accounts and role assignments"<br>
+• Top row: search bar (filter by name/email/role) + "+ CREATE USER" button (right aligned, cyan)<br>
+• User table sorted A-Z by username by default</span><br><br>
+<span class="pk">USER TABLE COLUMNS:</span><br>
+<span class="pv">• USERNAME (Mono font) + EMAIL below it (smaller, muted)<br>
+• ROLE badge: SUPERUSER (red border), ADMIN (amber border), NORMAL USER (green border)<br>
+• STATUS: green dot + ACTIVE / grey dot + INACTIVE<br>
+• MFA ENABLED: ✓ or ✗ (Mono font)<br>
+• LAST LOGIN: relative time (e.g., "2h ago", "3d ago")<br>
+• ACTIONS column: [EDIT ROLE] [RESET PASSWORD] [DISABLE] — Superuser only sees these</span><br><br>
+<span class="pk">EDIT ROLE MODAL (Superuser only):</span><br>
+<span class="pv">• Title: "MODIFY ROLE: analyst1"<br>
+• Radio buttons for role selection with description under each:<br>
+  ◉ SUPERUSER — Full system access, user management, system config<br>
+  ◉ ADMIN — Operational access, create rules, manage incidents, cannot manage users<br>
+  ◉ NORMAL USER — View and respond to assigned incidents only<br>
+• Warning: "Role changes take effect on next login"<br>
+• SAVE ROLE button (cyan)</span><br><br>
+<span class="pk">CREATE USER MODAL:</span><br>
+<span class="pv">• Fields: Full Name, Username, Email, Role (radio), Temporary Password (auto-generated + copy button)<br>
+• "Send welcome email" toggle<br>
+• "Force MFA setup on first login" toggle<br>
+• CREATE USER button</span><br><br>
+<span class="pk">RBAC ENFORCEMENT (backend):</span><br>
+<span class="pv">• Every API endpoint checks: req.user.role against required permission<br>
+• Middleware: checkPermission('isolate_host') — returns 403 if role insufficient<br>
+• Frontend: hide/disable buttons based on user.role in JWT claims<br>
+• Role stored in JWT, refreshed on role change<br>
+• NORMAL USER: hide sidebar items [Audit Log, Settings, User Management]<br>
+• NORMAL USER: Detection Rules / Playbooks / Threat Intel = read-only (no add/edit/delete buttons)<br>
+• ADMIN: hide [User Management] from sidebar, limited Settings (no SSO/MFA/System Health)</span><br><br>
+<span class="pk">ROLES DEFINED:</span><br>
+<span class="pv">SUPERUSER: god mode — everything including user creation, role modification, system config, DR test<br>
+ADMIN: security analyst lead — all operational features, no user management or system infra<br>
+NORMAL USER: junior analyst — view all, resolve only assigned incidents, no destructive actions</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('pum',this)">COPY USER MANAGEMENT PROMPT</button>
+</div>
+
+<hr class="divider">
+
+<!-- ===== PART C: PROJECT PAGE ===== -->
+<div class="sec-hdr" style="margin-bottom:28px;">
+  <div class="sec-icon" style="background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);">📁</div>
+  <div>
+    <div class="sec-title">PART C — PROJECT PAGE</div>
+    <div class="sec-sub">TOP-BAR BUTTON → CREATE PROJECTS → ADD ENDPOINTS → PER-PROJECT DASHBOARD</div>
+  </div>
+</div>
+
+<div class="feat-block">
+  <div class="feat-num">NEW FEATURE — TOP-BAR "PROJECTS" BUTTON → FULL PROJECT SYSTEM</div>
+  <div class="feat-title">PROJECT MANAGEMENT + PER-PROJECT DASHBOARD</div>
+  <div class="feat-desc">Projects let you group specific endpoints together and view a filtered dashboard showing only those endpoints' alerts, incidents, and health. The "Projects" button lives in the top bar. Each project has its own isolated SOC dashboard view.</div>
+
+  <!-- PROJECT PAGE MOCKUP -->
+  <div class="mockup" style="margin-bottom:16px;">
+    <div class="mockup-title">PROJECTS LIST PAGE — UI WIREFRAME</div>
+    <div class="proj-layout">
+      <div class="proj-topbar-mock">
+        <div><div class="proj-title-mock">PROJECTS</div><div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-top:3px;letter-spacing:1px;">Group endpoints into monitored projects</div></div>
+        <div class="proj-btn">+ NEW PROJECT</div>
+      </div>
+      <div class="proj-grid">
+        <div class="proj-card">
+          <div class="proj-card-name">PRODUCTION SERVERS</div>
+          <div class="proj-card-meta">3 endpoints · Last activity: 2min ago</div>
+          <div class="proj-card-stat">
+            <span class="proj-stat-chip" style="color:var(--red);border-color:rgba(255,59,92,.3);">12 CRITICAL</span>
+            <span class="proj-stat-chip" style="color:var(--amber);border-color:rgba(255,176,32,.3);">3 WARNINGS</span>
+          </div>
+        </div>
+        <div class="proj-card">
+          <div class="proj-card-name">DEV ENVIRONMENT</div>
+          <div class="proj-card-meta">2 endpoints · Last activity: 1h ago</div>
+          <div class="proj-card-stat">
+            <span class="proj-stat-chip" style="color:var(--green);border-color:rgba(0,255,136,.3);">0 ALERTS</span>
+          </div>
+        </div>
+        <div class="proj-card">
+          <div class="proj-card-name">STAGING CLUSTER</div>
+          <div class="proj-card-meta">1 endpoint · Last activity: 3h ago</div>
+          <div class="proj-card-stat">
+            <span class="proj-stat-chip" style="color:var(--amber);border-color:rgba(255,176,32,.3);">2 WARNINGS</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- NEW PROJECT MODAL MOCKUP -->
+  <div class="mockup" style="margin-bottom:16px;">
+    <div class="mockup-title">NEW PROJECT MODAL — UI WIREFRAME</div>
+    <div class="modal">
+      <div class="modal-title">+ CREATE NEW PROJECT</div>
+      <div class="modal-field">
+        <div class="modal-label">PROJECT NAME</div>
+        <div class="modal-input"><span style="color:var(--text3);">e.g. Production Servers</span></div>
+      </div>
+      <div class="modal-field">
+        <div class="modal-label">DESCRIPTION (optional)</div>
+        <div class="modal-input"><span style="color:var(--text3);">Brief description...</span></div>
+      </div>
+      <div class="modal-field">
+        <div class="modal-label">ADD ENDPOINTS</div>
+        <div class="modal-input search">🔍 <span style="color:var(--text3);">Search endpoints by name or IP...</span></div>
+        <div class="ep-list">
+          <div class="ep-item"><div><div class="ep-name">e2e-test-server</div><div style="font-family:var(--mono);font-size:9px;color:var(--cyan);">10.0.0.99</div></div><div style="display:flex;align-items:center;gap:8px;"><span class="ep-status">OFFLINE</span><span class="ep-add-btn">+ ADD</span></div></div>
+          <div class="ep-item" style="background:rgba(0,200,255,.04);"><div><div class="ep-name">live-test-server</div><div style="font-family:var(--mono);font-size:9px;color:var(--cyan);">10.0.0.98</div></div><div style="display:flex;align-items:center;gap:8px;"><span style="font-family:var(--mono);font-size:8px;color:var(--green);border:1px solid rgba(0,255,136,.3);border-radius:3px;padding:1px 5px;">✓ ADDED</span></div></div>
+          <div class="ep-item"><div><div class="ep-name">staging-server-01</div><div style="font-family:var(--mono);font-size:9px;color:var(--cyan);">10.0.1.10</div></div><div style="display:flex;align-items:center;gap:8px;"><span class="ep-status" style="color:var(--green);border-color:rgba(0,255,136,.3);">ONLINE</span><span class="ep-add-btn">+ ADD</span></div></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-cancel">CANCEL</div>
+        <div class="modal-save">CREATE PROJECT</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROJECT DASHBOARD MOCKUP -->
+  <div class="mockup" style="margin-bottom:16px;">
+    <div class="mockup-title">PROJECT DASHBOARD — CLICKING A PROJECT CARD SHOWS THIS FILTERED VIEW</div>
+    <div class="proj-dash">
+      <div class="proj-dash-topbar">
+        <div class="back-btn">← ALL PROJECTS</div>
+        <div>
+          <div class="proj-dash-name">📁 PRODUCTION SERVERS</div>
+          <div class="proj-dash-sub">3 ENDPOINTS · FILTERED DASHBOARD</div>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:8px;">
+          <div class="back-btn" style="color:var(--green);">+ ADD ENDPOINT</div>
+          <div class="back-btn" style="color:var(--amber);">⚙ MANAGE</div>
+        </div>
+      </div>
+      <div class="proj-stats">
+        <div class="ps-card"><div style="font-family:var(--mono);font-size:8px;color:var(--green);border:1px solid rgba(0,255,136,.25);border-radius:3px;padding:1px 5px;display:inline-block;margin-bottom:4px;">PROJECT ONLY</div><div class="ps-num">3</div><div class="ps-lbl">ENDPOINTS</div></div>
+        <div class="ps-card"><div style="font-family:var(--mono);font-size:8px;color:var(--red);border:1px solid rgba(255,59,92,.25);border-radius:3px;padding:1px 5px;display:inline-block;margin-bottom:4px;">31 ACTIVE</div><div class="ps-num" style="color:var(--red);">31</div><div class="ps-lbl">CRITICAL ALERTS</div></div>
+        <div class="ps-card"><div style="font-family:var(--mono);font-size:8px;color:var(--amber);border:1px solid rgba(255,176,32,.25);border-radius:3px;padding:1px 5px;display:inline-block;margin-bottom:4px;">0 ONLINE</div><div class="ps-num" style="color:var(--amber);">0%</div><div class="ps-lbl">SYS HEALTH</div></div>
+        <div class="ps-card"><div style="font-family:var(--mono);font-size:8px;color:var(--cyan);border:1px solid rgba(0,200,255,.2);border-radius:3px;padding:1px 5px;display:inline-block;margin-bottom:4px;">PROCESSED</div><div class="ps-num">16</div><div class="ps-lbl">EVENTS</div></div>
+      </div>
+      <div class="proj-ep-list">
+        <div class="proj-ep-hdr">
+          <span class="proj-ep-col">ENDPOINT</span>
+          <span class="proj-ep-col">STATUS</span>
+          <span class="proj-ep-col">RISK</span>
+          <span class="proj-ep-col">ALERTS</span>
+        </div>
+        <div class="proj-ep-row">
+          <div><div class="proj-ep-name">e2e-test-server</div><div class="proj-ep-ip">10.0.0.99</div></div>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);border:1px solid rgba(200,232,248,.15);border-radius:3px;padding:1px 5px;">OFFLINE</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--red);">CRITICAL</span>
+          <span style="font-family:var(--orb);font-size:13px;color:var(--red);">18</span>
+        </div>
+        <div class="proj-ep-row">
+          <div><div class="proj-ep-name">live-test-server</div><div class="proj-ep-ip">10.0.0.98</div></div>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--text3);border:1px solid rgba(200,232,248,.15);border-radius:3px;padding:1px 5px;">OFFLINE</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--amber);">WARNING</span>
+          <span style="font-family:var(--orb);font-size:13px;color:var(--amber);">13</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="prompt-wrap" id="pproj">
+<span class="pc">// PROJECT PAGE — FULL SPECIFICATION</span><br><br>
+<span class="pk">1. TOP-BAR BUTTON:</span><br>
+<span class="pv">• Add "PROJECTS" button in the Dashboard topbar (top-right area, before the clock)<br>
+• Style: outlined cyan, Share Tech Mono font, 10px, letter-spacing:2px, 📁 icon prefix<br>
+• Clicking navigates to /projects page<br>
+• Badge on button showing active project count: "PROJECTS (3)"</span><br><br>
+<span class="pk">2. PROJECTS LIST PAGE (/projects):</span><br>
+<span class="pv">• Page title: "PROJECTS" — Orbitron font, same cyber style as other pages<br>
+• Sub: "Group and monitor specific endpoint collections"<br>
+• Top-right: "+ NEW PROJECT" button (primary cyan button style)<br>
+• Project cards grid: 3 columns, responsive to 2 then 1 on smaller screens<br>
+• Each project card shows:<br>
+  - Project name (Orbitron, white, 13px)<br>
+  - Endpoint count + last activity time (Mono, muted)<br>
+  - Alert summary chips: [N CRITICAL] [N WARNINGS] [0 ALERTS] — colored badges<br>
+  - Top edge: 1px cyan gradient line (same as stat cards)<br>
+  - Click anywhere on card → navigate to /projects/{id}/dashboard<br>
+  - Corner bracket accents (CSS ::before/::after)<br>
+• Empty state: centered "No projects yet" with + Create First Project button</span><br><br>
+<span class="pk">3. NEW PROJECT MODAL:</span><br>
+<span class="pv">• Full-screen overlay with centered modal (max-width 540px)<br>
+• Title: "+ CREATE NEW PROJECT" — Orbitron, cyan<br>
+• Field 1: Project Name — text input, required, placeholder "e.g. Production Servers"<br>
+• Field 2: Description — optional textarea, 2 rows<br>
+• Field 3: "ADD ENDPOINTS" section:<br>
+  - Search bar: "🔍 Search by name or IP..." — filters endpoint list in real-time as user types<br>
+  - Endpoint list (scrollable, max-height 200px) shows ALL available endpoints from Assets<br>
+  - Each row: [hostname] [IP] [status badge] [+ ADD / ✓ ADDED button]<br>
+  - Added endpoints show green "✓ ADDED" and are highlighted<br>
+  - "Selected: N endpoints" counter above list<br>
+• Modal footer: [CANCEL] [CREATE PROJECT] buttons, right-aligned<br>
+• Validation: name required, at least 1 endpoint required before creating</span><br><br>
+<span class="pk">4. ADDING ENDPOINTS TO EXISTING PROJECT:</span><br>
+<span class="pv">• Inside Project Dashboard → "⚙ MANAGE" button → opens same endpoint picker modal (pre-selected with existing endpoints)<br>
+• "+ ADD ENDPOINT" button → quick-add modal with just the search + endpoint list<br>
+• Remove endpoint: in endpoint list row → "REMOVE" button (red outlined)<br>
+• Removing endpoint doesn't delete the endpoint from Assets — just removes it from the project</span><br><br>
+<span class="pk">5. PROJECT DASHBOARD (/projects/{id}/dashboard):</span><br>
+<span class="pv">• This is the SAME layout as the main SOC Dashboard BUT filtered to only this project's endpoints<br>
+• Topbar: "← ALL PROJECTS" back button (left side), Project Name + "FILTERED DASHBOARD" subtitle, "+ ADD ENDPOINT" + "⚙ MANAGE" buttons (right side)<br>
+• "PROJECT ONLY" badge on all stat cards to show data is filtered<br>
+• Stat cards: ENDPOINTS (this project's count), SYSTEM HEALTH, CRITICAL ALERTS, EVENTS PROCESSED — ALL filtered to project endpoints only<br>
+• Global Threat Map: shows only threat events originating from/targeting this project's endpoints<br>
+• Severity Distribution: only incidents from this project's endpoints<br>
+• Recent Incidents section: only incidents from this project's endpoints<br>
+• Endpoint table (new in project dashboard): list all endpoints in this project with: name, IP, status, risk level, alert count, last seen<br>
+• "Active Brute-Force" section: filtered to project endpoints<br>
+• The standard sidebar navigation still works — clicking "Incidents" from project dashboard shows ALL incidents but with a "Project: Production Servers" filter chip pre-applied</span><br><br>
+<span class="pk">6. SIDEBAR INTEGRATION:</span><br>
+<span class="pv">• When inside a Project Dashboard, add a subtle "PROJECT MODE" banner at the top of the sidebar<br>
+• Shows: 📁 [Project Name] with a small "EXIT PROJECT" link that returns to global dashboard<br>
+• All sidebar nav links (Incidents, Assets, etc.) route to project-filtered versions while in project mode</span><br><br>
+<span class="pk">7. DATABASE SCHEMA:</span><br>
+<span class="pv">• projects table: {id, name, description, created_by, created_at, updated_at}<br>
+• project_endpoints table: {project_id, endpoint_id (FK to assets), added_by, added_at}<br>
+• No data is duplicated — project views just filter existing data by endpoint list</span><br><br>
+<span class="pk">8. API ENDPOINTS:</span><br>
+<span class="pv">• GET /api/projects → list all projects with alert counts<br>
+• POST /api/projects → create project {name, description, endpoint_ids[]}<br>
+• GET /api/projects/{id} → project details + endpoint list<br>
+• PUT /api/projects/{id} → update name/description<br>
+• POST /api/projects/{id}/endpoints → add endpoints {endpoint_ids[]}<br>
+• DELETE /api/projects/{id}/endpoints/{endpoint_id} → remove endpoint<br>
+• GET /api/projects/{id}/dashboard → same as main dashboard but WHERE endpoint_id IN (project_endpoints)<br>
+• DELETE /api/projects/{id} → delete project (not endpoints)</span><br><br>
+<span class="pk">STYLE CONSISTENCY:</span><br>
+<span class="pv">All new UI must match exactly: Orbitron for titles, Share Tech Mono for labels/badges/meta, Rajdhani for body text. Colors: bg #060f1e, cyan #00c8ff, borders rgba(0,200,255,0.2). Cards: 1px top gradient line, corner brackets, bg #0a1628.</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('pproj',this)">COPY PROJECT PAGE PROMPT</button>
+</div>
+
+</div><!-- /container -->
+
+<div class="footer">
+  <span class="dot-live"></span>
+  SECUREPULSE NEW FEATURES BUILD GUIDE &nbsp;·&nbsp; 7 MISSING FEATURES + USER MANAGEMENT + PROJECT PAGE &nbsp;·&nbsp; ALL PROMPTS COPY-READY
+</div>
+
+<script>
+function copyText(id, btn) {
+  const el = document.getElementById(id);
+  const text = el.innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'COPIED ✓';
+    btn.style.color = '#00ff88';
+    btn.style.borderColor = 'rgba(0,255,136,0.35)';
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.style.color = '';
+      btn.style.borderColor = '';
+    }, 2500);
+  });
+}
+</script>
+</body>
+</html>
+HTMLEOF
+echo "Done. Size: $(wc -c < /mnt/user-data/outputs/securepulse_new_features_guide.html) bytes"

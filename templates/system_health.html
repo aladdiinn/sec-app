@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% set active = 'system-health' %}
+{% block title %}System Health — SecurePulse{% endblock %}
+{% block page_title %}SYSTEM HEALTH & HA/DR{% endblock %}
+{% block page_sub %}Monitor core services, database replication, and Disaster Recovery status{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <div style="display:grid; grid-template-columns: 1fr 400px; gap:20px">
+        <!-- Infrastructure Status -->
+        <div style="display:flex; flex-direction:column; gap:20px">
+            <div class="card glass">
+                <h3 class="card-title">CLUSTER NODES (HIGH AVAILABILITY)</h3>
+                <div id="node-list" style="margin-top:20px">
+                    <!-- Nodes injected here -->
+                </div>
+            </div>
+
+            <div class="card glass">
+                <h3 class="card-title">DATABASE REPLICATION & BACKUP</h3>
+                <div style="margin-top:20px; display:grid; grid-template-columns: 1fr 1fr; gap:15px">
+                    <div class="p-stat">
+                        <span class="stat-label">REP LAG</span>
+                        <span class="p-stat-val mono" id="db-lag" style="color:var(--green)">0ms</span>
+                    </div>
+                    <div class="p-stat">
+                        <span class="stat-label">LAST BACKUP</span>
+                        <span class="p-stat-val mono" id="db-backup" style="font-size:10px">---</span>
+                    </div>
+                </div>
+            </div>
+        </div>        <!-- DR Testing -->
+        <div class="card glass" style="display:flex; flex-direction:column">
+            <h3 class="card-title">DR READINESS AUDIT</h3>
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:30px 0">
+                <div id="dr-status-icon" style="width:80px; height:80px; border-radius:50%; border:2px solid var(--border); display:flex; align-items:center; justify-content:center; margin-bottom:15px">
+                    <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="var(--text3)" stroke-width="1.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                </div>
+                <div id="dr-status-text" class="mono" style="font-size:12px; color:var(--text2); margin-bottom:20px; text-align:center">SAFE MONITORING MODE</div>
+                
+                <div style="width:100%; padding:0 20px">
+                    <button class="btn btn-primary" onclick="runAudit()" id="audit-btn" style="width:100%; padding:12px">RUN READINESS AUDIT</button>
+                </div>
+            </div>
+            
+            <div id="audit-results" style="border-top:1px solid var(--border); padding-top:15px; display:none">
+                <div id="audit-list" style="display:flex; flex-direction:column; gap:10px">
+                    <!-- Audit rows injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function loadHealth() {
+        try {
+            const data = await apiFetch('/api/system/health');
+            const list = document.getElementById('node-list');
+            list.innerHTML = data.nodes.map(n => `
+                <div class="health-node">
+                    <div class="health-status-dot" style="background:${n.status === 'ONLINE' ? 'var(--green)' : 'var(--red)'}"></div>
+                    <div class="health-info">
+                        <div>
+                            <div class="health-label">NODE NAME</div>
+                            <div class="health-value">${n.name}</div>
+                        </div>
+                        <div>
+                            <div class="health-label">REGION / ROLE</div>
+                            <div class="health-value" style="font-size:9px">${n.region} / ${n.role}</div>
+                        </div>
+                        <div>
+                            <div class="health-label">CPU LOAD</div>
+                            <div class="health-value">${n.cpu}</div>
+                        </div>
+                        <div>
+                            <div class="health-label">MEMORY</div>
+                            <div class="health-value">${n.mem}</div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            document.getElementById('db-lag').innerText = data.db.replication_lag_ms + 'ms';
+            document.getElementById('db-backup').innerText = new Date(data.db.last_backup).toLocaleTimeString();
+        } catch (e) { showToast('Failed to load system health', 'error'); }
+    }
+
+    async function runAudit() {
+        const btn = document.getElementById('audit-btn');
+        const list = document.getElementById('audit-list');
+        const results = document.getElementById('audit-results');
+        
+        btn.disabled = true;
+        btn.innerText = 'AUDITING...';
+
+        try {
+            const res = await apiFetch('/api/system/dr-audit');
+            results.style.display = 'block';
+            
+            if (res.status === 'FAIL') {
+                list.innerHTML = `<div style="color:var(--red); font-size:11px; text-align:center">${res.message}</div>`;
+                return;
+            }
+
+            list.innerHTML = res.checks.map(c => `
+                <div class="audit-row">
+                    <span class="dot-live" style="background:${c.status === 'PASS' ? 'var(--green)' : 'var(--red)'}"></span>
+                    <span style="flex:1">${c.name}</span>
+                    <span class="mono" style="font-size:9px; color:var(--text3)">${c.msg}</span>
+                </div>
+            `).join('');
+            
+            showToast('Readiness Audit Completed', 'success');
+        } catch (e) { showToast('Audit failed', 'error'); }
+        finally { btn.disabled = false; btn.innerText = 'RUN READINESS AUDIT'; }
+    }
+
+    window.addEventListener('load', loadHealth);
+</script>
+<style>
+    .audit-row { display: flex; align-items: center; gap: 10px; font-size: 11px; font-family: var(--mono); color: var(--text2); }
+    .dot-live { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+</style>
+{% endblock %}

@@ -1,114 +1,583 @@
 {% extends "base.html" %}
 {% set hide_nav = true %}
-{% block title %}Login{% endblock %}
+{% block title %}Secure Access{% endblock %}
 
 {% block extra_css %}
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
 <style>
-    body {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 100vh;
-    }
+/* ── RESET for login page ── */
+body {
+  overflow: hidden !important;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  font-family: 'Share Tech Mono', monospace;
+}
 
-    .login-bg {
-        position: fixed;
-        inset: 0;
-        z-index: -1;
-        background:
-            radial-gradient(ellipse 80% 60% at 50% -20%, rgba(59, 130, 246, .18) 0%, transparent 60%),
-            radial-gradient(ellipse 60% 40% at 80% 80%, rgba(168, 85, 247, .10) 0%, transparent 50%);
-    }
+.page-container { padding: 0 !important; }
+
+/* ── FULL SCREEN SCENE ── */
+.login-scene {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Background image */
+.login-bg-img {
+  position: absolute;
+  inset: 0;
+  background: url('https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=1400&q=80') center/cover no-repeat;
+  filter: brightness(0.5) saturate(1.4) hue-rotate(10deg);
+}
+
+/* Gradient overlay: dark on left, transparent on right */
+.login-bg-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(5,15,35,0.95) 0%,
+    rgba(5,15,35,0.85) 30%,
+    rgba(5,15,35,0.45) 60%,
+    rgba(5,15,35,0.08) 100%
+  );
+}
+
+/* Scanline texture */
+.login-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0,200,255,0.018) 3px,
+    rgba(0,200,255,0.018) 4px
+  );
+}
+
+/* CSS grid overlay */
+.login-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.07;
+  background:
+    linear-gradient(rgba(0,200,255,0.5) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,200,255,0.5) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Sweep scan line */
+.login-sweep {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(0,200,255,0.7), transparent);
+  animation: sweepDown 4s linear infinite;
+  pointer-events: none;
+}
+@keyframes sweepDown {
+  from { top: 0; opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  to   { top: 100%; opacity: 0; }
+}
+
+/* ── LEFT PANEL ── */
+.login-panel {
+  position: absolute;
+  left: 32px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 230px;
+  background: rgba(6,18,45,0.88);
+  border: 1px solid rgba(0,200,255,0.3);
+  border-radius: 10px;
+  padding: 22px 18px 18px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: opacity 0.6s ease;
+}
+
+/* Corner brackets */
+.c { position: absolute; width: 12px; height: 12px; border-color: rgba(0,200,255,0.7); border-style: solid; }
+.c.tl { top:-1px; left:-1px; border-width:2px 0 0 2px; border-radius:3px 0 0 0; }
+.c.tr { top:-1px; right:-1px; border-width:2px 2px 0 0; border-radius:0 3px 0 0; }
+.c.bl { bottom:-1px; left:-1px; border-width:0 0 2px 2px; border-radius:0 0 0 3px; }
+.c.br { bottom:-1px; right:-1px; border-width:0 2px 2px 0; border-radius:0 0 3px 0; }
+
+/* Logo row */
+.lp-logo-row { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+.lp-logo-box {
+  width:36px; height:36px;
+  background: rgba(0,200,255,0.1);
+  border: 1.5px solid rgba(0,200,255,0.5);
+  border-radius:7px;
+  display:flex; align-items:center; justify-content:center;
+  position: relative; flex-shrink:0;
+}
+.lp-logo-box svg { width:18px; height:18px; stroke:#00c8ff; fill:none; stroke-width:2; }
+.lp-pulse {
+  position:absolute; inset:-5px; border-radius:10px;
+  border:1px solid rgba(0,200,255,0.3);
+  animation: lpulse 2s ease-in-out infinite;
+}
+@keyframes lpulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.3;transform:scale(1.1)} }
+.lp-logo-name { font-family:'Orbitron',monospace; font-size:11px; color:#00c8ff; letter-spacing:2px; line-height:1.3; }
+.lp-logo-sub  { font-size:9px; color:rgba(0,200,255,0.4); letter-spacing:1px; }
+
+/* Divider */
+.lp-div { height:1px; background:linear-gradient(90deg,transparent,rgba(0,200,255,0.4),transparent); margin-bottom:14px; }
+
+/* Field label */
+.lp-label { font-size:9px; letter-spacing:2px; color:rgba(0,200,255,0.6); margin-bottom:5px; text-transform:uppercase; display:block; }
+
+/* Input wrapper */
+.lp-field {
+  background: rgba(0,200,255,0.05);
+  border: 1px solid rgba(0,200,255,0.2);
+  border-radius:5px;
+  padding: 0;
+  display:flex; align-items:center;
+  margin-bottom:10px;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  overflow: hidden;
+}
+.lp-field:focus-within {
+  border-color: rgba(0,200,255,0.7);
+  box-shadow: 0 0 10px rgba(0,200,255,0.2);
+}
+.lp-field-icon {
+  width:32px; display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+.lp-field-icon svg { width:13px; height:13px; stroke:rgba(0,200,255,0.6); fill:none; stroke-width:2; }
+.lp-field input {
+  flex:1; background:transparent !important; border:none !important;
+  outline:none !important; padding:8px 8px 8px 0;
+  color:rgba(255,255,255,0.85) !important;
+  font-family:'Share Tech Mono',monospace;
+  font-size:12px;
+  box-shadow:none !important;
+}
+.lp-field input::placeholder { color:rgba(255,255,255,0.25); }
+
+/* Password toggle */
+.lp-pw-toggle {
+  background:none; border:none; cursor:pointer;
+  padding:0 10px; display:flex; align-items:center;
+}
+.lp-pw-toggle svg { width:12px; height:12px; stroke:rgba(0,200,255,0.4); fill:none; stroke-width:2; }
+
+/* Remember + Forgot row */
+.lp-rem-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+.lp-rem { display:flex; align-items:center; gap:5px; cursor:pointer; }
+.lp-chk {
+  width:10px; height:10px;
+  border:1px solid rgba(0,200,255,0.4);
+  border-radius:2px;
+  display:flex; align-items:center; justify-content:center;
+}
+.lp-chk-inner { width:5px; height:5px; background:#00c8ff; border-radius:1px; }
+.lp-rem-txt { font-size:9px; color:rgba(255,255,255,0.35); letter-spacing:1px; }
+.lp-forgot { font-size:9px; color:rgba(0,200,255,0.55); letter-spacing:1px; cursor:pointer; text-decoration:none; }
+.lp-forgot:hover { color:#00c8ff; }
+
+/* Error box */
+.lp-error {
+  background: rgba(255,0,80,0.1);
+  border: 1px solid rgba(255,0,80,0.3);
+  border-radius:4px;
+  color: #ff6688;
+  font-size:10px;
+  padding: 6px 10px;
+  margin-bottom:10px;
+  display:none;
+  letter-spacing:0.5px;
+}
+
+/* ACCESS button */
+.lp-btn {
+  width:100%; padding:10px;
+  background: linear-gradient(90deg,rgba(0,150,200,0.3),rgba(0,80,160,0.2));
+  border: 1px solid rgba(0,200,255,0.55);
+  border-radius:5px;
+  font-family:'Orbitron',monospace;
+  font-size:10px; letter-spacing:3px;
+  color:#00c8ff;
+  cursor:pointer;
+  position:relative; overflow:hidden;
+  transition: box-shadow 0.3s, border-color 0.3s;
+}
+.lp-btn:hover { border-color:rgba(0,200,255,0.9); box-shadow:0 0 16px rgba(0,200,255,0.3); }
+.lp-btn:disabled { opacity:0.5; cursor:not-allowed; }
+.lp-btn-shine {
+  position:absolute; top:0; left:-100%; width:60%; height:100%;
+  background:linear-gradient(90deg,transparent,rgba(0,200,255,0.18),transparent);
+  animation: btnshine 3s ease-in-out infinite 1s;
+}
+@keyframes btnshine { 0%{left:-100%} 40%{left:150%} 100%{left:150%} }
+
+/* Spinner in button */
+.lp-spinner {
+  display:inline-block;
+  width:12px; height:12px;
+  border:2px solid rgba(0,200,255,0.3);
+  border-top-color:#00c8ff;
+  border-radius:50%;
+  animation: lpspin 0.8s linear infinite;
+}
+@keyframes lpspin { to{transform:rotate(360deg)} }
+
+/* ── HUD DECORATIVE — RIGHT ── */
+.hud-ring {
+  position:absolute; border-radius:50%;
+  border:1px solid rgba(0,200,255,0.13);
+}
+.hud-ring1 {
+  width:180px; height:180px;
+  right:18%; top:50%;
+  transform:translate(50%,-50%);
+  animation:spinSlow 12s linear infinite;
+}
+.hud-ring2 {
+  width:240px; height:240px;
+  right:18%; top:50%;
+  transform:translate(50%,-50%);
+  border-style:dashed;
+  border-color:rgba(0,200,255,0.07);
+  animation:spinSlow 20s linear infinite reverse;
+}
+.hud-ring3 {
+  width:120px; height:120px;
+  right:18%; top:50%;
+  transform:translate(50%,-50%);
+  border-color:rgba(0,200,255,0.18);
+  animation:spinSlow 8s linear infinite;
+}
+@keyframes spinSlow {
+  from { transform:translate(50%,-50%) rotate(0deg); }
+  to   { transform:translate(50%,-50%) rotate(360deg); }
+}
+
+/* Data tags */
+.hud-tag {
+  position:absolute;
+  font-family:'Share Tech Mono',monospace;
+  font-size:9px; letter-spacing:1px;
+  color:rgba(0,200,255,0.45);
+}
+.hud-tag1 { top:14%; right:7%; }
+.hud-tag2 { bottom:20%; right:5%; }
+.hud-tag3 { top:52%; right:3%; transform:translateY(-50%); }
+
+/* Bottom status bar */
+.hud-status {
+  position:absolute; bottom:14px; left:32px;
+  display:flex; align-items:center; gap:8px;
+}
+.hud-sdot {
+  width:5px; height:5px; border-radius:50%;
+  background:#00ff88;
+  animation:sdpulse 1.5s ease-in-out infinite;
+}
+@keyframes sdpulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
+.hud-stxt { font-size:9px; color:rgba(255,255,255,0.3); letter-spacing:2px; }
+
+.hud-ver { position:absolute; bottom:14px; right:18px; font-size:9px; color:rgba(0,200,255,0.22); letter-spacing:1px; }
+
+/* ── SUCCESS OVERLAY ── */
+.login-success {
+  position:absolute; inset:0;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  opacity:0; pointer-events:none;
+  transition: opacity 0.6s ease;
+}
+.login-success.visible { opacity:1; pointer-events:all; }
+
+/* Particles */
+.ls-particles { position:absolute; inset:0; pointer-events:none; }
+.ls-pt {
+  position:absolute; width:3px; height:3px;
+  background:rgba(0,200,255,0.7); border-radius:50%;
+  animation:ptfloat 3s ease-in-out infinite;
+}
+.ls-pt:nth-child(1){left:8%;top:20%;animation-delay:0s}
+.ls-pt:nth-child(2){left:78%;top:25%;animation-delay:0.4s}
+.ls-pt:nth-child(3){left:45%;top:75%;animation-delay:0.8s}
+.ls-pt:nth-child(4){left:20%;top:65%;animation-delay:1.2s}
+.ls-pt:nth-child(5){left:72%;top:80%;animation-delay:1.6s}
+.ls-pt:nth-child(6){left:55%;top:15%;animation-delay:2.0s}
+.ls-pt:nth-child(7){left:30%;top:45%;animation-delay:0.6s}
+.ls-pt:nth-child(8){left:88%;top:55%;animation-delay:1.0s}
+@keyframes ptfloat {
+  0%,100%{transform:translateY(0);opacity:0.6}
+  50%{transform:translateY(-12px);opacity:1}
+}
+
+/* Avatar with spinning rings */
+.ls-avatar-wrap { position:relative; width:80px; height:80px; margin-bottom:16px; }
+.ls-avatar-wrap::before,
+.ls-avatar-wrap::after {
+  content:''; position:absolute; border-radius:50%;
+  border:1.5px solid rgba(0,200,255,0.5);
+}
+.ls-avatar-wrap::before { inset:-10px; animation:spinRing 4s linear infinite; }
+.ls-avatar-wrap::after  { inset:-20px; border-color:rgba(0,200,255,0.2); animation:spinRing 7s linear infinite reverse; }
+@keyframes spinRing { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+
+.ls-avatar {
+  width:80px; height:80px; border-radius:50%;
+  background:rgba(0,200,255,0.08);
+  border:2px solid rgba(0,200,255,0.5);
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 0 20px rgba(0,200,255,0.3);
+}
+.ls-avatar svg { width:34px; height:34px; stroke:#00c8ff; fill:none; stroke-width:1.5; }
+
+.ls-granted {
+  font-family:'Orbitron',monospace;
+  font-size:11px; letter-spacing:4px;
+  color:#00c8ff; text-transform:uppercase;
+  margin-bottom:8px;
+  text-shadow:0 0 20px rgba(0,200,255,0.6);
+}
+.ls-username {
+  font-family:'Orbitron',monospace;
+  font-size:18px; font-weight:600;
+  color:#fff; letter-spacing:2px;
+  margin-bottom:12px;
+  min-height:28px;
+}
+.ls-statusbar { display:flex; align-items:center; gap:8px; }
+.ls-dot {
+  width:7px; height:7px; border-radius:50%;
+  background:#00ff88;
+  box-shadow:0 0 8px rgba(0,255,136,0.7);
+  animation:sdpulse 1.5s ease-in-out infinite;
+}
+.ls-stxt { font-size:11px; color:rgba(255,255,255,0.4); letter-spacing:2px; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="login-bg"></div>
-<div class="login-card fade-up">
-    <div class="login-brand">
-        <div class="login-brand-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-            </svg>
-        </div>
-        <div>
-            <h1 class="login-brand-name">SecurePulse</h1>
-            <p class="login-brand-sub">Security Monitoring Platform</p>
-        </div>
+<div class="login-scene">
+  <!-- Background layers -->
+  <div class="login-bg-img"></div>
+  <div class="login-bg-overlay"></div>
+  <div class="login-scanlines"></div>
+  <div class="login-grid"></div>
+  <div class="login-sweep"></div>
+
+  <!-- HUD decorative rings (right side) -->
+  <div class="hud-ring hud-ring1"></div>
+  <div class="hud-ring hud-ring2"></div>
+  <div class="hud-ring hud-ring3"></div>
+
+  <!-- Floating data tags -->
+  <div class="hud-tag hud-tag1">SYS_AUTH v2.4</div>
+  <div class="hud-tag hud-tag2">ENC: AES-256</div>
+  <div class="hud-tag hud-tag3">STATUS: ONLINE</div>
+
+  <!-- ── LOGIN PANEL (LEFT) ── -->
+  <div class="login-panel" id="login-panel">
+    <!-- Corner brackets -->
+    <div class="c tl"></div><div class="c tr"></div>
+    <div class="c bl"></div><div class="c br"></div>
+
+    <!-- Logo -->
+    <div class="lp-logo-row">
+      <div class="lp-logo-box">
+        <div class="lp-pulse"></div>
+        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+      </div>
+      <div>
+        <div class="lp-logo-name">SECUREPULSE</div>
+        <div class="lp-logo-sub">SECURE ACCESS</div>
+      </div>
     </div>
 
-    <form id="login-form">
-        <div class="form-group">
-            <label class="form-label">Email address</label>
-            <input type="email" id="email" class="form-input" value="admin@securepulse.local" required autofocus />
-        </div>
-        <div class="form-group" style="margin-top:14px">
-            <label class="form-label">Password</label>
-            <div class="pw-wrap">
-                <input type="password" id="password" class="form-input" required />
-                <button type="button" class="pw-toggle" onclick="togglePw()">
-                    <svg id="pw-eye" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                        stroke-width="2">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                    </svg>
-                </button>
-            </div>
-        </div>
+    <div class="lp-div"></div>
 
-        <div id="login-error" class="login-error" style="display:none"></div>
+    <form id="login-form" autocomplete="on">
+      <!-- Username -->
+      <label class="lp-label" for="username">Identifier</label>
+      <div class="lp-field">
+        <div class="lp-field-icon">
+          <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+        <input type="text" id="username" name="username" placeholder="admin" value="admin" required autofocus />
+      </div>
 
-        <button type="submit" class="btn btn-primary login-btn" id="login-btn">
-            Sign In
+      <!-- Password -->
+      <label class="lp-label" for="password">Authorization</label>
+      <div class="lp-field">
+        <div class="lp-field-icon">
+          <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <input type="password" id="password" name="password" placeholder="••••••••••" required />
+        <button type="button" class="lp-pw-toggle" onclick="togglePw()" tabindex="-1">
+          <svg id="pw-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
-    </form>
+      </div>
 
-    <p class="login-hint">Default: admin@securepulse.local / Admin@1234</p>
+      <!-- Remember + Forgot -->
+      <div class="lp-rem-row">
+        <label class="lp-rem">
+          <div class="lp-chk"><div class="lp-chk-inner"></div></div>
+          <span class="lp-rem-txt">REMEMBER ME</span>
+        </label>
+        <a href="#" class="lp-forgot">FORGOT?</a>
+      </div>
+
+      <!-- Error -->
+      <div id="login-error" class="lp-error"></div>
+
+      <!-- Submit -->
+      <button type="submit" class="lp-btn" id="login-btn">
+        <div class="lp-btn-shine"></div>
+        <span id="login-btn-txt">ACCESS</span>
+      </button>
+    </form>
+  </div>
+
+  <!-- ── SUCCESS OVERLAY ── -->
+  <div class="login-success" id="login-success">
+    <div class="ls-particles">
+      <div class="ls-pt"></div><div class="ls-pt"></div><div class="ls-pt"></div>
+      <div class="ls-pt"></div><div class="ls-pt"></div><div class="ls-pt"></div>
+      <div class="ls-pt"></div><div class="ls-pt"></div>
+    </div>
+
+    <div class="ls-avatar-wrap">
+      <div class="ls-avatar">
+        <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      </div>
+    </div>
+
+    <div class="ls-granted">ACCESS GRANTED</div>
+    <div class="ls-username" id="ls-username"></div>
+    <div class="ls-statusbar">
+      <div class="ls-dot"></div>
+      <span class="ls-stxt">SESSION ACTIVE</span>
+    </div>
+  </div>
+
+  <!-- Bottom HUD status -->
+  <div class="hud-status">
+    <div class="hud-sdot"></div>
+    <span class="hud-stxt">SECURE CONNECTION ESTABLISHED</span>
+  </div>
+  <div class="hud-ver">v2.4.1</div>
 </div>
 
 <script>
-    // If the backend rendered this page, it means the server session is invalid or missing.
-    // Clear any stale local storage tokens to prevent infinite redirect loops.
-    localStorage.removeItem('sp_token');
-    localStorage.removeItem('sp_user');
+  // Clear stale tokens when login page loads
+  localStorage.removeItem('sp_token');
+  localStorage.removeItem('sp_user');
 
-    function togglePw() {
-        const pw = document.getElementById('password');
-        pw.type = pw.type === 'password' ? 'text' : 'password';
-    }
+  function togglePw() {
+    const pw = document.getElementById('password');
+    pw.type = pw.type === 'password' ? 'text' : 'password';
+  }
 
-    document.getElementById('login-form').addEventListener('submit', async function (e) {
-        e.preventDefault();
-        const btn = document.getElementById('login-btn');
-        const err = document.getElementById('login-error');
-        err.style.display = 'none';
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner"></span>';
+  // ── Glitch typewriter effect ──
+  const GLITCH_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%&*!?';
+  function glitchReveal(el, finalText, duration = 1200) {
+    el.textContent = '';
+    const steps = 18;
+    const interval = duration / steps;
+    let step = 0;
 
-        try {
-            const res = await fetch('/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    email: document.getElementById('email').value.trim().toLowerCase(),
-                    password: document.getElementById('password').value,
-                }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Login failed');
+    const timer = setInterval(() => {
+      step++;
+      const progress = step / steps;
+      const resolvedLen = Math.floor(progress * finalText.length);
 
-            localStorage.setItem('sp_token', data.access_token);
-            localStorage.setItem('sp_user', JSON.stringify({
-                id: data.user_id, email: data.email,
-                full_name: data.full_name, is_admin: data.is_admin,
-            }));
-            window.location.href = '/dashboard?_cb=' + Date.now();
-        } catch (ex) {
-            err.textContent = ex.message;
-            err.style.display = 'flex';
-            btn.disabled = false;
-            btn.textContent = 'Sign In';
+      let display = '';
+      for (let i = 0; i < finalText.length; i++) {
+        if (i < resolvedLen) {
+          display += finalText[i];
+        } else {
+          display += GLITCH_CHARS[Math.floor(Math.random() * GLITCH_CHARS.length)];
         }
-    });
+      }
+      el.textContent = display;
+
+      if (step >= steps) {
+        clearInterval(timer);
+        el.textContent = finalText;
+      }
+    }, interval);
+  }
+
+  // ── Success animation → redirect ──
+  function showSuccess(fullName) {
+    // Fade out panel
+    const panel = document.getElementById('login-panel');
+    panel.style.opacity = '0';
+    panel.style.pointerEvents = 'none';
+
+    // Show success overlay after 400ms
+    setTimeout(() => {
+      const success = document.getElementById('login-success');
+      success.classList.add('visible');
+
+      // Glitch-reveal the username
+      const usernameEl = document.getElementById('ls-username');
+      glitchReveal(usernameEl, fullName.toUpperCase(), 1000);
+
+      // Redirect after 2.5s
+      setTimeout(() => {
+        window.location.href = '/dashboard?_cb=' + Date.now();
+      }, 2500);
+    }, 400);
+  }
+
+  // ── Form submit ──
+  document.getElementById('login-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const btn = document.getElementById('login-btn');
+    const btnTxt = document.getElementById('login-btn-txt');
+    const err = document.getElementById('login-error');
+
+    err.style.display = 'none';
+    btn.disabled = true;
+    btnTxt.innerHTML = '<span class="lp-spinner"></span>';
+
+    try {
+      const res = await fetch('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: document.getElementById('username').value.trim(),
+          password: document.getElementById('password').value,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Authentication failed');
+
+      // Store tokens
+      localStorage.setItem('sp_token', data.access_token);
+      localStorage.setItem('sp_user', JSON.stringify({
+        id: data.user_id, username: data.username,
+        full_name: data.full_name, is_admin: data.is_admin,
+      }));
+
+      // Trigger success animation
+      showSuccess(data.full_name || data.email);
+
+    } catch (ex) {
+      err.textContent = '⚠ ' + ex.message;
+      err.style.display = 'block';
+      btn.disabled = false;
+      btnTxt.textContent = 'ACCESS';
+    }
+  });
 </script>
 {% endblock %}

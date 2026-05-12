@@ -1,0 +1,231 @@
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&display=swap');
+*{box-sizing:border-box;margin:0;padding:0;}
+.scene{
+  width:100%;height:420px;
+  border-radius:14px;
+  overflow:hidden;
+  position:relative;
+  font-family:'Share Tech Mono',monospace;
+}
+.bg{
+  position:absolute;inset:0;
+  background:url('https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=900&q=80') center/cover no-repeat;
+  filter:brightness(0.55) saturate(1.3);
+}
+.bg-overlay{
+  position:absolute;inset:0;
+  background:linear-gradient(90deg,rgba(5,15,35,0.92) 0%,rgba(5,15,35,0.75) 38%,rgba(5,15,35,0.1) 100%);
+}
+/* SCAN LINE */
+.scanline{
+  position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,200,255,0.015) 3px,rgba(0,200,255,0.015) 4px);
+}
+/* GRID LINES */
+.grid{position:absolute;inset:0;pointer-events:none;opacity:0.08;}
+.grid::before{content:'';position:absolute;inset:0;background:linear-gradient(rgba(0,200,255,0.5) 1px,transparent 1px),linear-gradient(90deg,rgba(0,200,255,0.5) 1px,transparent 1px);background-size:40px 40px;}
+
+/* SWEEP */
+.sweep{
+  position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,rgba(0,200,255,0.7),transparent);
+  animation:sweepDown 4s linear infinite;
+}
+@keyframes sweepDown{from{top:0;opacity:0}10%{opacity:1}90%{opacity:1}to{top:100%;opacity:0}}
+
+/* LEFT PANEL — LOGIN */
+.panel{
+  position:absolute;left:24px;top:50%;transform:translateY(-50%);
+  width:220px;
+  background:rgba(6,18,45,0.82);
+  border:1px solid rgba(0,200,255,0.3);
+  border-radius:10px;
+  padding:20px 18px;
+  backdrop-filter:blur(8px);
+}
+/* top logo */
+.logo-row{display:flex;align-items:center;gap:8px;margin-bottom:18px;}
+.logo-hex{
+  width:34px;height:34px;
+  background:rgba(0,200,255,0.1);
+  border:1.5px solid rgba(0,200,255,0.5);
+  border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  position:relative;
+}
+.logo-hex i{font-size:16px;color:#00c8ff;}
+.logo-pulse{
+  position:absolute;inset:-4px;border-radius:8px;
+  border:1px solid rgba(0,200,255,0.3);
+  animation:pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.3;transform:scale(1.1)}}
+.logo-txt{font-family:'Orbitron',monospace;font-size:11px;color:#00c8ff;letter-spacing:2px;line-height:1.3;}
+.logo-sub{font-size:9px;color:rgba(0,200,255,0.4);letter-spacing:1px;}
+
+/* divider */
+.div{height:1px;background:linear-gradient(90deg,transparent,rgba(0,200,255,0.4),transparent);margin-bottom:16px;}
+
+/* label */
+.field-label{font-size:9px;letter-spacing:2px;color:rgba(0,200,255,0.5);margin-bottom:5px;text-transform:uppercase;}
+
+/* input */
+.field{
+  background:rgba(0,200,255,0.05);
+  border:1px solid rgba(0,200,255,0.2);
+  border-radius:5px;
+  padding:7px 10px;
+  display:flex;align-items:center;gap:7px;
+  margin-bottom:12px;
+  transition:border-color 0.3s;
+}
+.field:hover{border-color:rgba(0,200,255,0.5);}
+.field i{font-size:13px;color:rgba(0,200,255,0.5);}
+.field span{font-size:11px;color:rgba(255,255,255,0.3);}
+
+/* remember row */
+.rem-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+.rem{display:flex;align-items:center;gap:5px;}
+.chk{width:10px;height:10px;border:1px solid rgba(0,200,255,0.4);border-radius:2px;display:flex;align-items:center;justify-content:center;}
+.chk-inner{width:5px;height:5px;background:#00c8ff;border-radius:1px;}
+.rem-txt{font-size:9px;color:rgba(255,255,255,0.35);letter-spacing:1px;}
+.forgot{font-size:9px;color:rgba(0,200,255,0.5);letter-spacing:1px;}
+
+/* button */
+.access-btn{
+  width:100%;padding:9px;
+  background:linear-gradient(90deg,rgba(0,150,200,0.3),rgba(0,80,160,0.2));
+  border:1px solid rgba(0,200,255,0.5);
+  border-radius:5px;
+  font-family:'Orbitron',monospace;
+  font-size:10px;letter-spacing:3px;
+  color:#00c8ff;
+  text-align:center;
+  cursor:pointer;
+  position:relative;overflow:hidden;
+}
+.btn-shine{
+  position:absolute;top:0;left:-100%;width:60%;height:100%;
+  background:linear-gradient(90deg,transparent,rgba(0,200,255,0.15),transparent);
+  animation:shine 3s ease-in-out infinite 1s;
+}
+@keyframes shine{0%{left:-100%}40%{left:150%}100%{left:150%}}
+
+/* corner brackets on panel */
+.corner{position:absolute;width:10px;height:10px;border-color:rgba(0,200,255,0.6);border-style:solid;}
+.tl{top:-1px;left:-1px;border-width:2px 0 0 2px;border-radius:3px 0 0 0;}
+.tr{top:-1px;right:-1px;border-width:2px 2px 0 0;border-radius:0 3px 0 0;}
+.bl{bottom:-1px;left:-1px;border-width:0 0 2px 2px;border-radius:0 0 0 3px;}
+.br{bottom:-1px;right:-1px;border-width:0 2px 2px 0;border-radius:0 0 3px 0;}
+
+/* RIGHT SIDE — decorative HUD elements */
+.hud-ring{
+  position:absolute;right:12%;top:50%;transform:translate(50%,-50%);
+  width:160px;height:160px;
+  border-radius:50%;
+  border:1px solid rgba(0,200,255,0.15);
+  animation:spinSlow 12s linear infinite;
+}
+.hud-ring2{
+  position:absolute;right:12%;top:50%;transform:translate(50%,-50%);
+  width:200px;height:200px;
+  border-radius:50%;
+  border:1px dashed rgba(0,200,255,0.08);
+  animation:spinSlow 20s linear infinite reverse;
+}
+@keyframes spinSlow{from{transform:translate(50%,-50%) rotate(0deg)}to{transform:translate(50%,-50%) rotate(360deg)}}
+
+/* floating data tags */
+.tag{
+  position:absolute;
+  font-size:9px;color:rgba(0,200,255,0.5);letter-spacing:1px;
+  font-family:'Share Tech Mono',monospace;
+}
+.tag1{top:15%;right:8%;}
+.tag2{bottom:18%;right:5%;}
+.tag3{top:50%;right:3%;transform:translateY(-50%);}
+
+/* bottom status bar */
+.status-bar{
+  position:absolute;bottom:12px;left:24px;
+  display:flex;align-items:center;gap:8px;
+}
+.s-dot{width:5px;height:5px;border-radius:50%;background:#00ff88;animation:sdot 1.5s ease-in-out infinite;}
+@keyframes sdot{0%,100%{opacity:1}50%{opacity:0.2}}
+.s-txt{font-size:9px;color:rgba(255,255,255,0.3);letter-spacing:2px;}
+
+/* version tag */
+.ver{position:absolute;bottom:12px;right:16px;font-size:9px;color:rgba(0,200,255,0.25);letter-spacing:1px;}
+</style>
+
+<div class="scene">
+  <div class="bg"></div>
+  <div class="bg-overlay"></div>
+  <div class="scanline"></div>
+  <div class="grid"></div>
+  <div class="sweep"></div>
+
+  <!-- decorative HUD rings on right -->
+  <div class="hud-ring"></div>
+  <div class="hud-ring2"></div>
+
+  <!-- floating data tags -->
+  <div class="tag tag1">SYS_AUTH v2.4</div>
+  <div class="tag tag2">ENC: AES-256</div>
+  <div class="tag tag3">STATUS: ONLINE</div>
+
+  <!-- LOGIN PANEL — LEFT -->
+  <div class="panel">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+
+    <div class="logo-row">
+      <div class="logo-hex">
+        <div class="logo-pulse"></div>
+        <i class="ti ti-shield-lock" aria-hidden="true"></i>
+      </div>
+      <div>
+        <div class="logo-txt">ANTIGRAVITY</div>
+        <div class="logo-sub">SECURE ACCESS</div>
+      </div>
+    </div>
+
+    <div class="div"></div>
+
+    <div class="field-label">Identifier</div>
+    <div class="field">
+      <i class="ti ti-user" aria-hidden="true"></i>
+      <span>Username</span>
+    </div>
+
+    <div class="field-label">Authorization</div>
+    <div class="field">
+      <i class="ti ti-lock" aria-hidden="true"></i>
+      <span>••••••••••</span>
+    </div>
+
+    <div class="rem-row">
+      <div class="rem">
+        <div class="chk"><div class="chk-inner"></div></div>
+        <span class="rem-txt">REMEMBER ME</span>
+      </div>
+      <span class="forgot">FORGOT?</span>
+    </div>
+
+    <div class="access-btn">
+      <div class="btn-shine"></div>
+      ACCESS
+    </div>
+  </div>
+
+  <!-- bottom status -->
+  <div class="status-bar">
+    <div class="s-dot"></div>
+    <span class="s-txt">SECURE CONNECTION ESTABLISHED</span>
+  </div>
+  <div class="ver">v2.4.1</div>
+</div>

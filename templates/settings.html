@@ -1,87 +1,312 @@
 {% extends "base.html" %}
 {% set active = 'settings' %}
 {% block page_title %}Settings{% endblock %}
-{% block page_sub %}Dashboard configuration and profile{% endblock %}
+{% block page_sub %}Dashboard configuration and system preferences{% endblock %}
 
 {% block content %}
-<div class="page fade-up">
-    <div class="page-header">
+<div class="fade-in" style="display:grid; grid-template-columns:1fr 1fr; gap:14px">
+
+    <!-- ── Account Profile ── -->
+    <div class="card">
+        <div class="card-header"><h3 class="card-title">Account Profile</h3></div>
+        <div style="display:flex; flex-direction:column; gap:12px">
+            <div>
+                <label style="display:block; font-family:var(--mono); font-size:9px; letter-spacing:2px; color:var(--text2); margin-bottom:5px; text-transform:uppercase">Full Name</label>
+                <input type="text" id="profile-name" placeholder="Loading..." style="width:100%">
+            </div>
+            <div>
+                <label style="display:block; font-family:var(--mono); font-size:9px; letter-spacing:2px; color:var(--text2); margin-bottom:5px; text-transform:uppercase">Email Address</label>
+                <input type="email" id="profile-email" placeholder="Loading..." style="width:100%">
+            </div>
+            <div>
+                <label style="display:block; font-family:var(--mono); font-size:9px; letter-spacing:2px; color:var(--text2); margin-bottom:5px; text-transform:uppercase">New Password <span style="color:var(--text3)">(leave blank to keep current)</span></label>
+                <input type="password" id="profile-password" placeholder="••••••••" style="width:100%">
+            </div>
+            <button class="btn btn-primary" id="btn-update-profile" onclick="updateProfile()" style="width:100%">
+                <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="margin-right:6px"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                Update Profile
+            </button>
+        </div>
+    </div>
+
+    <!-- ── Security & API ── -->
+    <div class="card">
+        <div class="card-header"><h3 class="card-title">Security &amp; API</h3></div>
+        <div style="display:flex; flex-direction:column; gap:12px">
+            <!-- Agent API Key hidden from all users per security policy -->
+            <div style="height:1px; background:var(--border)"></div>
+            <div>
+                <label style="display:block; font-family:var(--mono); font-size:9px; letter-spacing:2px; color:var(--text2); margin-bottom:5px; text-transform:uppercase">Heartbeat Timeout</label>
+                <div style="display:flex; align-items:center; gap:10px">
+                    <input type="number" id="heartbeat-timeout" value="120" min="30" max="600" style="width:90px" {% if session.get('user_role') == 'normal' %}disabled{% endif %}>
+                    <span style="font-family:var(--mono); font-size:10px; color:var(--text2)">seconds</span>
+                    {% if session.get('user_role') != 'normal' %}
+                    <button class="btn btn-glass" style="padding:5px 12px; font-size:11px" onclick="saveHeartbeat()">Save</button>
+                    {% endif %}
+                </div>
+                <p style="font-family:var(--mono); font-size:9px; color:var(--text3); margin-top:5px; letter-spacing:1px">Servers not seen within this window are marked Offline.</p>
+            </div>
+            {% if session.get('user_role') != 'normal' %}
+            <div style="height:1px; background:var(--border)"></div>
+            <button class="btn btn-glass" style="border-color:var(--red); color:var(--red); width:100%" onclick="revokeTokens()">
+                <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="margin-right:6px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                Revoke All Agent Tokens
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ── Appearance ── -->
+    <div class="card">
+        <div class="card-header"><h3 class="card-title">Appearance</h3></div>
+        <div style="display:flex; flex-direction:column; gap:14px">
+            <div style="font-family:var(--mono); font-size:9px; letter-spacing:2px; color:var(--text2); text-transform:uppercase">Color Theme</div>
+
+            <div id="opt-dark" class="theme-toggle-btn" onclick="selectTheme('dark')" style="justify-content:space-between">
+                <div style="display:flex; align-items:center; gap:10px">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                    </svg>
+                    <span>Dark Mode</span>
+                    <span style="font-size:9px; color:var(--text3); font-weight:400">(default)</span>
+                </div>
+                <div class="theme-toggle-track" id="track-dark"><div class="theme-toggle-thumb"></div></div>
+            </div>
+
+            <div id="opt-light" class="theme-toggle-btn" onclick="selectTheme('light')" style="justify-content:space-between">
+                <div style="display:flex; align-items:center; gap:10px">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="5"/>
+                        <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                        <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                    </svg>
+                    <span>Light Mode</span>
+                </div>
+                <div class="theme-toggle-track" id="track-light"><div class="theme-toggle-thumb"></div></div>
+            </div>
+
+            <p style="font-family:var(--mono); font-size:9px; color:var(--text3); letter-spacing:1px; line-height:1.6">
+                Theme is saved in your browser and applies instantly across all pages. Default is Dark.
+            </p>
+        </div>
+    </div>
+
+    {% if session.get('user_role') != 'normal' %}
+    <!-- ── Notification Routing ── -->
+    <div class="card" style="grid-column: span 2">
+        <div class="card-header">
+            <h3 class="card-title">Intelligent Alert Routing</h3>
+            <span class="badge badge-info">Admin Only</span>
+        </div>
+        <p style="font-family:var(--mono); font-size:9px; color:var(--text3); margin-bottom:15px; letter-spacing:1px">
+            Route security alerts to specific teams based on server tags (Site or Role).
+        </p>
         
-    </div>
-
-    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px">
-        <!-- Account Settings -->
-        <div class="card">
-            <div class="card-header"><h3 class="card-title">Account Profile</h3></div>
-            <div style="display:flex; flex-direction:column; gap:16px">
-                <div class="form-group">
-                    <label class="form-label">Full Name</label>
-                    <input type="text" id="profile-name" class="form-input" value="Loading..." readonly>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Email Address</label>
-                    <input type="email" id="profile-email" class="form-input" value="Loading..." readonly>
-                </div>
-                <button class="btn btn-primary" disabled>Update Profile</button>
+        <div style="display:grid; grid-template-columns: 1fr 350px; gap:20px">
+            <!-- Routes Table -->
+            <div style="border-right: 1px solid var(--border); padding-right:20px">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Match Type</th>
+                            <th>Value</th>
+                            <th>Recipient Email</th>
+                            <th style="text-align:right">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="routes-list">
+                        <!-- Injected here -->
+                    </tbody>
+                </table>
             </div>
-        </div>
 
-        <!-- Security Settings -->
-        <div class="card">
-            <div class="card-header"><h3 class="card-title">Security & API</h3></div>
-            <div style="display:flex; flex-direction:column; gap:16px">
-                <div class="form-group">
-                    <label class="form-label">Agent API Key</label>
-                    <div style="display:flex; gap:8px">
-                        <input type="password" id="api-key-input" class="form-input" style="flex:1" value="••••••••••••••••" readonly>
-                        <button class="btn btn-ghost" onclick="toggleApiKey()">Show</button>
-                    </div>
-                    <p style="font-size:10px; color:var(--text-muted); margin-top:4px">Used by agents during initial registration.</p>
+            <!-- Add Route Form -->
+            <div style="display:flex; flex-direction:column; gap:12px">
+                <h4 style="font-family:var(--mono); font-size:10px; color:var(--text2); letter-spacing:1px">ADD NEW ROUTE</h4>
+                <div>
+                    <label class="stat-label">MATCH TYPE</label>
+                    <select id="route-type" style="width:100%">
+                        <option value="site">Site (e.g. Cloud, DC)</option>
+                        <option value="role">Role (e.g. primary, standby)</option>
+                        <option value="default">Default Fallback</option>
+                    </select>
                 </div>
-                <div class="form-divider" style="height:1px; background:var(--border); margin:8px 0"></div>
-                <div class="form-group">
-                    <label class="form-label">Heartbeat Timeout</label>
-                    <div style="display:flex; align-items:center; gap:12px">
-                        <input type="number" class="form-input" style="width:100px" value="120" readonly>
-                        <span style="font-size:12px; color:var(--text-muted)">seconds</span>
-                    </div>
+                <div>
+                    <label class="stat-label">MATCH VALUE</label>
+                    <input type="text" id="route-value" placeholder="e.g. Cloud" style="width:100%">
                 </div>
-                <button class="btn btn-danger" onclick="revokeTokens()">Revoke All Agent Tokens</button>
+                <div>
+                    <label class="stat-label">TEAM EMAIL</label>
+                    <input type="email" id="route-email" placeholder="team@company.com" style="width:100%">
+                </div>
+                <button class="btn btn-primary" onclick="addRoute()" style="width:100%; margin-top:10px">Add Routing Rule</button>
             </div>
         </div>
     </div>
+    {% endif %}
+</div>
+
+    <!-- ── System Info ── -->
+    <div class="card">
+        <div class="card-header"><h3 class="card-title">System Info</h3></div>
+        <div style="display:flex; flex-direction:column; gap:8px">
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border)">
+                <span style="font-family:var(--mono); font-size:9px; letter-spacing:1px; color:var(--text2); text-transform:uppercase">Platform</span>
+                <span style="font-family:var(--mono); font-size:10px; color:var(--text)">SecurePulse SOC</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border)">
+                <span style="font-family:var(--mono); font-size:9px; letter-spacing:1px; color:var(--text2); text-transform:uppercase">Version</span>
+                <span style="font-family:var(--mono); font-size:10px; color:var(--cyan)">v2.4.1</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border)">
+                <span style="font-family:var(--mono); font-size:9px; letter-spacing:1px; color:var(--text2); text-transform:uppercase">Heartbeat Status</span>
+                <span id="heartbeat-status" class="badge badge-success">Active</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0">
+                <span style="font-family:var(--mono); font-size:9px; letter-spacing:1px; color:var(--text2); text-transform:uppercase">Status</span>
+                <span class="badge badge-success">Operational</span>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <script>
-    function toggleApiKey() {
-        const input = document.getElementById('api-key-input');
-        const btn = event.target;
-        if (input.type === 'password') {
-            // In a real app, fetch the key via API
-            input.type = 'text';
-            input.value = 'sp-agent-key-9f2a8c1b5d3e7f0a4c6b8d2e1f5a9c3b';
-            btn.textContent = 'Hide';
-        } else {
-            input.type = 'password';
-            input.value = '••••••••••••••••';
-            btn.textContent = 'Show';
-        }
-    }
-
-    function revokeTokens() {
-        if (confirm("Are you sure you want to revoke all agent tokens? This will disconnect all monitored servers immediately.")) {
-            alert("Tokens revoked! (Simulated)");
-        }
-    }
-
+    // ── Load Settings ──
     document.addEventListener('DOMContentLoaded', async function() {
         try {
             const data = await apiFetch('/auth/me');
-            document.getElementById('profile-name').value = data.full_name || 'Not set';
-            document.getElementById('profile-email').value = data.email || 'Not set';
-        } catch (e) {
-            console.error("Failed to load profile:", e);
-        }
+            document.getElementById('profile-name').value  = data.full_name || '';
+            document.getElementById('profile-email').value = data.email || '';
+            
+            // Load Routes
+            loadRoutes();
+        } catch (e) { console.error('Failed to load profile:', e); }
+
+        const saved = localStorage.getItem('sp_heartbeat_timeout');
+        if (saved) document.getElementById('heartbeat-timeout').value = saved;
+        syncToggleUI(getTheme());
     });
+
+    async function loadRoutes() {
+        const list = document.getElementById('routes-list');
+        try {
+            const routes = await apiFetch('/api/settings/notification-routes');
+            list.innerHTML = routes.map(r => `
+                <tr>
+                    <td><span class="badge">${r.match_type.toUpperCase()}</span></td>
+                    <td class="mono" style="font-size:11px">${r.match_value || 'N/A'}</td>
+                    <td class="mono" style="font-size:11px">${r.recipient_email}</td>
+                    <td style="text-align:right">
+                        <button class="btn btn-glass" style="padding:4px 8px; font-size:9px" onclick="deleteRoute(${r.id})">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+            if (routes.length === 0) {
+                list.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text3); font-size:10px; padding:20px">No routing rules configured.</td></tr>';
+            }
+        } catch (e) { showToast('Failed to load routes', 'error'); }
+    }
+
+    async function addRoute() {
+        const type = document.getElementById('route-type').value;
+        const value = document.getElementById('route-value').value.trim();
+        const email = document.getElementById('route-email').value.trim();
+
+        if (!email) { showToast('Email is required', 'error'); return; }
+        if (type !== 'default' && !value) { showToast('Match value is required', 'error'); return; }
+
+        try {
+            await apiFetch('/api/settings/notification-routes', {
+                method: 'POST',
+                body: JSON.stringify({ match_type: type, match_value: value, recipient_email: email })
+            });
+            showToast('Routing rule added', 'success');
+            document.getElementById('route-value').value = '';
+            document.getElementById('route-email').value = '';
+            loadRoutes();
+        } catch (e) { showToast('Failed to add route', 'error'); }
+    }
+
+    // (Remaining functions: updateProfile, saveHeartbeat, toggleApiKey, revokeTokens, selectTheme, syncToggleUI...)
+
+    // ── Update Profile ──
+    async function updateProfile() {
+        const btn = document.getElementById('btn-update-profile');
+        const name     = document.getElementById('profile-name').value.trim();
+        const email    = document.getElementById('profile-email').value.trim();
+        const password = document.getElementById('profile-password').value;
+
+        if (!name || !email) { showToast('Name and email are required', 'error'); return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        try {
+            const payload = { full_name: name, email };
+            if (password) payload.password = password;
+
+            await apiFetch('/auth/me', {
+                method: 'PATCH',
+                body: JSON.stringify(payload)
+            });
+            document.getElementById('profile-password').value = '';
+            showToast('Profile updated successfully', 'success');
+        } catch (e) {
+            showToast('Update failed: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="margin-right:6px"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Update Profile';
+        }
+    }
+
+    // ── Save Heartbeat Timeout ──
+    function saveHeartbeat() {
+        const val = parseInt(document.getElementById('heartbeat-timeout').value);
+        if (isNaN(val) || val < 30 || val > 600) {
+            showToast('Timeout must be between 30 and 600 seconds', 'error');
+            return;
+        }
+        localStorage.setItem('sp_heartbeat_timeout', val);
+        showToast(`Heartbeat timeout set to ${val}s`, 'success');
+    }
+
+    // ── API key toggle ──
+    function toggleApiKey() {
+        showToast('Access denied: Registration keys are system-managed', 'error');
+    }
+
+    function revokeTokens() {
+        if (confirm('Revoke all agent tokens? This will disconnect all monitored servers immediately.')) {
+            showToast('Tokens revoked (simulated)', 'warning');
+        }
+    }
+
+    // ── Theme selection ──
+    function selectTheme(theme) {
+        setTheme(theme);
+        syncToggleUI(theme);
+        showToast(theme === 'light' ? 'Light mode activated' : 'Dark mode activated', 'success');
+    }
+
+    function syncToggleUI(theme) {
+        const trackDark  = document.getElementById('track-dark');
+        const trackLight = document.getElementById('track-light');
+        const optDark    = document.getElementById('opt-dark');
+        const optLight   = document.getElementById('opt-light');
+
+        if (theme === 'light') {
+            trackDark.classList.remove('on');
+            trackLight.classList.add('on');
+            optLight.style.borderColor = 'var(--border2)';
+            optDark.style.borderColor  = 'var(--border)';
+        } else {
+            trackLight.classList.remove('on');
+            trackDark.classList.add('on');
+            optDark.style.borderColor  = 'var(--border2)';
+            optLight.style.borderColor = 'var(--border)';
+        }
+    }
 </script>
 {% endblock %}

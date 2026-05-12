@@ -5,46 +5,72 @@
 {% block page_sub %}IP Address: {{ server.ip_address }} · Server ID: {{ server.id }}{% endblock %}
 
 {% block topbar_actions %}
-<div style="display:flex; gap:12px">
-    <button class="btn btn-glass" style="border-color:var(--accent-red); color:var(--accent-red)" id="btn-isolate" onclick="isolateHost()">
-        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" style="margin-right:8px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+<div style="display:flex; gap:10px; align-items:center">
+    <button class="btn btn-glass" id="btn-isolate" onclick="isolateHost()"
+        style="border-color:var(--red); color:var(--red); display:flex; align-items:center; gap:7px; padding:7px 14px">
+        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
         Isolate Host
     </button>
-    <button class="tb-btn primary" onclick="exportReport()">
-        <svg viewBox="0 0 24 24"><path d="M18 8h1a4 4 0 010 8h-1"/><path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+    <button class="btn btn-glass" onclick="exportReport()"
+        style="display:flex; align-items:center; gap:7px; padding:7px 14px">
+        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
         Export Report
     </button>
 </div>
+<style>
+    .switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--bg4); transition: .4s; border-radius: 20px; border: 1px solid var(--border); }
+    .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 2px; background-color: var(--text3); transition: .4s; border-radius: 50%; }
+    input:checked + .slider { background-color: var(--cyan2); border-color: var(--cyan); }
+    input:checked + .slider:before { transform: translateX(20px); background-color: var(--cyan); }
+    
+    .service-row { display: flex; justify-content: space-between; align-items: center; background: rgba(0,200,255,0.05); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); }
+    .service-info { flex: 1; }
+    .service-actions { display: flex; gap: 8px; }
+</style>
 {% endblock %}
 
 {% block content %}
 <div class="page fade-up">
-    <div style="margin-bottom:16px;">
+    <div style="margin-bottom:16px">
         <button class="btn btn-ghost" style="padding:6px 12px; font-size:11px" onclick="window.location.href='/servers'">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px">
-                <line x1="19" y1="12" x2="5" y2="12"></line>
-                <polyline points="12 19 5 12 12 5"></polyline>
+                <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
             </svg>
             Back to Servers
         </button>
+    </div>
+
     {% if server.status == 'isolated' %}
-    <div class="card glass fade-in" style="background:rgba(239, 68, 68, 0.1); border:1px solid var(--accent-red); margin-bottom:24px">
-        <div style="display:flex; align-items:center; gap:16px; padding:16px">
-            <div class="stat-icon red" style="width:40px; height:40px">
+    <div class="card glass fade-in" style="background:rgba(255,59,92,0.08); border:1px solid var(--red); margin-bottom:20px">
+        <div style="display:flex; align-items:center; gap:16px; padding:14px 20px">
+            <div class="stat-icon red" style="width:38px; height:38px; flex-shrink:0">
                 <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             </div>
-            <div>
-                <h4 style="color:var(--accent-red); margin:0">HOST ISOLATED</h4>
-                <p style="font-size:12px; color:var(--text-secondary); margin:4px 0 0 0">This asset has been programmatically contained due to a high-severity incident. All non-management traffic is blocked.</p>
+            <div style="flex:1">
+                <h4 style="color:var(--red); margin:0; font-size:13px; letter-spacing:1px">HOST ISOLATED</h4>
+                <p class="text-sub" style="margin:3px 0 0 0">This asset has been programmatically contained. All non-management traffic is blocked.</p>
             </div>
-            <button class="btn btn-glass" style="margin-left:auto; font-size:11px" onclick="reconnectHost()">Restore Connectivity</button>
+            <button class="btn btn-glass" style="flex-shrink:0; font-size:11px; border-color:var(--green); color:var(--green)" onclick="reconnectHost()">
+                <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" stroke-width="2" style="margin-right:5px">
+                    <path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                </svg>
+                Restore Connectivity
+            </button>
         </div>
     </div>
     {% endif %}
-    </div>
 
     <!-- Server Overview Stats -->
-    <div class="stats-grid">
+    <div class="stats-grid" style="grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px">
         <div class="stat-card stat-card--blue">
             <div class="stat-body">
                 <div class="stat-value" id="server-total-events">—</div>
@@ -65,31 +91,91 @@
         </div>
         <div class="stat-card stat-card--green">
             <div class="stat-body">
-                <div class="stat-value" style="font-size:14px; font-family:monospace">{{ server.agent_token[:8] }}...</div>
+                <div class="stat-value" style="font-size:13px; font-family:var(--mono)">{{ server.agent_token[:8] }}...</div>
                 <div class="stat-label">Agent Token</div>
             </div>
         </div>
     </div>
 
-    <div class="dashboard-grid">
-        <!-- Event History -->
-        <div class="card">
-            <div class="card-header">
-                <h3 class="card-title">Recent Events</h3>
-            </div>
-            <div id="server-events-list" class="live-feed" style="max-height:500px">
-                <div class="center-spinner"><div class="spinner"></div></div>
+    <!-- Operational & Service Configuration -->
+    <div class="card" style="margin-bottom:20px">
+        <div class="card-header">
+            <h3 class="card-title">Operational & Service Configuration</h3>
+        </div>
+        <div class="card-body" style="padding:20px">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:30px">
+                <!-- Maintenance Controls -->
+                <div style="border-right:1px solid var(--border); padding-right:30px">
+                    <h4 style="color:var(--cyan); margin-bottom:15px; font-size:14px; letter-spacing:1px">MAINTENANCE CONTROLS</h4>
+                    <div style="display:flex; align-items:center; gap:15px; margin-bottom:20px">
+                        <label class="switch">
+                            <input type="checkbox" id="maint-toggle" onchange="toggleMaintenance()">
+                            <span class="slider"></span>
+                        </label>
+                        <span id="maint-status-text" class="text-sub">Maintenance Disabled</span>
+                    </div>
+                    
+                    <div id="maint-window-section" style="display:none">
+                        <label class="text-sub" style="display:block; margin-bottom:8px; font-size:11px">Set Timed Maintenance Window</label>
+                        <div style="display:flex; gap:10px">
+                            <select id="maint-hours" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; flex:1; font-size:11px">
+                                <option value="1">1 Hour</option>
+                                <option value="2">2 Hours</option>
+                                <option value="4">4 Hours</option>
+                                <option value="8">8 Hours</option>
+                                <option value="24">24 Hours</option>
+                            </select>
+                            <button type="button" class="btn btn-glass" style="font-size:11px; padding:5px 12px" onclick="setMaintenanceWindow()">Set Window</button>
+                        </div>
+                        <p id="maint-until-text" class="text-meta" style="margin-top:10px; color:var(--amber); font-size:11px"></p>
+                    </div>
+                </div>
+
+                <!-- Service Restart Config -->
+                <div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px">
+                        <h4 style="color:var(--cyan); font-size:14px; letter-spacing:1px; margin:0">MANAGED SERVICES (RESTART LOGIC)</h4>
+                        <button type="button" class="btn btn-primary" style="padding:4px 12px; font-size:11px" onclick="restartServices()">Run Restart Playbook</button>
+                    </div>
+                    <div id="services-list" style="display:flex; flex-direction:column; gap:10px; margin-bottom:15px">
+                        <div class="center-spinner"><div class="spinner" style="width:20px; height:20px"></div></div>
+                    </div>
+                    
+                    <div style="background:rgba(0,200,255,0.03); border:1px dashed var(--border); padding:12px; border-radius:6px">
+                        <p class="text-meta" style="margin-bottom:8px; font-size:10px; text-transform:uppercase">Add New Service (e.g. Tomcat)</p>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px">
+                            <input type="text" id="new-service-name" placeholder="Service Name (e.g. Tomcat-1)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; font-size:11px; width:100%">
+                            <input type="text" id="new-service-user" placeholder="Run as User (e.g. tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; font-size:11px; width:100%">
+                        </div>
+                        <div style="margin-bottom:8px">
+                            <input type="text" id="new-service-path" placeholder="Binary/Startup Path (e.g. /opt/tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; font-size:11px; width:100%">
+                        </div>
+                        <button type="button" class="btn btn-ghost" style="width:100%; font-size:11px; padding:6px; border-color:var(--cyan)" onclick="addService()">+ Add Managed Service</button>
+                    </div>
+                </div>
             </div>
         </div>
+    </div>
 
-        <!-- Alerts History -->
-        <div class="card">
-            <div class="card-header">
-                <h3 class="card-title">Alert History</h3>
-            </div>
-            <div id="server-alerts-list" class="live-feed" style="max-height:500px">
-                <div class="center-spinner"><div class="spinner"></div></div>
-            </div>
+    <!-- Recent Events — full width -->
+    <div class="card" style="margin-bottom:20px">
+        <div class="card-header">
+            <h3 class="card-title">Recent Events</h3>
+            <span class="badge badge-info" id="events-count-badge">—</span>
+        </div>
+        <div id="server-events-list" class="live-feed" style="max-height:380px; overflow-y:auto">
+            <div class="center-spinner"><div class="spinner"></div></div>
+        </div>
+    </div>
+
+    <!-- Alert History — full width -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Alert History</h3>
+            <span class="badge badge-critical" id="alerts-count-badge">—</span>
+        </div>
+        <div id="server-alerts-list" class="live-feed" style="max-height:380px; overflow-y:auto">
+            <div class="center-spinner"><div class="spinner"></div></div>
         </div>
     </div>
 </div>
@@ -97,22 +183,59 @@
 <script>
     const serverId = {{ server.id }};
 
+    let managedServices = [];
+
     async function loadServerData() {
         try {
-            // Load Events
-            const eventsData = await apiFetch(`/api/events?server_id=${serverId}&limit=30`);
-            const eventsEl = document.getElementById('server-events-list');
-            document.getElementById('server-total-events').textContent = eventsData.total;
+            // Load Server Metadata
+            const s = await apiFetch(`/api/servers/${serverId}`);
+            document.getElementById('maint-toggle').checked = s.is_maintenance;
+            document.getElementById('maint-status-text').textContent = s.is_maintenance ? 'Maintenance Active' : 'Maintenance Disabled';
+            document.getElementById('maint-status-text').style.color = s.is_maintenance ? 'var(--amber)' : 'var(--text2)';
+            document.getElementById('maint-window-section').style.display = s.is_maintenance ? 'block' : 'none';
             
+            if (s.maintenance_until) {
+                const until = new Date(s.maintenance_until);
+                if (until > new Date()) {
+                    document.getElementById('maint-until-text').textContent = `Timed Window active until: ${until.toLocaleString()}`;
+                } else {
+                    document.getElementById('maint-until-text').textContent = '';
+                }
+            } else {
+                document.getElementById('maint-until-text').textContent = '';
+            }
+
+            // Load Managed Services
+            if (s.managed_services) {
+                if (typeof s.managed_services === 'string') {
+                    try { managedServices = JSON.parse(s.managed_services); }
+                    catch(e) { managedServices = []; }
+                } else if (Array.isArray(s.managed_services)) {
+                    managedServices = s.managed_services;
+                } else {
+                    managedServices = [];
+                }
+            } else {
+                managedServices = [];
+            }
+            renderServices();
+
+            // Load Events
+            const eventsData = await apiFetch(`/api/events?server_id=${serverId}&limit=50`);
+            const eventsEl = document.getElementById('server-events-list');
+            const totalEvt = eventsData.total || eventsData.items.length;
+            document.getElementById('server-total-events').textContent = totalEvt;
+            document.getElementById('events-count-badge').textContent = totalEvt + ' events';
+
             if (eventsData.items.length > 0) {
                 document.getElementById('server-last-login').textContent = relTime(eventsData.items[0].created_at);
                 eventsEl.innerHTML = eventsData.items.map(e => `
-                    <div class="feed-item feed-item--${e.severity}">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
-                            <span class="mono" style="font-weight:600">${e.event_type}</span>
-                            <span style="font-size:10px; color:var(--text-muted)">${new Date(e.created_at).toLocaleString()}</span>
+                    <div class="feed-item feed-item--${e.severity}" style="display:grid; grid-template-columns:1fr auto; gap:10px; align-items:start">
+                        <div>
+                            <span class="mono" style="font-weight:600; font-size:13px">${e.event_type}</span>
+                            <p class="text-sub" style="margin:3px 0 0 0">${e.description}</p>
                         </div>
-                        <p style="font-size:12px; color:var(--text-secondary)">${e.description}</p>
+                        <span class="text-meta" style="white-space:nowrap">${new Date(e.created_at).toLocaleString()}</span>
                     </div>
                 `).join('');
             } else {
@@ -120,9 +243,11 @@
             }
 
             // Load Alerts
-            const alertsData = await apiFetch(`/api/alerts?server_id=${serverId}&limit=20`);
+            const alertsData = await apiFetch(`/api/alerts?server_id=${serverId}&limit=30`);
             const alertsEl = document.getElementById('server-alerts-list');
-            document.getElementById('server-open-alerts').textContent = alertsData.items.filter(a => !a.is_resolved).length;
+            const openCount = alertsData.items.filter(a => !a.is_resolved).length;
+            document.getElementById('server-open-alerts').textContent = openCount;
+            document.getElementById('alerts-count-badge').textContent = openCount + ' open';
 
             if (alertsData.items.length > 0) {
                 alertsEl.innerHTML = alertsData.items.map(a => `
@@ -131,9 +256,9 @@
                             <span class="alert-title">${a.title}</span>
                             <span class="badge ${a.is_resolved ? 'badge-gray' : 'badge-red'}">${a.is_resolved ? 'Resolved' : 'Open'}</span>
                         </div>
-                        <p class="alert-msg">${a.message}</p>
-                        <div style="display:flex; justify-content:space-between; margin-top:6px">
-                            <span class="alert-time">${relTime(a.created_at)}</span>
+                        <p class="alert-msg text-sub">${a.message}</p>
+                        <div style="display:flex; justify-content:space-between; margin-top:6px; align-items:center">
+                            <span class="text-meta">${relTime(a.created_at)}</span>
                             ${!a.is_resolved ? `<button class="btn btn-ghost" style="padding:3px 10px; font-size:11px" onclick="resolveDetailAlert(${a.id}, this)">Resolve</button>` : ''}
                         </div>
                     </div>
@@ -149,51 +274,151 @@
         btn.disabled = true;
         try {
             await apiFetch(`/api/alerts/${id}/resolve`, { method: 'PATCH' });
+            showToast('Alert resolved', 'success');
             loadServerData();
-        } catch (e) { btn.disabled = false; alert('Failed to resolve alert'); }
+        } catch (e) { btn.disabled = false; showToast('Failed to resolve alert', 'error'); }
     }
 
-    function relTime(iso) {
-        const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
-        if (diff < 60) return `${diff}s ago`;
-        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-        return `${Math.floor(diff / 3600)}h ago`;
+        return `${Math.floor(diff / 86400)}d ago`;
+    }
+
+    function renderServices() {
+        const list = document.getElementById('services-list');
+        if (!Array.isArray(managedServices) || managedServices.length === 0) {
+            list.innerHTML = '<p class="text-meta" style="font-style:italic">No services configured</p>';
+            return;
+        }
+        list.innerHTML = managedServices.map((s, idx) => `
+            <div class="service-row" style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:var(--bg3); border-radius:4px; border:1px solid var(--border)">
+                <div class="service-info">
+                    <div class="mono" style="font-size:12px; color:var(--cyan)">${s.name} <span style="color:var(--text3); font-size:10px">as ${s.user || s.username || 'root'}</span></div>
+                    <div class="mono" style="font-size:10px; color:var(--text3); margin-top:2px">${s.path}</div>
+                </div>
+                <div class="service-actions">
+                    <button type="button" class="btn btn-ghost" style="padding:4px; color:var(--red)" onclick="removeService('${s.name}')">
+                        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async function toggleMaintenance() {
+        const active = document.getElementById('maint-toggle').checked;
+        try {
+            await apiFetch(`/api/servers/${serverId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ is_maintenance: active })
+            });
+            showToast(active ? 'Maintenance Mode Enabled' : 'Maintenance Mode Disabled', 'info');
+            setTimeout(loadServerData, 500);
+        } catch (e) { 
+            alert('Failed to update maintenance state: ' + e.message);
+            document.getElementById('maint-toggle').checked = !active; // Revert UI
+        }
+    }
+
+    async function setMaintenanceWindow() {
+        const hours = document.getElementById('maint-hours').value;
+        try {
+            await apiFetch(`/api/servers/${serverId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ maintenance_hours: parseInt(hours, 10) })
+            });
+            showToast(`Maintenance window set for ${hours}h`, 'success');
+            loadServerData();
+        } catch (e) { 
+            alert('Failed to set window: ' + e.message); 
+        }
+    }
+
+    async function addService() {
+        const name = document.getElementById('new-service-name').value.trim();
+        const user = document.getElementById('new-service-user').value.trim();
+        const path = document.getElementById('new-service-path').value.trim();
+        if (!name || !user || !path) return showToast('Name, User, and Path required', 'warning');
+        
+        try {
+            const res = await apiFetch(`/api/servers/${serverId}/services`, {
+                method: 'POST',
+                body: JSON.stringify({ name: name, user: user, path: path })
+            });
+            showToast('Service added successfully', 'success');
+            managedServices = res.services || [];
+            renderServices();
+            document.getElementById('new-service-name').value = '';
+            document.getElementById('new-service-user').value = '';
+            document.getElementById('new-service-path').value = '';
+        } catch (e) {
+            alert('Failed to add service: ' + e.message);
+        }
+    }
+
+    async function removeService(serviceName) {
+        if (!confirm(`Delete service ${serviceName}?`)) return;
+        try {
+            const res = await apiFetch(`/api/servers/${serverId}/services/${encodeURIComponent(serviceName)}`, {
+                method: 'DELETE'
+            });
+            showToast('Service removed', 'success');
+            managedServices = res.services || [];
+            renderServices();
+        } catch (e) {
+            alert('Failed to remove service: ' + e.message);
+        }
+    }
+
+    async function restartServices() {
+        if (!confirm('Run restart playbook for all managed services?')) return;
+        try {
+            const res = await apiFetch(`/api/servers/${serverId}/restart-services`, {
+                method: 'POST'
+            });
+            
+            let success = true;
+            res.results.forEach(r => {
+                if (r.returncode !== 0) success = false;
+            });
+            
+            if (success) {
+                showToast('Playbook executed successfully', 'success');
+            } else {
+                showToast('Playbook executed with some errors (check logs)', 'warning');
+                console.log('Restart results:', res.results);
+            }
+        } catch (e) {
+            alert('Failed to run restart playbook: ' + e.message);
+        }
     }
 
     async function isolateHost() {
-        if (!confirm("CRITICAL ACTION: Are you sure you want to isolate this host? This will block all non-management traffic.")) return;
-        
+        if (!confirm('CRITICAL ACTION: Isolate this host? All non-management traffic will be blocked.')) return;
         const btn = document.getElementById('btn-isolate');
         btn.disabled = true;
-        btn.innerText = "Isolating...";
-        
+        btn.innerHTML = '⏳ Isolating...';
         try {
             await apiFetch(`/api/servers/${serverId}/isolate`, { method: 'POST' });
             showToast('Host isolation triggered', 'success');
-            setTimeout(() => window.location.reload(), 1500);
-        } catch (e) { 
+            setTimeout(() => window.location.reload(), 1200);
+        } catch (e) {
             btn.disabled = false;
-            btn.innerText = "Isolate Host";
-            showToast('Isolation failed', 'error'); 
+            btn.innerHTML = '⚠ Isolate Host';
+            showToast('Isolation failed', 'error');
         }
     }
 
     async function reconnectHost() {
-        if (!confirm("Are you sure you want to restore connectivity for this host?")) return;
+        if (!confirm('Restore connectivity for this host?')) return;
         try {
-            // Reusing a simple update or creating a specific endpoint
             await apiFetch(`/api/servers/${serverId}/reconnect`, { method: 'POST' });
-            showToast('Host connectivity restored', 'success');
+            showToast('Connectivity restored', 'success');
             setTimeout(() => window.location.reload(), 1000);
         } catch (e) { showToast('Restore failed', 'error'); }
     }
 
     function exportReport() {
         const token = getToken();
-        if (!token) {
-            alert('Authentication error');
-            return;
-        }
+        if (!token) { showToast('Authentication error', 'error'); return; }
         window.open(`/api/servers/${serverId}/export-report?token=${token}`, '_blank');
     }
 

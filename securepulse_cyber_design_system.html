@@ -1,0 +1,415 @@
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap');
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#060f1e;
+  --bg2:#0a1628;
+  --bg3:#0d1f3c;
+  --cyan:#00c8ff;
+  --cyan2:rgba(0,200,255,0.15);
+  --cyan3:rgba(0,200,255,0.06);
+  --green:#00ff88;
+  --red:#ff3b5c;
+  --amber:#ffb020;
+  --border:rgba(0,200,255,0.2);
+  --border2:rgba(0,200,255,0.4);
+  --text:#c8e8f8;
+  --text2:rgba(200,232,248,0.5);
+  --text3:rgba(200,232,248,0.25);
+  --orb:'Orbitron',monospace;
+  --mono:'Share Tech Mono',monospace;
+  --raj:'Rajdhani',sans-serif;
+}
+.root{background:var(--bg);color:var(--text);font-family:var(--raj);font-size:14px;padding:20px;border-radius:14px;}
+
+/* SECTION HEADERS */
+.sec-title{font-family:var(--orb);font-size:10px;letter-spacing:3px;color:var(--cyan);text-transform:uppercase;padding:0 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;align-items:center;gap:8px;}
+.sec-title::before{content:'';width:6px;height:6px;background:var(--cyan);border-radius:50%;flex-shrink:0;}
+
+/* DESIGN TOKEN TABLE */
+.token-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;}
+.token-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;}
+.tk-label{font-size:9px;letter-spacing:2px;color:var(--text2);text-transform:uppercase;margin-bottom:8px;}
+.tk-item{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.tk-swatch{width:14px;height:14px;border-radius:3px;flex-shrink:0;}
+.tk-name{font-family:var(--mono);font-size:11px;color:var(--text);}
+.tk-hex{font-family:var(--mono);font-size:10px;color:var(--text3);margin-left:auto;}
+.font-demo{font-family:var(--orb);font-size:12px;color:var(--cyan);margin-bottom:4px;}
+.font-demo2{font-family:var(--mono);font-size:12px;color:var(--text);margin-bottom:4px;}
+.font-demo3{font-family:var(--raj);font-size:13px;color:var(--text2);}
+
+/* BEFORE/AFTER COMPARE */
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;}
+.comp-box{border-radius:8px;overflow:hidden;}
+.comp-label{font-size:9px;letter-spacing:2px;text-transform:uppercase;padding:6px 10px;font-family:var(--mono);}
+.comp-label.before{background:rgba(255,100,100,0.1);color:#ff6464;border-bottom:1px solid rgba(255,100,100,0.2);}
+.comp-label.after{background:rgba(0,200,255,0.08);color:var(--cyan);border-bottom:1px solid var(--border);}
+
+/* SIDEBAR DEMO */
+.sidebar-before,.sidebar-after{padding:12px 0;background:var(--bg2);}
+.sb-item{padding:7px 14px;font-size:12px;display:flex;align-items:center;gap:8px;color:rgba(255,255,255,0.5);}
+.sb-item.active-before{background:rgba(255,255,255,0.06);color:#fff;border-left:2px solid #5b5bff;}
+.sb-item.active-after{background:var(--cyan2);color:var(--cyan);border-left:2px solid var(--cyan);}
+.sb-icon{font-size:14px;}
+.sb-text-before{font-family:system-ui,sans-serif;font-size:12px;}
+.sb-text-after{font-family:var(--mono);font-size:11px;letter-spacing:1px;}
+
+/* CARD DEMO */
+.card-before,.card-after{padding:12px;background:#111827;}
+.stat-before{background:#1f2937;border-radius:6px;padding:10px 12px;margin-bottom:8px;}
+.stat-before .num{font-size:22px;font-weight:700;color:#fff;}
+.stat-before .lbl{font-size:11px;color:#6b7280;text-transform:uppercase;}
+.stat-after{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:8px;position:relative;overflow:hidden;}
+.stat-after::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
+.stat-after .num{font-family:var(--orb);font-size:22px;color:var(--cyan);}
+.stat-after .lbl{font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--text2);text-transform:uppercase;margin-top:2px;}
+.stat-after .badge{position:absolute;top:8px;right:8px;font-family:var(--mono);font-size:9px;color:var(--green);border:1px solid rgba(0,255,136,0.3);border-radius:3px;padding:1px 5px;}
+
+/* BADGE DEMO */
+.badges-row{display:flex;gap:6px;flex-wrap:wrap;padding:12px;}
+.badge-before{padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;}
+.badge-after{padding:2px 8px;border-radius:3px;font-size:9px;font-family:var(--mono);letter-spacing:1px;border:1px solid;}
+
+/* INCIDENT ROW DEMO */
+.inc-before{background:#1e2433;border-left:3px solid #ef4444;padding:10px 12px;margin:8px;}
+.inc-after{background:var(--bg2);border:1px solid var(--border);border-left:2px solid var(--red);padding:10px 12px;margin:8px;position:relative;}
+.inc-after::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,rgba(255,59,92,0.4),transparent);}
+.inc-title-b{font-size:13px;font-weight:700;color:#fff;margin-bottom:3px;}
+.inc-title-a{font-family:var(--orb);font-size:11px;color:#fff;letter-spacing:1px;margin-bottom:4px;}
+.inc-meta-b{font-size:11px;color:#6b7280;}
+.inc-meta-a{font-family:var(--mono);font-size:10px;color:var(--text2);}
+.inc-badge-b{display:inline-block;background:#ef4444;color:#fff;font-size:9px;padding:1px 6px;border-radius:3px;font-weight:700;}
+.inc-badge-a{display:inline-block;color:var(--red);border:1px solid rgba(255,59,92,0.4);font-family:var(--mono);font-size:9px;padding:1px 6px;border-radius:3px;letter-spacing:1px;}
+
+/* FULL DASHBOARD PREVIEW */
+.dashboard{background:var(--bg);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;height:300px;}
+.d-sidebar{width:140px;background:var(--bg2);border-right:1px solid var(--border);padding:12px 0;flex-shrink:0;}
+.d-logo{padding:8px 12px 14px;border-bottom:1px solid var(--border);margin-bottom:10px;}
+.d-logo-icon{width:24px;height:24px;background:var(--cyan2);border:1px solid var(--border2);border-radius:5px;display:inline-flex;align-items:center;justify-content:center;margin-right:6px;vertical-align:middle;}
+.d-logo-txt{font-family:var(--orb);font-size:9px;color:var(--cyan);letter-spacing:1px;vertical-align:middle;}
+.d-nav-item{padding:6px 12px;display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:0.5px;cursor:default;}
+.d-nav-item.active{background:var(--cyan2);color:var(--cyan);border-left:2px solid var(--cyan);}
+.d-nav-item i{font-size:13px;}
+.d-main{flex:1;padding:12px;overflow:hidden;}
+.d-header{margin-bottom:10px;}
+.d-h1{font-family:var(--orb);font-size:12px;color:#fff;letter-spacing:1px;}
+.d-h2{font-family:var(--mono);font-size:9px;color:var(--text2);letter-spacing:1px;margin-top:2px;}
+.d-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px;}
+.d-stat{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px;position:relative;overflow:hidden;}
+.d-stat::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
+.d-stat-num{font-family:var(--orb);font-size:16px;color:var(--cyan);}
+.d-stat-lbl{font-family:var(--mono);font-size:8px;letter-spacing:1.5px;color:var(--text2);margin-top:2px;}
+.d-stat-badge{font-family:var(--mono);font-size:7px;color:var(--green);border:1px solid rgba(0,255,136,0.25);border-radius:2px;padding:1px 4px;display:inline-block;margin-bottom:4px;}
+.d-cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;}
+.d-card{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px;}
+.d-card-title{font-family:var(--mono);font-size:8px;letter-spacing:1.5px;color:var(--cyan);margin-bottom:6px;}
+.inc-row{padding:5px 0;border-bottom:1px solid rgba(0,200,255,0.08);}
+.inc-row-title{font-family:var(--orb);font-size:8px;color:#fff;letter-spacing:0.5px;}
+.inc-row-meta{font-family:var(--mono);font-size:7px;color:var(--text2);}
+.severity-bar{height:3px;background:var(--bg);border-radius:2px;margin-top:4px;overflow:hidden;}
+.s-fill-crit{height:100%;background:var(--red);width:75%;}
+.s-fill-warn{height:100%;background:var(--amber);width:15%;}
+.asset-card{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:6px;margin-bottom:5px;}
+.asset-name{font-family:var(--mono);font-size:8px;color:var(--text);letter-spacing:0.5px;}
+.asset-ip{font-family:var(--mono);font-size:7px;color:var(--cyan);}
+.asset-badge-off{font-family:var(--mono);font-size:7px;color:var(--red);border:1px solid rgba(255,59,92,0.3);border-radius:2px;padding:1px 4px;display:inline-block;margin-top:3px;}
+.asset-badge-iso{font-family:var(--mono);font-size:7px;color:var(--amber);border:1px solid rgba(255,176,32,0.3);border-radius:2px;padding:1px 4px;display:inline-block;margin-top:3px;}
+.sweep-mini{height:1px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);animation:swp 3s linear infinite;margin-bottom:8px;}
+@keyframes swp{0%{opacity:0;transform:scaleX(0)}30%{opacity:1;transform:scaleX(1)}70%{opacity:1}100%{opacity:0;transform:scaleX(0)}}
+.dot-live{width:5px;height:5px;border-radius:50%;background:var(--green);display:inline-block;animation:dlive 1.5s ease infinite;margin-right:4px;vertical-align:middle;}
+@keyframes dlive{0%,100%{opacity:1}50%{opacity:0.2}}
+
+/* PROMPT SECTION */
+.prompt-wrap{background:#040d1a;border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-family:var(--mono);font-size:11px;line-height:1.85;color:#7ab8d4;}
+.pk{color:var(--cyan);font-weight:bold;}
+.pv{color:#d0eeff;}
+.pc{color:rgba(100,180,220,0.3);font-style:italic;}
+.copy-btn{margin-top:12px;padding:7px 20px;background:rgba(0,200,255,0.08);border:1px solid rgba(0,200,255,0.3);border-radius:5px;color:var(--cyan);font-family:var(--mono);font-size:10px;letter-spacing:2px;cursor:pointer;display:inline-block;}
+.copy-btn:hover{background:rgba(0,200,255,0.15);}
+
+/* CORNER BRACKETS */
+.bracket-box{position:relative;}
+.bracket-box::before,.bracket-box::after{content:'';position:absolute;width:8px;height:8px;border-color:rgba(0,200,255,0.5);border-style:solid;}
+.bracket-box::before{top:0;left:0;border-width:1.5px 0 0 1.5px;}
+.bracket-box::after{bottom:0;right:0;border-width:0 1.5px 1.5px 0;}
+</style>
+
+<div class="root">
+
+<div class="sec-title">01 — Design Token System (apply across all pages)</div>
+<div class="token-grid">
+  <div class="token-card">
+    <div class="tk-label">Color Palette</div>
+    <div class="tk-item"><div class="tk-swatch" style="background:#060f1e;border:1px solid #333;"></div><span class="tk-name">BG Primary</span><span class="tk-hex">#060f1e</span></div>
+    <div class="tk-item"><div class="tk-swatch" style="background:#0a1628;"></div><span class="tk-name">BG Surface</span><span class="tk-hex">#0a1628</span></div>
+    <div class="tk-item"><div class="tk-swatch" style="background:#00c8ff;"></div><span class="tk-name">Cyan — primary</span><span class="tk-hex">#00c8ff</span></div>
+    <div class="tk-item"><div class="tk-swatch" style="background:#00ff88;"></div><span class="tk-name">Green — active/ok</span><span class="tk-hex">#00ff88</span></div>
+    <div class="tk-item"><div class="tk-swatch" style="background:#ff3b5c;"></div><span class="tk-name">Red — critical</span><span class="tk-hex">#ff3b5c</span></div>
+    <div class="tk-item"><div class="tk-swatch" style="background:#ffb020;"></div><span class="tk-name">Amber — warning</span><span class="tk-hex">#ffb020</span></div>
+  </div>
+  <div class="token-card">
+    <div class="tk-label">Typography</div>
+    <div class="font-demo">Orbitron — headings, numbers, titles</div>
+    <div class="font-demo2">Share Tech Mono — labels, badges, meta</div>
+    <div class="font-demo3">Rajdhani — body text, descriptions</div>
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(0,200,255,0.1);">
+      <div class="tk-label">Sizes</div>
+      <div class="tk-item"><span class="tk-name" style="font-family:'Orbitron',monospace;font-size:11px;">Page Title</span><span class="tk-hex">Orbitron 13px + letter-spacing:2px</span></div>
+      <div class="tk-item"><span class="tk-name" style="font-family:'Share Tech Mono',monospace;font-size:9px;letter-spacing:2px;">SECTION LABEL</span><span class="tk-hex">Mono 9px ls:2px</span></div>
+      <div class="tk-item"><span class="tk-name" style="font-family:'Orbitron',monospace;font-size:20px;color:#00c8ff;">24</span><span class="tk-hex">Orbitron 20-24px for stat numbers</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="sec-title">02 — Sidebar: Before vs After</div>
+<div class="compare">
+  <div class="comp-box" style="border:1px solid rgba(255,100,100,0.15);border-radius:8px;overflow:hidden;">
+    <div class="comp-label before">BEFORE — current</div>
+    <div class="sidebar-before">
+      <div class="sb-item active-before"><i class="ti ti-layout-dashboard sb-icon"></i><span class="sb-text-before">Dashboard</span></div>
+      <div class="sb-item"><i class="ti ti-server sb-icon"></i><span class="sb-text-before">Assets</span></div>
+      <div class="sb-item"><i class="ti ti-alert-triangle sb-icon"></i><span class="sb-text-before">Incidents</span></div>
+      <div class="sb-item"><i class="ti ti-shield sb-icon"></i><span class="sb-text-before">Detection Rules</span></div>
+      <div class="sb-item"><i class="ti ti-world sb-icon"></i><span class="sb-text-before">Threat Intel</span></div>
+    </div>
+  </div>
+  <div class="comp-box" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+    <div class="comp-label after">AFTER — cyber upgrade</div>
+    <div class="sidebar-before" style="background:#0a1628;">
+      <div style="padding:8px 12px 10px;border-bottom:1px solid rgba(0,200,255,0.15);margin-bottom:6px;">
+        <span style="font-family:'Orbitron',monospace;font-size:8px;color:#00c8ff;letter-spacing:2px;">SECUREPULSE</span>
+      </div>
+      <div class="sb-item active-after"><i class="ti ti-layout-dashboard sb-icon"></i><span class="sb-text-after">DASHBOARD</span></div>
+      <div class="sb-item" style="color:rgba(200,232,248,0.4);"><i class="ti ti-server sb-icon"></i><span class="sb-text-after">ASSETS</span></div>
+      <div class="sb-item" style="color:rgba(200,232,248,0.4);"><i class="ti ti-alert-triangle sb-icon"></i><span class="sb-text-after">INCIDENTS</span></div>
+      <div class="sb-item" style="color:rgba(200,232,248,0.4);"><i class="ti ti-shield sb-icon"></i><span class="sb-text-after">DETECTION</span></div>
+      <div class="sb-item" style="color:rgba(200,232,248,0.4);"><i class="ti ti-world sb-icon"></i><span class="sb-text-after">THREAT INTEL</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="sec-title">03 — Stat Cards: Before vs After</div>
+<div class="compare">
+  <div class="comp-box" style="border:1px solid rgba(255,100,100,0.15);border-radius:8px;overflow:hidden;">
+    <div class="comp-label before">BEFORE</div>
+    <div class="card-before">
+      <div class="stat-before"><span class="lbl">TOTAL ENDPOINTS</span><div class="num">5</div></div>
+    </div>
+  </div>
+  <div class="comp-box" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+    <div class="comp-label after">AFTER</div>
+    <div class="card-after" style="background:#060f1e;padding:12px;">
+      <div class="stat-after bracket-box">
+        <div class="d-stat-badge">ACTIVE</div>
+        <div class="num">5</div>
+        <div class="lbl">TOTAL ENDPOINTS</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sec-title">04 — Badges: Before vs After</div>
+<div class="compare">
+  <div class="comp-box" style="border:1px solid rgba(255,100,100,0.15);border-radius:8px;overflow:hidden;">
+    <div class="comp-label before">BEFORE</div>
+    <div class="badges-row">
+      <span class="badge-before" style="background:#ef4444;color:#fff;">CRITICAL</span>
+      <span class="badge-before" style="background:#f59e0b;color:#000;">WARNING</span>
+      <span class="badge-before" style="background:#6b7280;color:#fff;">OFFLINE</span>
+      <span class="badge-before" style="background:#8b5cf6;color:#fff;">INTERCEPTED</span>
+    </div>
+  </div>
+  <div class="comp-box" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+    <div class="comp-label after">AFTER</div>
+    <div class="badges-row" style="background:#060f1e;">
+      <span class="badge-after" style="color:#ff3b5c;border-color:rgba(255,59,92,0.35);">CRITICAL</span>
+      <span class="badge-after" style="color:#ffb020;border-color:rgba(255,176,32,0.35);">WARNING</span>
+      <span class="badge-after" style="color:rgba(200,232,248,0.4);border-color:rgba(200,232,248,0.15);">OFFLINE</span>
+      <span class="badge-after" style="color:#00c8ff;border-color:rgba(0,200,255,0.3);">INTERCEPTED</span>
+    </div>
+  </div>
+</div>
+
+<div class="sec-title">05 — Incident Row: Before vs After</div>
+<div class="compare">
+  <div class="comp-box" style="border:1px solid rgba(255,100,100,0.15);border-radius:8px;overflow:hidden;">
+    <div class="comp-label before">BEFORE</div>
+    <div style="background:#111827;padding:4px 0;">
+      <div class="inc-before">
+        <div><span class="inc-badge-b">CRITICAL</span></div>
+        <div class="inc-title-b" style="margin-top:4px;">HOST ISOLATED: e2e-test-server</div>
+        <div class="inc-meta-b">Automated isolation triggered by playbook</div>
+      </div>
+    </div>
+  </div>
+  <div class="comp-box" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+    <div class="comp-label after">AFTER</div>
+    <div style="background:#060f1e;padding:4px 0;">
+      <div class="inc-after">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+          <span class="inc-badge-a">CRITICAL</span>
+          <span style="font-family:'Share Tech Mono',monospace;font-size:9px;color:rgba(200,232,248,0.35);">Alert #67</span>
+        </div>
+        <div class="inc-title-a">HOST ISOLATED: e2e-test-server</div>
+        <div class="inc-meta-a">Automated isolation triggered by playbook: Auto-Isolate Host</div>
+        <div style="margin-top:6px;font-family:'Share Tech Mono',monospace;font-size:9px;color:rgba(200,232,248,0.35);">
+          Host: <span style="color:#00c8ff;">e2e-test-server</span> &nbsp;|&nbsp; Type: <span style="color:#00c8ff;">isolation_triggered</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sec-title">06 — Full Dashboard Preview (cyber-upgraded)</div>
+<div class="dashboard">
+  <div class="d-sidebar">
+    <div class="d-logo">
+      <div class="d-logo-icon"><i class="ti ti-shield-lock" style="font-size:12px;color:#00c8ff;" aria-hidden="true"></i></div>
+      <span class="d-logo-txt">SECURE<br>PULSE</span>
+    </div>
+    <div class="d-nav-item active"><i class="ti ti-layout-dashboard" aria-hidden="true"></i>DASHBOARD</div>
+    <div class="d-nav-item"><i class="ti ti-server" aria-hidden="true"></i>ASSETS</div>
+    <div class="d-nav-item"><i class="ti ti-alert-triangle" aria-hidden="true"></i>INCIDENTS</div>
+    <div class="d-nav-item"><i class="ti ti-shield" aria-hidden="true"></i>DETECTION</div>
+    <div class="d-nav-item"><i class="ti ti-world" aria-hidden="true"></i>THREAT INTEL</div>
+    <div class="d-nav-item"><i class="ti ti-activity" aria-hidden="true"></i>ACTIVITY</div>
+    <div class="d-nav-item"><i class="ti ti-search" aria-hidden="true"></i>SEARCH</div>
+  </div>
+  <div class="d-main">
+    <div class="sweep-mini"></div>
+    <div class="d-header">
+      <div class="d-h1">SOC COMMAND CENTER</div>
+      <div class="d-h2"><span class="dot-live"></span>Real-time security intelligence & threat detection</div>
+    </div>
+    <div class="d-stats">
+      <div class="d-stat"><div class="d-stat-badge">ACTIVE</div><div class="d-stat-num">5</div><div class="d-stat-lbl">ENDPOINTS</div></div>
+      <div class="d-stat"><div class="d-stat-badge" style="color:#ff3b5c;border-color:rgba(255,59,92,0.25);">0 ONLINE</div><div class="d-stat-num" style="color:#ffb020;">0%</div><div class="d-stat-lbl">SYS HEALTH</div></div>
+      <div class="d-stat"><div class="d-stat-badge" style="color:#ff3b5c;border-color:rgba(255,59,92,0.25);">40 ACTIVE</div><div class="d-stat-num" style="color:#ff3b5c;">40</div><div class="d-stat-lbl">CRIT ALERTS</div></div>
+      <div class="d-stat"><div class="d-stat-badge">PROCESSED</div><div class="d-stat-num">24</div><div class="d-stat-lbl">EVENTS</div></div>
+    </div>
+    <div class="d-cards">
+      <div class="d-card">
+        <div class="d-card-title">RECENT INCIDENTS</div>
+        <div class="inc-row"><div class="inc-row-title" style="color:#ff3b5c;">HOST ISOLATED</div><div class="inc-row-meta">e2e-test-server · Alert #67</div><div class="severity-bar"><div class="s-fill-crit"></div></div></div>
+        <div class="inc-row"><div class="inc-row-title" style="color:#ffb020;">HOST RECONNECTED</div><div class="inc-row-meta">e2e-test-server · Alert #39</div><div class="severity-bar"><div class="s-fill-warn"></div></div></div>
+        <div class="inc-row"><div class="inc-row-title" style="color:#ff3b5c;">FILE INTEGRITY</div><div class="inc-row-meta">e2e-test-server · Alert #37</div><div class="severity-bar"><div class="s-fill-crit"></div></div></div>
+      </div>
+      <div class="d-card">
+        <div class="d-card-title">ASSETS</div>
+        <div class="asset-card"><div class="asset-name">e2e-test-server</div><div class="asset-ip">10.0.0.99</div><div class="asset-badge-off">OFFLINE</div></div>
+        <div class="asset-card"><div class="asset-name">e2e-test-server</div><div class="asset-ip">10.0.0.99</div><div class="asset-badge-iso">ISOLATED</div></div>
+        <div class="asset-card"><div class="asset-name">live-test-server</div><div class="asset-ip">10.0.0.99</div><div class="asset-badge-off">OFFLINE</div></div>
+      </div>
+      <div class="d-card">
+        <div class="d-card-title">SEVERITY DIST</div>
+        <div style="display:flex;flex-direction:column;gap:5px;margin-top:4px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-family:'Share Tech Mono',monospace;font-size:8px;color:#ff3b5c;">CRITICAL</span>
+            <span style="font-family:'Orbitron',monospace;font-size:11px;color:#ff3b5c;">18</span>
+          </div>
+          <div style="height:4px;background:#0d1f3c;border-radius:2px;"><div style="height:100%;background:#ff3b5c;width:75%;border-radius:2px;"></div></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+            <span style="font-family:'Share Tech Mono',monospace;font-size:8px;color:#ffb020;">WARNING</span>
+            <span style="font-family:'Orbitron',monospace;font-size:11px;color:#ffb020;">3</span>
+          </div>
+          <div style="height:4px;background:#0d1f3c;border-radius:2px;"><div style="height:100%;background:#ffb020;width:15%;border-radius:2px;"></div></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+            <span style="font-family:'Share Tech Mono',monospace;font-size:8px;color:#00c8ff;">INFO</span>
+            <span style="font-family:'Orbitron',monospace;font-size:11px;color:#00c8ff;">3</span>
+          </div>
+          <div style="height:4px;background:#0d1f3c;border-radius:2px;"><div style="height:100%;background:#00c8ff;width:10%;border-radius:2px;"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:20px;">
+<div class="sec-title">07 — Full Developer Prompt (copy to AntiGravity AI)</div>
+<div class="prompt-wrap">
+<span class="pc">// SECUREPULSE — FULL UI CYBER THEME UPGRADE PROMPT</span><br><br>
+<span class="pk">GLOBAL SETUP (apply to ALL pages):</span><br>
+<span class="pv">Import Google Fonts: Orbitron (400,600,700), Share Tech Mono, Rajdhani (400,500,600)</span><br>
+<span class="pv">Add CSS vars: --bg:#060f1e  --bg2:#0a1628  --bg3:#0d1f3c  --cyan:#00c8ff</span><br>
+<span class="pv">--green:#00ff88  --red:#ff3b5c  --amber:#ffb020  --border:rgba(0,200,255,0.2)</span><br><br>
+
+<span class="pk">TYPOGRAPHY RULES:</span><br>
+<span class="pv">• Page titles → font-family: Orbitron, font-size:13px, letter-spacing:2px, color:#fff<br>
+• Stat numbers → Orbitron, 22-28px, color: --cyan (or red/amber for critical/warning)<br>
+• Section labels, badges, meta text → Share Tech Mono, 9-10px, letter-spacing:2px, uppercase<br>
+• Body, descriptions, nav items → Rajdhani, 12-14px<br>
+• NEVER use system-ui, Inter, or Roboto anywhere</span><br><br>
+
+<span class="pk">BACKGROUNDS:</span><br>
+<span class="pv">• Page bg: #060f1e<br>
+• Sidebar bg: #0a1628, right border: 1px solid rgba(0,200,255,0.2)<br>
+• Cards/surfaces: #0a1628, border: 1px solid rgba(0,200,255,0.2), border-radius:8px<br>
+• Add top highlight line on each card: 1px gradient (transparent→cyan→transparent)<br>
+• Add subtle repeating scanline texture on page bg (CSS bg-image, 3% opacity)</span><br><br>
+
+<span class="pk">SIDEBAR:</span><br>
+<span class="pv">• Logo area: ShieldLock icon in cyan-bordered box + "SECUREPULSE" in Orbitron 8px<br>
+• Nav items: Mono font, 10px, letter-spacing:1px, uppercase, icons 13px<br>
+• Active item: bg rgba(0,200,255,0.1), left border 2px solid cyan, color cyan<br>
+• Hover: bg rgba(0,200,255,0.05), color rgba(0,200,255,0.7)<br>
+• Logout: color --red, hover underline</span><br><br>
+
+<span class="pk">STAT CARDS (dashboard):</span><br>
+<span class="pv">• Card bg #0a1628, border 1px solid rgba(0,200,255,0.2), radius 8px<br>
+• Top edge: 1px gradient line cyan<br>
+• Corner bracket accents (CSS ::before/::after, cyan 1.5px)<br>
+• Status badge top-right: Mono 8px, color depends on state (green=active, red=critical)<br>
+• Number: Orbitron 22px — cyan if normal, red if critical, amber if warning<br>
+• Label: Mono 9px, letter-spacing:2px, color rgba(200,232,248,0.5)</span><br><br>
+
+<span class="pk">BADGES (all pages):</span><br>
+<span class="pv">Remove filled solid backgrounds. Replace with:<br>
+• border: 1px solid (color at 35% opacity), text: that color at 100%<br>
+• CRITICAL → color:#ff3b5c  WARNING → color:#ffb020<br>
+• OFFLINE → color:rgba(200,232,248,0.4)  ACTIVE/ONLINE → color:#00ff88<br>
+• INTERCEPTED/ISOLATED → color:#00c8ff<br>
+• Font: Share Tech Mono 9px, letter-spacing:1px, border-radius:3px, padding:2px 7px</span><br><br>
+
+<span class="pk">INCIDENT ROWS:</span><br>
+<span class="pv">• Row bg: #0a1628, border: 1px solid rgba(0,200,255,0.15)<br>
+• Left accent border: 2px solid (red=critical, amber=warning)<br>
+• Bottom edge: 1px gradient line (red/amber at 40%→transparent)<br>
+• Title: Orbitron 11px, color #fff, letter-spacing:1px<br>
+• Alert # and meta: Mono 9px, color rgba(200,232,248,0.35)<br>
+• Hostname/type values: color --cyan<br>
+• SLA badge: red border, Mono 9px<br>
+• Buttons (Resolve, Promote): bg transparent, border 1px cyan, Mono font, hover bg cyan/10</span><br><br>
+
+<span class="pk">ASSET CARDS:</span><br>
+<span class="pv">• Card bg #0d1f3c, border rgba(0,200,255,0.2), radius 8px<br>
+• Server icon: bg rgba(255,59,92,0.1), border rgba(255,59,92,0.3), icon color red<br>
+• Asset name: Orbitron 12px, color #fff<br>
+• IP: Mono 11px, color --cyan<br>
+• Status badge: outlined style (see badges above), no filled bg</span><br><br>
+
+<span class="pk">TOPBAR:</span><br>
+<span class="pv">• bg #0a1628, border-bottom 1px rgba(0,200,255,0.15)<br>
+• Clock: Orbitron 12px, color --cyan<br>
+• User avatar: cyan-bordered circle<br>
+• Add slow sweep animation: horizontal 1px cyan line sweeping top→bottom of page, 4s loop</span><br><br>
+
+<span class="pk">KEEP:</span><br>
+<span class="pv">All existing data, routing, state logic, and API calls. Visual/CSS layer only.</span>
+</div>
+<button class="copy-btn" onclick="
+  const t=document.querySelector('.prompt-wrap').innerText;
+  navigator.clipboard.writeText(t).then(()=>{
+    this.textContent='COPIED ✓';
+    this.style.color='#00ff88';
+    this.style.borderColor='rgba(0,255,136,0.35)';
+    setTimeout(()=>{
+      this.textContent='COPY FULL PROMPT';
+      this.style.color='';
+      this.style.borderColor='';
+    },2500);
+  });
+">COPY FULL PROMPT</button>
+</div>
+
+</div>

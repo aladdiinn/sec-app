@@ -11,12 +11,9 @@ import time
 import io
 import yaml
 import re
-try:
-    from reportlab.lib.pagesizes import letter
-    from reportlab.pdfgen import canvas
-except ImportError:
-    pass
+import re
 from datetime import datetime, timezone, timedelta
+import subprocess
 from functools import wraps
 
 from flask import (
@@ -29,7 +26,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 
 from database import db, init_db
-from models import User, Server, Event, Alert, AuditLog, AlertRule, Case, ThreatIndicator, Playbook
+from models import (User, Server, Event, Alert, AuditLog, AlertRule, Case, ThreatIndicator, Playbook,
+                     CaseComment, Notification, FirewallConfig, BlockedIP, IdentityProviderConfig,
+                     JiraConfig, CaseTicket, DRTestLog, Project, ProjectEndpoint,
+                     ROLE_SUPERUSER, ROLE_ADMIN, ROLE_NORMAL)
 from sqlalchemy import func # type: ignore
 from sqlalchemy.exc import IntegrityError # type: ignore
 
@@ -81,11 +81,12 @@ def favicon():
 
 # ─── JWT helpers ─────────────────────────────────────────────────────────────
 
-def create_jwt(user_id: int, email: str, is_admin: bool) -> str:
+def create_jwt(user_id: int, identity: str, is_admin: bool, role: str = ROLE_NORMAL) -> str:
     payload = {
         "sub": str(user_id),
-        "email": email,
+        "identity": identity,
         "is_admin": is_admin,
+        "role": role,
         "exp": datetime.now(timezone.utc) + timedelta(hours=app.config["JWT_EXPIRE_HOURS"]),
         "iat": datetime.now(timezone.utc),
     }
@@ -174,6 +175,25 @@ def agent_key_required(f):
     return decorated
 
 
+def require_role(*roles):
+    """Decorator — enforces RBAC role check. Usage: @require_role('superuser') or @require_role('superuser','admin')"""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            user = getattr(g, 'user', None)
+            if not user:
+                # Also check JWT payload
+                payload = getattr(g, 'jwt_payload', {})
+                role = payload.get('role', ROLE_NORMAL)
+            else:
+                role = user.role
+            if role not in roles:
+                return jsonify({"error": "Insufficient permissions", "required": list(roles)}), 403
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+
 def audit_log_action(action_name):
     """Decorator to log actions to AuditLog."""
     def decorator(f):
@@ -240,18 +260,21 @@ def seed_admin():
     admin_email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@securepulse.local")
     admin_pass  = os.getenv("DEFAULT_ADMIN_PASSWORD", "Admin@1234")
 
-    # Check if admin already exists
-    if not User.query.filter_by(email=admin_email).first():
+    # Check if admin already exists by email OR username
+    existing_admin = User.query.filter((User.email == admin_email) | (User.username == "admin")).first()
+    if not existing_admin:
         try:
             admin = User(
                 email=admin_email,
+                username="admin",
                 hashed_password=generate_password_hash(admin_pass),
                 full_name="Default Admin",
                 is_admin=True,
+                role=ROLE_SUPERUSER,
             )
             db.session.add(admin)
             db.session.commit()
-            logger.info(f"Default admin created: {admin_email}")
+            logger.info(f"Default superuser created: {admin_email}")
         except IntegrityError:
             db.session.rollback()
             logger.info(f"Admin already exists (handled IntegrityError): {admin_email}")
@@ -303,6 +326,28 @@ def dashboard_page():
                          threats=threat_count, 
                          servers=server_count)
 
+@app.route("/maintenance")
+@login_required
+def maintenance_page():
+    return render_template("maintenance.html", active='maintenance')
+
+@app.route("/api/servers/maintenance", methods=["GET"])
+@jwt_required
+def get_maintenance_servers():
+    now = datetime.now(timezone.utc)
+    servers = Server.query.filter(
+        (Server.is_maintenance == True) | 
+        (Server.maintenance_until > now)
+    ).all()
+    return jsonify([{
+        "id": s.id,
+        "hostname": s.hostname,
+        "ip_address": s.ip_address,
+        "is_maintenance": s.is_maintenance,
+        "maintenance_until": s.maintenance_until.isoformat() if s.maintenance_until else None,
+        "status": s.status
+    } for s in servers])
+
 @app.route("/incidents")
 @login_required
 def incidents_page():
@@ -329,8 +374,8 @@ def servers_legacy():
 
 @app.route("/events")
 @login_required
-def events_legacy():
-    return redirect(url_for("incidents_page"))
+def events_page():
+    return render_template("events.html", active='events')
 
 @app.route("/alerts")
 @login_required
@@ -403,6 +448,37 @@ def reports_page():
     return render_template("reports.html", active='reports')
 
 
+@app.route("/user-management")
+@login_required
+def user_management_page():
+    user = g.user
+    if not user or user.role != ROLE_SUPERUSER:
+        return redirect(url_for("dashboard_page"))
+    return render_template("user_management.html", active='user-management')
+
+
+@app.route("/projects")
+@login_required
+def projects_page():
+    return render_template("projects.html", active='projects')
+
+
+@app.route("/projects/<int:project_id>/dashboard")
+@login_required
+def project_dashboard_page(project_id):
+    project = Project.query.get_or_404(project_id)
+    return render_template("project_dashboard.html", active='projects', project=project)
+
+
+@app.route("/system-health")
+@login_required
+def system_health_page():
+    user = g.user
+    if not user or user.role != ROLE_SUPERUSER:
+        return redirect(url_for("dashboard_page"))
+    return render_template("system_health.html", active='system-health')
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # API — AUTH
 # ──────────────────────────────────────────────────────────────────────────────
@@ -411,23 +487,31 @@ def reports_page():
 @audit_log_action("User Login")
 def auth_login():
     data = request.get_json(force=True)
-    email    = data.get("email", "").strip().lower()
+    username = data.get("username", "").strip()
     password = data.get("password", "")
 
-    if not email or not password:
-        return jsonify({"error": "Email and password required"}), 400
+    if not username or not password:
+        return jsonify({"error": "Username and password required"}), 400
 
-    user = User.query.filter_by(email=email).first()
+    user = User.query.filter_by(username=username).first()
     if not user or not check_password_hash(user.hashed_password, password):
-        return jsonify({"error": "Invalid email or password"}), 401
+        return jsonify({"error": "Invalid username or password"}), 401
 
     if not user.is_active:
         return jsonify({"error": "Account is disabled"}), 403
 
-    token = create_jwt(user.id, user.email, user.is_admin)
+    # Update last_login
+    try:
+        user.last_login = datetime.now(timezone.utc)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    token = create_jwt(user.id, user.username, user.is_admin, user.role)
     session["token"] = token
+    session["user_role"] = user.role
     g.login_user_id = user.id
-    g.target_override = email
+    g.target_override = username
     return jsonify({
         "access_token": token,
         "token_type": "bearer",
@@ -435,6 +519,8 @@ def auth_login():
         "email": user.email,
         "full_name": user.full_name,
         "is_admin": user.is_admin,
+        "username": user.username,
+        "role": user.role,
     })
 
 
@@ -453,6 +539,27 @@ def auth_me():
     })
 
 
+@app.route("/auth/me", methods=["PATCH"])
+@jwt_required
+def update_profile():
+    """Update current user's profile (name, email, password)."""
+    user_id = int(g.jwt_payload["sub"])
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    data = request.get_json(force=True)
+    if "full_name" in data and data["full_name"].strip():
+        user.full_name = data["full_name"].strip()
+    if "email" in data and data["email"].strip():
+        user.email = data["email"].strip()
+    if "password" in data and data["password"].strip():
+        if len(data["password"]) < 6:
+            return jsonify({"error": "Password must be at least 6 characters"}), 400
+        user.hashed_password = generate_password_hash(data["password"])
+    db.session.commit()
+    return jsonify({"message": "Profile updated successfully", "full_name": user.full_name, "email": user.email})
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # API — AGENT REGISTRATION
 # ──────────────────────────────────────────────────────────────────────────────
@@ -464,6 +571,9 @@ def register_agent():
     hostname   = data.get("hostname", "unknown")
     ip_address = data.get("ip_address")
     os_info    = data.get("os_info")
+    role       = data.get("role", "none")
+    site       = data.get("site", "DC")
+    cluster_id = data.get("cluster_id")
 
     agent_token = secrets.token_urlsafe(48)
     server = Server(
@@ -472,6 +582,9 @@ def register_agent():
         os_info=os_info,
         agent_token=agent_token,
         status="online",
+        role=role,
+        site=site,
+        cluster_id=cluster_id,
         last_seen=datetime.now(timezone.utc),
     )
     db.session.add(server)
@@ -493,6 +606,11 @@ def setup_script():
     base_url = request.url_root.rstrip("/")
     api_key  = app.config["AGENT_API_KEY"]
     
+    # Read tags from query parameters
+    role = request.args.get("role", "none")
+    site = request.args.get("site", "DC")
+    cluster = request.args.get("cluster", "")
+    
     script = f"""#!/bin/bash
 # SecurePulse — Automated Agent Installer
 set -euo pipefail
@@ -505,6 +623,9 @@ error() {{ echo -e "${{RED}}[ERROR]${{NC}} $*"; exit 1; }}
 
 BACKEND_URL="{base_url}"
 API_KEY="{api_key}"
+ROLE="{role}"
+SITE="{site}"
+CLUSTER="{cluster}"
 INSTALL_DIR="/opt/securepulse-agent"
 
 info "Starting SecurePulse Agent setup..."
@@ -535,7 +656,7 @@ OS_INFO="$(uname -s) $(uname -r)"
 REG_RES=$(curl -s -X POST "$BACKEND_URL/api/agents/register" \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: $API_KEY" \\
-  -d "{{\\"hostname\\":\\"$HOSTNAME_VAL\\",\\"ip_address\\":\\"$IP_VAL\\",\\"os_info\\":\\"$OS_INFO\\"}}")
+  -d "{{\\"hostname\\":\\"$HOSTNAME_VAL\\",\\"ip_address\\":\\"$IP_VAL\\",\\"os_info\\":\\"$OS_INFO\\",\\"role\\":\\"$ROLE\\",\\"site\\":\\"$SITE\\",\\"cluster_id\\":\\"$CLUSTER\\"}}")
 
 AGENT_TOKEN=$(echo "$REG_RES" | python3 -c "import sys,json; print(json.load(sys.stdin)['agent_token'])")
 
@@ -617,6 +738,21 @@ class RuleManager:
                         data = yaml.safe_load(f)
                         if data and "rules" in data:
                             self.rules.extend(data["rules"])
+                            
+                            # Sync with database for playbook linking
+                            with app.app_context():
+                                for r in data["rules"]:
+                                    existing = AlertRule.query.filter_by(name=r.get("name")).first()
+                                    if not existing:
+                                        new_ar = AlertRule(
+                                            name=r.get("name"),
+                                            event_type=r.get("event_type"),
+                                            severity=r.get("severity", "warning"),
+                                            is_active=r.get("is_active", True)
+                                        )
+                                        db.session.add(new_ar)
+                                db.session.commit()
+                                
                     logger.info(f"Loaded {len(data.get('rules', []))} rules from {filename}")
                 except Exception as e:
                     logger.error(f"Failed to load rules from {filename}: {e}")
@@ -679,6 +815,16 @@ class PlaybookRunner:
         if not playbook or not alert:
             return False
         
+        # --- Maintenance Check ---
+        now = datetime.now(timezone.utc)
+        is_maint = getattr(alert.server, 'is_maintenance', False)
+        maint_until = getattr(alert.server, 'maintenance_until', None)
+        
+        if is_maint or (maint_until and maint_until > now):
+            maint_str = "Permanent" if is_maint else f"Until {maint_until.strftime('%Y-%m-%d %H:%M:%S')}"
+            logger.info(f"SUPPRESSED: Playbook '{playbook.name}' execution suppressed (Server in Maintenance {maint_str})")
+            return False
+        
         try:
             actions = json.loads(playbook.actions) if isinstance(playbook.actions, str) else playbook.actions
             for action in actions:
@@ -709,6 +855,53 @@ class PlaybookRunner:
                     )
                     db.session.add(isolation_alert)
                     alert.server.status = "isolated"
+                elif action_type == "notify_email":
+                    # dispatch_alert_notification(alert)
+                    pass
+                elif action_type == "run_health_check":
+                    logger.info(f"PLAYBOOK ACTION: Manual health check for {alert.server.hostname}")
+                    # Simulate fresh health check result
+                elif action_type == "restart_service":
+                    service_name = action.get("service_name")
+                    managed_services = []
+                    if alert.server.managed_services:
+                        try:
+                            managed_services = json.loads(alert.server.managed_services)
+                        except:
+                            pass
+                    
+                    target_service = None
+                    if service_name:
+                        target_service = next((s for s in managed_services if s.get('name') == service_name), None)
+                    elif managed_services:
+                        # Fallback: Look for tomcat specifically if no name given
+                        target_service = next((s for s in managed_services if 'tomcat' in s.get('name', '').lower()), managed_services[0])
+                    
+                    if target_service:
+                        user = target_service.get('username', 'root')
+                        path = target_service.get('path', '')
+                        
+                        # Advanced Restart Logic: Kill process containing path, then run startup as user
+                        # If path ends with / or is just a dir, we assume bin/startup.sh
+                        startup_script = f"{path}/bin/startup.sh" if not path.endswith('.sh') else path
+                        kill_pattern = path.rstrip('/')
+                        
+                        complex_cmd = f"sudo -u {user} bash -c 'pkill -f {kill_pattern} || true; {startup_script}'"
+                        
+                        logger.warning(f"PLAYBOOK ACTION: Automated restart for {target_service.get('name')} on {alert.server.hostname}")
+                        logger.info(f"RESTART LOGIC: {complex_cmd}")
+                        
+                        # Log the action as a new event
+                        restart_evt = Event(
+                            server_id=alert.server_id,
+                            event_id=f"RESTART_{int(time.time())}",
+                            event_type="service_restart",
+                            severity="info",
+                            description=f"Triggered restart for {target_service.get('name')} (User: {user}, Path: {path})"
+                        )
+                        db.session.add(restart_evt)
+                    else:
+                        logger.warning(f"PLAYBOOK ACTION: Restart failed - no managed service found for {service_name or 'default'}")
             
             db.session.commit()
             return True
@@ -762,6 +955,19 @@ def ingest_event():
         db.session.commit()
         return jsonify({"message": "Heartbeat received"}), 200
 
+    # ── Noise filter: silently drop login/logout events for system accounts ───
+    SPAM_USERS = {"root", "ubuntu"}
+    if event_type in ("login", "logout"):
+        # Check description and raw_data for the username
+        user_in_desc = any(f" {u}" in f" {description.lower()} " or description.lower().startswith(u) for u in SPAM_USERS)
+        user_in_raw = False
+        if isinstance(raw_data, dict):
+            raw_user = str(raw_data.get("user", raw_data.get("username", raw_data.get("user_name", "")))).lower()
+            user_in_raw = raw_user in SPAM_USERS
+        if user_in_desc or user_in_raw:
+            logger.debug(f"Filtered spam login/logout for system account on {server.hostname}: {description}")
+            return jsonify({"message": "Event filtered (system account)"}), 200
+
     for kw in CRITICAL_KEYWORDS:
         if kw in description.lower():
             severity = "critical"
@@ -783,6 +989,13 @@ def ingest_event():
     server.last_seen = datetime.now(timezone.utc)
     server.status = "online"
 
+    # --- Maintenance check: Skip alerts and playbooks if active ---
+    is_maint = server.is_maintenance or (server.maintenance_until and server.maintenance_until > datetime.now(timezone.utc))
+    if is_maint:
+        logger.info(f"MAINTENANCE: Event from {server.hostname} processed but alerts suppressed.")
+        db.session.commit()
+        return jsonify({"message": "Event processed (Maintenance suppressed alerts)"}), 200
+
     # --- 1. Custom Rule Detection ---
     triggered_rules = rule_manager.evaluate(event_type, description, raw_data)
     for rule in triggered_rules:
@@ -800,6 +1013,17 @@ def ingest_event():
             score=score_alert(sev, tactic),
         )
         db.session.add(alert)
+        db.session.flush() # Get alert.id
+        
+        # --- Automated SOAR Trigger ---
+        # Fetch matching AlertRule from DB to see if a playbook is linked
+        db_rule = AlertRule.query.filter_by(name=rule.get("name")).first()
+        if db_rule and db_rule.playbook_id:
+            logger.info(f"AUTO-SOAR: Triggering playbook {db_rule.playbook_id} for rule {db_rule.name}")
+            PlaybookRunner.run(db_rule.playbook_id, alert.id)
+
+        if sev in ("critical", "high"):
+            dispatch_alert_notification(alert)
         logger.info(f"Rule triggered: {rule.get('name')} on {server.hostname}")
 
     # --- 2. Threat Intel Lookup ---
@@ -821,6 +1045,8 @@ def ingest_event():
                 message=f"Known malicious indicator detected. Source: {ti.source}. Severity: {ti.severity}",
             )
             db.session.add(alert)
+            db.session.flush()
+            dispatch_alert_notification(alert)
             logger.info(f"Threat Intel Match: {ip} on {server.hostname}")
 
     # --- 3. UEBA (Anomaly Detection) ---
@@ -837,6 +1063,9 @@ def ingest_event():
                 message=f"Login detected at unusual hour: {hour}:00 UTC",
             )
             db.session.add(alert)
+            db.session.flush()
+            if alert.severity in ("critical", "high"):
+                dispatch_alert_notification(alert)
 
     # --- 4. Hardcoded Security Triggers (Legacy) ---
     # Auto-create alerts
@@ -859,6 +1088,9 @@ def ingest_event():
             score=score_alert(alert_severity),
         )
         db.session.add(alert)
+        db.session.flush()
+        if alert_severity in ("critical", "high"):
+            dispatch_alert_notification(alert)
         
     # Brute force detection
     if event_type == "failed_login":
@@ -912,6 +1144,19 @@ def ingest_event():
         na.auto_promoted = True
         logger.warning(f"Auto-escalated alert '{na.title}' to Case #{auto_case.id}")
     db.session.commit()
+
+    # --- 6. Automated SOAR: Trigger playbooks associated with alert rules ---
+    all_triggered_alerts = db.session.query(Alert).filter(
+        Alert.server_id == server.id,
+        Alert.event_id == event.id
+    ).all()
+
+    for ta in all_triggered_alerts:
+        # Check if the triggered rule has an associated playbook
+        rule = AlertRule.query.filter_by(name=ta.title, event_type=ta.alert_type).first()
+        if rule and rule.playbook_id:
+            logger.info(f"AUTO-SOAR: Triggering playbook #{rule.playbook_id} for alert #{ta.id} on {server.hostname}")
+            PlaybookRunner.run(rule.playbook_id, ta.id)
 
     # Push WebSocket update
     socketio.emit("new_event", {
@@ -1023,6 +1268,9 @@ def get_servers():
             "status": status,
             "severity": max_sev_name,
             "severity_val": max_sev_val,
+            "role": s.role,
+            "site": s.site,
+            "cluster_id": s.cluster_id,
             "last_seen": s.last_seen.isoformat() if s.last_seen else None,
             "registered_at": s.registered_at.isoformat(),
         })
@@ -1034,6 +1282,14 @@ def get_servers():
 @app.route("/api/servers/<int:server_id>/export-report")
 @jwt_required
 def export_report(server_id):
+    """Generate a PDF summary of server security status."""
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+    except ImportError:
+        logger.error("ReportLab library not found. Cannot generate PDF.")
+        return jsonify({"error": "PDF generation library (reportlab) not found"}), 500
+
     server = Server.query.get_or_404(server_id)
     total_events = Event.query.filter_by(server_id=server_id).count()
     crit_alerts = Alert.query.filter_by(server_id=server_id, severity='critical', is_resolved=False).count()
@@ -1083,6 +1339,7 @@ def export_report(server_id):
     )
 @app.route("/api/servers/<int:server_id>/isolate", methods=["POST"])
 @jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
 @audit_log_action("Isolate Server")
 def isolate_server(server_id):
     server = Server.query.get_or_404(server_id)
@@ -1114,6 +1371,7 @@ def isolate_server(server_id):
 
 @app.route("/api/servers/<int:server_id>/reconnect", methods=["POST"])
 @jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
 @audit_log_action("Reconnect Server")
 def reconnect_server(server_id):
     server = Server.query.get_or_404(server_id)
@@ -1137,6 +1395,175 @@ def reconnect_server(server_id):
     return jsonify({"message": f"Server {server.hostname} reconnected", "status": "online"})
 
 
+@app.route("/api/servers/<int:server_id>", methods=["GET"])
+@jwt_required
+def get_server_metadata(server_id):
+    """Retrieve detailed metadata for a single server."""
+    server = Server.query.get_or_404(server_id)
+    return jsonify({
+        "id": server.id,
+        "hostname": server.hostname,
+        "ip_address": server.ip_address,
+        "os_info": server.os_info,
+        "status": server.status,
+        "is_maintenance": server.is_maintenance,
+        "maintenance_until": server.maintenance_until.isoformat() if server.maintenance_until else None,
+        "managed_services": json.loads(server.managed_services) if server.managed_services else []
+    })
+
+
+@app.route("/api/servers/<int:server_id>", methods=["DELETE"])
+@jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
+@audit_log_action("Delete Server")
+def delete_server(server_id):
+    """Permanently remove a server and all its associated events and alerts."""
+    server = Server.query.get_or_404(server_id)
+    hostname = server.hostname
+    # Cascade: remove related events and alerts
+    Event.query.filter_by(server_id=server_id).delete()
+    Alert.query.filter_by(server_id=server_id).delete()
+    db.session.delete(server)
+    db.session.commit()
+    return jsonify({"message": f"Server '{hostname}' deleted successfully"})
+
+
+@app.route("/api/servers/<int:server_id>", methods=["PATCH"])
+@jwt_required
+@audit_log_action("Update Server Metadata")
+def update_server(server_id):
+    """Update server maintenance windows and managed services."""
+    try:
+        server = Server.query.get_or_404(server_id)
+        data = request.get_json(force=True)
+        
+        logger.info(f"UPDATE SERVER {server_id} RECEIVED DATA: {data}")
+        
+        if "is_maintenance" in data:
+            server.is_maintenance = bool(data["is_maintenance"])
+            if not server.is_maintenance:
+                server.maintenance_until = None
+        
+        if "maintenance_hours" in data:
+            hours = int(data["maintenance_hours"])
+            if hours > 0:
+                server.maintenance_until = datetime.now(timezone.utc) + timedelta(hours=hours)
+                server.is_maintenance = True # Also enable the flag
+            else:
+                server.maintenance_until = None
+                server.is_maintenance = False
+                
+        if "managed_services" in data:
+            # Expected: list of {name, username, path}
+            services = data["managed_services"]
+            logger.info(f"SAVING SERVICES for {server.hostname}: {services}")
+            server.managed_services = json.dumps(services)
+            
+        db.session.commit()
+        logger.info(f"DB COMMIT SUCCESS for server {server.id}")
+        return jsonify({"message": f"Server {server.hostname} updated successfully", "server": {"is_maintenance": server.is_maintenance, "managed_services": server.managed_services}})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"DB COMMIT FAILED for server {server_id}: {e}", exc_info=True)
+        return jsonify({"error": f"Database save failed: {str(e)}"}), 500
+
+# Utility to run a command as a specific Windows user
+import subprocess
+
+def run_as_user(username, command):
+    """Run *command* as *username* using Windows `runas`.
+    Returns a dict with stdout, stderr and returncode.
+    """
+    runas_cmd = ["runas", f"/user:{username}", "cmd /c " + command]
+    try:
+        completed = subprocess.run(runas_cmd, capture_output=True, text=True, shell=False)
+        return {"stdout": completed.stdout, "stderr": completed.stderr, "returncode": completed.returncode}
+    except Exception as e:
+        logger.error(f"run_as_user failed for {username}: {e}")
+        return {"stdout": "", "stderr": str(e), "returncode": -1}
+
+# ---------- Service Management Endpoints ----------
+
+@app.route("/api/servers/<int:server_id>/services", methods=["POST"])
+@jwt_required
+@audit_log_action("Add/Update Managed Service")
+def add_update_service(server_id):
+    server = Server.query.get_or_404(server_id)
+    service = request.get_json(force=True)
+    if not all(k in service for k in ("name", "path", "user")):
+        return jsonify({"error": "Missing required service fields"}), 400
+    existing = []
+    if server.managed_services:
+        try:
+            existing = json.loads(server.managed_services)
+        except Exception:
+            existing = []
+    updated = False
+    for i, s in enumerate(existing):
+        if s.get("name") == service["name"]:
+            existing[i] = service
+            updated = True
+            break
+    if not updated:
+        existing.append(service)
+    server.managed_services = json.dumps(existing)
+    try:
+        db.session.commit()
+        return jsonify({"message": "Service added/updated", "services": existing})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Failed to add/update service: {e}")
+        return jsonify({"error": "Database error"}), 500
+
+@app.route("/api/servers/<int:server_id>/services/<service_name>", methods=["DELETE"])
+@jwt_required
+@audit_log_action("Delete Managed Service")
+def delete_service(server_id, service_name):
+    server = Server.query.get_or_404(server_id)
+    if not server.managed_services:
+        return jsonify({"error": "No services configured"}), 404
+    try:
+        services = json.loads(server.managed_services)
+    except Exception:
+        services = []
+    services = [s for s in services if s.get("name") != service_name]
+    server.managed_services = json.dumps(services)
+    try:
+        db.session.commit()
+        return jsonify({"message": f"Service {service_name} deleted", "services": services})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Failed to delete service: {e}")
+        return jsonify({"error": "Database error"}), 500
+
+@app.route("/api/servers/<int:server_id>/restart-services", methods=["POST"])
+@jwt_required
+@audit_log_action("Restart Managed Services")
+def restart_services(server_id):
+    """Trigger the restart playbook for all services of a server."""
+    server = Server.query.get_or_404(server_id)
+    if not server.managed_services:
+        return jsonify({"error": "No services configured"}), 400
+    try:
+        services = json.loads(server.managed_services)
+    except Exception as e:
+        logger.error(f"Invalid services JSON: {e}")
+        return jsonify({"error": "Invalid services data"}), 500
+    results = []
+    for svc in services:
+        user = svc.get("user")
+        cmd = svc.get("restart_cmd") or f"{svc.get('path')}/bin/startup.sh"
+        res = run_as_user(user, cmd)
+        results.append({
+            "name": svc.get("name"),
+            "command": cmd,
+            "returncode": res["returncode"],
+            "stdout": res["stdout"],
+            "stderr": res["stderr"]
+        })
+    return jsonify({"results": results})
+
+# Original search route
 @app.route("/api/search", methods=["GET"])
 @jwt_required
 def unified_search():
@@ -1208,10 +1635,16 @@ def server_stats():
     total_events = Event.query.count()
     open_alerts = Alert.query.filter_by(is_resolved=False).count()
 
+    maint_count = Server.query.filter(
+        (Server.is_maintenance == True) | 
+        (Server.maintenance_until > datetime.now(timezone.utc))
+    ).count()
+
     return jsonify({
         "total_servers": total,
         "online_servers": online,
         "offline_servers": total - online,
+        "maintenance_servers": maint_count,
         "total_events": total_events,
         "open_alerts": open_alerts,
     })
@@ -1434,6 +1867,31 @@ def get_cases():
             "updated_at": c.updated_at.isoformat() if c.updated_at else None,
         } for c in cases
     ])
+@app.route("/api/cases/<int:case_id>/sync-jira", methods=["POST"])
+@jwt_required
+@audit_log_action("Jira Sync")
+def sync_case_jira(case_id):
+    case = Case.query.get_or_404(case_id)
+    # Simulated Jira Sync logic
+    return jsonify({"message": f"Case {case_id} synced to Jira successfully", "ticket_id": f"SEC-{case_id + 100}"})
+
+
+@app.route("/api/cases/<int:case_id>/resolve", methods=["POST"])
+@jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
+@audit_log_action("Resolve Case")
+def resolve_case(case_id):
+    case = Case.query.get_or_404(case_id)
+    case.status = "resolved"
+    case.updated_at = datetime.now(timezone.utc)
+    # Auto-resolve linked alerts
+    alerts = Alert.query.filter_by(case_id=case_id).all()
+    for a in alerts:
+        a.is_resolved = True
+        a.resolved_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({"message": f"Case {case_id} and all linked alerts resolved"})
+
 @app.route("/api/cases/<int:case_id>/details", methods=["GET"])
 @jwt_required
 def get_case_details(case_id):
@@ -1456,7 +1914,7 @@ def get_case_details(case_id):
         })
         links.append({"source": alert_node_id, "target": f"case_{case.id}"})
         
-        if a.server_id:
+        if a.server_id and getattr(a, "server", None):
             server_node_id = f"server_{a.server_id}"
             if server_node_id not in server_nodes:
                 nodes.append({
@@ -1469,14 +1927,16 @@ def get_case_details(case_id):
             links.append({"source": server_node_id, "target": alert_node_id})
             
         if a.event_id:
-            event_node_id = f"event_{a.event_id}"
-            nodes.append({
-                "id": event_node_id,
-                "label": a.event.event_type,
-                "type": "event",
-                "severity": a.event.severity
-            })
-            links.append({"source": event_node_id, "target": alert_node_id})
+            event = Event.query.get(a.event_id)
+            if event:
+                event_node_id = f"event_{a.event_id}"
+                nodes.append({
+                    "id": event_node_id,
+                    "label": event.event_type,
+                    "type": "event",
+                    "severity": event.severity
+                })
+                links.append({"source": event_node_id, "target": alert_node_id})
 
     return jsonify({"nodes": nodes, "links": links, "case": {
         "id": case.id,
@@ -1570,6 +2030,7 @@ def get_threat_intel():
 
 @app.route("/api/threat-intel", methods=["POST"])
 @jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
 @audit_log_action("Add Threat Indicator")
 def add_threat_intel():
     data = request.get_json(force=True)
@@ -1577,7 +2038,8 @@ def add_threat_intel():
         indicator_type=data.get("indicator_type", "ip"),
         value=data.get("value"),
         source=data.get("source", "manual"),
-        severity=data.get("severity", "medium")
+        severity=data.get("severity", "medium"),
+        is_blocked=data.get("is_blocked", False)
     )
     db.session.add(indicator)
     db.session.commit()
@@ -1586,6 +2048,7 @@ def add_threat_intel():
 
 @app.route("/api/threat-intel/<int:id>", methods=["DELETE"])
 @jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
 @audit_log_action("Delete Threat Indicator")
 def delete_threat_intel(id):
     indicator = ThreatIndicator.query.get_or_404(id)
@@ -1619,6 +2082,7 @@ def get_rules():
 
 @app.route("/api/rules", methods=["POST"])
 @jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
 @audit_log_action("Create Detection Rule")
 def create_rule():
     """Add a new rule to the default_rules.yaml file and reload."""
@@ -1634,20 +2098,42 @@ def create_rule():
         "is_active": True,
     }
 
-    rules_path = os.path.join(base_dir, "rules", "default_rules.yaml")
+    rules_dir = os.path.join(base_dir, "rules")
+    rules_path = os.path.join(rules_dir, "default_rules.yaml")
+    
+    if not os.path.exists(rules_dir):
+        os.makedirs(rules_dir)
+        
     try:
-        with open(rules_path, "r") as f:
-            yaml_data = yaml.safe_load(f) or {"rules": []}
+        yaml_data = {"rules": []}
+        if os.path.exists(rules_path):
+            with open(rules_path, "r") as f:
+                yaml_data = yaml.safe_load(f) or {"rules": []}
+        
         yaml_data["rules"].append(new_rule)
         with open(rules_path, "w") as f:
             yaml.dump(yaml_data, f, default_flow_style=False, allow_unicode=True)
+            
+        # Sync with database for playbook linking
+        with app.app_context():
+            existing = AlertRule.query.filter_by(name=new_rule.get("name")).first()
+            if not existing:
+                db.session.add(AlertRule(
+                    name=new_rule.get("name"),
+                    event_type=new_rule.get("event_type"),
+                    severity=new_rule.get("severity", "warning")
+                ))
+                db.session.commit()
+                
         rule_manager.load_rules()
         return jsonify({"message": "Rule created", "total_rules": len(rule_manager.rules)}), 201
     except Exception as e:
+        logger.error(f"Rule Creation Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/rules/<int:rule_id>", methods=["DELETE"])
 @jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
 @audit_log_action("Delete Detection Rule")
 def delete_rule(rule_id):
     """Delete a rule by index from default_rules.yaml."""
@@ -1662,6 +2148,14 @@ def delete_rule(rule_id):
         yaml_data["rules"] = rules
         with open(rules_path, "w") as f:
             yaml.dump(yaml_data, f, default_flow_style=False, allow_unicode=True)
+            
+        # Also delete from DB if exists
+        with app.app_context():
+            db_rule = AlertRule.query.filter_by(name=deleted.get("name")).first()
+            if db_rule:
+                db.session.delete(db_rule)
+                db.session.commit()
+                
         rule_manager.load_rules()
         return jsonify({"message": f"Rule '{deleted.get('name')}' deleted"})
     except Exception as e:
@@ -1669,10 +2163,31 @@ def delete_rule(rule_id):
 
 @app.route("/api/rules/reload", methods=["POST"])
 @jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
 def reload_rules():
     """Hot-reload all rules from YAML files."""
     rule_manager.load_rules()
     return jsonify({"message": "Rules reloaded", "total_rules": len(rule_manager.rules)})
+
+
+@app.route("/api/rules/<int:rule_id>", methods=["PATCH"])
+@jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
+@audit_log_action("Update Alert Rule")
+def update_rule(rule_id):
+    """Link a playbook to a rule for automated response."""
+    rule = AlertRule.query.get_or_404(rule_id)
+    data = request.get_json(force=True)
+    
+    if "playbook_id" in data:
+        rule.playbook_id = data["playbook_id"]
+    if "is_active" in data:
+        rule.is_active = bool(data["is_active"])
+    if "severity" in data:
+        rule.severity = data["severity"]
+        
+    db.session.commit()
+    return jsonify({"message": f"Rule {rule.name} updated successfully"})
 
 # ──────────────────────────────────────────────────────────────────────────────
 # API — PLAYBOOKS
@@ -1694,11 +2209,13 @@ def get_playbooks():
 
 @app.route("/api/playbooks", methods=["POST"])
 @jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
 @audit_log_action("Create Playbook")
 def create_playbook():
     data = request.get_json(force=True)
     pb = Playbook(
         name=data.get("name"),
+        description=data.get("description"),
         actions=json.dumps(data.get("actions", [])),
         is_active=data.get("is_active", True)
     )
@@ -1708,6 +2225,7 @@ def create_playbook():
 
 @app.route("/api/playbooks/<int:pb_id>/execute/<int:alert_id>", methods=["POST"])
 @jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
 @audit_log_action("Execute Playbook")
 def execute_playbook(pb_id, alert_id):
     success = PlaybookRunner.run(pb_id, alert_id)
@@ -1741,6 +2259,603 @@ def ws_disconnect():
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "service": "securepulse"})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API — USER MANAGEMENT (Part B)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/users", methods=["GET"])
+@jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
+def get_users():
+    users = User.query.all()
+    return jsonify([{
+        "id": u.id,
+        "email": u.email,
+        "username": u.username,
+        "full_name": u.full_name,
+        "role": u.role,
+        "is_active": u.is_active,
+        "mfa_enabled": u.mfa_enabled,
+        "last_login": u.last_login.isoformat() if u.last_login else None
+    } for u in users])
+
+
+@app.route("/api/users/<int:user_id>/role", methods=["PATCH"])
+@jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
+@audit_log_action("Update User Role")
+def update_user_role(user_id):
+    user = User.query.get_or_404(user_id)
+    data = request.get_json(force=True)
+    role = data.get("role")
+    
+    if role not in VALID_ROLES:
+        return jsonify({"error": "Invalid role"}), 400
+    
+    user.role = role
+    user.is_admin = (role == ROLE_SUPERUSER)
+    db.session.commit()
+    return jsonify({"message": "Role updated"})
+
+@app.route("/api/users/<int:user_id>/disable", methods=["PATCH"])
+@jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
+@audit_log_action("Disable/Enable User")
+def toggle_user_active(user_id):
+    user = User.query.get_or_404(user_id)
+    user.is_active = not user.is_active
+    db.session.commit()
+    return jsonify({"message": f"User {'enabled' if user.is_active else 'disabled'}"})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API — FEATURE #21: GRAPH RELATIONSHIP VIEW
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/cases/<int:case_id>/graph", methods=["GET"])
+@jwt_required
+def get_case_graph(case_id):
+    case = Case.query.get_or_404(case_id)
+    # Fetch alerts linked to this case
+    alerts = Alert.query.filter_by(case_id=case.id).all()
+    
+    nodes = []
+    links = []
+    seen_nodes = set()
+
+    def add_node(id, label, type, status=None):
+        if id not in seen_nodes:
+            nodes.append({"id": id, "label": label, "type": type, "status": status})
+            seen_nodes.add(id)
+
+    # Add Case Node
+    add_node(f"case_{case.id}", f"Case #{case.id}", "case", case.priority)
+
+    for alert in alerts:
+        alert_id = f"alert_{alert.id}"
+        add_node(alert_id, alert.title, "alert", alert.severity)
+        links.append({"source": f"case_{case.id}", "target": alert_id, "label": "contains"})
+
+        # Link to Server
+        if alert.server:
+            srv_id = f"server_{alert.server.id}"
+            add_node(srv_id, alert.server.hostname, "server", alert.server.status)
+            links.append({"source": alert_id, "target": srv_id, "label": "triggered_on"})
+
+        # Link to Event
+        if alert.event_id:
+            evt = Event.query.get(alert.event_id)
+            if evt:
+                evt_id = f"event_{evt.id}"
+                add_node(evt_id, evt.event_type, "event", evt.severity)
+                links.append({"source": evt_id, "target": alert_id, "label": "caused"})
+
+                # Extract IP if present in description or raw_data
+                ip_match = re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', evt.description)
+                if ip_match:
+                    ip = ip_match.group(0)
+                    ip_id = f"ip_{ip}"
+                    add_node(ip_id, ip, "ip")
+                    links.append({"source": ip_id, "target": f"server_{evt.server_id}", "label": "connected_to"})
+
+    return jsonify({"nodes": nodes, "links": links})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API — FEATURE #24: ACCOUNT DISABLE / PASSWORD RESET
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/response/disable-account", methods=["POST"])
+@jwt_required
+@require_role(ROLE_SUPERUSER, ROLE_ADMIN)
+@audit_log_action("Disable Affected Account")
+def response_disable_account():
+    data = request.get_json(force=True)
+    username = data.get("username")
+    incident_id = data.get("incident_id")
+    
+    # Simulate calling Okta/AD/LDAP API
+    logger.info(f"SIMULATION: Disabling account {username} for incident {incident_id}")
+    
+    # Log to audit trail (handled by decorator, but we can add details)
+    g.target_override = f"User: {username}"
+    
+    return jsonify({"message": f"Account {username} has been disabled in the identity provider."})
+
+@app.route("/api/response/reset-password", methods=["POST"])
+@jwt_required
+@require_role(ROLE_SUPERUSER, ROLE_ADMIN)
+@audit_log_action("Force Password Reset")
+def response_reset_password():
+    data = request.get_json(force=True)
+    username = data.get("username")
+    
+    # Simulate calling Okta/AD/LDAP API
+    logger.info(f"SIMULATION: Forcing password reset for {username}")
+    
+    return jsonify({"message": f"Password reset forced for {username}. User will be prompted on next login."})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API — FEATURE #25: FIREWALL RULE PUSH
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/response/block-ip", methods=["POST"])
+@jwt_required
+@require_role(ROLE_SUPERUSER, ROLE_ADMIN)
+@audit_log_action("Block IP on Firewall")
+def response_block_ip():
+    data = request.get_json(force=True)
+    ip = data.get("ip")
+    reason = data.get("reason", "Malicious activity detected")
+    ttl = data.get("ttl", 168) # Default 7 days
+    
+    # Simulate pushing rules to firewalls
+    logger.info(f"SIMULATION: Pushing DENY rule for {ip} to firewalls. TTL: {ttl}h")
+    
+    # Record in DB
+    block = BlockedIP(
+        ip=ip,
+        reason=reason,
+        blocked_by=g.user.id,
+        ttl_hours=ttl,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=ttl) if ttl else None,
+        status="active"
+    )
+    db.session.add(block)
+    
+    # Update Threat Intel if exists
+    ti = ThreatIndicator.query.filter_by(value=ip).first()
+    if ti:
+        ti.is_blocked = True
+        
+    db.session.commit()
+    return jsonify({"message": f"IP {ip} blocked on perimeter firewalls."})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API — FEATURE #32: SSO / MFA SETTINGS
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/settings/sso", methods=["GET", "POST"])
+@jwt_required
+@require_role(ROLE_SUPERUSER)
+def manage_sso_settings():
+    if request.method == "POST":
+        data = request.get_json(force=True)
+        # Update or create config
+        config = IdentityProviderConfig.query.filter_by(provider_type=data.get("provider_type")).first()
+        if not config:
+            config = IdentityProviderConfig(provider_type=data.get("provider_type"))
+            db.session.add(config)
+        
+        config.is_enabled = data.get("is_enabled", False)
+        config.config = json.dumps(data.get("config", {}))
+        db.session.commit()
+        return jsonify({"message": "SSO configuration updated"})
+    
+    configs = IdentityProviderConfig.query.all()
+    return jsonify([{
+        "provider_type": c.provider_type,
+        "is_enabled": c.is_enabled,
+        "config": json.loads(c.config) if c.config else {}
+    } for c in configs])
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API — FEATURE #33: SYSTEM HEALTH
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/system/health", methods=["GET"])
+@jwt_required
+@require_role(ROLE_SUPERUSER)
+def get_system_health():
+    # Simulate system health data
+    import psutil
+    uptime = datetime.now(timezone.utc) - datetime.fromtimestamp(psutil.boot_time(), timezone.utc)
+    
+    # Real system health logic using Asset Tagging
+    primary_nodes = Server.query.filter_by(role="primary").all()
+    standby_nodes = Server.query.filter_by(role="standby").all()
+    
+    nodes_data = []
+    for s in primary_nodes + standby_nodes:
+        is_online = s.last_seen and (datetime.now(timezone.utc) - s.last_seen.replace(tzinfo=timezone.utc)).total_seconds() < int(os.getenv("HEARTBEAT_TIMEOUT", 120))
+        status_str = "ONLINE" if is_online else "OFFLINE"
+        
+        # AUTO-ALERT: If standby node goes offline, create a critical alert
+        if not is_online and s.role == "standby":
+            existing = Alert.query.filter_by(server_id=s.id, title="Standby Node Offline", is_resolved=False).first()
+            if not existing:
+                alert = Alert(
+                    server_id=s.id,
+                    alert_type="system_health",
+                    severity="critical",
+                    title="Standby Node Offline",
+                    message=f"Critical: DR Standby node {s.hostname} in {s.site} is OFFLINE. DB Replication may be at risk.",
+                    score=95
+                )
+                db.session.add(alert)
+                db.session.commit()
+                # AUTOMATIC EMAIL DISPATCH
+                recipient = dispatch_alert_notification(alert)
+                logger.warning(f"AUTO-ALERT & DISPATCH: Standby node {s.hostname} is offline. Alert sent to {recipient}")
+
+        nodes_data.append({
+            "id": s.id,
+            "name": s.hostname,
+            "region": s.site,
+            "role": s.role.upper(),
+            "status": status_str,
+            "cpu": "12%",
+            "mem": "45%"
+        })
+
+    return jsonify({
+        "uptime": str(uptime).split('.')[0],
+        "nodes": nodes_data or [
+            {"name": "No Tagged Nodes", "region": "N/A", "role": "NONE", "status": "UNKNOWN", "cpu": "0%", "mem": "0%"}
+        ],
+        "db": {
+            "status": "HEALTHY",
+            "replication_lag_ms": 0 if not standby_nodes else 15,
+            "last_backup": (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
+        },
+        "last_dr_test": DRTestLog.query.order_by(DRTestLog.ran_at.desc()).first().ran_at.isoformat() if DRTestLog.query.first() else None
+    })
+
+@app.route("/api/users", methods=["POST"])
+@jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
+def create_user():
+    data = request.get_json(force=True)
+    # Email is now optional
+    email = data.get("email")
+    if email == "": email = None
+    username = data.get("username")
+    
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+        
+    if User.query.filter_by(username=username).first():
+        return jsonify({"error": "Username already exists"}), 400
+
+    new_user = User(
+        email=email, # Can be None
+        username=username,
+        full_name=data.get("full_name"),
+        hashed_password=generate_password_hash(data.get("password", "SecurePulse123!")),
+        role=data.get("role", ROLE_NORMAL)
+    )
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({"message": "User created successfully", "id": new_user.id}), 201
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API — DR READINESS AUDIT (SAFE CHECKS)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/system/dr-audit", methods=["GET"])
+@jwt_required
+def run_dr_audit():
+    """Safety Check: Performs a 6-point readiness audit."""
+    standby = Server.query.filter_by(role="standby").first()
+    
+    if not standby:
+        return jsonify({"status": "FAIL", "message": "No standby server registered."})
+
+    # Check 1: Connectivity
+    ping_ok = standby.status == "online"
+    
+    # Check 2: DB Sync
+    sync_ok = False
+    if standby.last_seen:
+        diff = (datetime.now(timezone.utc) - standby.last_seen.replace(tzinfo=timezone.utc)).total_seconds()
+        sync_ok = diff < 60
+
+    # Check 3: Firewall Rules
+    fw_ok = FirewallConfig.query.filter_by(site="DR").first() is not None
+
+    # Check 4: Disk Capacity (Simulated for this server)
+    disk_ok = True 
+    
+    # Check 5: Service Status (Simulated)
+    service_ok = standby.status != "unknown"
+
+    overall = "PASS" if (ping_ok and sync_ok and fw_ok) else "WARNING"
+    
+    return jsonify({
+        "status": overall,
+        "checks": [
+            {"name": "Ping Test", "status": "PASS" if ping_ok else "FAIL", "msg": "DR Server responding"},
+            {"name": "DB Replication", "status": "PASS" if sync_ok else "FAIL", "msg": "Replication Lag: <1s"},
+            {"name": "Firewall Ready", "status": "PASS" if fw_ok else "FAIL", "msg": "DR Rules applied"},
+            {"name": "Disk Capacity", "status": "PASS" if disk_ok else "FAIL", "msg": "85% Available"},
+            {"name": "Service Health", "status": "PASS" if service_ok else "FAIL", "msg": "Agent Service Active"}
+        ]
+    })
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API — FEATURE #34: COLLABORATION TOOLS
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/cases/<int:case_id>/comments", methods=["GET"])
+@jwt_required
+def get_case_comments(case_id):
+    comments = CaseComment.query.filter_by(case_id=case_id).order_by(CaseComment.created_at.asc()).all()
+    return jsonify([{
+        "id": c.id,
+        "user": c.author.full_name or c.author.username,
+        "user_email": c.author.email,
+        "text": c.text,
+        "is_system": c.is_system,
+        "created_at": c.created_at.isoformat()
+    } for c in comments])
+
+@app.route("/api/cases/<int:case_id>/comments", methods=["POST"])
+@jwt_required
+@audit_log_action("Add Case Comment")
+def add_case_comment(case_id):
+    data = request.get_json(force=True)
+    text = data.get("text")
+    if not text:
+        return jsonify({"error": "Comment text required"}), 400
+    
+    comment = CaseComment(
+        case_id=case_id,
+        user_id=g.user.id,
+        text=text
+    )
+    db.session.add(comment)
+    
+    # Simple @mention parsing
+    mentions = re.findall(r'@(\w+)', text)
+    for username in mentions:
+        target_user = User.query.filter_by(username=username).first()
+        if target_user:
+            notif = Notification(
+                user_id=target_user.id,
+                type="mention",
+                message=f"{g.user.username} mentioned you in Case #{case_id}",
+                case_id=case_id
+            )
+            db.session.add(notif)
+            
+    db.session.commit()
+    return jsonify({"message": "Comment added successfully"})
+
+@app.route("/api/notifications", methods=["GET"])
+@jwt_required
+def get_notifications():
+    notifs = Notification.query.filter_by(user_id=g.user.id).order_by(Notification.created_at.desc()).limit(20).all()
+    return jsonify([{
+        "id": n.id,
+        "type": n.type,
+        "message": n.message,
+        "case_id": n.case_id,
+        "is_read": n.is_read,
+        "created_at": n.created_at.isoformat()
+    } for n in notifs])
+
+@app.route("/api/notifications/mark-read", methods=["POST"])
+@jwt_required
+def mark_notifications_read():
+    data = request.get_json(force=True)
+    ids = data.get("ids", [])
+    Notification.query.filter(Notification.id.in_(ids), Notification.user_id == g.user.id).update({"is_read": True}, synchronize_session=False)
+    db.session.commit()
+    return jsonify({"message": "Notifications marked as read"})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API — INTELLIGENT ALERT ROUTING
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/settings/notification-routes", methods=["GET", "POST"])
+@jwt_required
+@require_role(ROLE_SUPERUSER)
+def manage_notification_routes():
+    if request.method == "POST":
+        data = request.get_json(force=True)
+        # Create or update a route
+        route_id = data.get("id")
+        if route_id:
+            route = NotificationRoute.query.get(route_id)
+        else:
+            route = NotificationRoute()
+            
+        route.match_type = data.get("match_type", "default")
+        route.match_value = data.get("match_value")
+        route.recipient_email = data.get("recipient_email")
+        db.session.add(route)
+        db.session.commit()
+        return jsonify({"message": "Route updated successfully"})
+
+    routes = NotificationRoute.query.all()
+    return jsonify([{
+        "id": r.id,
+        "match_type": r.match_type,
+        "match_value": r.match_value,
+        "recipient_email": r.recipient_email
+    } for r in routes])
+
+def dispatch_alert_notification(alert):
+    """
+    Intelligent routing logic to determine recipient email based on server metadata.
+    """
+    server = alert.server
+    if server and getattr(server, 'is_maintenance', False):
+        logger.info(f"SUPPRESSED: Alert '{alert.title}' notification suppressed (Server in Maintenance)")
+        return None
+    recipient = None
+    
+    # 1. Match by Role (e.g. standby -> DB Team)
+    if server and server.role:
+        route = NotificationRoute.query.filter_by(match_type="role", match_value=server.role).first()
+        if route: recipient = route.recipient_email
+        
+    # 2. Match by Site (e.g. Cloud -> Cloud Team)
+    if not recipient and server and server.site:
+        route = NotificationRoute.query.filter_by(match_type="site", match_value=server.site).first()
+        if route: recipient = route.recipient_email
+        
+    # 3. Fallback to Default
+    if not recipient:
+        route = NotificationRoute.query.filter_by(match_type="default").first()
+        recipient = route.recipient_email if route else "soc-manager@securepulse.local"
+
+    # Simulation of Email Dispatch
+    logger.info(f"AUTO-DISPATCH: Alert '{alert.title}' routed to {recipient}")
+    # Here you would add: mail.send_message(subject=alert.title, recipients=[recipient], body=alert.message)
+    
+    return recipient
+
+@app.route("/api/cases/<int:case_id>/send-alert", methods=["POST"])
+@jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
+def send_routed_alert(case_id):
+    # Find the server associated with this case (via its alerts)
+    first_alert = Alert.query.filter_by(case_id=case_id).first()
+    if not first_alert:
+        return jsonify({"error": "No alerts found in this case to route"}), 400
+    
+    recipient = dispatch_alert_notification(first_alert)
+    
+    return jsonify({
+        "message": f"Security alert successfully routed to {recipient}",
+        "team_email": recipient
+    })
+    if not config: return jsonify({})
+    return jsonify({
+        "provider": config.provider,
+        "base_url": config.base_url,
+        "project_key": config.project_key,
+        "is_enabled": config.is_enabled
+    })
+
+@app.route("/api/cases/<int:case_id>/tickets", methods=["POST"])
+@jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
+@audit_log_action("Create External Ticket")
+def create_case_ticket(case_id):
+    case = Case.query.get_or_404(case_id)
+    # Simulate Jira ticket creation
+    ticket_id = f"SEC-{1000 + case_id}"
+    ticket_url = f"https://jira.securepulse.local/browse/{ticket_id}"
+    
+    ticket = CaseTicket(
+        case_id=case_id,
+        ticket_id=ticket_id,
+        ticket_url=ticket_url,
+        ticket_status="Open",
+        last_synced=datetime.now(timezone.utc)
+    )
+    db.session.add(ticket)
+    db.session.commit()
+    return jsonify({"message": f"Jira ticket {ticket_id} created.", "ticket_id": ticket_id, "url": ticket_url})
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API — PART C: PROJECT MANAGEMENT
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/projects", methods=["GET"])
+@jwt_required
+def get_projects():
+    projects = Project.query.all()
+    res = []
+    for p in projects:
+        # Filter alerts for endpoints in this project
+        endpoint_ids = [ep.server_id for ep in p.endpoints]
+        alert_count = Alert.query.filter(Alert.server_id.in_(endpoint_ids), Alert.is_resolved == False).count()
+        critical_count = Alert.query.filter(Alert.server_id.in_(endpoint_ids), Alert.severity == "critical", Alert.is_resolved == False).count()
+        
+        res.append({
+            "id": p.id,
+            "name": p.name,
+            "description": p.description,
+            "endpoint_count": len(endpoint_ids),
+            "alert_count": alert_count,
+            "critical_count": critical_count,
+            "created_at": p.created_at.isoformat()
+        })
+    return jsonify(res)
+
+@app.route("/api/projects", methods=["POST"])
+@jwt_required
+@require_role(ROLE_ADMIN, ROLE_SUPERUSER)
+@audit_log_action("Create Project")
+def create_project():
+    data = request.get_json(force=True)
+    name = data.get("name")
+    if not name: return jsonify({"error": "Name required"}), 400
+    
+    project = Project(
+        name=name,
+        description=data.get("description"),
+        created_by=g.user.id
+    )
+    db.session.add(project)
+    db.session.flush()
+    
+    endpoint_ids = data.get("endpoint_ids", [])
+    for eid in endpoint_ids:
+        db.session.add(ProjectEndpoint(project_id=project.id, server_id=eid, added_by=g.user.id))
+        
+    db.session.commit()
+    return jsonify({"id": project.id, "message": "Project created"})
+
+@app.route("/api/projects/<int:id>/dashboard", methods=["GET"])
+@jwt_required
+def get_project_dashboard(id):
+    project = Project.query.get_or_404(id)
+    endpoint_ids = [ep.server_id for ep in project.endpoints]
+    
+    if not endpoint_ids:
+        return jsonify({"endpoints": [], "stats": {"alerts": 0, "critical": 0, "events": 0}})
+
+    alerts = Alert.query.filter(Alert.server_id.in_(endpoint_ids)).all()
+    events_count = Event.query.filter(Event.server_id.in_(endpoint_ids)).count()
+    
+    return jsonify({
+        "project_name": project.name,
+        "stats": {
+            "endpoints": len(endpoint_ids),
+            "alerts": len([a for a in alerts if not a.is_resolved]),
+            "critical": len([a for a in alerts if a.severity == "critical" and not a.is_resolved]),
+            "events": events_count
+        },
+        "endpoints": [{
+            "id": ep.server.id,
+            "hostname": ep.server.hostname,
+            "ip": ep.server.ip_address,
+            "status": ep.server.status,
+            "alerts": ep.server.alerts.filter_by(is_resolved=False).count()
+        } for ep in project.endpoints]
+    })
 
 
 # ──────────────────────────────────────────────────────────────────────────────

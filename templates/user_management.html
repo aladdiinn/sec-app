@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% set active = 'user-management' %}
+{% block title %}User Management — SecurePulse{% endblock %}
+{% block page_title %}USER MANAGEMENT & RBAC{% endblock %}
+{% block page_sub %}Manage administrative access, roles, and account security{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
+        <div style="display:flex; gap:15px">
+            <div class="card glass" style="padding:10px 20px">
+                <span class="stat-label">TOTAL USERS</span>
+                <span class="stat-value" id="count-total">0</span>
+            </div>
+            <div class="card glass" style="padding:10px 20px">
+                <span class="stat-label">ACTIVE SESSIONS</span>
+                <span class="stat-value" id="count-active">0</span>
+            </div>
+        </div>
+        <button class="btn btn-primary" onclick="openCreateUser()">+ ADD NEW USER</button>
+    </div>
+
+    <div class="card glass" style="padding:0">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>USER / EMAIL</th>
+                    <th>ROLE</th>
+                    <th>STATUS</th>
+                    <th>MFA</th>
+                    <th>LAST LOGIN</th>
+                    <th>ACTIONS</th>
+                </tr>
+            </thead>
+            <tbody id="user-list">
+                <!-- Users injected here -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal Overlay -->
+<div id="modal-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); backdrop-filter:blur(5px); display:none; z-index:9999; align-items:center; justify-content:center">
+    <div class="card" id="modal-content" style="width:450px; padding:30px">
+        <!-- Modal content -->
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function loadUsers() {
+        try {
+            const users = await apiFetch('/api/users');
+            const list = document.getElementById('user-list');
+            document.getElementById('count-total').innerText = users.length;
+            document.getElementById('count-active').innerText = users.filter(u => u.last_login).length;
+
+            list.innerHTML = users.map(u => `
+                <tr>
+                    <td>
+                        <div style="font-weight:600">${u.full_name || u.username || 'Unnamed'}</div>
+                        <div class="mono" style="font-size:10px; color:var(--text3)">${u.username}</div>
+                    </td>
+                    <td><span class="badge badge-${u.role === 'superuser' ? 'critical' : u.role === 'admin' ? 'warning' : 'info'}">${u.role}</span></td>
+                    <td><span class="badge badge-${u.is_active ? 'success' : 'critical'}">${u.is_active ? 'ACTIVE' : 'DISABLED'}</span></td>
+                    <td><span class="mono" style="color:${u.mfa_enabled ? 'var(--green)' : 'var(--text3)'}">${u.mfa_enabled ? 'ENABLED' : 'OFF'}</span></td>
+                    <td class="mono" style="font-size:10px">${u.last_login ? new Date(u.last_login).toLocaleString() : 'NEVER'}</td>
+                    <td>
+                        <div style="display:flex; gap:8px">
+                            <button class="btn btn-glass" onclick="openEditRole(${u.id}, '${u.role}')">ROLE</button>
+                            <button class="btn btn-glass" style="color:${u.is_active ? 'var(--red)' : 'var(--green)'}" onclick="toggleUser(${u.id})">
+                                ${u.is_active ? 'DISABLE' : 'ENABLE'}
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        } catch (e) { showToast('Failed to load users', 'error'); }
+    }
+
+    function openCreateUser() {
+        showModal(`
+            <h3 class="card-title">ADD NEW USER</h3>
+            <div style="margin-top:20px; display:flex; flex-direction:column; gap:15px">
+                <div>
+                    <label class="stat-label">EMAIL ADDRESS (OPTIONAL)</label>
+                    <input type="email" id="new-email" style="width:100%" placeholder="user@securepulse.local">
+                </div>
+                <div>
+                    <label class="stat-label">USERNAME</label>
+                    <input type="text" id="new-username" style="width:100%" placeholder="jdoe">
+                </div>
+                <div>
+                    <label class="stat-label">FULL NAME</label>
+                    <input type="text" id="new-name" style="width:100%" placeholder="John Doe">
+                </div>
+                <div>
+                    <label class="stat-label">INITIAL PASSWORD</label>
+                    <input type="password" id="new-pass" style="width:100%">
+                </div>
+                <div>
+                    <label class="stat-label">ASSIGN ROLE</label>
+                    <select id="new-role" style="width:100%">
+                        <option value="normal">Normal User</option>
+                        <option value="admin">Administrator</option>
+                        <option value="superuser">Superuser</option>
+                    </select>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:10px">
+                    <button class="btn btn-primary" style="flex:1" onclick="execCreateUser()">CREATE ACCOUNT</button>
+                    <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
+                </div>
+            </div>
+        `);
+    }
+
+    async function execCreateUser() {
+        const data = {
+            email: document.getElementById('new-email').value,
+            username: document.getElementById('new-username').value,
+            full_name: document.getElementById('new-name').value,
+            password: document.getElementById('new-pass').value,
+            role: document.getElementById('new-role').value
+        };
+        try {
+            await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(data) });
+            showToast('User created', 'success');
+            closeModal();
+            loadUsers();
+        } catch (e) { showToast('Creation failed', 'error'); }
+    }
+
+    function openEditRole(id, current) {
+        showModal(`
+            <h3 class="card-title">UPDATE USER ROLE</h3>
+            <div style="margin-top:20px">
+                <label class="stat-label">SELECT NEW ROLE</label>
+                <select id="edit-role-val" style="width:100%; margin:10px 0">
+                    <option value="normal" ${current === 'normal' ? 'selected' : ''}>Normal User</option>
+                    <option value="admin" ${current === 'admin' ? 'selected' : ''}>Administrator</option>
+                    <option value="superuser" ${current === 'superuser' ? 'selected' : ''}>Superuser</option>
+                </select>
+                <div style="display:flex; gap:10px; margin-top:20px">
+                    <button class="btn btn-primary" style="flex:1" onclick="execUpdateRole(${id})">SAVE CHANGES</button>
+                    <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
+                </div>
+            </div>
+        `);
+    }
+
+    async function execUpdateRole(id) {
+        const role = document.getElementById('edit-role-val').value;
+        try {
+            await apiFetch(`/api/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) });
+            showToast('Role updated', 'success');
+            closeModal();
+            loadUsers();
+        } catch (e) { showToast('Update failed', 'error'); }
+    }
+
+    async function toggleUser(id) {
+        try {
+            await apiFetch(`/api/users/${id}/disable`, { method: 'PATCH' });
+            loadUsers();
+        } catch (e) { showToast('Action failed', 'error'); }
+    }
+
+    function showModal(html) {
+        document.getElementById('modal-content').innerHTML = html;
+        document.getElementById('modal-overlay').style.display = 'flex';
+    }
+    function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
+
+    window.addEventListener('load', loadUsers);
+</script>
+{% endblock %}

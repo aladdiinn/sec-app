@@ -3,10 +3,18 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{% block title %}SecurePulse{% endblock %} — Security Operations Center</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233b82f6'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>" />
+    <title>{% block title %}SecurePulse{% endblock %} — SOC Command Center</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet"/>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300c8ff'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>" />
     <link rel="stylesheet" href="/static/css/main.css" />
+    <!-- Theme init: run before paint to prevent flash -->
+    <script>
+      (function() {
+        var t = localStorage.getItem('sp_theme');
+        if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        window.USER_ROLE = "{{ session.get('user_role', 'normal') }}";
+      })();
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -15,84 +23,120 @@
 <body>
     {% if not hide_nav %}
     <div class="app">
-        <!-- Sidebar -->
+        <!-- ── SIDEBAR ── -->
         <aside class="sidebar">
+            <!-- Brand -->
             <div class="sb-brand">
                 <div class="sb-logo">
-                    <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
                 </div>
-                <div class="sb-title">SecurePulse</div>
+                <div class="sb-title">SECURE<br>PULSE</div>
             </div>
 
+            <!-- Nav -->
             <nav class="sb-nav">
                 <a href="/dashboard" class="nav-item {% if active == 'dashboard' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                    Dashboard
+                    DASHBOARD
                 </a>
                 <a href="/assets" class="nav-item {% if active == 'assets' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-                    Assets
+                    ASSETS
+                </a>
+                <a href="/maintenance" class="nav-item {% if active == 'maintenance' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                    MAINTENANCE
                 </a>
                 <a href="/incidents" class="nav-item {% if active == 'incidents' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                    Incidents
+                    INCIDENTS
                 </a>
-
                 <a href="/rules" class="nav-item {% if active == 'rules' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-                    Detection Rules
+                    DETECTION
                 </a>
                 <a href="/threat-intel" class="nav-item {% if active == 'threat-intel' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                    Threat Intel
+                    THREAT INTEL
                 </a>
                 <a href="/events" class="nav-item {% if active == 'events' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                    Activity Feed
+                    ACTIVITY
                 </a>
                 <a href="/search" class="nav-item {% if active == 'search' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                    Search
+                    SEARCH
                 </a>
                 <a href="/playbooks" class="nav-item {% if active == 'playbooks' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-                    Playbooks
+                    PLAYBOOKS
+                </a>
+                <a href="/projects" class="nav-item {% if active == 'projects' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                    PROJECTS
                 </a>
                 <a href="/reports" class="nav-item {% if active == 'reports' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                    Reports
-                </a>
-                <a href="/audit-log" class="nav-item {% if active == 'audit_log' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    Audit Log
+                    REPORTS
+                </a>
+                {% if session.get('user_role') == 'superuser' %}
+                <a href="/user-management" class="nav-item {% if active == 'user-management' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    USER MGMT
+                </a>
+                <a href="/system-health" class="nav-item {% if active == 'system-health' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                    SYSTEM HEALTH
+                </a>
+                {% endif %}
+                <a href="/audit-log" class="nav-item {% if active == 'audit_log' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
+                    AUDIT LOG
                 </a>
                 <a href="/settings" class="nav-item {% if active == 'settings' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
-                    Settings
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+                    SETTINGS
                 </a>
             </nav>
 
-            <div style="margin-top:auto; padding-top:20px;">
-                <button class="nav-item" onclick="logout()" style="width:100%;text-align:left;background:none;border:none; cursor:pointer;">
-                    <svg viewBox="0 0 24 24" stroke="var(--accent-red)"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
-                    <span style="color:var(--accent-red)">Logout</span>
+            <!-- Logout -->
+            <div class="nav-logout">
+                <button class="nav-item" onclick="window.location.href='/logout'">
+                    <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    LOGOUT
                 </button>
             </div>
         </aside>
 
-        <!-- Main content -->
+        <!-- ── MAIN ── -->
         <main class="main-content">
             <!-- Topbar -->
             <header class="topbar">
                 <div class="fade-in">
-                    <h1 class="sb-title" style="font-size:24px">{% block page_title %}SOC Command Center{% endblock %}</h1>
-                    <p style="color:var(--text-muted); font-size:12px;">{% block page_sub %}Real-time security intelligence feed{% endblock %}</p>
+                    <h1 class="sb-title">{% block page_title %}SOC COMMAND CENTER{% endblock %}</h1>
+                    <p>
+                        <span class="dot-live"></span>
+                        {% block page_sub %}Real-time security intelligence{% endblock %}
+                    </p>
                 </div>
-                
-                <div style="display:flex; align-items:center; gap:20px">
+                <div style="display:flex; align-items:center; gap:14px">
                     {% block topbar_actions %}{% endblock %}
-                    <div id="sb-clock" style="font-family:var(--font-mono); font-weight:600; color:var(--accent-blue)">--:--:--</div>
-                    <div class="sb-logo" style="width:32px; height:32px; border-radius:50%; font-size:12px; font-weight:700">A</div>
+                    
+                    <!-- Notification Bell -->
+                    <div class="notif-bell" id="notif-toggle">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                        <span class="notif-badge" id="notif-badge" style="display:none"></span>
+                        
+                        <div class="notif-dropdown" id="notif-dropdown">
+                            <div class="notif-header">NOTIFICATIONS</div>
+                            <div class="notif-list" id="notif-list">
+                                <div class="notif-empty">No new notifications</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="sb-clock">--:--:--</div>
+                    <div class="sb-logo" style="width:26px; height:26px; border-radius:50%; font-family:var(--orb); font-size:10px; color:var(--cyan); display:flex; align-items:center; justify-content:center; background:rgba(0,200,255,0.1); border:1px solid var(--cyan)">{{ session.get('user_role', 'N')[0]|upper }}</div>
                 </div>
             </header>
     {% endif %}
@@ -113,22 +157,87 @@
     {% if not hide_nav %}
     <script src="/static/js/realtime.js"></script>
     <script>
-        function updateClock(){
-            const now = new Date();
-            const timeEl = document.getElementById('sb-clock');
-            if (timeEl) timeEl.textContent = now.toLocaleTimeString('en-GB',{hour12:false});
+        function updateClock() {
+            const el = document.getElementById('sb-clock');
+            if (el) el.textContent = new Date().toLocaleTimeString('en-GB', {hour12: false});
         }
         updateClock();
         setInterval(updateClock, 1000);
 
-        function showToast(message, type='info') {
+        function showToast(message, type = 'info') {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
             toast.className = `toast toast--${type} fade-in`;
             toast.textContent = message;
             container.appendChild(toast);
-            setTimeout(() => toast.remove(), 4000);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transition = 'opacity .3s';
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
         }
+
+        // ── Notifications ──
+        const notifToggle = document.getElementById('notif-toggle');
+        const notifDropdown = document.getElementById('notif-dropdown');
+        const notifBadge = document.getElementById('notif-badge');
+        const notifList = document.getElementById('notif-list');
+
+        notifToggle.onclick = (e) => {
+            e.stopPropagation();
+            notifDropdown.classList.toggle('show');
+            if (notifDropdown.classList.contains('show')) markNotifsRead();
+        };
+        document.addEventListener('click', () => notifDropdown.classList.remove('show'));
+
+        async function fetchNotifications() {
+            try {
+                const res = await apiFetch('/api/notifications');
+                const unread = res.filter(n => !n.is_read);
+                
+                if (unread.length > 0) {
+                    notifBadge.style.display = 'block';
+                    notifBadge.innerText = unread.length;
+                } else {
+                    notifBadge.style.display = 'none';
+                }
+
+                if (res.length > 0) {
+                    notifList.innerHTML = res.map(n => `
+                        <div class="notif-item ${n.is_read ? '' : 'unread'}" onclick="window.location.href='/cases/${n.case_id}'">
+                            <div class="notif-msg">${n.message}</div>
+                            <div class="notif-time">${new Date(n.created_at).toLocaleTimeString()}</div>
+                        </div>
+                    `).join('');
+                }
+            } catch (e) {}
+        }
+
+        async function markNotifsRead() {
+            const unreadIds = Array.from(notifList.querySelectorAll('.unread')).map(el => parseInt(el.getAttribute('data-id')));
+            if (unreadIds.length === 0) return;
+            await apiFetch('/api/notifications/mark-read', { method: 'POST', body: JSON.stringify({ ids: unreadIds }) });
+            notifBadge.style.display = 'none';
+        }
+
+        if (window.location.pathname !== '/login') {
+            fetchNotifications();
+            setInterval(fetchNotifications, 30000);
+        }
+
+        // ── Global theme toggle ──
+        window.setTheme = function(theme) {
+            if (theme === 'light') {
+                document.documentElement.setAttribute('data-theme', 'light');
+                localStorage.setItem('sp_theme', 'light');
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+                localStorage.setItem('sp_theme', 'dark');
+            }
+        };
+        window.getTheme = function() {
+            return localStorage.getItem('sp_theme') || 'dark';
+        };
     </script>
     {% endif %}
     {% block extra_js %}{% endblock %}

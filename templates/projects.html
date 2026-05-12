@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% set active = 'projects' %}
+{% block title %}Projects — SecurePulse{% endblock %}
+{% block page_title %}PROJECTS & MULTI-TENANCY{% endblock %}
+{% block page_sub %}Segment your infrastructure into logical projects with dedicated dashboards{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    {% if session.get('user_role') != 'normal' %}
+    <div style="display:flex; justify-content:flex-end; margin-bottom:20px">
+        <button class="btn btn-primary" onclick="openCreateProject()">+ CREATE NEW PROJECT</button>
+    </div>
+    {% endif %}
+
+    <div id="project-list" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:20px">
+        <!-- Projects injected here -->
+    </div>
+</div>
+
+<!-- Modal Overlay -->
+<div id="modal-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); backdrop-filter:blur(5px); display:none; z-index:9999; align-items:center; justify-content:center">
+    <div class="card" id="modal-content" style="width:500px; padding:30px">
+        <!-- Modal content -->
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function loadProjects() {
+        try {
+            const projects = await apiFetch('/api/projects');
+            const list = document.getElementById('project-list');
+            
+            list.innerHTML = projects.map(p => `
+                <div class="card project-card glass" onclick="window.location.href='/projects/${p.id}/dashboard'" style="cursor:pointer">
+                    <div class="card-header">
+                        <h3 class="card-title" style="font-size:14px">${p.name}</h3>
+                        <span class="badge badge-info">${p.endpoint_count} ENDPOINTS</span>
+                    </div>
+                    <p style="color:var(--text2); min-height:40px; margin-bottom:15px">${p.description || 'No description provided.'}</p>
+                    
+                    <div class="project-stats">
+                        <div class="p-stat">
+                            <span class="p-stat-val" style="color:var(--amber)">${p.alert_count}</span>
+                            <span class="p-stat-label">ALERTS</span>
+                        </div>
+                        <div class="p-stat">
+                            <span class="p-stat-val" style="color:var(--red)">${p.critical_count}</span>
+                            <span class="p-stat-label">CRITICAL</span>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top:15px; border-top:1px solid var(--border); padding-top:10px; display:flex; justify-content:space-between; align-items:center">
+                        <span class="mono" style="font-size:8px; color:var(--text3)">CREATED: ${new Date(p.created_at).toLocaleDateString()}</span>
+                        <button class="btn btn-glass" style="font-size:8px">VIEW DASHBOARD</button>
+                    </div>
+                </div>
+            `).join('') || '<div class="card glass" style="grid-column: 1/-1; padding:50px; text-align:center; color:var(--text3)">No projects found. Create one to get started.</div>';
+        } catch (e) { showToast('Failed to load projects', 'error'); }
+    }
+
+    async function openCreateProject() {
+        const servers = await apiFetch('/api/servers');
+        const sOptions = servers.map(s => `
+            <div style="display:flex; align-items:center; gap:10px; padding:5px; border-bottom:1px solid rgba(0,200,255,0.05)">
+                <input type="checkbox" name="endpoints" value="${s.id}" id="srv-${s.id}">
+                <label for="srv-${s.id}" style="cursor:pointer; flex:1">
+                    <div style="font-weight:600">${s.hostname}</div>
+                    <div class="mono" style="font-size:9px; color:var(--text3)">${s.ip_address || 'No IP'}</div>
+                </label>
+            </div>
+        `).join('');
+
+        showModal(`
+            <h3 class="card-title">CREATE PROJECT</h3>
+            <div style="margin-top:20px; display:flex; flex-direction:column; gap:15px">
+                <div>
+                    <label class="stat-label">PROJECT NAME</label>
+                    <input type="text" id="p-name" style="width:100%" placeholder="e.g. Finance-Web-Cluster">
+                </div>
+                <div>
+                    <label class="stat-label">DESCRIPTION</label>
+                    <textarea id="p-desc" style="width:100%; height:60px" placeholder="Optional description..."></textarea>
+                </div>
+                <div>
+                    <label class="stat-label">SELECT ENDPOINTS</label>
+                    <div style="max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:4px; padding:5px; margin-top:5px">
+                        ${sOptions || '<div style="padding:10px; text-align:center; color:var(--text3)">No servers registered yet.</div>'}
+                    </div>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:10px">
+                    <button class="btn btn-primary" style="flex:1" onclick="execCreateProject()">INITIALIZE PROJECT</button>
+                    <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
+                </div>
+            </div>
+        `);
+    }
+
+    async function execCreateProject() {
+        const name = document.getElementById('p-name').value;
+        const description = document.getElementById('p-desc').value;
+        const endpoint_ids = Array.from(document.querySelectorAll('input[name="endpoints"]:checked')).map(cb => parseInt(cb.value));
+        
+        if (!name) return showToast('Project name required', 'error');
+
+        try {
+            await apiFetch('/api/projects', {
+                method: 'POST',
+                body: JSON.stringify({ name, description, endpoint_ids })
+            });
+            showToast('Project created', 'success');
+            closeModal();
+            loadProjects();
+        } catch (e) { showToast('Failed to create project', 'error'); }
+    }
+
+    function showModal(html) {
+        document.getElementById('modal-content').innerHTML = html;
+        document.getElementById('modal-overlay').style.display = 'flex';
+    }
+    function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
+
+    window.addEventListener('load', loadProjects);
+</script>
+{% endblock %}

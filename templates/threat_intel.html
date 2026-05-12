@@ -19,6 +19,7 @@
             <div class="stat-icon purple"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
             <div><div class="stat-value" id="stat-critical-ioc">—</div><div class="stat-label">Critical Severity</div></div>
         </div>
+        {% if session.get('user_role') != 'normal' %}
         <div class="card glass" style="padding:20px; display:flex; flex-direction:column; gap:8px">
             <button class="btn btn-primary" onclick="showAddModal()" style="width:100%">
                 <svg viewBox="0 0 24 24" width="14" height="14" stroke="white" fill="none" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -29,6 +30,7 @@
                 Bulk Import
             </button>
         </div>
+        {% endif %}
     </div>
 
     <!-- Search + Filter -->
@@ -177,7 +179,7 @@
                 <td style="padding:12px; font-size:12px; color:var(--text-secondary)">${i.source || '—'}</td>
                 <td style="padding:12px; font-size:12px; color:var(--text-muted)">${new Date(i.created_at).toLocaleDateString()}</td>
                 <td style="padding:12px">
-                    <button class="btn btn-glass" style="padding:4px 10px; font-size:11px; border-color:var(--accent-red); color:var(--accent-red)" onclick="deleteIOC(${i.id}, '${i.value}')">Remove</button>
+                    \${window.USER_ROLE !== 'normal' ? \`<button class="btn btn-glass" style="padding:4px 10px; font-size:11px; border-color:var(--accent-red); color:var(--accent-red)" onclick="deleteIOC(\${i.id}, '\${i.value}')">Remove</button>\` : '<span style="color:var(--text-muted)">Read-only</span>'}
                 </td>
             </tr>
         `).join('');

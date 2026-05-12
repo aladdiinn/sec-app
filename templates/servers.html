@@ -8,30 +8,52 @@
     <!-- Action Bar -->
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px">
         <div style="display:flex; gap:16px">
-            <select id="filter-status" class="glass" style="padding:10px 20px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="loadServers()">
+            <select id="filter-status" class="glass" style="padding:10px 20px; border-radius:var(--radius-sm); color:var(--text); border:1px solid var(--border)" onchange="loadServers()">
                 <option value="">All Statuses</option>
                 <option value="online">Online</option>
                 <option value="offline">Offline</option>
             </select>
         </div>
         <button class="btn btn-primary" onclick="showAddServerModal()">
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="white" stroke-width="2.5" fill="none"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="white" stroke-width="2.5" fill="none" style="margin-right:6px">
+                <line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
             Add New Asset
         </button>
     </div>
 
-    <div id="servers-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:24px">
+    <div id="servers-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:20px">
         <!-- Asset Cards -->
     </div>
 </div>
 
 <!-- Add Server Modal -->
-<div id="add-server-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:40px; border-radius:var(--radius-lg); z-index:1000; width:500px; box-shadow:0 30px 80px rgba(0,0,0,0.9)">
+<div id="add-server-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:40px; border-radius:var(--radius-lg); z-index:1000; width:550px; box-shadow:0 30px 80px rgba(0,0,0,0.9)">
     <h2 class="card-title" style="font-size:24px; margin-bottom:12px">Onboard Asset</h2>
-    <p style="font-size:14px; color:var(--text-secondary); margin-bottom:24px">Execute the following command on your target server to initialize the monitoring agent.</p>
-    
-    <div style="background:var(--bg-deep); border:1px solid var(--border-glass); padding:16px; border-radius:var(--radius-md); position:relative; margin-bottom:24px">
-        <code id="setup-command" style="font-family:var(--font-mono); color:var(--accent-cyan); font-size:12px; word-break:break-all">curl -sSL {{ request.url_root.rstrip('/') }}/setup | sudo bash</code>
+    <p class="text-sub" style="margin-bottom:24px">Configure asset metadata before generating the setup command.</p>
+
+    <!-- Tag Selectors -->
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:20px">
+        <div>
+            <label class="stat-label">ASSET SITE</label>
+            <select id="onboard-site" class="glass" style="width:100%" onchange="updateOnboardCommand()">
+                <option value="DC">Data Center (DC)</option>
+                <option value="DR">Disaster Recovery (DR)</option>
+                <option value="Cloud">Cloud Infrastructure</option>
+            </select>
+        </div>
+        <div>
+            <label class="stat-label">SERVER ROLE</label>
+            <select id="onboard-role" class="glass" style="width:100%" onchange="updateOnboardCommand()">
+                <option value="primary">Primary Server</option>
+                <option value="standby">Standby Server (DR)</option>
+                <option value="none">Generic / Agent</option>
+            </select>
+        </div>
+    </div>
+
+    <div style="background:var(--bg-deep); border:1px solid var(--border); padding:16px; border-radius:var(--radius-md); position:relative; margin-bottom:24px">
+        <code id="setup-command" style="font-family:var(--mono); color:var(--cyan); font-size:12px; word-break:break-all">curl -sSL {{ request.url_root.rstrip('/') }}/setup?role=primary&site=DC | sudo bash</code>
         <button class="btn btn-glass" style="position:absolute; top:8px; right:8px; padding:4px 10px; font-size:11px" onclick="copySetupCommand()">Copy</button>
     </div>
 
@@ -40,43 +62,98 @@
     </div>
 </div>
 
+<!-- Delete Confirm Modal -->
+<div id="delete-overlay" onclick="closeDeleteModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:998; backdrop-filter:blur(4px)"></div>
+<div id="delete-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:36px; border-radius:var(--radius-lg); z-index:999; width:420px; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--red)">
+    <div style="display:flex; align-items:center; gap:14px; margin-bottom:16px">
+        <div class="stat-icon red" style="width:40px; height:40px; flex-shrink:0">
+            <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        </div>
+        <div>
+            <h3 class="card-title" style="margin:0; color:var(--red)">Delete Asset</h3>
+            <p class="text-sub" style="margin:4px 0 0 0">This will permanently remove the server and ALL its events and alerts.</p>
+        </div>
+    </div>
+    <p style="font-family:var(--mono); font-size:12px; color:var(--text); background:var(--bg2); padding:10px 14px; border-radius:var(--radius-sm); margin-bottom:20px">
+        Server: <strong id="delete-hostname" style="color:var(--red)">—</strong>
+    </p>
+    <div style="display:flex; gap:10px; justify-content:flex-end">
+        <button class="btn btn-glass" onclick="closeDeleteModal()">Cancel</button>
+        <button class="btn btn-primary" id="btn-confirm-delete" style="border-color:var(--red); background:rgba(255,59,92,0.15); color:var(--red)" onclick="confirmDelete()">
+            <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="margin-right:5px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            Delete Permanently
+        </button>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script>
+    let _deleteServerId = null;
+    let _deleteHostname = '';
+
     async function loadServers() {
         const grid = document.getElementById('servers-grid');
         const status = document.getElementById('filter-status').value;
+        const urlParams = new URLSearchParams(window.location.search);
+        const filterMaint = urlParams.get('filter') === 'maintenance';
+
         let url = `/api/servers`;
         if (status) url += `?status=${status}`;
 
         try {
-            const data = await apiFetch(url);
+            let data = await apiFetch(url);
+
+            // Filter by maintenance if requested via URL
+            if (filterMaint) {
+                data = data.filter(s => s.is_maintenance || (s.maintenance_until && new Date(s.maintenance_until) > new Date()));
+            }
+
             if (!data.length) {
                 grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:60px">No assets found in the inventory.</div>';
                 return;
             }
 
             grid.innerHTML = data.map(s => `
-                <div class="card glass glass-hover fade-in" style="cursor:pointer" onclick="window.location.href='/servers/${s.id}'">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px">
-                        <div class="stat-icon ${s.status === 'online' ? 'green' : 'red'}" style="width:48px; height:48px">
-                            <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                <div class="card glass glass-hover fade-in" style="position:relative; display:flex; flex-direction:column">
+                    <!-- Delete button top-right -->
+                    ${window.USER_ROLE !== 'normal' ? `
+                    <button onclick="event.stopPropagation(); openDeleteModal(\${s.id}, '\${s.hostname.replace(/'/g, "\\\\'")}')"
+                        title="Delete server"
+                        style="position:absolute; top:12px; right:12px; background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:5px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono); display:flex; align-items:center; gap:5px; z-index:2; transition:background 0.2s"
+                        onmouseenter="this.style.background='rgba(255,59,92,0.25)'"
+                        onmouseleave="this.style.background='rgba(255,59,92,0.1)'">
+                        <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" fill="none" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                        </svg>
+                        DEL
+                    </button>
+                    ` : ''}
+
+                    <!-- Card body — clickable to detail -->
+                    <div style="cursor:pointer; flex:1" onclick="window.location.href='/servers/${s.id}'">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px">
+                            <div class="stat-icon ${s.status === 'online' ? 'green' : s.status === 'isolated' ? 'orange' : 'red'}" style="width:48px; height:48px">
+                                <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                            </div>
+                            <span class="badge badge-${s.status === 'online' ? 'success' : s.status === 'isolated' ? 'warning' : 'critical'}" style="margin-right:44px">${s.status.toUpperCase()}</span>
                         </div>
-                        <span class="badge badge-${s.status === 'online' ? 'success' : 'critical'}">${s.status.toUpperCase()}</span>
-                    </div>
-                    
-                    <h3 class="card-title" style="font-size:20px; margin-bottom:4px">${s.hostname}</h3>
-                    <p style="font-family:var(--font-mono); font-size:12px; color:var(--accent-blue); margin-bottom:16px">${s.ip_address || 'Unassigned IP'}</p>
-                    
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; border-top: 1px solid var(--border-glass); padding-top:16px; margin-top:auto">
-                        <div>
-                            <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Risk Level</div>
-                            <div style="font-size:13px; font-weight:700; color:var(--accent-${s.severity === 'critical' ? 'red' : 'green'})">${s.severity.toUpperCase()}</div>
-                        </div>
-                        <div>
-                            <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Last Seen</div>
-                            <div style="font-size:13px; color:var(--text-primary)">${new Date(s.last_seen || s.registered_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+
+                        <h3 class="card-title" style="font-size:18px; margin-bottom:4px">${s.hostname}</h3>
+                        <p class="text-meta" style="margin-bottom:16px">${s.ip_address || 'Unassigned IP'}</p>
+
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; border-top: 1px solid var(--border); padding-top:12px">
+                            <div>
+                                <div class="text-meta" style="margin-bottom:3px">RISK LEVEL</div>
+                                <div style="font-size:13px; font-weight:700; color:${s.severity === 'critical' ? 'var(--red)' : 'var(--green)'}">${s.severity.toUpperCase()}</div>
+                            </div>
+                            <div>
+                                <div class="text-meta" style="margin-bottom:3px">LAST SEEN</div>
+                                <div style="font-size:13px; color:var(--text)">${new Date(s.last_seen || s.registered_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -84,8 +161,48 @@
         } catch (e) { console.error('Asset load error:', e); }
     }
 
+    function openDeleteModal(id, hostname) {
+        _deleteServerId = id;
+        _deleteHostname = hostname;
+        document.getElementById('delete-hostname').textContent = hostname;
+        document.getElementById('delete-overlay').style.display = 'block';
+        document.getElementById('delete-modal').style.display = 'block';
+    }
+
+    function closeDeleteModal() {
+        document.getElementById('delete-overlay').style.display = 'none';
+        document.getElementById('delete-modal').style.display = 'none';
+        _deleteServerId = null;
+    }
+
+    async function confirmDelete() {
+        if (!_deleteServerId) return;
+        const btn = document.getElementById('btn-confirm-delete');
+        btn.disabled = true;
+        btn.textContent = 'Deleting...';
+        try {
+            await apiFetch(`/api/servers/${_deleteServerId}`, { method: 'DELETE' });
+            showToast(`Server '${_deleteHostname}' deleted`, 'success');
+            closeDeleteModal();
+            loadServers();
+        } catch (e) {
+            showToast('Delete failed: ' + e.message, 'error');
+            btn.disabled = false;
+            btn.textContent = 'Delete Permanently';
+        }
+    }
+
     function showAddServerModal() {
         document.getElementById('add-server-modal').style.display = 'block';
+        updateOnboardCommand();
+    }
+
+    function updateOnboardCommand() {
+        const site = document.getElementById('onboard-site').value;
+        const role = document.getElementById('onboard-role').value;
+        const root = window.location.origin;
+        const cmd = `curl -sSL ${root}/setup?role=${role}&site=${site} | sudo bash`;
+        document.getElementById('setup-command').innerText = cmd;
     }
 
     function closeAddServerModal() {

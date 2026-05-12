@@ -109,12 +109,12 @@
           <tbody>
             ${data.items.map(e => `
               <tr>
-                <td class="mono" style="font-size:11px;white-space:nowrap;color:var(--text-secondary)">${new Date(e.created_at).toLocaleString()}</td>
+                <td class="text-meta" style="white-space:nowrap">${new Date(e.created_at).toLocaleString()}</td>
                 <td><strong>${e.hostname}</strong></td>
-                <td><span class="mono" style="font-size:12px">${e.event_type}</span></td>
+                <td><span class="text-meta">${e.event_type}</span></td>
                 <td>${severityBadge(e.severity)}</td>
-                <td style="color:var(--text-muted);font-size:12px">${e.source || '—'}</td>
-                <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.description}">${e.description}</td>
+                <td class="text-sub">${e.source || '—'}</td>
+                <td class="text-sub" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e.description}">${e.description}</td>
               </tr>
             `).join('')}
           </tbody>

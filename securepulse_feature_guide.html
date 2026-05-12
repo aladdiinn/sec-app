@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SecurePulse — Feature Intelligence Guide</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #040d1a;
+  --bg2: #071526;
+  --bg3: #0a1e35;
+  --bg4: #0d2040;
+  --cyan: #00c8ff;
+  --cyan2: rgba(0,200,255,0.12);
+  --cyan3: rgba(0,200,255,0.05);
+  --green: #00ff88;
+  --red: #ff3b5c;
+  --amber: #ffb020;
+  --purple: #a855f7;
+  --border: rgba(0,200,255,0.18);
+  --border2: rgba(0,200,255,0.35);
+  --text: #c8e8f8;
+  --text2: rgba(200,232,248,0.55);
+  --text3: rgba(200,232,248,0.28);
+  --orb: 'Orbitron', monospace;
+  --mono: 'Share Tech Mono', monospace;
+  --raj: 'Rajdhani', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--raj);
+  font-size: 15px;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* SCANLINE */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,200,255,0.012) 3px, rgba(0,200,255,0.012) 4px);
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* SWEEP */
+.sweep {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  animation: sweepDown 6s linear infinite;
+  z-index: 999;
+  pointer-events: none;
+}
+@keyframes sweepDown { from{top:0;opacity:0} 5%{opacity:1} 95%{opacity:0.6} to{top:100vh;opacity:0} }
+
+/* TOPBAR */
+.topbar {
+  position: sticky;
+  top: 0;
+  background: rgba(4,13,26,0.95);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  backdrop-filter: blur(12px);
+  z-index: 900;
+}
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.logo-icon {
+  width: 36px; height: 36px;
+  background: var(--cyan2);
+  border: 1.5px solid var(--border2);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  position: relative;
+}
+.logo-icon::before {
+  content: '🛡';
+  font-size: 16px;
+}
+.logo-pulse {
+  position: absolute;
+  inset: -5px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,200,255,0.2);
+  animation: lpulse 2.5s ease-in-out infinite;
+}
+@keyframes lpulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.3;transform:scale(1.1)} }
+.logo-text { font-family: var(--orb); font-size: 13px; letter-spacing: 3px; color: var(--cyan); }
+.logo-sub { font-family: var(--mono); font-size: 9px; color: var(--text3); letter-spacing: 2px; }
+
+.topbar-right { display: flex; align-items: center; gap: 20px; }
+.stat-pill {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text2);
+  letter-spacing: 1px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--cyan3);
+}
+.stat-pill span { color: var(--cyan); }
+.stat-pill.red span { color: var(--red); }
+.stat-pill.green span { color: var(--green); }
+
+/* HERO */
+.hero {
+  padding: 60px 36px 40px;
+  text-align: center;
+  position: relative;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 50%; transform: translateX(-50%);
+  width: 600px; height: 200px;
+  background: radial-gradient(ellipse, rgba(0,200,255,0.06) 0%, transparent 70%);
+  pointer-events: none;
+}
+.hero h1 {
+  font-family: var(--orb);
+  font-size: 28px;
+  letter-spacing: 4px;
+  color: #fff;
+  margin-bottom: 8px;
+}
+.hero h1 span { color: var(--cyan); }
+.hero-sub { font-family: var(--mono); font-size: 11px; color: var(--text2); letter-spacing: 2px; margin-bottom: 28px; }
+
+/* SUMMARY CHIPS */
+.summary-row {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1px solid;
+  cursor: default;
+}
+.chip.cyan { color: var(--cyan); border-color: rgba(0,200,255,0.3); background: rgba(0,200,255,0.06); }
+.chip.green { color: var(--green); border-color: rgba(0,255,136,0.3); background: rgba(0,255,136,0.06); }
+.chip.amber { color: var(--amber); border-color: rgba(255,176,32,0.3); background: rgba(255,176,32,0.06); }
+.chip.red { color: var(--red); border-color: rgba(255,59,92,0.3); background: rgba(255,59,92,0.06); }
+.chip.purple { color: var(--purple); border-color: rgba(168,85,247,0.3); background: rgba(168,85,247,0.06); }
+
+/* COVERAGE BANNER */
+.coverage-banner {
+  max-width: 900px;
+  margin: 0 auto 50px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 28px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: linear-gradient(var(--bg2), var(--bg2)) padding-box, linear-gradient(90deg, var(--cyan), rgba(0,200,255,0.2), var(--cyan)) border-box;
+}
+.cov-item { text-align: center; padding: 10px; }
+.cov-num { font-family: var(--orb); font-size: 28px; }
+.cov-label { font-family: var(--mono); font-size: 9px; letter-spacing: 2px; color: var(--text2); margin-top: 4px; }
+
+/* CATEGORY */
+.container { max-width: 1100px; margin: 0 auto; padding: 0 28px 60px; }
+
+.category {
+  margin-bottom: 50px;
+}
+.cat-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+.cat-header::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; left: 0;
+  width: 120px; height: 1px;
+  background: var(--cyan);
+}
+.cat-icon {
+  width: 40px; height: 40px;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+.cat-title { font-family: var(--orb); font-size: 13px; letter-spacing: 3px; color: #fff; }
+.cat-count { font-family: var(--mono); font-size: 9px; color: var(--text3); letter-spacing: 2px; margin-top: 2px; }
+
+/* FEATURE GRID */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+/* FEATURE CARD */
+.feature-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.25s, background 0.25s;
+}
+.feature-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0,200,255,0.4), transparent);
+}
+.feature-card:hover {
+  border-color: rgba(0,200,255,0.4);
+  background: var(--bg3);
+}
+.feature-card.built {
+  border-color: rgba(0,200,255,0.3);
+}
+.feature-card.built::before {
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+}
+.feature-card.missing {
+  border-color: rgba(255,176,32,0.2);
+  opacity: 0.85;
+}
+.feature-card.missing::before {
+  background: linear-gradient(90deg, transparent, var(--amber), transparent);
+}
+
+.fc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+.fc-number { font-family: var(--mono); font-size: 10px; color: var(--text3); letter-spacing: 1px; }
+.fc-status {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 1px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid;
+}
+.fc-status.built { color: var(--green); border-color: rgba(0,255,136,0.35); background: rgba(0,255,136,0.06); }
+.fc-status.missing { color: var(--amber); border-color: rgba(255,176,32,0.35); background: rgba(255,176,32,0.06); }
+
+.fc-name { font-family: var(--orb); font-size: 12px; letter-spacing: 1px; color: #fff; margin-bottom: 6px; line-height: 1.4; }
+.fc-desc { font-family: var(--raj); font-size: 13px; color: var(--text2); margin-bottom: 12px; line-height: 1.6; }
+
+/* HOW IT WORKS */
+.fc-how {
+  background: var(--bg);
+  border: 1px solid rgba(0,200,255,0.1);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.fc-how-label { font-family: var(--mono); font-size: 8px; letter-spacing: 2px; color: var(--cyan); margin-bottom: 5px; }
+.fc-how-text { font-family: var(--raj); font-size: 12px; color: var(--text2); line-height: 1.5; }
+
+/* EXAMPLE */
+.fc-example {
+  background: rgba(0,200,255,0.04);
+  border-left: 2px solid rgba(0,200,255,0.3);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border-radius: 0 4px 4px 0;
+}
+.fc-ex-label { font-family: var(--mono); font-size: 8px; letter-spacing: 2px; color: var(--cyan); margin-bottom: 3px; }
+.fc-ex-text { font-family: var(--mono); font-size: 11px; color: var(--text); }
+
+/* WHERE IN APP */
+.fc-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.fc-where-label { font-family: var(--mono); font-size: 8px; color: var(--text3); letter-spacing: 1px; }
+.fc-where-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid;
+}
+.fc-where-tag.page { color: var(--cyan); border-color: rgba(0,200,255,0.25); background: rgba(0,200,255,0.06); }
+.fc-where-tag.missing-tag { color: var(--amber); border-color: rgba(255,176,32,0.25); background: rgba(255,176,32,0.06); }
+
+/* MISSING SECTION */
+.missing-section {
+  background: rgba(255,176,32,0.04);
+  border: 1px solid rgba(255,176,32,0.25);
+  border-radius: 12px;
+  padding: 28px;
+  margin-bottom: 50px;
+}
+.missing-header {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255,176,32,0.2);
+}
+.missing-title { font-family: var(--orb); font-size: 13px; letter-spacing: 2px; color: var(--amber); }
+.missing-sub { font-family: var(--mono); font-size: 9px; color: rgba(255,176,32,0.5); letter-spacing: 1px; margin-top: 2px; }
+.missing-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.missing-item {
+  background: rgba(255,176,32,0.06);
+  border: 1px solid rgba(255,176,32,0.2);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.mi-name { font-family: var(--orb); font-size: 11px; color: var(--amber); margin-bottom: 5px; }
+.mi-desc { font-family: var(--raj); font-size: 12px; color: var(--text2); }
+.mi-priority {
+  display: inline-block;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 1px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  color: var(--amber);
+  border: 1px solid rgba(255,176,32,0.3);
+}
+
+/* FOOTER */
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 28px 36px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  letter-spacing: 2px;
+}
+.dot-live { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); margin-right: 6px; vertical-align: middle; animation: dlive 1.5s ease infinite; }
+@keyframes dlive { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+/* TAB NAV */
+.tab-nav {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 40px;
+}
+.tab-btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.tab-btn:hover, .tab-btn.active {
+  background: var(--cyan2);
+  border-color: var(--border2);
+  color: var(--cyan);
+}
+
+/* Screen demo mini */
+.screen-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--purple);
+  border: 1px solid rgba(168,85,247,0.25);
+  border-radius: 3px;
+  padding: 2px 7px;
+  margin-top: 8px;
+}
+</style>
+</head>
+<body>
+
+<div class="sweep"></div>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-icon"><div class="logo-pulse"></div></div>
+    <div>
+      <div class="logo-text">SECUREPULSE</div>
+      <div class="logo-sub">FEATURE INTELLIGENCE GUIDE</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="stat-pill">TOTAL FEATURES: <span>35</span></div>
+    <div class="stat-pill green">BUILT: <span>28</span></div>
+    <div class="stat-pill red">MISSING: <span>7</span></div>
+  </div>
+</div>
+
+<!-- HERO -->
+<div class="hero">
+  <h1>YOUR <span>35 FEATURES</span> EXPLAINED</h1>
+  <div class="hero-sub">WHAT EACH FEATURE DOES · HOW IT WORKS · WHERE IT LIVES IN YOUR APP · WHAT'S MISSING</div>
+  <div class="summary-row">
+    <span class="chip cyan">🔍 Detection & Alerting — 6 features</span>
+    <span class="chip red">🚨 Incident Management — 5 features</span>
+    <span class="chip amber">🧠 Threat Intelligence — 3 features</span>
+    <span class="chip green">👁 Visibility & Log Mgmt — 5 features</span>
+    <span class="chip purple">🔬 Investigation & Forensics — 2 features</span>
+    <span class="chip cyan">🛡 Response & Containment — 4 features</span>
+    <span class="chip red">📊 Reporting & Compliance — 3 features</span>
+    <span class="chip amber">⚙ Platform & Integration — 5 features</span>
+    <span class="chip purple">🤝 Collaboration — 2 features</span>
+  </div>
+</div>
+
+<!-- COVERAGE BANNER -->
+<div class="container">
+<div class="coverage-banner">
+  <div class="cov-item"><div class="cov-num" style="color:var(--cyan)">35</div><div class="cov-label">TOTAL FEATURES</div></div>
+  <div class="cov-item"><div class="cov-num" style="color:var(--green)">28</div><div class="cov-label">BUILT IN APP</div></div>
+  <div class="cov-item"><div class="cov-num" style="color:var(--amber)">7</div><div class="cov-label">MISSING / INCOMPLETE</div></div>
+  <div class="cov-item"><div class="cov-num" style="color:var(--purple)">80%</div><div class="cov-label">COVERAGE SCORE</div></div>
+</div>
+
+<!-- ======================== CATEGORY 1 ======================== -->
+<div class="category">
+  <div class="cat-header">
+    <div class="cat-icon" style="background:rgba(0,200,255,0.1);border:1px solid rgba(0,200,255,0.3);">🔍</div>
+    <div>
+      <div class="cat-title">DETECTION & ALERTING</div>
+      <div class="cat-count">6 FEATURES · 6 BUILT</div>
+    </div>
+  </div>
+  <div class="feature-grid">
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#01</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">REAL-TIME EVENT CORRELATION</div>
+      <div class="fc-desc">Correlates security logs from multiple sources the moment they arrive — like joining puzzle pieces from different systems instantly.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Your agent on each server sends events (file changes, logins, process starts) to SecurePulse. The backend checks each event against all other recent events across all servers simultaneously. If a login attempt from IP X matches a file-change event 3 seconds later, it raises an alert.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">failed_login × 6 from 198.51.100.42 at 2:08AM → correlated as brute-force → triggers isolation playbook automatically.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Dashboard → Recent Events</span><span class="fc-where-tag page">Asset Detail → Event Log</span></div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#02</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">SIEM INTEGRATION</div>
+      <div class="fc-desc">Ability to ingest logs from external SIEM platforms like Splunk, QRadar, or Sentinel into SecurePulse.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">SecurePulse exposes an API endpoint. External SIEMs forward their normalized logs to this endpoint. SecurePulse then processes them the same way as its own agent events — creating alerts, running detection rules, etc.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">Your Splunk detects a suspicious AD login → forwards log to SecurePulse → SecurePulse creates incident automatically.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Settings → Integrations</span><span class="fc-where-tag page">Activity Feed</span></div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#03</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">RULE-BASED ALERTING</div>
+      <div class="fc-desc">You write rules like "IF event contains X, THEN create alert". Sigma-style YAML signatures that run against every incoming event.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Every event arriving is tested against each active detection rule. Rules are evaluated in real-time. If an event matches a rule's condition (e.g., description contains "sudo"), a new alert is created at the defined severity level.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Rule: ssh_login + description contains "user root" → CRITICAL alert. Visible in Detection Rules page with 5 active rules.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Detection Rules page</span><span class="fc-where-tag page">+ New Rule modal</span></div>
+      <div class="screen-ref">📸 Image 4 — Detection Rules table</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#04</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">BEHAVIOURAL ANALYTICS (UEBA)</div>
+      <div class="fc-desc">Learns what "normal" looks like for each user/host, then flags anomalies — not just known bad patterns.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">The system builds a baseline of normal activity per user and host (typical login hours, usual commands, normal file access). When behaviour deviates significantly, it scores it and raises an alert — even if no explicit rule matches.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">User "jake" always logs in 9AM–6PM. At 2AM he SSHs in → UEBA flags as anomaly → score: 80/100 (seen in your incidents list).</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Incidents → Score badge</span><span class="fc-where-tag page">Activity Feed</span></div>
+      <div class="screen-ref">📸 Image 3 — Score: 50/100 badge on WARNING alert</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#05</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">THREAT INTELLIGENCE FEEDS</div>
+      <div class="fc-desc">Enriches alerts using live IOC/IOA (Indicator of Compromise/Attack) feeds from external threat databases (STIX/TAXII format).</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">SecurePulse subscribes to threat intel feeds (like MISP, AlienVault OTX, or custom AutoTestFeed). IPs, domains, hashes from these feeds are stored as IOCs. Every incoming event's IPs/domains are matched against these — instant enrichment.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">IP 198.51.100.42 in your Threat Intel → Source: AutoTestFeed → Severity: CRITICAL. Login from this IP auto-escalates all related alerts.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Threat Intel page</span><span class="fc-where-tag page">IOC table</span></div>
+      <div class="screen-ref">📸 Image 6 — Threat Intelligence page with IOC entry</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#06</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">CUSTOM DETECTION RULES</div>
+      <div class="fc-desc">Author and deploy your own Sigma/YARA-style detection signatures — not just predefined rules but 100% custom logic you write.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">The rule builder UI lets you pick Event Type (failed_login, file_change, ssh_login etc.), Condition Operator (contains, regex, equals), Value to match, Severity level, MITRE ATT&CK technique mapping, and custom alert message. Rules hot-reload without restart.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Rule #3: new_process + regex "bash -i >& /dev/tcp/.* 0>&1" → CRITICAL → EXECUTION tactic T1059.004 (Reverse Shell Detection)</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Detection Rules page</span><span class="fc-where-tag page">+ New Rule modal</span></div>
+      <div class="screen-ref">📸 Image 4 + Image 5 — Detection rules table + modal</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ======================== CATEGORY 2 ======================== -->
+<div class="category">
+  <div class="cat-header">
+    <div class="cat-icon" style="background:rgba(255,59,92,0.1);border:1px solid rgba(255,59,92,0.3);">🚨</div>
+    <div>
+      <div class="cat-title">INCIDENT MANAGEMENT</div>
+      <div class="cat-count">5 FEATURES · 5 BUILT</div>
+    </div>
+  </div>
+  <div class="feature-grid">
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#07</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">INCIDENT QUEUE & TRIAGE</div>
+      <div class="fc-desc">Prioritised list of all active security alerts — sorted by severity so analysts know exactly what to attack first.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">All alerts stream into the Incidents page. You can filter by Severity (Critical/Warning/Info) and Status (Open/Resolved). Each row shows the alert title, triggering event, affected host, timestamp, and SLA countdown. CRITICAL alerts appear at the top always.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Alert #71: HOST ISOLATED: live-test-server → CRITICAL at top. Alert #69: WARNING (host_reconnected) below it. Proper severity ordering.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Incidents page</span></div>
+      <div class="screen-ref">📸 Image 3 — Security Incidents page</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#08</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">CASE MANAGEMENT</div>
+      <div class="fc-desc">Groups multiple related alerts into a single "Case" for structured investigation — like a folder that ties all evidence together.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">When an analyst clicks "Promote to Case" on an incident, all related alerts, events, and timeline get packaged into a Case record with a unique Case ID. The investigator can add notes, assign owners, and track resolution status.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Alert #67 → "Investigate Case #34" button. All brute-force events from 198.51.100.42 grouped under Case #34 with full timeline.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Incidents → Investigate Case button</span><span class="fc-where-tag page">Promote to Case</span></div>
+      <div class="screen-ref">📸 Image 3 — "Investigate Case #34" button visible</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#09</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">SEVERITY SCORING & ESCALATION</div>
+      <div class="fc-desc">Auto-calculates a risk score for each alert (0–100) and escalates it if it crosses a threshold — no manual intervention needed.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">A scoring algorithm considers: event type severity, frequency of similar events, asset criticality, IOC matches, MITRE tactic importance, and time of day. Scores above 70 → auto-escalate. Badge "AUTO-ESCALATED" appears. Analysts can override.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Alert #37: Score 80/100 + AUTO-ESCALATED badge. Alert #39: Score 50/100, Warning only — not auto-escalated.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Incidents → Score badge</span><span class="fc-where-tag page">AUTO-ESCALATED tag</span></div>
+      <div class="screen-ref">📸 Image 3 — Score badges on incident rows</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#10</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">WORKFLOW AUTOMATION (SOAR)</div>
+      <div class="fc-desc">Playbooks that automatically run containment/investigation/remediation steps without a human needing to click anything.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">You define a Playbook in the Playbook Builder: trigger condition → sequence of actions (isolate host, notify analyst, create ticket, block IP, etc.). When a matching alert fires, the playbook executes automatically in order. "Auto-Isolate Host" playbook is your most visible example.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Brute-force detected → "Auto-Isolate Host" playbook triggers → e2e-test-server isolated → Alert created → "Automated isolation triggered by playbook: Auto-Isolate Host"</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Playbook Builder page</span><span class="fc-where-tag page">Incidents (trigger source)</span></div>
+      <div class="screen-ref">📸 Image 7 — Playbook Builder page</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#11</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">SLA TRACKING & BREACH ALERTS</div>
+      <div class="fc-desc">Each incident has a Service Level Agreement deadline. SecurePulse counts down and warns you before the SLA is breached.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">When an alert is created, a SLA timer starts based on severity (Critical = 1hr, Warning = 4hrs, Info = 24hrs). A countdown badge shows remaining time. If an analyst doesn't act before expiry, "SLA EXPIRED" badge appears and the alert is auto-escalated to the next level.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Alert #67: "SLA: 3H 38M REMAINING" countdown badge. Alert #37 at bottom: "SLA EXPIRED" — analyst missed the window.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Incidents → SLA countdown badge</span><span class="fc-where-tag page">Reports → SLA breach risk: 26</span></div>
+      <div class="screen-ref">📸 Image 3 + Image 8 — SLA badges + Reporting page</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ======================== CATEGORY 3 ======================== -->
+<div class="category">
+  <div class="cat-header">
+    <div class="cat-icon" style="background:rgba(255,176,32,0.1);border:1px solid rgba(255,176,32,0.3);">🧠</div>
+    <div>
+      <div class="cat-title">THREAT INTELLIGENCE</div>
+      <div class="cat-count">3 FEATURES · 3 BUILT</div>
+    </div>
+  </div>
+  <div class="feature-grid">
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#12</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">IOC MANAGEMENT</div>
+      <div class="fc-desc">Store, search, and expire Indicators of Compromise — IPs, domains, file hashes, URLs known to be malicious.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">The Threat Intel page is a database of IOCs. You can add them manually (+ ADD IOC), bulk import from a CSV/STIX file, search by IP/domain/hash, and filter by type or severity. IOCs auto-expire after a configured TTL. All incoming events are matched against active IOCs in real-time.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">IOC: IP 198.51.100.42 · Source: AutoTestFeed · Severity: CRITICAL · Added: 7/5/2026. This IP's login attempt triggered brute-force detection.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Threat Intel page</span><span class="fc-where-tag page">+ Add IOC / Bulk Import</span></div>
+      <div class="screen-ref">📸 Image 6 — Full Threat Intelligence page</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#13</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">MITRE ATT&CK MAPPING</div>
+      <div class="fc-desc">Tags every alert and detection rule with the corresponding MITRE ATT&CK technique — giving context to "why this matters" in attacker language.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">MITRE ATT&CK is the industry-standard playbook of attacker tactics (Initial Access, Execution, Persistence, Privilege Escalation etc.) and their specific techniques (T1059 = Command Scripting). Each detection rule you create can be tagged with a Tactic + Technique ID. This enables "attack path" visualisation.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Rule "Reverse Shell Pattern" → EXECUTION tactic → T1059.004. Rule "Sensitive File Access" → CREDENTIAL ACCESS → T1003.008.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Detection Rules → MITRE column</span><span class="fc-where-tag page">New Rule → MITRE Technique field</span></div>
+      <div class="screen-ref">📸 Image 4 + Image 5 — Detection rules MITRE column + rule modal</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#14</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">FEED AGGREGATION</div>
+      <div class="fc-desc">Normalises multiple threat intelligence feeds from different sources into one unified lake — no matter their original format.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">SecurePulse pulls from multiple TI feed providers (commercial feeds, ISAC feeds, government feeds, open source). Each feed has different formats (STIX, TAXII, CSV, JSON). The aggregator normalises them all into a unified IOC schema. Deduplication removes overlapping entries.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">SEEN IN YOUR APP</div><div class="fc-ex-text">"AutoTestFeed" is currently your only active feed source. Production setup would add: VirusTotal, AlienVault OTX, CISA feeds.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Threat Intel → Source column</span><span class="fc-where-tag page">Bulk Import button</span></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ======================== CATEGORY 4 ======================== -->
+<div class="category">
+  <div class="cat-header">
+    <div class="cat-icon" style="background:rgba(0,255,136,0.1);border:1px solid rgba(0,255,136,0.3);">👁</div>
+    <div>
+      <div class="cat-title">VISIBILITY & LOG MANAGEMENT</div>
+      <div class="cat-count">5 FEATURES · 4 BUILT · 1 PARTIAL</div>
+    </div>
+  </div>
+  <div class="feature-grid">
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#15</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">MULTI-SOURCE LOG INGESTION</div>
+      <div class="fc-desc">Collects logs from endpoints, networks, cloud, identity systems, and applications in one place.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">The SecurePulse agent installed on hosts sends: process events, file changes, login events, network connections. The API also accepts logs from external sources via REST. All events normalised to a common schema with: event_type, host, description, timestamp, source_ip.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">e2e-test-server sends: file_change (modified /etc/shadow), failed_login ×6, ssh_login. All ingested, timestamped, and correlated.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Asset Detail → Recent Events</span><span class="fc-where-tag page">Activity Feed</span></div>
+      <div class="screen-ref">📸 Image 2 — Asset detail with 8 recent events</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#16</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">CLOUD WORKLOAD VISIBILITY</div>
+      <div class="fc-desc">AWS/Azure/GCP native log collection — see what's happening inside your cloud instances, not just on-prem servers.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Cloud provider APIs (CloudTrail for AWS, Activity Log for Azure, Cloud Logging for GCP) stream logs to SecurePulse via configured integrations. Events like "EC2 instance started by unknown IAM role" or "Storage bucket made public" appear as events with the cloud provider as source.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">AWS CloudTrail: "Root account login from non-whitelisted IP" → SecurePulse alert → Incident created automatically.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Settings → Cloud Integrations</span><span class="fc-where-tag page">Activity Feed (cloud events)</span></div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#17</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">ENDPOINT TELEMETRY (EDR)</div>
+      <div class="fc-desc">Deep visibility into what's running on endpoints — process trees, file reads/writes, registry changes, network connections.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">The SecurePulse agent acts as a lightweight EDR sensor. It hooks into the OS kernel to capture: every process that starts (with its parent PID, command line, user), every file that's modified (path, hash, modifier), every network connection (src IP, dst IP, port, protocol). This creates a full audit trail.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Events seen on e2e-test-server: "file_change: Modified /etc/shadow" — the agent captured the exact file path modified during the attack.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Asset Detail → Recent Events</span><span class="fc-where-tag page">Detection Rules (event_types)</span></div>
+      <div class="screen-ref">📸 Image 2 — file_change + failed_login events in asset detail</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#18</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">NETWORK TRAFFIC ANALYSIS</div>
+      <div class="fc-desc">NetFlow/PCAP parsing to detect lateral movement — attackers moving from one compromised host to another inside your network.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Network sensors or firewall NetFlow exports are ingested. SecurePulse analyses: connections between internal hosts (lateral movement), unusual external connections, data exfiltration patterns (large outbound transfers), port scanning. Each suspicious connection pattern raises an alert.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">198.51.100.42 (external) → port 22 (SSH) → e2e-test-server → brute-force pattern detected from network flow analysis.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Dashboard → Global Threat Map</span><span class="fc-where-tag page">Threat Intel → IP IOCs</span></div>
+      <div class="screen-ref">📸 Image 1 — Global Threat Visualization map</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#19</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">ASSET INVENTORY</div>
+      <div class="fc-desc">Live inventory of all devices, users, and services — their status, risk level, last seen time, and agent token.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">When a SecurePulse agent registers on a server, it auto-creates an Asset record with: hostname, IP, server ID, agent token (for authentication), first-seen time. The Asset page shows all assets with live status (Online/Offline/Isolated), risk level calculated from recent events, and last-seen timestamp.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">5 assets: 3× e2e-test-server (OFFLINE, CRITICAL risk), 1× e2e-test-server (OFFLINE, INFO), 1× live-test-server (OFFLINE, INFO). One is ISOLATED.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Assets page</span><span class="fc-where-tag page">Dashboard → Endpoints count</span></div>
+      <div class="screen-ref">📸 Image 1 (assets count) + Image 2 (full assets page — original screenshots)</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ======================== CATEGORY 5 ======================== -->
+<div class="category">
+  <div class="cat-header">
+    <div class="cat-icon" style="background:rgba(168,85,247,0.1);border:1px solid rgba(168,85,247,0.3);">🔬</div>
+    <div>
+      <div class="cat-title">INVESTIGATION & FORENSICS</div>
+      <div class="cat-count">2 FEATURES · 1 BUILT · 1 MISSING</div>
+    </div>
+  </div>
+  <div class="feature-grid">
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#20</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">PIVOT & DRILL-DOWN SEARCH</div>
+      <div class="fc-desc">Click any field in an alert and instantly pivot to see all correlated events — like following a thread through the attack.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Every value in the system (IP, username, hostname, event type) is clickable. Clicking pivots to a filtered search showing all events that share that value. This lets an analyst start from "this IP" and quickly see every host it touched, every event it caused, across all time.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">IN YOUR APP</div><div class="fc-ex-text">Search page + filter by host/type. Clicking "e2e-test-server" in an incident shows all 8 events from that host. Clicking an IP shows all its connections.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Search page</span><span class="fc-where-tag page">Asset Detail (pivot from events)</span></div>
+    </div>
+
+    <div class="feature-card missing">
+      <div class="fc-top"><span class="fc-number">#21</span><span class="fc-status missing">⚠ MISSING</span></div>
+      <div class="fc-name">GRAPH-BASED RELATIONSHIP VIEW</div>
+      <div class="fc-desc">Visual node-graph showing relationships: User → Host → IP → Alert. Lets you see the attack path visually, not just as a list.</div>
+      <div class="fc-how"><div class="fc-how-label">WHAT THIS SHOULD LOOK LIKE</div><div class="fc-how-text">A D3.js or vis.js network graph where nodes = entities (hosts, users, IPs) and edges = relationships (logged into, connected to, triggered alert). You'd see "IP 198.51.100.42 → connected to e2e-test-server → triggered brute-force → isolation playbook ran" as a visual flow.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">WHAT TO BUILD</div><div class="fc-ex-text">In Case investigation view: show a network graph of all entities involved. Nodes: IP (red if malicious), Host (orange if isolated), User (green if normal). Edges: login attempts, file accesses, network connections.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SHOULD BE IN:</span><span class="fc-where-tag missing-tag">Case Investigation view</span><span class="fc-where-tag missing-tag">Asset Detail page</span></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ======================== CATEGORY 6 ======================== -->
+<div class="category">
+  <div class="cat-header">
+    <div class="cat-icon" style="background:rgba(0,200,255,0.1);border:1px solid rgba(0,200,255,0.3);">🛡</div>
+    <div>
+      <div class="cat-title">RESPONSE & CONTAINMENT</div>
+      <div class="cat-count">4 FEATURES · 2 BUILT · 2 MISSING</div>
+    </div>
+  </div>
+  <div class="feature-grid">
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#22</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">ONE-CLICK HOST ISOLATION</div>
+      <div class="fc-desc">Quarantine a compromised server from the network instantly — all traffic blocked except management, stops the attacker cold.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Clicking "Isolate Host" sends a command to the SecurePulse agent on that server. The agent applies firewall rules blocking all inbound/outbound traffic except the management channel back to SecurePulse. The host shows "ISOLATED" status and a red banner: "This asset has been programmatically contained. All non-management traffic is blocked."</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">e2e-test-server → ISOLATED badge + red banner. "ISOLATE HOST" button top right. "RESTORE CONNECTIVITY" to reverse. Exactly what you see in Image 2.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Asset Detail → ISOLATE HOST button</span><span class="fc-where-tag page">Assets → ISOLATED badge</span></div>
+      <div class="screen-ref">📸 Image 2 — Host isolation banner + button</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#23</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">AUTOMATED PLAYBOOK EXECUTION</div>
+      <div class="fc-desc">Playbooks run containment steps automatically — no analyst needed to click through a checklist during an attack.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Already covered in #10 (SOAR). Key difference here: the execution is fully automated (not triggered manually). The "Auto-Isolate Host" playbook fires the moment a brute-force rule matches — the host was isolated before any human even saw the alert. This is the SOAR aspect of automated response.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">"Automated isolation triggered by playbook: Auto-Isolate Host" — the alert description tells you it was automatic, not manual.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Playbooks page → RUN button</span><span class="fc-where-tag page">Incident description text</span></div>
+      <div class="screen-ref">📸 Image 7 — Playbook Builder + Image 3 — automated incident description</div>
+    </div>
+
+    <div class="feature-card missing">
+      <div class="fc-top"><span class="fc-number">#24</span><span class="fc-status missing">⚠ MISSING</span></div>
+      <div class="fc-name">ACCOUNT DISABLE / PASSWORD RESET</div>
+      <div class="fc-desc">Revoke a compromised user's credentials as part of incident response — disable their AD/LDAP account or force password reset.</div>
+      <div class="fc-how"><div class="fc-how-label">WHAT TO BUILD</div><div class="fc-how-text">In the Case/Incident investigation view, add an "Actions" panel. When a user is identified as compromised, buttons: "Disable AD Account" (calls your directory API), "Force Password Reset", "Revoke Active Sessions" (calls your SSO provider). This should also be available as a Playbook action step.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">Analyst sees user "jake" SSHed in at 2AM with root privileges → clicks "Disable Account" → jake's credentials instantly revoked → attacker loses access even if they had the password.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SHOULD BE IN:</span><span class="fc-where-tag missing-tag">Incident/Case Actions panel</span><span class="fc-where-tag missing-tag">Playbook action step</span></div>
+    </div>
+
+    <div class="feature-card missing">
+      <div class="fc-top"><span class="fc-number">#25</span><span class="fc-status missing">⚠ MISSING</span></div>
+      <div class="fc-name">FIREWALL RULE PUSH</div>
+      <div class="fc-desc">Block malicious IPs/domains directly via your firewall API from the SOC console — no need to log into the firewall separately.</div>
+      <div class="fc-how"><div class="fc-how-label">WHAT TO BUILD</div><div class="fc-how-text">In Threat Intel and Incidents, add a "Block IP" action button. When clicked, SecurePulse calls your firewall's API (Palo Alto, Cisco ASA, pfSense, AWS Security Groups etc.) to add a DENY rule for that IP. Status shows: "Blocked on: Perimeter Firewall, AWS SG-prod". Also available as a playbook action step.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">IOC: 198.51.100.42 flagged as attacker IP → analyst clicks "Block IP" → SecurePulse pushes DENY rule to firewall → IP blocked at perimeter within seconds.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SHOULD BE IN:</span><span class="fc-where-tag missing-tag">Threat Intel → IOC Actions</span><span class="fc-where-tag missing-tag">Incident Actions panel</span></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ======================== CATEGORY 7 ======================== -->
+<div class="category">
+  <div class="cat-header">
+    <div class="cat-icon" style="background:rgba(0,255,136,0.1);border:1px solid rgba(0,255,136,0.3);">📊</div>
+    <div>
+      <div class="cat-title">REPORTING & COMPLIANCE</div>
+      <div class="cat-count">3 FEATURES · 3 BUILT</div>
+    </div>
+  </div>
+  <div class="feature-grid">
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#26</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">EXECUTIVE DASHBOARDS</div>
+      <div class="fc-desc">High-level KPI summaries (MTTD, MTTR, alert volumes) for management who don't need technical detail — just the business impact numbers.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">MTTD (Mean Time To Detect) = average time between an attack starting and SecurePulse creating an alert. MTTR (Mean Time To Resolve) = average time from alert creation to resolution. These are the two most important security KPIs. Executives see these alongside total open alerts and SLA breach risk count.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Reports page shows: MTTD &lt;2min (excellent!), MTTR: 0m (all resolved instantly in test), Open Alerts: 4, SLA Breach Risk: 26.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Reports page (top KPI section)</span></div>
+      <div class="screen-ref">📸 Image 8 — Reporting & Compliance page top section</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#27</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">COMPLIANCE REPORTING</div>
+      <div class="fc-desc">Pre-built report templates for ISO 27001, PCI-DSS, NIST CSF, and GDPR — generate audit-ready reports with one click.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Each compliance framework maps specific SecurePulse data to its requirements. ISO 27001 A.12 needs operational logs → SecurePulse exports event logs formatted to that section. PCI-DSS Requirement 10 needs logging proof → audit trail exported. Reports are PDF-formatted with framework-specific structure.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">4 report templates visible: ISO 27001, PCI-DSS, NIST CSF, GDPR. Each with "GENERATE REPORT" button. GDPR covers Article 33 breach notification + 72-hour response timeline via SLA timers.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Reports → Compliance Templates section</span></div>
+      <div class="screen-ref">📸 Image 8 — Compliance report template cards</div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#28</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">EVIDENCE EXPORT (CHAIN OF CUSTODY)</div>
+      <div class="fc-desc">Tamper-evident, SHA-256 hashed export of a case — legally defensible evidence package for court proceedings or insurance claims.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">When exporting evidence, SecurePulse packages: all events in the case (with original timestamps), alert history, analyst actions and notes, system audit log. Each file is SHA-256 hashed and the bundle signed with a timestamp. The hash proves no one modified the evidence after export. "Chain of custody" = no gaps in evidence handling.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">REAL EXAMPLE FROM YOUR APP</div><div class="fc-ex-text">Evidence Export section: "Case #34: Investigation: HOST ISOLATED: e2e-test-server" → "EXPORT EVIDENCE PACKAGE" button. This creates the signed bundle.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Reports → Evidence Export section</span></div>
+      <div class="screen-ref">📸 Image 8 — Evidence Export (Chain of Custody) section</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ======================== CATEGORY 8 ======================== -->
+<div class="category">
+  <div class="cat-header">
+    <div class="cat-icon" style="background:rgba(0,200,255,0.1);border:1px solid rgba(0,200,255,0.3);">⚙</div>
+    <div>
+      <div class="cat-title">PLATFORM & INTEGRATION</div>
+      <div class="cat-count">5 FEATURES · 3 BUILT · 2 MISSING</div>
+    </div>
+  </div>
+  <div class="feature-grid">
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#29</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">OPEN API / WEBHOOKS</div>
+      <div class="fc-desc">REST API for all major actions + webhook event bus — lets other tools trigger SecurePulse or receive events from it.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Every action in SecurePulse (create alert, isolate host, resolve incident) is available via REST API. External tools (ticketing systems, ITSM, chat tools) can call these APIs. Webhooks let SecurePulse push events to external URLs — e.g., "When CRITICAL alert created → POST to Slack webhook → analyst gets pinged instantly."</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">Jira integration: CRITICAL incident created in SecurePulse → webhook → Jira ticket auto-created with full details → assigned to on-call analyst.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Settings → API & Webhooks</span><span class="fc-where-tag page">Agent token in Asset Detail</span></div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#30</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">PRE-BUILT CONNECTORS LIBRARY</div>
+      <div class="fc-desc">300+ vendor integrations out of the box — connect common security tools without writing custom code.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Each connector is a pre-built module that handles authentication + data mapping for a specific tool (Splunk, CrowdStrike, SentinelOne, ServiceNow, PagerDuty, Slack, Teams etc.). You configure credentials once and the integration is live. Connectors handle API version changes automatically.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">Connect CrowdStrike Falcon → endpoint events flow into SecurePulse. Connect ServiceNow → incidents auto-create ITSM tickets. Connect PagerDuty → on-call alerts for critical incidents.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Settings → Integrations</span></div>
+    </div>
+
+    <div class="feature-card built">
+      <div class="fc-top"><span class="fc-number">#31</span><span class="fc-status built">✓ BUILT</span></div>
+      <div class="fc-name">AUDIT TRAIL</div>
+      <div class="fc-desc">Immutable log of every analyst and system action — who did what, when, and why. Required for compliance and insider threat detection.</div>
+      <div class="fc-how"><div class="fc-how-label">HOW IT WORKS</div><div class="fc-how-text">Every action is logged: analyst logins, rule changes, alert resolutions, host isolations, report exports. Each entry has: actor (user or system), action type, target entity, timestamp, source IP. Logs are write-once and cannot be modified even by admins. This is what courts and auditors demand.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">"admin@securepulse.local isolated e2e-test-server at 2:01:35AM via manual_isolation" → logged → cannot be deleted → audit-ready.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SEEN IN:</span><span class="fc-where-tag page">Audit Log page</span><span class="fc-where-tag page">Incident → "triggered by admin@..."</span></div>
+    </div>
+
+    <div class="feature-card missing">
+      <div class="fc-top"><span class="fc-number">#32</span><span class="fc-status missing">⚠ MISSING</span></div>
+      <div class="fc-name">SINGLE SIGN-ON (SSO/MFA)</div>
+      <div class="fc-desc">SAML/OIDC integration with enforced MFA for all analysts — your staff log in with company credentials, not separate SecurePulse passwords.</div>
+      <div class="fc-how"><div class="fc-how-label">WHAT TO BUILD</div><div class="fc-how-text">Implement: SAML 2.0 SP integration (for Okta, Azure AD, Google Workspace), OIDC support for OAuth2-based providers, mandatory MFA enforcement (TOTP/hardware key), session timeout policies, failed login lockout. Add SSO config to Settings page. Login page should support "Login with Okta" / "Login with Microsoft" buttons.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">Your SOC analyst goes to SecurePulse → clicks "Login with Okta" → Okta prompts MFA → analyst authenticates → returned to SecurePulse with their role/permissions from AD groups.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SHOULD BE IN:</span><span class="fc-where-tag missing-tag">Login page (SSO button)</span><span class="fc-where-tag missing-tag">Settings → SSO/MFA config</span></div>
+    </div>
+
+    <div class="feature-card missing">
+      <div class="fc-top"><span class="fc-number">#33</span><span class="fc-status missing">⚠ MISSING</span></div>
+      <div class="fc-name">HIGH AVAILABILITY & DR</div>
+      <div class="fc-desc">Active-active deployment with defined RPO/RTO — SecurePulse itself never goes down, even when servers fail.</div>
+      <div class="fc-how"><div class="fc-how-label">WHAT TO BUILD</div><div class="fc-how-text">Infrastructure concern (not UI). Needs: multi-region deployment with load balancer, database replication with automatic failover, RPO (Recovery Point Objective — max data loss: e.g., 1 minute), RTO (Recovery Time Objective — max downtime: e.g., 30 seconds). UI should show a "System Health" page with uptime metrics, replica status, and DR test history.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">Primary AWS us-east-1 instance crashes → DR kicks in within 30 seconds → eu-west-1 replica takes over → no alert data lost (RPO: 1 min) → analysts don't notice.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SHOULD BE IN:</span><span class="fc-where-tag missing-tag">Settings → System Health</span><span class="fc-where-tag missing-tag">Infrastructure layer</span></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ======================== CATEGORY 9 ======================== -->
+<div class="category">
+  <div class="cat-header">
+    <div class="cat-icon" style="background:rgba(168,85,247,0.1);border:1px solid rgba(168,85,247,0.3);">🤝</div>
+    <div>
+      <div class="cat-title">COLLABORATION & WORKFLOW</div>
+      <div class="cat-count">2 FEATURES · 0 BUILT · 2 MISSING</div>
+    </div>
+  </div>
+  <div class="feature-grid">
+
+    <div class="feature-card missing">
+      <div class="fc-top"><span class="fc-number">#34</span><span class="fc-status missing">⚠ MISSING</span></div>
+      <div class="fc-name">ANALYST COLLABORATION TOOLS</div>
+      <div class="fc-desc">Comments, mentions, task assignments within cases — multiple analysts working the same incident without stepping on each other.</div>
+      <div class="fc-how"><div class="fc-how-label">WHAT TO BUILD</div><div class="fc-how-text">Inside each Case/Incident: add a threaded comment timeline (like GitHub issues). Analysts can: add notes with @mentions, assign the case to another analyst, set investigation status (New/In Progress/Pending Review/Resolved), attach screenshots/files. All comments appear in the Audit Trail.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">Case #34: Analyst A posts "Confirmed brute-force from 198.51.100.42 — checking other hosts" → @mentions Analyst B → B gets notified → adds "No lateral movement detected on subnet 10.0.1.x" → case resolved collaboratively.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SHOULD BE IN:</span><span class="fc-where-tag missing-tag">Case detail view (comment thread)</span><span class="fc-where-tag missing-tag">Incident sidebar</span></div>
+    </div>
+
+    <div class="feature-card missing">
+      <div class="fc-top"><span class="fc-number">#35</span><span class="fc-status missing">⚠ MISSING</span></div>
+      <div class="fc-name">EXTERNAL TICKET SYNC</div>
+      <div class="fc-desc">Bi-directional sync with ITSM tools (Jira, ServiceNow, Zendesk) — incidents created in SecurePulse auto-create tickets, and resolving a ticket closes the incident.</div>
+      <div class="fc-how"><div class="fc-how-label">WHAT TO BUILD</div><div class="fc-how-text">Configure ITSM connector in Settings. When a CRITICAL incident is created: SecurePulse creates a Jira issue and stores the Jira ticket ID. When analyst resolves in Jira: webhook notifies SecurePulse → incident auto-resolved. Status changes sync both ways. Ticket URL visible in incident detail.</div></div>
+      <div class="fc-example"><div class="fc-ex-label">USE CASE</div><div class="fc-ex-text">Alert #67 created → SEC-2847 Jira ticket auto-opens → assigned to on-call via PagerDuty → analyst resolves in Jira → SecurePulse incident auto-closes → SLA met.</div></div>
+      <div class="fc-where"><span class="fc-where-label">SHOULD BE IN:</span><span class="fc-where-tag missing-tag">Incident detail → Linked tickets</span><span class="fc-where-tag missing-tag">Settings → ITSM integration</span></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ======================== MISSING SUMMARY ======================== -->
+<div class="missing-section">
+  <div class="missing-header">
+    <div style="width:40px;height:40px;background:rgba(255,176,32,0.1);border:1px solid rgba(255,176,32,0.35);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;">⚠</div>
+    <div>
+      <div class="missing-title">7 MISSING FEATURES — PRIORITY BUILD LIST</div>
+      <div class="missing-sub">THESE ARE IN YOUR REQUIREMENTS BUT NOT YET IMPLEMENTED IN THE APP</div>
+    </div>
+  </div>
+  <div class="missing-grid">
+    <div class="missing-item">
+      <div class="mi-name">#21 — Graph Relationship View</div>
+      <div class="mi-desc">Visual node-graph of entity relationships (User→Host→IP→Alert). Build with D3.js or vis.js in Case investigation view.</div>
+      <div class="mi-priority">INVESTIGATION & FORENSICS</div>
+    </div>
+    <div class="missing-item">
+      <div class="mi-name">#24 — Account Disable / Password Reset</div>
+      <div class="mi-desc">Revoke compromised user credentials from the incident view. Calls AD/LDAP/SSO APIs. Also as playbook action.</div>
+      <div class="mi-priority">RESPONSE & CONTAINMENT</div>
+    </div>
+    <div class="missing-item">
+      <div class="mi-name">#25 — Firewall Rule Push</div>
+      <div class="mi-desc">Block malicious IPs via firewall API from SecurePulse. "Block IP" button in Threat Intel + Incidents. Add as playbook step.</div>
+      <div class="mi-priority">RESPONSE & CONTAINMENT</div>
+    </div>
+    <div class="missing-item">
+      <div class="mi-name">#32 — SSO / MFA</div>
+      <div class="mi-desc">SAML 2.0 / OIDC login with enforced MFA. "Login with Okta/Microsoft" on login page. SSO config in Settings.</div>
+      <div class="mi-priority">PLATFORM & INTEGRATION</div>
+    </div>
+    <div class="missing-item">
+      <div class="mi-name">#33 — High Availability & DR</div>
+      <div class="mi-desc">Multi-region active-active deployment with defined RPO/RTO. System health dashboard page. Infrastructure-level work.</div>
+      <div class="mi-priority">PLATFORM & INTEGRATION</div>
+    </div>
+    <div class="missing-item">
+      <div class="mi-name">#34 — Analyst Collaboration</div>
+      <div class="mi-desc">Comment threads, @mentions, task assignments inside Case/Incident view. Multiple analysts working same case.</div>
+      <div class="mi-priority">COLLABORATION & WORKFLOW</div>
+    </div>
+    <div class="missing-item">
+      <div class="mi-name">#35 — External Ticket Sync</div>
+      <div class="mi-desc">Bi-directional Jira/ServiceNow sync. Incidents auto-create tickets. Resolving ticket closes incident. Status syncs both ways.</di</body>
+</html>

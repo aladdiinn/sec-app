@@ -46,6 +46,9 @@
                         <button class="btn btn-glass" style="font-size:11px; padding:4px 10px; border-color:var(--accent-orange); color:var(--accent-orange)" onclick="addAction('block_ip')">+ Block IP</button>
                         <button class="btn btn-glass" style="font-size:11px; padding:4px 10px; border-color:var(--accent-purple,#a78bfa); color:#a78bfa" onclick="addAction('disable_account')">+ Disable Account</button>
                         <button class="btn btn-glass" style="font-size:11px; padding:4px 10px" onclick="addAction('notify_slack')">+ Notify Slack</button>
+                        <button class="btn btn-glass" style="font-size:11px; padding:4px 10px; border-color:var(--accent-blue); color:var(--accent-blue)" onclick="addAction('notify_email')">+ Notify Email</button>
+                        <button class="btn btn-glass" style="font-size:11px; padding:4px 10px" onclick="addAction('run_health_check')">+ Run Health Check</button>
+                        <button class="btn btn-glass" style="font-size:11px; padding:4px 10px; border-color:var(--accent-green); color:var(--accent-green)" onclick="addAction('restart_service')">+ Restart Service</button>
                     </div>
                 </div>
 
@@ -89,6 +92,9 @@
         block_ip: { label: '🚫 Block IP', color: 'var(--accent-orange)' },
         disable_account: { label: '👤 Disable Account', color: '#a78bfa' },
         notify_slack: { label: '💬 Notify Slack', color: 'var(--accent-cyan)' },
+        notify_email: { label: '📧 Notify Email', color: 'var(--accent-blue)' },
+        run_health_check: { label: '🔍 Run Health Check', color: 'var(--accent-purple)' },
+        restart_service: { label: '🔄 Restart Service', color: 'var(--accent-green)' },
     };
 
     async function loadPlaybooks() {
