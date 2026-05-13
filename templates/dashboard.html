@@ -120,28 +120,39 @@
         </div>
     </div>
 
-    <!-- Recent Alerts -->
-    <div class="card glass">
-        <div class="card-header">
-            <h2 class="card-title">Recent Security Alerts</h2>
-            <a href="/alerts" class="btn btn-glass" style="padding:4px 12px">View All</a>
-        </div>
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Severity</th>
-                    <th>Alert</th>
-                    <th>Source</th>
-                    <th>Time</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody id="open-alerts-list">
-                <!-- Populated by JS -->
-            </tbody>
-        </table>
-    </div>
-</div>
+     <!-- Recent Alerts -->
+     <div class="card glass">
+         <div class="card-header">
+             <h2 class="card-title">Recent Security Alerts</h2>
+             <a href="/alerts" class="btn btn-glass" style="padding:4px 12px">View All</a>
+         </div>
+         <table class="data-table">
+             <thead>
+                 <tr>
+                     <th>Severity</th>
+                     <th>Alert</th>
+                     <th>Source</th>
+                     <th>Time</th>
+                     <th>Actions</th>
+                 </tr>
+             </thead>
+             <tbody id="open-alerts-list">
+                 <!-- Populated by JS -->
+             </tbody>
+         </table>
+     </div>
+
+     <!-- Maintenance Servers -->
+     <div class="card glass">
+         <div class="card-header">
+             <h2 class="card-title">Servers in Maintenance</h2>
+             <a href="/maintenance" class="btn btn-glass" style="padding:4px 12px">View All</a>
+         </div>
+         <div id="maintenance-servers-list" style="display:flex; flex-direction:column; gap:8px">
+             <div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">No servers in maintenance</div>
+         </div>
+     </div>
+ </div>
 {% endblock %}
 
 {% block extra_js %}
@@ -236,45 +247,62 @@ async function loadDashboard() {
         document.getElementById('leg-warn').textContent = warn;
         document.getElementById('leg-crit').textContent = crit;
 
-        // Feed
-        const feedEl = document.getElementById('live-feed');
-        feedEl.innerHTML = items.slice(0, 5).map(e => `
-            <div style="display:flex; gap:12px; align-items:center">
-                <div style="width:8px; height:8px; border-radius:50%; background:var(--accent-${e.severity === 'critical' ? 'red' : e.severity === 'warning' ? 'orange' : 'blue'})"></div>
-                <div style="flex:1">
-                    <div style="font-size:13px; font-weight:500">${e.description.slice(0, 40)}...</div>
-                    <div class="text-meta" style="margin-top:2px">${e.hostname || 'System'} · ${new Date(e.created_at).toLocaleTimeString()}</div>
-                </div>
-            </div>
-        `).join('');
+         // Feed
+         const feedEl = document.getElementById('live-feed');
+         feedEl.innerHTML = items.slice(0, 5).map(e => `
+             <div style="display:flex; gap:12px; align-items:center">
+                 <div style="width:8px; height:8px; border-radius:50%; background:var(--accent-${e.severity === 'critical' ? 'red' : e.severity === 'warning' ? 'orange' : 'blue'})"></div>
+                 <div style="flex:1">
+                     <div style="font-size:13px; font-weight:500">${e.description.slice(0, 40)}...</div>
+                     <div class="text-meta" style="margin-top:2px">${e.hostname || 'System'} · ${new Date(e.created_at).toLocaleTimeString()}</div>
+                 </div>
+             </div>
+         `).join('');
 
-        // Alerts
-        const alertsData = await apiFetch('/api/alerts?is_resolved=false&limit=5');
-        const alertList = document.getElementById('open-alerts-list');
-        alertList.innerHTML = alertsData.items.map(a => `
-            <tr>
-                <td><span class="badge badge-${a.severity === 'critical' ? 'critical' : 'warning'}">${a.severity}</span></td>
-                <td style="font-weight:600">${a.title}</td>
-                <td>${a.hostname || 'Unknown'}</td>
-                <td class="text-meta">${new Date(a.created_at).toLocaleTimeString()}</td>
-                <td><button class="btn btn-glass" style="padding:4px 8px" onclick="resolveAlert(${a.id})">Resolve</button></td>
-            </tr>
-        `).join('');
+         // Alerts
+         const alertsData = await apiFetch('/api/alerts?is_resolved=false&limit=5');
+         const alertList = document.getElementById('open-alerts-list');
+         alertList.innerHTML = alertsData.items.map(a => `
+             <tr>
+                 <td><span class="badge badge-${a.severity === 'critical' ? 'critical' : 'warning'}">${a.severity}</span></td>
+                 <td style="font-weight:600">${a.title}</td>
+                 <td>${a.hostname || 'Unknown'}</td>
+                 <td class="text-meta">${new Date(a.created_at).toLocaleTimeString()}</td>
+                 <td><button class="btn btn-glass" style="padding:4px 8px" onclick="resolveAlert(${a.id})">Resolve</button></td>
+             </tr>
+         `).join('');
 
-        // Brute Force
-        const bruteData = await apiFetch('/api/dashboard/brute-force');
-        const bruteList = document.getElementById('brute-force-list');
-        if (bruteData.length > 0) {
-            bruteList.innerHTML = bruteData.map(b => `
-                <div class="glass" style="padding:10px; border-radius:var(--radius-sm); border-left: 3px solid var(--red)">
-                    <div style="display:flex; justify-content:space-between">
-                        <span style="font-family:var(--mono); font-weight:700; color:var(--red)">${b.ip}</span>
-                        <span class="text-meta">${b.count} attempts</span>
-                    </div>
-                    <div class="text-sub" style="margin-top:3px">Target: ${b.target}</div>
-                </div>
-            `).join('');
-        }
+         // Brute Force
+         const bruteData = await apiFetch('/api/dashboard/brute-force');
+         const bruteList = document.getElementById('brute-force-list');
+         if (bruteData.length > 0) {
+             bruteList.innerHTML = bruteData.map(b => `
+                 <div class="glass" style="padding:10px; border-radius:var(--radius-sm); border-left: 3px solid var(--red)">
+                     <div style="display:flex; justify-content:space-between">
+                         <span style="font-family:var(--mono); font-weight:700; color:var(--red)">${b.ip}</span>
+                         <span class="text-meta">${b.count} attempts</span>
+                     </div>
+                     <div class="text-sub" style="margin-top:3px">Target: ${b.target}</div>
+                 </div>
+             `).join('');
+         }
+
+         // Maintenance Servers
+         const maintData = await apiFetch('/api/servers/maintenance');
+         const maintList = document.getElementById('maintenance-servers-list');
+         if (maintData.length > 0) {
+             maintList.innerHTML = maintData.map(s => `
+                 <div class="glass" style="padding:10px; border-radius:var(--radius-sm); border-left: 3px solid var(--amber)">
+                     <div style="display:flex; justify-content:space-between">
+                         <span style="font-family:var(--mono); font-weight:600">${s.hostname}</span>
+                         <span class="text-meta">${s.is_maintenance ? 'Permanent' : 'Until ' + new Date(s.maintenance_until).toLocaleString()}</span>
+                     </div>
+                     <div class="text-sub" style="margin-top:3px">Status: ${s.status}</div>
+                 </div>
+             `).join('');
+         } else {
+             document.getElementById('maintenance-servers-list').innerHTML = '<div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">No servers in maintenance</div>';
+         }
 
     } catch (e) { console.error('Dashboard load error:', e); }
 }

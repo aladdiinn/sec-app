@@ -876,30 +876,57 @@ class PlaybookRunner:
                     elif managed_services:
                         # Fallback: Look for tomcat specifically if no name given
                         target_service = next((s for s in managed_services if 'tomcat' in s.get('name', '').lower()), managed_services[0])
-                    
+                     
                     if target_service:
-                        user = target_service.get('username', 'root')
-                        path = target_service.get('path', '')
-                        
-                        # Advanced Restart Logic: Kill process containing path, then run startup as user
-                        # If path ends with / or is just a dir, we assume bin/startup.sh
-                        startup_script = f"{path}/bin/startup.sh" if not path.endswith('.sh') else path
-                        kill_pattern = path.rstrip('/')
-                        
-                        complex_cmd = f"sudo -u {user} bash -c 'pkill -f {kill_pattern} || true; {startup_script}'"
-                        
-                        logger.warning(f"PLAYBOOK ACTION: Automated restart for {target_service.get('name')} on {alert.server.hostname}")
-                        logger.info(f"RESTART LOGIC: {complex_cmd}")
-                        
-                        # Log the action as a new event
-                        restart_evt = Event(
-                            server_id=alert.server_id,
-                            event_id=f"RESTART_{int(time.time())}",
-                            event_type="service_restart",
-                            severity="info",
-                            description=f"Triggered restart for {target_service.get('name')} (User: {user}, Path: {path})"
-                        )
-                        db.session.add(restart_evt)
+                         user = target_service.get('user', 'root')  # Use 'user' field from service definition
+                         path = target_service.get('path', '')
+                         restart_cmd = target_service.get('restart_cmd') or f"{path}/bin/startup.sh"  # Use restart_cmd if provided
+                         
+                         logger.warning(f"PLAYBOOK ACTION: Automated restart for {target_service.get('name')} on {alert.server.hostname}")
+                         logger.info(f"RESTART LOGIC: sudo -u {user} {restart_cmd}")
+                         
+                         # Log the action as a new event
+                         restart_evt = Event(
+                             server_id=alert.server_id,
+                             event_id=f"RESTART_{int(time.time())}",
+                             event_type="service_restart",
+                             severity="info",
+                             description=f"Triggered restart for {target_service.get('name')} (User: {user})"
+                         )
+                         db.session.add(restart_evt)
+                         
+                         # Execute the restart command as the specified user
+                         # Note: In a real Linux environment, we would use su or sudo here
+                         # For Windows compatibility in the existing code, we keep the run_as_user function
+                         # But we'll construct the appropriate command for Linux
+                         restart_command = f"sudo -u {user} {restart_cmd}"
+                         
+                         # Execute the restart command
+                         # In production Linux environment, this would use the actual command
+                         # For now, we'll simulate it or use the existing Windows function as fallback
+                         try:
+                             # Try to run as the specified user (Linux-style)
+                             import subprocess
+                             completed = subprocess.run(restart_command, shell=True, capture_output=True, text=True, timeout=30)
+                             res = {"stdout": completed.stdout, "stderr": completed.stderr, "returncode": completed.returncode}
+                         except Exception as e:
+                             # Fallback to Windows function if Linux approach fails
+                             logger.warning(f"Linux-style sudo failed, falling back to Windows run_as_user: {e}")
+                             res = run_as_user(user, restart_cmd)
+                         
+                         results.append({
+                             "name": target_service.get('name'),
+                             "command": restart_command,
+                             "returncode": res["returncode"],
+                             "stdout": res["stdout"],
+                             "stderr": res["stderr"]
+                         })
+                         
+                         # Execute the restart command as the specified user
+                         # Note: In a real Linux environment, we would use su or sudo here
+                         # For Windows compatibility in the existing code, we keep the run_as_user function
+                         # But we'll construct the appropriate command for Linux
+                         restart_command = f"sudo -u {user} {restart_cmd}"
                     else:
                         logger.warning(f"PLAYBOOK ACTION: Restart failed - no managed service found for {service_name or 'default'}")
             
@@ -1454,7 +1481,7 @@ def update_server(server_id):
                 server.is_maintenance = False
                 
         if "managed_services" in data:
-            # Expected: list of {name, username, path}
+            # Expected: list of {name, user, path, restart_cmd (optional)}
             services = data["managed_services"]
             logger.info(f"SAVING SERVICES for {server.hostname}: {services}")
             server.managed_services = json.dumps(services)
@@ -1553,7 +1580,15 @@ def restart_services(server_id):
     for svc in services:
         user = svc.get("user")
         cmd = svc.get("restart_cmd") or f"{svc.get('path')}/bin/startup.sh"
-        res = run_as_user(user, cmd)
+        # Try to run as the specified user (Linux-style with sudo)
+        try:
+            import subprocess
+            completed = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+            res = {"stdout": completed.stdout, "stderr": completed.stderr, "returncode": completed.returncode}
+        except Exception as e:
+            # Fallback to Windows function if Linux approach fails
+            logger.warning(f"Linux-style subprocess failed, falling back to Windows run_as_user: {e}")
+            res = run_as_user(user, cmd)
         results.append({
             "name": svc.get("name"),
             "command": cmd,

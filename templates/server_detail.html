@@ -143,14 +143,17 @@
                     
                     <div style="background:rgba(0,200,255,0.03); border:1px dashed var(--border); padding:12px; border-radius:6px">
                         <p class="text-meta" style="margin-bottom:8px; font-size:10px; text-transform:uppercase">Add New Service (e.g. Tomcat)</p>
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px">
-                            <input type="text" id="new-service-name" placeholder="Service Name (e.g. Tomcat-1)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; font-size:11px; width:100%">
-                            <input type="text" id="new-service-user" placeholder="Run as User (e.g. tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; font-size:11px; width:100%">
-                        </div>
-                        <div style="margin-bottom:8px">
-                            <input type="text" id="new-service-path" placeholder="Binary/Startup Path (e.g. /opt/tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; font-size:11px; width:100%">
-                        </div>
-                        <button type="button" class="btn btn-ghost" style="width:100%; font-size:11px; padding:6px; border-color:var(--cyan)" onclick="addService()">+ Add Managed Service</button>
+                         <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px">
+                             <input type="text" id="new-service-name" placeholder="Service Name (e.g. Tomcat-1)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; font-size:11px; width:100%">
+                             <input type="text" id="new-service-user" placeholder="Run as User (e.g. tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; font-size:11px; width:100%">
+                         </div>
+                         <div style="margin-bottom:8px">
+                             <input type="text" id="new-service-path" placeholder="Binary/Startup Path (e.g. /opt/tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; font-size:11px; width:100%">
+                         </div>
+                         <div style="margin-bottom:8px">
+                             <input type="text" id="new-service-restart-cmd" placeholder="Optional Restart Command (e.g. pkill -f tomcat && sudo -u manna sh /app/apache-tomcat/bin/startup.sh)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; font-size:11px; width:100%">
+                         </div>
+                         <button type="button" class="btn btn-ghost" style="width:100%; font-size:11px; padding:6px; border-color:var(--cyan)" onclick="addService()">+ Add Managed Service</button>
                     </div>
                 </div>
             </div>
@@ -303,20 +306,30 @@
         `).join('');
     }
 
-    async function toggleMaintenance() {
-        const active = document.getElementById('maint-toggle').checked;
-        try {
-            await apiFetch(`/api/servers/${serverId}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ is_maintenance: active })
-            });
-            showToast(active ? 'Maintenance Mode Enabled' : 'Maintenance Mode Disabled', 'info');
-            setTimeout(loadServerData, 500);
-        } catch (e) { 
-            alert('Failed to update maintenance state: ' + e.message);
-            document.getElementById('maint-toggle').checked = !active; // Revert UI
-        }
-    }
+     async function toggleMaintenance() {
+         const active = document.getElementById('maint-toggle').checked;
+         const hoursInput = document.getElementById('maint-hours');
+         const hours = parseInt(hoursInput.value, 10);
+         // Validate hours when turning on
+         if (active && (isNaN(hours) || hours <= 0)) {
+             showToast('Please select a valid number of hours (greater than 0)', 'warning');
+             document.getElementById('maint-toggle').checked = false; // revert toggle
+             return;
+         }
+         try {
+             // We always send maintenance_hours. If active, use the selected hours (must be >0). If not active, send 0 to clear.
+             const hoursToSend = active ? hours : 0;
+             await apiFetch(`/api/servers/${serverId}`, {
+                 method: 'PATCH',
+                 body: JSON.stringify({ maintenance_hours: hoursToSend })
+             });
+             showToast(active ? `Maintenance enabled for ${hours}h` : 'Maintenance disabled', 'info');
+             setTimeout(loadServerData, 500);
+         } catch (e) { 
+             alert('Failed to update maintenance state: ' + e.message);
+             document.getElementById('maint-toggle').checked = !active; // Revert UI
+         }
+     }
 
     async function setMaintenanceWindow() {
         const hours = document.getElementById('maint-hours').value;
@@ -332,27 +345,29 @@
         }
     }
 
-    async function addService() {
-        const name = document.getElementById('new-service-name').value.trim();
-        const user = document.getElementById('new-service-user').value.trim();
-        const path = document.getElementById('new-service-path').value.trim();
-        if (!name || !user || !path) return showToast('Name, User, and Path required', 'warning');
-        
-        try {
-            const res = await apiFetch(`/api/servers/${serverId}/services`, {
-                method: 'POST',
-                body: JSON.stringify({ name: name, user: user, path: path })
-            });
-            showToast('Service added successfully', 'success');
-            managedServices = res.services || [];
-            renderServices();
-            document.getElementById('new-service-name').value = '';
-            document.getElementById('new-service-user').value = '';
-            document.getElementById('new-service-path').value = '';
-        } catch (e) {
-            alert('Failed to add service: ' + e.message);
-        }
-    }
+     async function addService() {
+         const name = document.getElementById('new-service-name').value.trim();
+         const user = document.getElementById('new-service-user').value.trim();
+         const path = document.getElementById('new-service-path').value.trim();
+         const restartCmd = document.getElementById('new-service-restart-cmd').value.trim();
+         if (!name || !user || !path) return showToast('Name, User, and Path required', 'warning');
+         
+         try {
+             const res = await apiFetch(`/api/servers/${serverId}/services`, {
+                 method: 'POST',
+                 body: JSON.stringify({ name: name, user: user, path: path, restart_cmd: restartCmd })
+             });
+             showToast('Service added successfully', 'success');
+             managedServices = res.services || [];
+             renderServices();
+             document.getElementById('new-service-name').value = '';
+             document.getElementById('new-service-user').value = '';
+             document.getElementById('new-service-path').value = '';
+             document.getElementById('new-service-restart-cmd').value = '';
+         } catch (e) {
+             alert('Failed to add service: ' + e.message);
+         }
+     }
 
     async function removeService(serviceName) {
         if (!confirm(`Delete service ${serviceName}?`)) return;
