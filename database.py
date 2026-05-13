@@ -19,6 +19,9 @@ def init_db(app: Flask):
             # Users
             db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(128) UNIQUE"))
             db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(32) DEFAULT 'normal' NOT NULL"))
+            db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP WITH TIME ZONE"))
+            db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT FALSE NOT NULL"))
+            db.session.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR(64)"))
             
             # Servers
             db.session.execute(text("ALTER TABLE servers ADD COLUMN IF NOT EXISTS role VARCHAR(32) DEFAULT 'none'"))

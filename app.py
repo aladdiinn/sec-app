@@ -722,7 +722,7 @@ class RuleManager:
     def __init__(self, rules_dir="rules"):
         self.rules_dir = rules_dir
         self.rules = []
-        self.load_rules()
+        # load_rules() will be called after DB init
 
     def load_rules(self):
         self.rules = []
@@ -793,6 +793,7 @@ class RuleManager:
         return triggered_rules
 
 # Global Rule Manager instance
+# It will load rules lazily or explicitly after DB init to avoid schema errors
 rule_manager = RuleManager()
 
 
@@ -2920,6 +2921,7 @@ def internal_error(e):
 # Initialize database on startup
 with app.app_context():
     init_db(app)
+    rule_manager.load_rules()
     seed_admin()
 
 if __name__ == "__main__":
