@@ -1578,20 +1578,21 @@ def restart_services(server_id):
         return jsonify({"error": "Invalid services data"}), 500
     results = []
     for svc in services:
-        user = svc.get("user")
-        cmd = svc.get("restart_cmd") or f"{svc.get('path')}/bin/startup.sh"
+        user = svc.get("user", "root")
+        base_cmd = svc.get("restart_cmd") or f"{svc.get('path')}/bin/startup.sh"
+        linux_cmd = f"sudo -u {user} {base_cmd}"
         # Try to run as the specified user (Linux-style with sudo)
         try:
             import subprocess
-            completed = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+            completed = subprocess.run(linux_cmd, shell=True, capture_output=True, text=True, timeout=30)
             res = {"stdout": completed.stdout, "stderr": completed.stderr, "returncode": completed.returncode}
         except Exception as e:
             # Fallback to Windows function if Linux approach fails
             logger.warning(f"Linux-style subprocess failed, falling back to Windows run_as_user: {e}")
-            res = run_as_user(user, cmd)
+            res = run_as_user(user, base_cmd)
         results.append({
             "name": svc.get("name"),
-            "command": cmd,
+            "command": linux_cmd,
             "returncode": res["returncode"],
             "stdout": res["stdout"],
             "stderr": res["stderr"]
