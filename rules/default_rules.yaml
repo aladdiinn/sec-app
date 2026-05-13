@@ -50,3 +50,135 @@ rules:
   mitre_technique: T1548
   name: 'Test: Root Command Execution'
   severity: critical
+- condition:
+    field: description
+    operator: contains
+    value: /etc/shadow
+  event_type: file_change
+  is_active: true
+  message: Sensitive file /etc/shadow accessed or modified
+  mitre_tactic: Credential Access
+  mitre_technique: T1003.008
+  name: Sensitive File Access /etc/shadow
+  severity: critical
+- condition:
+    field: description
+    operator: regex
+    value: nc\s+(-l|-lp|-lvp)
+  event_type: new_process
+  is_active: true
+  message: Netcat listener started — possible C2 channel
+  mitre_tactic: Execution
+  mitre_technique: T1059
+  name: Netcat Listener Detected
+  severity: critical
+- condition:
+    field: description
+    operator: contains
+    value: /etc/passwd
+  event_type: file_change
+  is_active: true
+  message: /etc/passwd file was modified — possible user account manipulation
+  mitre_tactic: Persistence
+  mitre_technique: T1136
+  name: Passwd File Modified
+  severity: critical
+- condition:
+    field: description
+    operator: contains
+    value: authorized_keys
+  event_type: file_change
+  is_active: true
+  message: SSH authorized_keys file modified — possible backdoor installation
+  mitre_tactic: Persistence
+  mitre_technique: T1098.004
+  name: SSH Authorized Keys Modified
+  severity: critical
+- condition:
+    field: description
+    operator: contains
+    value: /etc/cron
+  event_type: file_change
+  is_active: true
+  message: Crontab or cron directory modified — possible persistence mechanism
+  mitre_tactic: Persistence
+  mitre_technique: T1053.005
+  name: Crontab Modification
+  severity: critical
+- condition:
+    field: description
+    operator: contains
+    value: chmod +s
+  event_type: new_process
+  is_active: true
+  message: SUID bit set on binary — privilege escalation risk
+  mitre_tactic: Privilege Escalation
+  mitre_technique: T1548.001
+  name: SUID Binary Created
+  severity: critical
+- condition:
+    field: description
+    operator: contains
+    value: Failed pwd
+  event_type: failed_login
+  is_active: true
+  message: Multiple failed password attempts detected
+  mitre_tactic: Credential Access
+  mitre_technique: T1110
+  name: Failed Brute Force Pattern
+  severity: warning
+- condition:
+    field: description
+    operator: contains
+    value: port_scan
+  event_type: network_event
+  is_active: true
+  message: Port scanning activity detected from external source
+  mitre_tactic: Discovery
+  mitre_technique: T1046
+  name: Port Scan Detected
+  severity: warning
+- condition:
+    field: description
+    operator: contains
+    value: large_upload
+  event_type: network_event
+  is_active: true
+  message: Large outbound file transfer detected — possible data exfiltration
+  mitre_tactic: Exfiltration
+  mitre_technique: T1048
+  name: Large File Transfer
+  severity: warning
+- condition:
+    field: description
+    operator: contains
+    value: useradd
+  event_type: new_process
+  is_active: true
+  message: New OS user account created — verify if authorized
+  mitre_tactic: Persistence
+  mitre_technique: T1136.001
+  name: New User Account Created
+  severity: warning
+- condition:
+    field: description
+    operator: contains
+    value: apt-get install
+  event_type: new_process
+  is_active: true
+  message: Software installation via apt-get detected outside maintenance window
+  mitre_tactic: Execution
+  mitre_technique: T1072
+  name: Package Manager Unusual Usage
+  severity: warning
+- condition:
+    field: description
+    operator: contains
+    value: service_stopped
+  event_type: service_event
+  is_active: true
+  message: Critical service stopped unexpectedly — possible impact or sabotage
+  mitre_tactic: Impact
+  mitre_technique: T1489
+  name: Service Stopped Unexpectedly
+  severity: warning

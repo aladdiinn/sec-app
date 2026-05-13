@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SecurePulse — Bug Fix & Production Build Guide</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#040d1a; --bg2:#071526; --bg3:#0a1e35; --bg4:#0d2040;
+  --cyan:#00c8ff; --cyan2:rgba(0,200,255,0.12); --cyan3:rgba(0,200,255,0.05);
+  --green:#00ff88; --red:#ff3b5c; --amber:#ffb020; --purple:#a855f7;
+  --border:rgba(0,200,255,0.18); --border2:rgba(0,200,255,0.35);
+  --text:#c8e8f8; --text2:rgba(200,232,248,0.55); --text3:rgba(200,232,248,0.28);
+  --orb:'Orbitron',monospace; --mono:'Share Tech Mono',monospace; --raj:'Rajdhani',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--raj);font-size:15px;line-height:1.6;overflow-x:hidden;}
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,200,255,0.01) 3px,rgba(0,200,255,0.01) 4px);pointer-events:none;z-index:1000;}
+.sweep{position:fixed;top:0;left:0;right:0;height:1.5px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);animation:sweepDown 6s linear infinite;z-index:999;pointer-events:none;}
+@keyframes sweepDown{from{top:0;opacity:0}5%{opacity:1}95%{opacity:.6}to{top:100vh;opacity:0}}
+
+.topbar{position:sticky;top:0;background:rgba(4,13,26,.97);border-bottom:1px solid var(--border);padding:14px 36px;display:flex;align-items:center;justify-content:space-between;backdrop-filter:blur(12px);z-index:900;}
+.logo{display:flex;align-items:center;gap:12px;}
+.logo-icon{width:36px;height:36px;background:var(--cyan2);border:1.5px solid var(--border2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;position:relative;}
+.logo-pulse{position:absolute;inset:-5px;border-radius:10px;border:1px solid rgba(0,200,255,.2);animation:lpulse 2.5s ease-in-out infinite;}
+@keyframes lpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.1)}}
+.logo-text{font-family:var(--orb);font-size:12px;letter-spacing:3px;color:var(--cyan);}
+.logo-sub{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;}
+.topbar-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.t-pill{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:4px 10px;border:1px solid;border-radius:4px;}
+.t-pill.red{color:var(--red);border-color:rgba(255,59,92,.3);background:rgba(255,59,92,.06);}
+.t-pill.amber{color:var(--amber);border-color:rgba(255,176,32,.3);background:rgba(255,176,32,.06);}
+.t-pill.green{color:var(--green);border-color:rgba(0,255,136,.3);background:rgba(0,255,136,.06);}
+
+.hero{padding:46px 36px 28px;text-align:center;position:relative;}
+.hero::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:700px;height:200px;background:radial-gradient(ellipse,rgba(0,200,255,.06) 0%,transparent 70%);pointer-events:none;}
+.hero h1{font-family:var(--orb);font-size:22px;letter-spacing:4px;color:#fff;margin-bottom:8px;}
+.hero h1 span{color:var(--cyan);}
+.hero-sub{font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:2px;margin-bottom:22px;}
+.chip-row{display:flex;justify-content:center;flex-wrap:wrap;gap:8px;}
+.chip{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:5px 14px;border-radius:20px;border:1px solid;cursor:default;}
+.chip.red{color:var(--red);border-color:rgba(255,59,92,.3);background:rgba(255,59,92,.06);}
+.chip.amber{color:var(--amber);border-color:rgba(255,176,32,.3);background:rgba(255,176,32,.06);}
+.chip.cyan{color:var(--cyan);border-color:rgba(0,200,255,.3);background:rgba(0,200,255,.06);}
+.chip.green{color:var(--green);border-color:rgba(0,255,136,.3);background:rgba(0,255,136,.06);}
+
+.container{max-width:1100px;margin:0 auto;padding:0 28px 60px;}
+
+/* SECTION HEADER */
+.sec-hdr{display:flex;align-items:center;gap:14px;margin:40px 0 22px;padding-bottom:12px;border-bottom:1px solid var(--border);position:relative;}
+.sec-hdr::after{content:'';position:absolute;bottom:-1px;left:0;width:160px;height:1px;background:var(--cyan);}
+.sec-icon{width:42px;height:42px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+.sec-title{font-family:var(--orb);font-size:13px;letter-spacing:3px;color:#fff;}
+.sec-sub{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:2px;margin-top:3px;}
+
+/* ISSUE BLOCK */
+.issue-block{border-radius:12px;padding:22px 26px;margin-bottom:16px;position:relative;overflow:hidden;}
+.issue-block::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;}
+.issue-block.bug{background:rgba(255,59,92,.04);border:1px solid rgba(255,59,92,.2);}
+.issue-block.bug::before{background:linear-gradient(90deg,transparent,var(--red),transparent);}
+.issue-block.feat{background:var(--bg2);border:1px solid var(--border);}
+.issue-block.feat::before{background:linear-gradient(90deg,transparent,var(--cyan),transparent);}
+.issue-block.warn{background:rgba(255,176,32,.04);border:1px solid rgba(255,176,32,.2);}
+.issue-block.warn::before{background:linear-gradient(90deg,transparent,var(--amber),transparent);}
+.issue-block.good{background:rgba(0,255,136,.03);border:1px solid rgba(0,255,136,.15);}
+.issue-block.good::before{background:linear-gradient(90deg,transparent,var(--green),transparent);}
+
+.issue-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.issue-tag{font-family:var(--mono);font-size:9px;letter-spacing:2px;padding:3px 10px;border-radius:3px;border:1px solid;}
+.issue-tag.bug{color:var(--red);border-color:rgba(255,59,92,.35);background:rgba(255,59,92,.08);}
+.issue-tag.fix{color:var(--green);border-color:rgba(0,255,136,.35);background:rgba(0,255,136,.08);}
+.issue-tag.feat{color:var(--cyan);border-color:rgba(0,200,255,.35);background:rgba(0,200,255,.08);}
+.issue-tag.warn{color:var(--amber);border-color:rgba(255,176,32,.35);background:rgba(255,176,32,.08);}
+.issue-tag.add{color:var(--purple);border-color:rgba(168,85,247,.35);background:rgba(168,85,247,.08);}
+.issue-title{font-family:var(--orb);font-size:13px;letter-spacing:1.5px;color:#fff;margin-bottom:8px;}
+.issue-desc{font-family:var(--raj);font-size:14px;color:var(--text2);margin-bottom:14px;line-height:1.7;}
+
+/* ERROR BOX */
+.error-box{background:#0a0005;border:1px solid rgba(255,59,92,.25);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-family:var(--mono);font-size:10px;color:#ff8080;line-height:1.8;}
+.error-label{font-family:var(--mono);font-size:8px;letter-spacing:2px;color:var(--red);margin-bottom:6px;}
+
+/* INFO GRID */
+.info-grid{display:grid;gap:12px;margin-bottom:14px;}
+.info-grid.two{grid-template-columns:1fr 1fr;}
+.info-grid.three{grid-template-columns:1fr 1fr 1fr;}
+.info-box{background:var(--bg);border:1px solid rgba(0,200,255,.1);border-radius:8px;padding:14px 16px;}
+.ib-label{font-family:var(--mono);font-size:8px;letter-spacing:2px;margin-bottom:8px;}
+.ib-label.red{color:var(--red);}
+.ib-label.cyan{color:var(--cyan);}
+.ib-label.green{color:var(--green);}
+.ib-label.amber{color:var(--amber);}
+.ib-label.purple{color:var(--purple);}
+.ib-text{font-family:var(--raj);font-size:13px;color:var(--text2);line-height:1.7;}
+
+/* FLOW STEPS */
+.flow{display:flex;flex-direction:column;gap:8px;}
+.flow-step{display:flex;align-items:flex-start;gap:10px;}
+.fn{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9px;flex-shrink:0;margin-top:2px;}
+.fn.c{background:var(--cyan2);border:1px solid var(--border2);color:var(--cyan);}
+.fn.r{background:rgba(255,59,92,.1);border:1px solid rgba(255,59,92,.3);color:var(--red);}
+.fn.g{background:rgba(0,255,136,.08);border:1px solid rgba(0,255,136,.25);color:var(--green);}
+.fn.a{background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.3);color:var(--amber);}
+.ft{font-family:var(--raj);font-size:13px;color:var(--text2);line-height:1.6;}
+.ft strong{color:var(--text);}
+
+/* PROMPT BOX */
+.prompt-wrap{background:#020a14;border:1px solid var(--border);border-radius:8px;padding:16px 20px;font-family:var(--mono);font-size:11px;line-height:1.95;color:#7ab8d4;margin-top:14px;}
+.pk{color:var(--cyan);font-weight:bold;}
+.pv{color:#d0eeff;}
+.pc{color:rgba(100,180,220,.28);font-style:italic;}
+.pr{color:var(--red);}
+.pg{color:var(--green);}
+.pa{color:var(--amber);}
+.copy-btn{margin-top:10px;padding:6px 18px;background:rgba(0,200,255,.07);border:1px solid rgba(0,200,255,.28);border-radius:5px;color:var(--cyan);font-family:var(--mono);font-size:10px;letter-spacing:2px;cursor:pointer;display:inline-block;transition:background .2s;}
+.copy-btn:hover{background:rgba(0,200,255,.16);}
+
+/* TABLE */
+.rule-table{width:100%;border-collapse:collapse;}
+.rule-table th{font-family:var(--mono);font-size:8px;letter-spacing:2px;color:var(--cyan);text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);}
+.rule-table td{font-family:var(--raj);font-size:13px;color:var(--text2);padding:9px 12px;border-bottom:1px solid rgba(0,200,255,.07);vertical-align:top;}
+.rule-table tr:hover td{background:var(--cyan3);}
+.badge{font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:3px;border:1px solid;display:inline-block;}
+.badge.crit{color:var(--red);border-color:rgba(255,59,92,.35);}
+.badge.warn{color:var(--amber);border-color:rgba(255,176,32,.35);}
+.badge.info{color:var(--cyan);border-color:rgba(0,200,255,.3);}
+.badge.good{color:var(--green);border-color:rgba(0,255,136,.3);}
+
+hr.div{border:none;border-top:1px solid var(--border);margin:36px 0;}
+.footer{border-top:1px solid var(--border);padding:26px 36px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--text3);letter-spacing:2px;}
+.dot-live{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:6px;vertical-align:middle;animation:dlive 1.5s ease infinite;}
+@keyframes dlive{0%,100%{opacity:1}50%{opacity:.2}}
+</style>
+</head>
+<body>
+<div class="sweep"></div>
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-icon">🛡<div class="logo-pulse"></div></div>
+    <div><div class="logo-text">SECUREPULSE</div><div class="logo-sub">BUG FIX + PRODUCTION BUILD GUIDE</div></div>
+  </div>
+  <div class="topbar-right">
+    <div class="t-pill red">🔴 BUGS: 8 CRITICAL</div>
+    <div class="t-pill amber">🟡 FIXES: 12 ITEMS</div>
+    <div class="t-pill green">🟢 NEW RULES + PLAYBOOKS INCLUDED</div>
+  </div>
+</div>
+
+<div class="hero">
+  <h1>SECUREPULSE — <span>PRODUCTION READY</span> FIX GUIDE</h1>
+  <div class="hero-sub">EVERY BROKEN FEATURE · ROOT CAUSE · EXACT FIX · COPY-READY PROMPTS</div>
+  <div class="chip-row">
+    <span class="chip red">🐛 Asset Delete + Add Server</span>
+    <span class="chip red">🐛 Maintenance Toggle Not Persisting</span>
+    <span class="chip red">🐛 Managed Services Not Saving</span>
+    <span class="chip red">🐛 Detection Rules Broken</span>
+    <span class="chip red">🐛 Threat Intel Empty</span>
+    <span class="chip red">🐛 Playbooks HTTP 500</span>
+    <span class="chip red">🐛 Audit Log DB Error</span>
+    <span class="chip amber">⚡ 15 New Detection Rules</span>
+    <span class="chip amber">⚡ 8 Production Playbooks</span>
+    <span class="chip cyan">📋 Full Prompt Included</span>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ===== BUG 1: ASSET DELETE + ADD SERVER ===== -->
+<div class="sec-hdr">
+  <div class="sec-icon" style="background:rgba(255,59,92,.1);border:1px solid rgba(255,59,92,.3);">🗑</div>
+  <div><div class="sec-title">BUG 1 — ASSET PAGE: DELETE SERVER + ADD NEW SERVER</div><div class="sec-sub">MISSING FEATURES ON ASSET/SERVER DETAIL PAGE</div></div>
+</div>
+
+<div class="issue-block bug">
+  <div class="issue-top"><span class="issue-tag bug">🔴 MISSING FEATURE</span><span class="issue-tag feat">ASSET PAGE</span></div>
+  <div class="issue-title">DELETE SERVER BUTTON — NOT PRESENT</div>
+  <div class="issue-desc">The Asset/Server detail page (Image 2) has no way to remove a server from the system. Once a server is added it can never be deleted from the UI. Need a DELETE button with confirmation to remove the asset and all its associated events/alerts from the database.</div>
+  <div class="info-grid two">
+    <div class="info-box">
+      <div class="ib-label cyan">WHERE TO ADD IT</div>
+      <div class="ib-text">On the Asset Detail page top-right area: next to "ISOLATE HOST" and "EXPORT REPORT" buttons, add a <strong>"DELETE SERVER"</strong> button (red outlined, trash icon). Also add a DELETE option in the Assets list page per server card/row.</div>
+    </div>
+    <div class="info-box">
+      <div class="ib-label red">DELETION BEHAVIOUR</div>
+      <div class="ib-text">Clicking DELETE → confirmation modal: "This will permanently delete [server-name] and all associated events, alerts, and history. This cannot be undone." → Two buttons: [CANCEL] [CONFIRM DELETE]. On confirm → DELETE /api/assets/{id} → cascade delete all related records → redirect to Assets list.</div>
+    </div>
+  </div>
+  <div class="prompt-wrap" id="b1">
+<span class="pc">// BUG FIX 1 — DELETE SERVER + ADD NEW SERVER</span><br><br>
+<span class="pk">FEATURE 1: DELETE SERVER BUTTON</span><br>
+<span class="pv">Location: Asset Detail page top-right button row (next to ISOLATE HOST + EXPORT REPORT)</span><br>
+<span class="pv">Button style: red outlined, Share Tech Mono font, "🗑 DELETE SERVER" label</span><br><br>
+<span class="pv">On click → show confirmation modal:<br>
+  Title: "DELETE SERVER" (red, Orbitron)<br>
+  Body: "Permanently delete [hostname] and ALL associated events, alerts, playbook history, and maintenance records. This CANNOT be undone."<br>
+  Input: type server name to confirm (prevents accidental deletion)<br>
+  Buttons: [CANCEL] [CONFIRM DELETE — red filled]</span><br><br>
+<span class="pk">API:</span><br>
+<span class="pv">DELETE /api/assets/{server_id}<br>
+CASCADE DELETE in database:<br>
+  - events WHERE server_id = id<br>
+  - alerts WHERE server_id = id<br>
+  - audit_logs WHERE target LIKE '%server_name%'<br>
+  - maintenance_records WHERE server_id = id<br>
+  - managed_services WHERE server_id = id<br>
+  - project_endpoints WHERE endpoint_id = id<br>
+After delete: redirect to /assets page, show success toast: "Server deleted successfully"</span><br><br>
+<span class="pk">FEATURE 2: ADD NEW SERVER (from Assets list page)</span><br>
+<span class="pv">On Assets list page top-right: "+ ADD SERVER" button (cyan, primary style)</span><br>
+<span class="pv">Opens modal with:<br>
+  - Server Name / Hostname (text input, required)<br>
+  - IP Address (text input, validate IPv4 format, required)<br>
+  - Description (optional)<br>
+  - Environment tag: [Production / Staging / Development / Testing] dropdown<br>
+  - "GENERATE AGENT TOKEN" button — auto-generates a secure token (UUID v4)<br>
+  - Shows generated token in copy-able field with "COPY TOKEN" button<br>
+  - Install command shown: "curl -sSL https://[your-domain]/install.sh | AGENT_TOKEN=[token] bash"<br>
+  - [CANCEL] [CREATE SERVER] buttons</span><br><br>
+<span class="pk">BACKEND for Add Server:</span><br>
+<span class="pv">POST /api/assets<br>
+Body: {name, ip_address, description, environment, agent_token (auto-generated)}<br>
+Returns: created asset object with id and agent_token<br>
+Server starts in OFFLINE status — goes ONLINE when agent first connects</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('b1',this)">COPY BUG 1 PROMPT</button>
+</div>
+
+<!-- ===== BUG 2: MAINTENANCE TOGGLE ===== -->
+<div class="sec-hdr">
+  <div class="sec-icon" style="background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.3);">🔧</div>
+  <div><div class="sec-title">BUG 2 — MAINTENANCE TOGGLE NOT PERSISTING</div><div class="sec-sub">STATE RESETS ON PAGE REFRESH — NOT SAVING TO DATABASE</div></div>
+</div>
+
+<div class="issue-block bug">
+  <div class="issue-top"><span class="issue-tag bug">🔴 BUG</span><span class="issue-tag feat">ASSET DETAIL PAGE</span></div>
+  <div class="issue-title">MAINTENANCE MODE TOGGLE RESETS ON REFRESH</div>
+  <div class="issue-desc">When you toggle Maintenance ON for a server (Image 2 — "Maintenance Controls" toggle), it shows "Maintenance Enabled" visually but resets back to OFF when the page is refreshed. The toggle state is only stored in React/Vue component local state, NOT being persisted to the database via API call.</div>
+  <div class="error-box">
+    <div class="error-label">ROOT CAUSE</div>
+    Toggle onChange handler is NOT calling any API endpoint.<br>
+    State is managed only in frontend component useState/reactive variable.<br>
+    On page reload: component re-mounts, fetches server data from DB (maintenance=false), overwrites local state.<br>
+    Dashboard "IN MAINTENANCE: 0" never updates because DB value never changes.
+  </div>
+  <div class="prompt-wrap" id="b2">
+<span class="pc">// BUG FIX 2 — MAINTENANCE TOGGLE PERSISTENCE</span><br><br>
+<span class="pk">ROOT CAUSE:</span><br>
+<span class="pr">Toggle onChange is only updating local component state. No API call is being made. Database field never changes. On refresh, component reads DB value (false) and resets toggle.</span><br><br>
+<span class="pk">FIX — BACKEND:</span><br>
+<span class="pv">1. Ensure 'maintenance_mode' boolean column exists on assets/servers table:<br>
+   ALTER TABLE assets ADD COLUMN IF NOT EXISTS maintenance_mode BOOLEAN DEFAULT FALSE;<br>
+   ALTER TABLE assets ADD COLUMN IF NOT EXISTS maintenance_started_at TIMESTAMP;<br>
+   ALTER TABLE assets ADD COLUMN IF NOT EXISTS maintenance_reason TEXT;</span><br><br>
+<span class="pv">2. Create/fix API endpoint:<br>
+   PATCH /api/assets/{server_id}/maintenance<br>
+   Body: {enabled: true/false, reason: "Scheduled maintenance"}<br>
+   Action: UPDATE assets SET maintenance_mode=enabled, maintenance_started_at=NOW() WHERE id=server_id<br>
+   Also: if enabling → suppress alerts from this server (don't create incidents while in maintenance)<br>
+   Returns: {id, maintenance_mode, maintenance_started_at}</span><br><br>
+<span class="pk">FIX — FRONTEND:</span><br>
+<span class="pv">In the toggle onChange handler:<br>
+  const handleMaintenanceToggle = async (enabled) => {<br>
+    setLoading(true);<br>
+    try {<br>
+      const res = await fetch('/api/assets/${serverId}/maintenance', {<br>
+        method: 'PATCH',<br>
+        headers: {'Content-Type':'application/json'},<br>
+        body: JSON.stringify({enabled, reason: maintenanceReason})<br>
+      });<br>
+      const data = await res.json();<br>
+      setMaintenanceEnabled(data.maintenance_mode); // update from DB response<br>
+      showToast(enabled ? 'Maintenance ENABLED' : 'Maintenance DISABLED');<br>
+    } catch(e) {<br>
+      showToast('Failed to update maintenance mode', 'error');<br>
+      setMaintenanceEnabled(!enabled); // revert toggle on failure<br>
+    } finally { setLoading(true); }<br>
+  };</span><br><br>
+<span class="pk">ALSO FIX — Page Load:</span><br>
+<span class="pv">On Asset Detail page mount: fetch server data from GET /api/assets/{id}<br>
+Set toggle state from response: setMaintenanceEnabled(server.maintenance_mode)<br>
+Show maintenance duration if enabled: "In maintenance since: [maintenance_started_at]"</span><br><br>
+<span class="pk">DASHBOARD COUNTER FIX:</span><br>
+<span class="pv">Dashboard "IN MAINTENANCE" stat card query:<br>
+SELECT COUNT(*) FROM assets WHERE maintenance_mode = TRUE<br>
+This will now correctly reflect real-time maintenance count</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('b2',this)">COPY BUG 2 PROMPT</button>
+</div>
+
+<!-- ===== BUG 3: MANAGED SERVICES ===== -->
+<div class="sec-hdr">
+  <div class="sec-icon" style="background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.3);">⚙</div>
+  <div><div class="sec-title">BUG 3 — MANAGED SERVICES (RESTART LOGIC) NOT SAVING</div><div class="sec-sub">SERVICE CONFIGURATIONS NOT PERSISTED + PLAYBOOK INTEGRATION BROKEN</div></div>
+</div>
+
+<div class="issue-block bug">
+  <div class="issue-top"><span class="issue-tag bug">🔴 BUG</span><span class="issue-tag feat">ASSET DETAIL — MANAGED SERVICES</span></div>
+  <div class="issue-title">SERVICE CONFIGURATIONS NOT SAVING TO DATABASE</div>
+  <div class="issue-desc">The "Managed Services (Restart Logic)" section (Image 2) lets you configure services like Tomcat with Name, User, Binary Path. But these configs are NOT being saved — same root cause as maintenance toggle: no API call on form submit. The "RUN RESTART PLAYBOOK" button also fails because there are no saved services to restart.</div>
+
+  <div class="info-grid two">
+    <div class="info-box">
+      <div class="ib-label cyan">IS MANAGED SERVICES REQUIRED?</div>
+      <div class="ib-text"><strong>YES — absolutely required.</strong> Without it, the "Restart Service" playbook action has NO way to know: which service to restart, what the binary path is, which Linux user to run it as, or what the server's service name is. This config IS the bridge between your playbook and the real server.<br><br>Example: You run Tomcat as user "tomcat8" from /app/apache-tomcat/bin/startup.sh. Without this config, a playbook cannot automatically restart it.</div>
+    </div>
+    <div class="info-box">
+      <div class="ib-label amber">WHAT THE CONFIG ENABLES</div>
+      <div class="ib-text">Once services are saved:<br>• Playbook "RESTART SERVICE" action can select from the saved services list for that server<br>• Agent receives restart command: {service_name, binary_path, run_as_user}<br>• Agent executes: <code>sudo -u tomcat8 /app/apache-tomcat/bin/startup.sh</code><br>• Agent reports back: success/failure with stdout/stderr<br>• Alert is auto-resolved if restart succeeds</div>
+    </div>
+  </div>
+
+  <div class="prompt-wrap" id="b3">
+<span class="pc">// BUG FIX 3 — MANAGED SERVICES SAVE + PLAYBOOK INTEGRATION</span><br><br>
+<span class="pk">DATABASE TABLE (create if missing):</span><br>
+<span class="pv">CREATE TABLE IF NOT EXISTS managed_services (<br>
+  id SERIAL PRIMARY KEY,<br>
+  server_id INTEGER REFERENCES assets(id) ON DELETE CASCADE,<br>
+  service_name VARCHAR(100) NOT NULL,   -- e.g. "Tomcat-1"<br>
+  run_as_user VARCHAR(100) NOT NULL,    -- e.g. "tomcat8"<br>
+  binary_path VARCHAR(500) NOT NULL,    -- e.g. "/app/apache-tomcat/bin"<br>
+  start_command VARCHAR(200),           -- e.g. "startup.sh"<br>
+  stop_command VARCHAR(200),            -- e.g. "shutdown.sh"<br>
+  status VARCHAR(50) DEFAULT 'unknown', -- running/stopped/unknown<br>
+  created_at TIMESTAMP DEFAULT NOW(),<br>
+  updated_at TIMESTAMP DEFAULT NOW()<br>
+);</span><br><br>
+<span class="pk">API ENDPOINTS:</span><br>
+<span class="pv">POST /api/assets/{server_id}/services<br>
+Body: {service_name, run_as_user, binary_path, start_command, stop_command}<br>
+Returns: created service object<br><br>
+GET /api/assets/{server_id}/services → list all services for server<br>
+PUT /api/assets/{server_id}/services/{service_id} → update service config<br>
+DELETE /api/assets/{server_id}/services/{service_id} → remove service<br>
+POST /api/assets/{server_id}/services/{service_id}/restart → trigger restart via agent</span><br><br>
+<span class="pk">FRONTEND FIX — SAVE BUTTON:</span><br>
+<span class="pv">In "ADD NEW SERVICE" form, the "ADD SERVICE" / save button must call:<br>
+  await fetch('/api/assets/${serverId}/services', {method:'POST', body: JSON.stringify(serviceData)})<br>
+On success: refresh service list from API, show toast "Service saved", clear form<br>
+On page load: fetch GET /api/assets/{id}/services and render existing services list</span><br><br>
+<span class="pk">SERVICES LIST UI (below the add form):</span><br>
+<span class="pv">Show each saved service as a row with:<br>
+[Service Name] [Run As User] [Binary Path] [STATUS badge] [RESTART NOW] [DELETE] buttons<br>
+STATUS badge: green=running / red=stopped / grey=unknown<br>
+"RESTART NOW" button → POST /api/assets/{server_id}/services/{service_id}/restart<br>
+Shows restart result: "✓ Tomcat-1 restarted successfully at 18:32:44" or error</span><br><br>
+<span class="pk">PLAYBOOK INTEGRATION (RESTART SERVICE action):</span><br>
+<span class="pv">When playbook action type = "restart_service":<br>
+  - Show dropdown: "Select service to restart" populated from GET /api/assets/{server_id}/services<br>
+  - Analyst picks service from saved list (e.g., "Tomcat-1 on e2e-test-server")<br>
+  - On playbook execution: agent receives command with exact binary_path + run_as_user<br>
+  - Agent runs: sudo -u {run_as_user} {binary_path}/{start_command}<br>
+  - Agent reports result back to SecurePulse API<br>
+  IF no services configured: show warning "No services configured for this server. Go to Asset Detail → Managed Services to add service configurations."</span><br><br>
+<span class="pk">RUN RESTART PLAYBOOK BUTTON:</span><br>
+<span class="pv">Button calls POST /api/playbooks/run {playbook_type: "restart_service", server_id, service_id}<br>
+Shows spinner while running<br>
+Shows result panel: steps completed, output, success/failure status</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('b3',this)">COPY BUG 3 PROMPT</button>
+</div>
+
+<!-- ===== BUG 4: DETECTION RULES ===== -->
+<div class="sec-hdr">
+  <div class="sec-icon" style="background:rgba(255,59,92,.1);border:1px solid rgba(255,59,92,.3);">🔍</div>
+  <div><div class="sec-title">BUG 4 — DETECTION RULES: BROKEN + NEED MORE RULES</div><div class="sec-sub">ONLY FAILED_LOGIN WORKING + 15 NEW RULES TO ADD</div></div>
+</div>
+
+<div class="issue-block bug">
+  <div class="issue-top"><span class="issue-tag bug">🔴 BUG</span><span class="issue-tag feat">DETECTION PAGE</span></div>
+  <div class="issue-title">RULES NOT TRIGGERING ALERTS — RULE ENGINE BROKEN</div>
+  <div class="issue-desc">Image 3 shows the Actions column rendering raw JavaScript code: "${window.USER_ROLE !== 'normal' ? [DELETE] : 'Read-only'}" — this means the template literal is not being evaluated, it's being stored as a raw string in the DB and rendered as text. Also only failed_login events trigger alerts because the rule matching engine is only checking that event type.</div>
+  <div class="error-box">
+    <div class="error-label">VISIBLE BUG IN IMAGE 3</div>
+    Actions column shows raw code: ${"{"}window.USER_ROLE !== 'normal' ? [DELETE] : 'Read-only'{"}"}<br>
+    This is a template literal that was never evaluated — stored as a string in DB and rendered literally.<br>
+    The rule evaluation logic only processes 'failed_login' event_type — other types (new_process, file_change, ssh_login) never trigger alerts.
+  </div>
+  <div class="prompt-wrap" id="b4">
+<span class="pc">// BUG FIX 4 — DETECTION RULES ENGINE</span><br><br>
+<span class="pk">BUG 1 — ACTIONS COLUMN RENDERING RAW JS:</span><br>
+<span class="pr">The string "${"{"}window.USER_ROLE !== 'normal' ? [DELETE] : 'Read-only'{"}"}" is being stored in the DB or passed as a prop and rendered as innerHTML/text instead of being evaluated as JSX/template.</span><br>
+<span class="pg">FIX: Replace the raw string with proper conditional rendering in the component:<br>
+  // In the table row component:<br>
+  const canDelete = currentUser.role !== 'normal';<br>
+  return (&lt;td&gt;{canDelete ? &lt;DeleteButton/&gt; : &lt;span&gt;Read-only&lt;/span&gt;}&lt;/td&gt;);<br>
+  // Do NOT store UI logic as strings in the database</span><br><br>
+<span class="pk">BUG 2 — RULE ENGINE ONLY MATCHES failed_login:</span><br>
+<span class="pr">The event processing pipeline has a conditional that routes only 'failed_login' events to rule matching. All other event types bypass the rule engine entirely.</span><br>
+<span class="pg">FIX — in your event processing service/worker:<br>
+  # WRONG (current code likely looks like this):<br>
+  if event.type == 'failed_login':<br>
+      check_rules(event)<br><br>
+  # CORRECT — check ALL event types against ALL rules:<br>
+  def process_event(event):<br>
+      rules = get_all_active_rules()  # fetch from DB<br>
+      for rule in rules:<br>
+          if rule.event_type == event.type:  # match by type first<br>
+              if evaluate_condition(rule, event):  # then check condition<br>
+                  create_alert(rule, event)  # fire alert<br><br>
+  def evaluate_condition(rule, event):<br>
+      if rule.operator == 'contains':<br>
+          return rule.value.lower() in event.description.lower()<br>
+      elif rule.operator == 'regex':<br>
+          return bool(re.search(rule.value, event.description))<br>
+      elif rule.operator == 'equals':<br>
+          return event.description == rule.value<br>
+      return False</span><br><br>
+<span class="pk">NOW ADD THESE 15 NEW DETECTION RULES TO THE SYSTEM:</span><br>
+<span class="pv">(Insert these into detection_rules table as default/seed rules)</span><br><br>
+<span class="pa">CRITICAL RULES:</span><br>
+<span class="pv">1. name:"SSH Root Login Attempt" event_type:ssh_login operator:contains value:"user root" severity:CRITICAL mitre:T1078 tactic:"Initial Access"<br>
+2. name:"Sensitive File Access /etc/shadow" event_type:file_change operator:contains value:"/etc/shadow" severity:CRITICAL mitre:T1003.008 tactic:"Credential Access"<br>
+3. name:"Reverse Shell Pattern" event_type:new_process operator:regex value:"bash\s+-i\s+>&?\s+/dev/tcp" severity:CRITICAL mitre:T1059.004 tactic:"Execution"<br>
+4. name:"Netcat Listener Detected" event_type:new_process operator:regex value:"nc\s+(-l|-lp|-lvp)" severity:CRITICAL mitre:T1059 tactic:"Execution"<br>
+5. name:"Passwd File Modified" event_type:file_change operator:contains value:"/etc/passwd" severity:CRITICAL mitre:T1136 tactic:"Persistence"<br>
+6. name:"SSH Authorized Keys Modified" event_type:file_change operator:contains value:"authorized_keys" severity:CRITICAL mitre:T1098.004 tactic:"Persistence"<br>
+7. name:"Crontab Modification" event_type:file_change operator:contains value:"/etc/cron" severity:CRITICAL mitre:T1053.005 tactic:"Persistence"<br>
+8. name:"SUID Binary Created" event_type:new_process operator:contains value:"chmod +s" severity:CRITICAL mitre:T1548.001 tactic:"Privilege Escalation"</span><br><br>
+<span class="pa">WARNING RULES:</span><br>
+<span class="pv">9. name:"Unauthorized Sudo Usage" event_type:new_process operator:contains value:"sudo" severity:WARNING mitre:T1548.003 tactic:"Privilege Escalation"<br>
+10. name:"Failed Brute Force Pattern" event_type:failed_login operator:contains value:"Failed pwd" severity:WARNING mitre:T1110 tactic:"Credential Access"<br>
+11. name:"Port Scan Detected" event_type:network_event operator:contains value:"port_scan" severity:WARNING mitre:T1046 tactic:"Discovery"<br>
+12. name:"Large File Transfer" event_type:network_event operator:contains value:"large_upload" severity:WARNING mitre:T1048 tactic:"Exfiltration"<br>
+13. name:"New User Account Created" event_type:new_process operator:contains value:"useradd" severity:WARNING mitre:T1136.001 tactic:"Persistence"<br>
+14. name:"Package Manager Unusual Usage" event_type:new_process operator:contains value:"apt-get install" severity:WARNING mitre:T1072 tactic:"Execution"<br>
+15. name:"Service Stopped Unexpectedly" event_type:service_event operator:contains value:"service_stopped" severity:WARNING mitre:T1489 tactic:"Impact"</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('b4',this)">COPY BUG 4 + NEW RULES PROMPT</button>
+</div>
+
+<!-- ===== BUG 5: THREAT INTEL ===== -->
+<div class="sec-hdr">
+  <div class="sec-icon" style="background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.3);">🧠</div>
+  <div><div class="sec-title">BUG 5 — THREAT INTEL: EMPTY + ADD IOC / BULK IMPORT MISSING</div><div class="sec-sub">NO DATA SHOWING + MISSING ACTION BUTTONS</div></div>
+</div>
+
+<div class="issue-block bug">
+  <div class="issue-top"><span class="issue-tag bug">🔴 BUG</span><span class="issue-tag feat">THREAT INTEL PAGE</span></div>
+  <div class="issue-title">THREAT INTEL SHOWING EMPTY — ADD IOC + BULK IMPORT BUTTONS GONE</div>
+  <div class="issue-desc">Image 4 shows the Threat Intel page with 0 IOCs and the stat counters showing edit icons (pencil) instead of numbers — meaning the stat values are not loading from the API. The "+ ADD IOC" and "BULK IMPORT" buttons that should be at the top are missing. The IOC table shows "No indicators found" but the count display is broken.</div>
+  <div class="error-box">
+    <div class="error-label">VISIBLE ISSUES IN IMAGE 4</div>
+    Stat boxes show pencil/edit icons where numbers should be — API not returning count data<br>
+    "+ ADD IOC" button completely missing from the page<br>
+    "BULK IMPORT" button missing<br>
+    IOC table is empty — either API failing or no data seeded
+  </div>
+  <div class="prompt-wrap" id="b5">
+<span class="pc">// BUG FIX 5 — THREAT INTEL PAGE</span><br><br>
+<span class="pk">BUG 1 — STAT COUNTERS SHOWING EDIT ICONS:</span><br>
+<span class="pr">The stat values (TOTAL IOCs, MALICIOUS IPs, CRITICAL SEVERITY) are rendering edit/pencil icons instead of numbers. This means the API response field names don't match what the frontend expects, causing undefined values that fall back to some edit control.</span><br>
+<span class="pg">FIX: Check GET /api/threat-intel/stats API response.<br>
+Expected response shape: {total_iocs: 5, malicious_ips: 3, critical_severity: 2}<br>
+Check frontend component is reading the correct field names from response.<br>
+Add null checks: const totalIocs = stats?.total_iocs ?? 0;<br>
+If API returns different field names, either fix API or update frontend destructuring.</span><br><br>
+<span class="pk">BUG 2 — MISSING ADD IOC + BULK IMPORT BUTTONS:</span><br>
+<span class="pr">Buttons are missing — either removed accidentally, conditional rendering hiding them (role check failing), or component not rendering the header section.</span><br>
+<span class="pg">FIX: Re-add these buttons to the Threat Intel page header:<br>
+  // Top of page, between subtitle and search bar:<br>
+  &lt;div class="action-row"&gt;<br>
+    &lt;button onClick={openAddIOCModal}&gt;+ ADD IOC&lt;/button&gt;<br>
+    &lt;button onClick={openBulkImportModal}&gt;↑ BULK IMPORT&lt;/button&gt;<br>
+  &lt;/div&gt;</span><br><br>
+<span class="pk">ADD IOC MODAL (implement if missing):</span><br>
+<span class="pv">Fields: IOC Type dropdown [IP / Domain / Hash / URL / Email], Value (text), Severity [Critical/Warning/Info], Source (text), Expiry date (optional), Notes (optional)<br>
+Submit: POST /api/threat-intel/iocs {type, value, severity, source, expiry, notes}<br>
+On success: refresh IOC list, show toast "IOC added", close modal</span><br><br>
+<span class="pk">BULK IMPORT MODAL:</span><br>
+<span class="pv">File upload (.csv or .txt) OR paste text area<br>
+CSV format: type,value,severity,source (one per line)<br>
+Preview: show parsed IOCs before import with row count<br>
+Submit: POST /api/threat-intel/iocs/bulk {iocs: [{type,value,severity,source}]}<br>
+Progress bar for large imports</span><br><br>
+<span class="pk">IOC TABLE FIX:</span><br>
+<span class="pv">GET /api/threat-intel/iocs should return array of IOC objects<br>
+Each row: TYPE badge | VALUE | SEVERITY badge | SOURCE | ADDED date | ACTIONS (REMOVE button)<br>
+REMOVE button: DELETE /api/threat-intel/iocs/{id}<br>
+Also add "BLOCK IP" button for IP-type IOCs (calls firewall API)</span><br><br>
+<span class="pk">AUTO-MATCHING (make it functional):</span><br>
+<span class="pv">When new event arrives with source_ip field:<br>
+  SELECT * FROM iocs WHERE type='ip' AND value = event.source_ip AND expiry > NOW()<br>
+  IF match found → create alert: "Malicious IP detected: {ip} matches IOC from {source}"<br>
+This must run in the event processing pipeline, not just display in UI</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('b5',this)">COPY BUG 5 PROMPT</button>
+</div>
+
+<!-- ===== BUG 6: PLAYBOOKS ===== -->
+<div class="sec-hdr">
+  <div class="sec-icon" style="background:rgba(255,59,92,.1);border:1px solid rgba(255,59,92,.3);">📋</div>
+  <div><div class="sec-title">BUG 6 — PLAYBOOKS: HTTP 500 + NOT EXECUTING</div><div class="sec-sub">ALL PLAYBOOK ACTIONS BROKEN + 8 NEW PLAYBOOKS TO ADD</div></div>
+</div>
+
+<div class="issue-block bug">
+  <div class="issue-top"><span class="issue-tag bug">🔴 BUG</span><span class="issue-tag feat">PLAYBOOK BUILDER</span></div>
+  <div class="issue-title">PLAYBOOK BUILDER SHOWS HTTP 500 — ACTIONS NOT EXECUTING</div>
+  <div class="issue-desc">Image 5 shows the Playbook Builder loading with "HTTP 500" error in the Active Playbooks panel. The action buttons (ISOLATE HOST, BLOCK IP, DISABLE ACCOUNT, NOTIFY SLACK, NOTIFY EMAIL, RUN HEALTH CHECK, RESTART SERVICE) are displayed but none execute when a playbook runs. The playbook execution engine has no implementation behind these action types.</div>
+  <div class="error-box">
+    <div class="error-label">HTTP 500 SOURCE</div>
+    GET /api/playbooks returning 500 — likely a database query error.<br>
+    Check: does the 'playbooks' table exist? Does it have the correct schema?<br>
+    Check server logs for the actual Python/Node exception on this endpoint.
+  </div>
+  <div class="prompt-wrap" id="b6">
+<span class="pc">// BUG FIX 6 — PLAYBOOKS HTTP 500 + FULL EXECUTION ENGINE</span><br><br>
+<span class="pk">STEP 1 — FIX HTTP 500:</span><br>
+<span class="pv">Check server logs for exact error on GET /api/playbooks<br>
+Likely causes:<br>
+  a) Table doesn't exist → run migration: CREATE TABLE playbooks (...)<br>
+  b) Column mismatch → check ORM model matches DB schema<br>
+  c) Missing JOIN table → playbook_actions table may not exist<br><br>
+Required tables:<br>
+CREATE TABLE IF NOT EXISTS playbooks (id SERIAL PRIMARY KEY, name VARCHAR(200), description TEXT, trigger_condition JSONB, is_active BOOLEAN DEFAULT TRUE, created_by INTEGER, created_at TIMESTAMP DEFAULT NOW());<br>
+CREATE TABLE IF NOT EXISTS playbook_actions (id SERIAL PRIMARY KEY, playbook_id INTEGER REFERENCES playbooks(id) ON DELETE CASCADE, action_type VARCHAR(100), action_config JSONB, step_order INTEGER, created_at TIMESTAMP DEFAULT NOW());</span><br><br>
+<span class="pk">STEP 2 — IMPLEMENT EACH ACTION TYPE:</span><br>
+<span class="pv">Build a playbook execution engine with a handler per action_type:</span><br><br>
+<span class="pg">ACTION: isolate_host</span><br>
+<span class="pv">→ Call POST /api/assets/{server_id}/isolate (existing endpoint)<br>
+→ Log: "Host {hostname} isolated by playbook {name}"<br>
+→ Create audit log entry</span><br><br>
+<span class="pg">ACTION: block_ip</span><br>
+<span class="pv">→ Call configured firewall APIs to add DENY rule for source IP from triggering event<br>
+→ Add IP to Threat Intel IOCs automatically<br>
+→ Log result per firewall</span><br><br>
+<span class="pg">ACTION: disable_account</span><br>
+<span class="pv">→ Call identity provider API (Okta/LDAP/AD) to disable affected user<br>
+→ User extracted from triggering event's username field<br>
+→ Log: "Account {username} disabled by playbook {name}"</span><br><br>
+<span class="pg">ACTION: notify_email</span><br>
+<span class="pv">→ Use configured SMTP/SendGrid/SES to send alert email<br>
+→ Config: recipient email(s), subject template, body template<br>
+→ Include: incident details, server name, severity, link to incident<br>
+→ Settings: Settings → Notifications → Email config</span><br><br>
+<span class="pg">ACTION: notify_slack</span><br>
+<span class="pv">→ POST to configured Slack Webhook URL<br>
+→ Message format: {text: "🚨 CRITICAL ALERT: {title}\nServer: {hostname}\nTime: {timestamp}\nLink: {url}"}<br>
+→ Config: Settings → Notifications → Slack Webhook URL</span><br><br>
+<span class="pg">ACTION: run_health_check</span><br>
+<span class="pv">→ Send health check command to agent on target server<br>
+→ Agent responds with: CPU%, RAM%, disk%, running services list, last event time<br>
+→ Store result in playbook execution log<br>
+→ If health check fails (agent unreachable): create new alert "Agent unreachable on {hostname}"</span><br><br>
+<span class="pg">ACTION: restart_service</span><br>
+<span class="pv">→ Look up managed_services for target server<br>
+→ Send restart command to agent: {action:"restart", service_name, binary_path, run_as_user}<br>
+→ Agent executes: sudo -u {run_as_user} {binary_path}/{start_command}<br>
+→ Agent reports stdout/stderr back within 30s timeout<br>
+→ Log success/failure with output</span><br><br>
+<span class="pg">ACTION: resolve_alert</span><br>
+<span class="pv">→ PATCH /api/incidents/{alert_id}/resolve {resolved_by: "playbook:{name}", resolution_note: "Auto-resolved by playbook"}<br>
+→ Update alert status to RESOLVED<br>
+→ Log resolution</span><br><br>
+<span class="pg">ACTION: promote_to_case</span><br>
+<span class="pv">→ POST /api/cases {incident_id, title, description: "Auto-promoted by playbook {name}"}<br>
+→ Returns case_id<br>
+→ All related alerts linked to this case</span><br><br>
+<span class="pk">STEP 3 — EXECUTION ENGINE:</span><br>
+<span class="pv">async function executePlaybook(playbook_id, trigger_event) {<br>
+  const playbook = await getPlaybook(playbook_id);<br>
+  const actions = await getPlaybookActions(playbook_id); // ordered by step_order<br>
+  const execution_log = await createExecutionLog(playbook_id, trigger_event.id);<br>
+  for (const action of actions) {<br>
+    const result = await executeAction(action.action_type, action.action_config, trigger_event);<br>
+    await logActionResult(execution_log.id, action.id, result);<br>
+    if (!result.success && action.stop_on_failure) break;<br>
+  }<br>
+  await finalizeExecutionLog(execution_log.id);<br>
+}</span><br><br>
+<span class="pk">STEP 4 — ADD THESE 8 PRODUCTION PLAYBOOKS AS DEFAULTS:</span><br>
+<span class="pv">1. "Auto-Isolate + Notify" — Trigger: CRITICAL brute-force alert → Actions: isolate_host → notify_email → notify_slack → promote_to_case<br>
+2. "Brute Force Response" — Trigger: failed_login count > 5 in 60s → Actions: block_ip (source) → notify_slack → resolve_alert<br>
+3. "Malware Detection Response" — Trigger: alert contains "reverse_shell" OR "netcat" → Actions: isolate_host → block_ip → disable_account → notify_email → promote_to_case<br>
+4. "File Integrity Alert" — Trigger: file_change on /etc/passwd or /etc/shadow → Actions: run_health_check → notify_slack → promote_to_case<br>
+5. "Service Down Auto-Restart" — Trigger: service_event contains "service_stopped" → Actions: restart_service → run_health_check → notify_email<br>
+6. "SSH Root Login Response" — Trigger: ssh_login + description contains "user root" → Actions: disable_account → notify_slack → promote_to_case<br>
+7. "Critical Alert Escalation" — Trigger: alert severity=CRITICAL AND no analyst action in 30 min → Actions: notify_email (all admins) → notify_slack<br>
+8. "Suspicious Process Response" — Trigger: new_process + CRITICAL severity → Actions: run_health_check → notify_slack → promote_to_case</span><br><br>
+<span class="pk">PLAYBOOK EXECUTION HISTORY UI:</span><br>
+<span class="pv">Each playbook in the list should show:<br>
+  - Last run: timestamp<br>
+  - Last run result: SUCCESS/FAILED/PARTIAL badge<br>
+  - "VIEW EXECUTION LOG" button → shows each step with result + output<br>
+  - "RUN MANUALLY" button (with target server selector)</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('b6',this)">COPY BUG 6 + PLAYBOOKS PROMPT</button>
+</div>
+
+<!-- ===== BUG 7: AUDIT LOG ===== -->
+<div class="sec-hdr">
+  <div class="sec-icon" style="background:rgba(255,59,92,.1);border:1px solid rgba(255,59,92,.3);">📜</div>
+  <div><div class="sec-title">BUG 7 — AUDIT LOG: DATABASE COLUMN MISSING</div><div class="sec-sub">sqlalchemy.exc.ProgrammingError — COLUMN audit_logs.details DOES NOT EXIST</div></div>
+</div>
+
+<div class="issue-block bug">
+  <div class="issue-top"><span class="issue-tag bug">🔴 BUG</span><span class="issue-tag feat">AUDIT LOG PAGE</span></div>
+  <div class="issue-title">AUDIT LOG CRASHES WITH SQLALCHEMY PROGRAMMING ERROR</div>
+  <div class="error-box">
+    <div class="error-label">EXACT ERROR FROM IMAGE 6</div>
+    sqlalchemy.exc.ProgrammingError: (psycopg2.errors.UndefinedColumn) column audit_logs.details does not exist<br>
+    LINE 1: ...s_action, audit_logs.TARGET AS audit_logs_target, audit_logs...<br>
+    SQL: SELECT audit_logs.id, audit_logs.user_id, audit_logs.action, audit_logs.target, audit_logs.details, audit_logs.timestamp FROM audit_logs ORDER BY audit_logs.timestamp DESC LIMIT 100
+  </div>
+  <div class="prompt-wrap" id="b7">
+<span class="pc">// BUG FIX 7 — AUDIT LOG DATABASE COLUMN MISSING</span><br><br>
+<span class="pk">ROOT CAUSE:</span><br>
+<span class="pr">The SQLAlchemy ORM model for AuditLog has a 'details' column defined, but this column was never added to the actual PostgreSQL database table via migration. The ORM model and DB schema are out of sync.</span><br><br>
+<span class="pk">IMMEDIATE FIX — Run this SQL on your database:</span><br>
+<span class="pv">-- Connect to your PostgreSQL database and run:<br>
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details TEXT;<br>
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45);<br>
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent TEXT;<br><br>
+-- Verify the full table schema matches your ORM:<br>
+\d audit_logs<br>
+-- Should show: id, user_id, action, target, details, timestamp, ip_address, user_agent</span><br><br>
+<span class="pk">MIGRATION FILE (add to your migrations folder):</span><br>
+<span class="pv"># If using Alembic (Flask/SQLAlchemy):<br>
+def upgrade():<br>
+    op.add_column('audit_logs', sa.Column('details', sa.Text(), nullable=True))<br>
+    op.add_column('audit_logs', sa.Column('ip_address', sa.String(45), nullable=True))<br>
+    op.add_column('audit_logs', sa.Column('user_agent', sa.Text(), nullable=True))<br><br>
+def downgrade():<br>
+    op.drop_column('audit_logs', 'details')<br>
+    op.drop_column('audit_logs', 'ip_address')<br>
+    op.drop_column('audit_logs', 'user_agent')</span><br><br>
+<span class="pk">AUDIT LOG PAGE — MAKE FULLY FUNCTIONAL:</span><br>
+<span class="pv">After DB fix, ensure the page shows:<br>
+  Columns: TIMESTAMP | USER | ACTION | TARGET | DETAILS | IP ADDRESS<br>
+  Filters: Date range picker, Action type dropdown, User filter, Search box<br>
+  Pagination: 50 rows per page with prev/next<br>
+  Export: "EXPORT CSV" button → GET /api/audit-logs/export?format=csv<br><br>
+Audit log entries must be created for EVERY action:<br>
+  - User login/logout → {action:"user_login", target:username, details:"Login from IP X"}<br>
+  - Host isolation → {action:"host_isolated", target:hostname, details:"Manual isolation by analyst"}<br>
+  - Alert resolved → {action:"alert_resolved", target:"Alert #{id}", details:"Resolution note"}<br>
+  - Rule created/deleted → {action:"rule_created", target:rule_name, details:full rule JSON}<br>
+  - Playbook executed → {action:"playbook_executed", target:playbook_name, details:"Triggered by alert #{id}"}<br>
+  - User role changed → {action:"role_changed", target:username, details:"Role changed from X to Y by Z"}<br>
+  - IOC added/removed → {action:"ioc_added", target:ip_value, details:"Added to threat intel"}</span><br><br>
+<span class="pk">AUDIT LOG SERVICE (helper function to call everywhere):</span><br>
+<span class="pv">def log_action(user_id, action, target, details=None, request=None):<br>
+    entry = AuditLog(<br>
+        user_id=user_id,<br>
+        action=action,<br>
+        target=str(target),<br>
+        details=details,<br>
+        ip_address=request.remote_addr if request else None,<br>
+        timestamp=datetime.utcnow()<br>
+    )<br>
+    db.session.add(entry)<br>
+    db.session.commit()<br><br>
+# Call this in EVERY API endpoint that modifies data:<br>
+log_action(current_user.id, "host_isolated", server.name, f"Isolated by {current_user.email}", request)</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('b7',this)">COPY BUG 7 PROMPT</button>
+</div>
+
+<!-- ===== GLOBAL OPTIMIZATIONS ===== -->
+<hr class="div">
+<div class="sec-hdr">
+  <div class="sec-icon" style="background:rgba(0,200,255,.1);border:1px solid rgba(0,200,255,.3);">🚀</div>
+  <div><div class="sec-title">PART 2 — GLOBAL OPTIMIZATIONS FOR PRODUCTION</div><div class="sec-sub">APPLY THESE ACROSS THE ENTIRE APP</div></div>
+</div>
+
+<div class="issue-block feat">
+  <div class="issue-top"><span class="issue-tag feat">⚡ OPTIMIZATION</span><span class="issue-tag add">ALL PAGES</span></div>
+  <div class="issue-title">PRODUCTION HARDENING — APPLY TO ENTIRE APP</div>
+  <div class="prompt-wrap" id="bopt">
+<span class="pc">// GLOBAL PRODUCTION OPTIMIZATIONS</span><br><br>
+<span class="pk">1. ERROR HANDLING — Every API call must have try/catch:</span><br>
+<span class="pv">Every fetch() call in frontend must handle errors gracefully.<br>
+Instead of crashing the page, show: error toast + fallback empty state.<br>
+Pattern for every API call:<br>
+  try {<br>
+    const res = await fetch('/api/...');<br>
+    if (!res.ok) throw new Error(`HTTP ${"{"}res.status{"}"}`);<br>
+    const data = await res.json();<br>
+    setData(data);<br>
+  } catch (err) {<br>
+    console.error(err);<br>
+    showToast('Failed to load data. Retrying...', 'error');<br>
+    setData([]); // safe fallback<br>
+  }</span><br><br>
+<span class="pk">2. LOADING STATES — All data tables must show skeleton/spinner:</span><br>
+<span class="pv">While any API call is in progress: show loading skeleton rows (animated grey bars)<br>
+Never show empty table while data is still loading<br>
+Differentiate: loading (spinner) vs empty (empty state message)</span><br><br>
+<span class="pk">3. REAL-TIME DATA — Dashboard + Incidents must auto-refresh:</span><br>
+<span class="pv">Dashboard stats: refresh every 30 seconds (setInterval or WebSocket)<br>
+Incidents list: refresh every 60 seconds or on WebSocket push event<br>
+Bell icon notification count: refresh every 30 seconds<br>
+Use AbortController to cancel stale requests on component unmount</span><br><br>
+<span class="pk">4. DATABASE INDEXES — Add for performance:</span><br>
+<span class="pv">CREATE INDEX IF NOT EXISTS idx_events_server_id ON events(server_id);<br>
+CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC);<br>
+CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);<br>
+CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);<br>
+CREATE INDEX IF NOT EXISTS idx_alerts_server_id ON alerts(server_id);<br>
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp DESC);<br>
+CREATE INDEX IF NOT EXISTS idx_iocs_value ON iocs(value);<br>
+CREATE INDEX IF NOT EXISTS idx_iocs_type ON iocs(type);</span><br><br>
+<span class="pk">5. NOTIFICATIONS BELL (topbar) — Make functional:</span><br>
+<span class="pv">GET /api/notifications?unread=true → returns count + recent items<br>
+Bell icon shows red badge with unread count<br>
+Click → dropdown: recent alerts, playbook results, SLA warnings<br>
+"Mark all read" → PATCH /api/notifications/mark-read<br>
+Auto-refresh count every 30 seconds</span><br><br>
+<span class="pk">6. SESSION MANAGEMENT:</span><br>
+<span class="pv">JWT token expiry: 8 hours for normal usage<br>
+On 401 response from any API: redirect to login page automatically<br>
+Show "Session expired, please login again" message<br>
+"Remember me" checkbox → 30 day token</span><br><br>
+<span class="pk">7. TOAST NOTIFICATIONS — Standardize across app:</span><br>
+<span class="pv">Every create/update/delete action shows a toast:<br>
+  Success: green, 3s auto-dismiss, top-right position<br>
+  Error: red, 6s auto-dismiss with "Dismiss" button, top-right<br>
+  Warning: amber, 5s, top-right<br>
+  Info: cyan, 3s, top-right<br>
+Toast message format: "[ACTION]: [RESULT]" e.g. "Host isolated: e2e-test-server" or "Error: Failed to connect to firewall API"</span><br><br>
+<span class="pk">8. FORM VALIDATION — All modals/forms:</span><br>
+<span class="pv">Required fields show red border + error message if submitted empty<br>
+IP address fields: validate IPv4 format with regex<br>
+Port fields: validate 1-65535 range<br>
+All forms: disable submit button while API call is in progress (prevents double-submit)</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('bopt',this)">COPY OPTIMIZATION PROMPT</button>
+</div>
+
+<!-- ===== MASTER PROMPT ===== -->
+<hr class="div">
+<div class="sec-hdr">
+  <div class="sec-icon" style="background:rgba(0,255,136,.1);border:1px solid rgba(0,255,136,.3);">📋</div>
+  <div><div class="sec-title">MASTER PROMPT — SEND THIS ENTIRE BLOCK TO ANTIGRAVITY AI</div><div class="sec-sub">SINGLE CONSOLIDATED PROMPT WITH ALL BUGS + FIXES</div></div>
+</div>
+
+<div class="issue-block good">
+  <div class="issue-title">COMBINED MASTER PROMPT — ALL ISSUES IN ONE</div>
+  <div class="prompt-wrap" id="bmaster">
+<span class="pc">// SECUREPULSE — FULL PRODUCTION FIX BRIEF — SEND TO AI BUILDER</span><br><br>
+<span class="pa">== THIS IS A COMPLETE BUG FIX + FEATURE COMPLETION TASK ==</span><br>
+<span class="pv">I have a cyber security SOC dashboard (SecurePulse) built with Python/Flask backend + PostgreSQL + React/Vue frontend. Multiple features are broken or not implemented. Fix ALL of the following:</span><br><br>
+
+<span class="pk">━━ BUG 1: ASSET PAGE — DELETE + ADD SERVER ━━</span><br>
+<span class="pv">Add "🗑 DELETE SERVER" button on Asset Detail page (top-right, red outlined). On click: confirmation modal requiring user to type server name, then DELETE /api/assets/{id} with CASCADE delete of all related records (events, alerts, maintenance, services, project_endpoints). Also add "+ ADD SERVER" button on Assets list page with modal: hostname, IP, description, environment tag, auto-generated agent token with copy button and install command shown.</span><br><br>
+
+<span class="pk">━━ BUG 2: MAINTENANCE TOGGLE NOT SAVING ━━</span><br>
+<span class="pv">The maintenance toggle in Asset Detail resets on page refresh. Add column: ALTER TABLE assets ADD COLUMN IF NOT EXISTS maintenance_mode BOOLEAN DEFAULT FALSE, maintenance_started_at TIMESTAMP. Create PATCH /api/assets/{id}/maintenance endpoint. Wire the toggle onChange to call this API. Load toggle state from API on page mount. Fix Dashboard "IN MAINTENANCE" counter to query DB.</span><br><br>
+
+<span class="pk">━━ BUG 3: MANAGED SERVICES NOT SAVING ━━</span><br>
+<span class="pv">Create managed_services table: (id, server_id, service_name, run_as_user, binary_path, start_command, stop_command, status). Implement POST/GET/PUT/DELETE /api/assets/{id}/services. Wire the "ADD SERVICE" button to call POST API. Show saved services list below form with RESTART NOW button. In Playbook "restart_service" action: populate service dropdown from this table. Agent receives exact binary_path + run_as_user to execute restart command.</span><br><br>
+
+<span class="pk">━━ BUG 4: DETECTION RULES BROKEN ━━</span><br>
+<span class="pv">Fix Actions column rendering raw JS template literal as text — replace with proper conditional JSX: {currentUser.role !== 'normal' ? &lt;DeleteButton/&gt; : &lt;span&gt;Read-only&lt;/span&gt;}. Fix rule engine to process ALL event_types not just failed_login: loop all active rules, match by event_type, evaluate condition (contains/regex/equals) against event.description, create alert if matched. Seed these 15 new detection rules into DB: [SSH Root Login/T1078/CRITICAL, /etc/shadow access/T1003.008/CRITICAL, Reverse Shell regex/T1059.004/CRITICAL, Netcat Listener/T1059/CRITICAL, /etc/passwd modified/T1136/CRITICAL, authorized_keys modified/T1098.004/CRITICAL, Crontab modification/T1053.005/CRITICAL, SUID chmod+s/T1548.001/CRITICAL, Sudo usage/T1548.003/WARNING, Brute force pattern/T1110/WARNING, Port scan/T1046/WARNING, Large file transfer/T1048/WARNING, useradd command/T1136.001/WARNING, apt-get install/T1072/WARNING, service_stopped/T1489/WARNING].</span><br><br>
+
+<span class="pk">━━ BUG 5: THREAT INTEL EMPTY + BROKEN ━━</span><br>
+<span class="pv">Fix stat counters (TOTAL IOCs, MALICIOUS IPs, CRITICAL) — check API response field names match frontend. Re-add missing "+ ADD IOC" and "BULK IMPORT" buttons to page header. ADD IOC modal: type/value/severity/source/expiry fields → POST /api/threat-intel/iocs. BULK IMPORT: CSV upload with preview. Add "BLOCK IP" action button in IOC table rows for IP-type IOCs. In event processing pipeline: match event source_ip against active IOCs and auto-create alert on match.</span><br><br>
+
+<span class="pk">━━ BUG 6: PLAYBOOKS HTTP 500 + NOT EXECUTING ━━</span><br>
+<span class="pv">Fix HTTP 500: check server logs, verify playbooks + playbook_actions tables exist with correct schema. Implement all 8 action handlers: isolate_host (call existing isolation API), block_ip (call firewall APIs), disable_account (call identity provider API), notify_email (SMTP/SendGrid), notify_slack (webhook URL), run_health_check (send to agent), restart_service (agent command with binary_path+run_as_user from managed_services), resolve_alert (PATCH alert status), promote_to_case (create case). Build execution engine: loop actions in step_order, log each result, continue on success, stop on failure if configured. Add 8 default playbooks: Auto-Isolate+Notify, Brute Force Response, Malware Detection, File Integrity Alert, Service Down Auto-Restart, SSH Root Login Response, Critical Alert Escalation, Suspicious Process Response. Each playbook card: show last run time + result + VIEW LOG button.</span><br><br>
+
+<span class="pk">━━ BUG 7: AUDIT LOG SQLALCHEMY ERROR ━━</span><br>
+<span class="pv">Run: ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details TEXT; ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45); — this fixes the "column details does not exist" error. Create log_action() helper function and call it from EVERY API endpoint that modifies data (login, isolate, resolve, rule create/delete, playbook run, user role change, IOC add/remove). Audit log page: add date filter, action type filter, search box, pagination (50/page), CSV export button.</span><br><br>
+
+<span class="pk">━━ GLOBAL PRODUCTION OPTIMIZATIONS ━━</span><br>
+<span class="pv">1. Every fetch() call: wrap in try/catch, show error toast on failure, show empty state (not crash) on error. 2. All tables: show loading skeleton while fetching. 3. Dashboard + Incidents: auto-refresh every 30s. 4. Add DB indexes on events(server_id), alerts(severity/status/server_id), audit_logs(timestamp), iocs(value). 5. Topbar bell icon: functional notifications (GET /api/notifications), badge count, dropdown, mark-read. 6. Session management: auto-redirect to login on 401, "session expired" message. 7. Toast notifications: standardized across all actions (green=success 3s, red=error 6s, amber=warning 5s). 8. Form validation: required field highlighting, IP format validation, disable submit during loading.</span><br><br>
+
+<span class="pa">STYLE: Keep all existing cyber/HUD aesthetic — Orbitron font for titles, Share Tech Mono for labels. All new UI must match existing design system. Do NOT change visual style — only fix functionality.</span>
+  </div>
+  <button class="copy-btn" onclick="copyText('bmaster',this)">⚡ COPY MASTER PROMPT (ALL BUGS)</button>
+</div>
+
+</div><!-- /container -->
+
+<div class="footer">
+  <span class="dot-live"></span>
+  SECUREPULSE BUG FIX GUIDE &nbsp;·&nbsp; 7 CRITICAL BUGS DOCUMENTED &nbsp;·&nbsp; 15 NEW RULES &nbsp;·&nbsp; 8 NEW PLAYBOOKS &nbsp;·&nbsp; PRODUCTION READY
+</div>
+
+<script>
+function copyText(id, btn) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.innerText).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'COPIED ✓';
+    btn.style.color = '#00ff88';
+    btn.style.borderColor = 'rgba(0,255,136,0.35)';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; btn.style.borderColor = ''; }, 2500);
+  });
+}
+</script>
+</body>
+</html>

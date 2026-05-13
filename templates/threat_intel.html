@@ -179,7 +179,7 @@
                 <td style="padding:12px; font-size:12px; color:var(--text-secondary)">${i.source || '—'}</td>
                 <td style="padding:12px; font-size:12px; color:var(--text-muted)">${new Date(i.created_at).toLocaleDateString()}</td>
                 <td style="padding:12px">
-                    \${window.USER_ROLE !== 'normal' ? \`<button class="btn btn-glass" style="padding:4px 10px; font-size:11px; border-color:var(--accent-red); color:var(--accent-red)" onclick="deleteIOC(\${i.id}, '\${i.value}')">Remove</button>\` : '<span style="color:var(--text-muted)">Read-only</span>'}
+                    ${window.USER_ROLE !== 'normal' ? `<button class="btn btn-glass" style="padding:4px 10px; font-size:11px; border-color:var(--accent-red); color:var(--accent-red)" onclick="deleteIOC(${i.id}, '${i.value.replace(/'/g, "\\'")}')">Remove</button>` : '<span style="color:var(--text-muted)">Read-only</span>'}
                 </td>
             </tr>
         `).join('');

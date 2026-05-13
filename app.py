@@ -260,7 +260,6 @@ def seed_admin():
     admin_email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@securepulse.local")
     admin_pass  = os.getenv("DEFAULT_ADMIN_PASSWORD", "Admin@1234")
 
-    # Check if admin already exists by email OR username
     existing_admin = User.query.filter((User.email == admin_email) | (User.username == "admin")).first()
     if not existing_admin:
         try:
@@ -281,6 +280,16 @@ def seed_admin():
         except Exception as e:
             db.session.rollback()
             logger.error(f"Error seeding admin: {str(e)}")
+    else:
+        # Backfill username for existing admin if it's missing (e.g. after schema migration)
+        if not existing_admin.username:
+            try:
+                existing_admin.username = "admin"
+                db.session.commit()
+                logger.info(f"Updated existing superuser {admin_email} with username 'admin'")
+            except Exception as e:
+                db.session.rollback()
+                logger.error(f"Failed to update existing admin username: {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -693,7 +702,7 @@ systemctl restart securepulse-agent
 
 info "✅ SecurePulse Agent installed and running!"
 """
-    return script, 200, {"Content-Type": "text/plain"}
+    return script.replace("\r\n", "\n"), 200, {"Content-Type": "text/plain"}
 
 
 @app.route("/setup/agent-files")
@@ -2918,11 +2927,157 @@ def internal_error(e):
 # ENTRY POINT
 # ──────────────────────────────────────────────────────────────────────────────
 
+def seed_default_rules():
+    """Seed 15 production detection rules into the YAML file if not already present."""
+    import yaml as _yaml
+    rules_dir = os.path.join(base_dir, "rules")
+    rules_path = os.path.join(rules_dir, "default_rules.yaml")
+    os.makedirs(rules_dir, exist_ok=True)
+
+    DEFAULT_RULES = [
+        {"name": "SSH Root Login Attempt", "event_type": "ssh_login", "severity": "critical",
+         "condition": {"field": "description", "operator": "contains", "value": "user root"},
+         "mitre_tactic": "Initial Access", "mitre_technique": "T1078",
+         "message": "SSH login attempt as root user detected", "is_active": True},
+        {"name": "Sensitive File Access /etc/shadow", "event_type": "file_change", "severity": "critical",
+         "condition": {"field": "description", "operator": "contains", "value": "/etc/shadow"},
+         "mitre_tactic": "Credential Access", "mitre_technique": "T1003.008",
+         "message": "Sensitive file /etc/shadow accessed or modified", "is_active": True},
+        {"name": "Reverse Shell Pattern", "event_type": "new_process", "severity": "critical",
+         "condition": {"field": "description", "operator": "regex", "value": r"bash\s+-i\s+>&?\s+/dev/tcp"},
+         "mitre_tactic": "Execution", "mitre_technique": "T1059.004",
+         "message": "Reverse shell pattern detected in process arguments", "is_active": True},
+        {"name": "Netcat Listener Detected", "event_type": "new_process", "severity": "critical",
+         "condition": {"field": "description", "operator": "regex", "value": r"nc\s+(-l|-lp|-lvp)"},
+         "mitre_tactic": "Execution", "mitre_technique": "T1059",
+         "message": "Netcat listener started — possible C2 channel", "is_active": True},
+        {"name": "Passwd File Modified", "event_type": "file_change", "severity": "critical",
+         "condition": {"field": "description", "operator": "contains", "value": "/etc/passwd"},
+         "mitre_tactic": "Persistence", "mitre_technique": "T1136",
+         "message": "/etc/passwd file was modified — possible user account manipulation", "is_active": True},
+        {"name": "SSH Authorized Keys Modified", "event_type": "file_change", "severity": "critical",
+         "condition": {"field": "description", "operator": "contains", "value": "authorized_keys"},
+         "mitre_tactic": "Persistence", "mitre_technique": "T1098.004",
+         "message": "SSH authorized_keys file modified — possible backdoor installation", "is_active": True},
+        {"name": "Crontab Modification", "event_type": "file_change", "severity": "critical",
+         "condition": {"field": "description", "operator": "contains", "value": "/etc/cron"},
+         "mitre_tactic": "Persistence", "mitre_technique": "T1053.005",
+         "message": "Crontab or cron directory modified — possible persistence mechanism", "is_active": True},
+        {"name": "SUID Binary Created", "event_type": "new_process", "severity": "critical",
+         "condition": {"field": "description", "operator": "contains", "value": "chmod +s"},
+         "mitre_tactic": "Privilege Escalation", "mitre_technique": "T1548.001",
+         "message": "SUID bit set on binary — privilege escalation risk", "is_active": True},
+        {"name": "Unauthorized Sudo Usage", "event_type": "new_process", "severity": "warning",
+         "condition": {"field": "description", "operator": "contains", "value": "sudo"},
+         "mitre_tactic": "Privilege Escalation", "mitre_technique": "T1548.003",
+         "message": "Sudo command executed — verify if authorized", "is_active": True},
+        {"name": "Failed Brute Force Pattern", "event_type": "failed_login", "severity": "warning",
+         "condition": {"field": "description", "operator": "contains", "value": "Failed pwd"},
+         "mitre_tactic": "Credential Access", "mitre_technique": "T1110",
+         "message": "Multiple failed password attempts detected", "is_active": True},
+        {"name": "Port Scan Detected", "event_type": "network_event", "severity": "warning",
+         "condition": {"field": "description", "operator": "contains", "value": "port_scan"},
+         "mitre_tactic": "Discovery", "mitre_technique": "T1046",
+         "message": "Port scanning activity detected from external source", "is_active": True},
+        {"name": "Large File Transfer", "event_type": "network_event", "severity": "warning",
+         "condition": {"field": "description", "operator": "contains", "value": "large_upload"},
+         "mitre_tactic": "Exfiltration", "mitre_technique": "T1048",
+         "message": "Large outbound file transfer detected — possible data exfiltration", "is_active": True},
+        {"name": "New User Account Created", "event_type": "new_process", "severity": "warning",
+         "condition": {"field": "description", "operator": "contains", "value": "useradd"},
+         "mitre_tactic": "Persistence", "mitre_technique": "T1136.001",
+         "message": "New OS user account created — verify if authorized", "is_active": True},
+        {"name": "Package Manager Unusual Usage", "event_type": "new_process", "severity": "warning",
+         "condition": {"field": "description", "operator": "contains", "value": "apt-get install"},
+         "mitre_tactic": "Execution", "mitre_technique": "T1072",
+         "message": "Software installation via apt-get detected outside maintenance window", "is_active": True},
+        {"name": "Service Stopped Unexpectedly", "event_type": "service_event", "severity": "warning",
+         "condition": {"field": "description", "operator": "contains", "value": "service_stopped"},
+         "mitre_tactic": "Impact", "mitre_technique": "T1489",
+         "message": "Critical service stopped unexpectedly — possible impact or sabotage", "is_active": True},
+    ]
+
+    try:
+        yaml_data = {"rules": []}
+        if os.path.exists(rules_path):
+            with open(rules_path, "r") as f:
+                yaml_data = _yaml.safe_load(f) or {"rules": []}
+
+        existing_names = {r.get("name") for r in yaml_data.get("rules", [])}
+        added = 0
+        for rule in DEFAULT_RULES:
+            if rule["name"] not in existing_names:
+                yaml_data["rules"].append(rule)
+                added += 1
+                # Also sync to DB for playbook linking
+                try:
+                    if not AlertRule.query.filter_by(name=rule["name"]).first():
+                        db.session.add(AlertRule(
+                            name=rule["name"],
+                            event_type=rule["event_type"],
+                            severity=rule["severity"],
+                        ))
+                except Exception:
+                    pass
+
+        if added > 0:
+            with open(rules_path, "w") as f:
+                _yaml.dump(yaml_data, f, default_flow_style=False, allow_unicode=True)
+            db.session.commit()
+            logger.info(f"Seeded {added} default detection rules")
+        rule_manager.load_rules()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error seeding detection rules: {e}")
+
+
+def seed_default_playbooks():
+    """Seed 8 production-ready default playbooks if not already present."""
+    DEFAULT_PLAYBOOKS = [
+        {"name": "Auto-Isolate + Notify", "description": "Isolate host and notify team on critical brute-force",
+         "actions": [{"type": "isolate_host"}, {"type": "notify_email"}, {"type": "notify_slack"}, {"type": "promote_to_case"}]},
+        {"name": "Brute Force Response", "description": "Block source IP and notify on repeated failed logins",
+         "actions": [{"type": "block_ip"}, {"type": "notify_slack"}, {"type": "resolve_alert"}]},
+        {"name": "Malware Detection Response", "description": "Full containment on reverse shell or netcat detection",
+         "actions": [{"type": "isolate_host"}, {"type": "block_ip"}, {"type": "disable_account"}, {"type": "notify_email"}, {"type": "promote_to_case"}]},
+        {"name": "File Integrity Alert", "description": "Health check and escalate on sensitive file modification",
+         "actions": [{"type": "run_health_check"}, {"type": "notify_slack"}, {"type": "promote_to_case"}]},
+        {"name": "Service Down Auto-Restart", "description": "Auto-restart stopped service and notify",
+         "actions": [{"type": "restart_service"}, {"type": "run_health_check"}, {"type": "notify_email"}]},
+        {"name": "SSH Root Login Response", "description": "Disable account and escalate on root SSH login",
+         "actions": [{"type": "disable_account"}, {"type": "notify_slack"}, {"type": "promote_to_case"}]},
+        {"name": "Critical Alert Escalation", "description": "Email all admins when critical alert has no response",
+         "actions": [{"type": "notify_email"}, {"type": "notify_slack"}]},
+        {"name": "Suspicious Process Response", "description": "Health check and notify on suspicious critical process",
+         "actions": [{"type": "run_health_check"}, {"type": "notify_slack"}, {"type": "promote_to_case"}]},
+    ]
+    try:
+        added = 0
+        for pb_data in DEFAULT_PLAYBOOKS:
+            if not Playbook.query.filter_by(name=pb_data["name"]).first():
+                pb = Playbook(
+                    name=pb_data["name"],
+                    description=pb_data["description"],
+                    actions=json.dumps(pb_data["actions"]),
+                    is_active=True
+                )
+                db.session.add(pb)
+                added += 1
+        if added > 0:
+            db.session.commit()
+            logger.info(f"Seeded {added} default playbooks")
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error seeding playbooks: {e}")
+
+
 # Initialize database on startup
 with app.app_context():
     init_db(app)
     rule_manager.load_rules()
     seed_admin()
+    seed_default_rules()
+    seed_default_playbooks()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))

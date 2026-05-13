@@ -41,7 +41,29 @@ def init_db(app: Flask):
             # Alert Rules
             db.session.execute(text("ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS playbook_id INTEGER"))
             
+            # Threat Indicators
+            db.session.execute(text("ALTER TABLE threat_indicators ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE"))
+            
+            # Audit Logs — Bug 7 fix
+            db.session.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details TEXT"))
+            db.session.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45)"))
+            db.session.execute(text("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent TEXT"))
+            
             db.session.commit()
+
+            # Performance Indexes (IF NOT EXISTS is implicit for concurrent index creation)
+            try:
+                db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_events_server_id ON events(server_id)"))
+                db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(created_at DESC)"))
+                db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity)"))
+                db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_alerts_server_id ON alerts(server_id)"))
+                db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp DESC)"))
+                db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_threat_indicators_value ON threat_indicators(value)"))
+                db.session.commit()
+            except Exception as ie:
+                db.session.rollback()
+                print(f"Index creation skipped (may already exist): {ie}")
+
         except Exception as e:
             print(f"Error during schema migration: {e}")
             db.session.rollback()

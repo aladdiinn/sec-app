@@ -23,7 +23,45 @@
         </svg>
         Export Report
     </button>
+    {% if session.get('user_role') != 'normal' %}
+    <button class="btn btn-glass" onclick="openDeleteServerModal()"
+        style="border-color:var(--red); color:var(--red); display:flex; align-items:center; gap:7px; padding:7px 14px">
+        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+        </svg>
+        Delete Server
+    </button>
+    {% endif %}
 </div>
+
+<!-- Delete Server Modal -->
+<div id="del-srv-overlay" onclick="closeDeleteServerModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:998; backdrop-filter:blur(4px)"></div>
+<div id="del-srv-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:36px; border-radius:var(--radius-lg); z-index:999; width:440px; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--red)">
+    <div style="display:flex; align-items:center; gap:14px; margin-bottom:16px">
+        <div class="stat-icon red" style="width:44px; height:44px; flex-shrink:0">
+            <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+        </div>
+        <div>
+            <h3 style="margin:0; color:var(--red); font-family:var(--orbitron,monospace); font-size:14px; letter-spacing:2px">DELETE SERVER</h3>
+            <p class="text-sub" style="margin:4px 0 0 0; font-size:12px">This will permanently remove this server and ALL associated events, alerts, maintenance history, and managed services. This CANNOT be undone.</p>
+        </div>
+    </div>
+    <p style="font-family:var(--mono); font-size:12px; color:var(--text); background:var(--bg3); padding:10px 14px; border-radius:4px; margin-bottom:16px">
+        Type the server name to confirm: <strong style="color:var(--red)">{{ server.hostname }}</strong>
+    </p>
+    <input id="del-srv-confirm-input" type="text" placeholder="Type hostname to confirm..." class="mono"
+        style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--red); padding:8px 12px; border-radius:4px; font-size:12px; margin-bottom:16px; box-sizing:border-box">
+    <div style="display:flex; gap:10px; justify-content:flex-end">
+        <button class="btn btn-glass" onclick="closeDeleteServerModal()">Cancel</button>
+        <button class="btn btn-primary" id="btn-confirm-del-srv" onclick="confirmDeleteServer()"
+            style="border-color:var(--red); background:rgba(255,59,92,0.15); color:var(--red)">
+            <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="margin-right:5px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            Confirm Delete
+        </button>
+    </div>
+</div>
+
 <style>
     .switch { position: relative; display: inline-block; width: 40px; height: 20px; }
     .switch input { opacity: 0; width: 0; height: 0; }
@@ -435,6 +473,39 @@
         const token = getToken();
         if (!token) { showToast('Authentication error', 'error'); return; }
         window.open(`/api/servers/${serverId}/export-report?token=${token}`, '_blank');
+    }
+
+    function openDeleteServerModal() {
+        document.getElementById('del-srv-overlay').style.display = 'block';
+        document.getElementById('del-srv-modal').style.display = 'block';
+        document.getElementById('del-srv-confirm-input').value = '';
+        document.getElementById('del-srv-confirm-input').focus();
+    }
+
+    function closeDeleteServerModal() {
+        document.getElementById('del-srv-overlay').style.display = 'none';
+        document.getElementById('del-srv-modal').style.display = 'none';
+    }
+
+    async function confirmDeleteServer() {
+        const hostname = '{{ server.hostname }}';
+        const typed = document.getElementById('del-srv-confirm-input').value.trim();
+        if (typed !== hostname) {
+            showToast('Hostname does not match. Please type it exactly.', 'error');
+            return;
+        }
+        const btn = document.getElementById('btn-confirm-del-srv');
+        btn.disabled = true;
+        btn.textContent = 'Deleting...';
+        try {
+            await apiFetch(`/api/servers/${serverId}`, { method: 'DELETE' });
+            showToast(`Server '${hostname}' deleted permanently.`, 'success');
+            setTimeout(() => window.location.href = '/servers', 1200);
+        } catch (e) {
+            showToast('Delete failed: ' + e.message, 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="margin-right:5px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg> Confirm Delete';
+        }
     }
 
     document.addEventListener('DOMContentLoaded', loadServerData);
