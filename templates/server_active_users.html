@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+<<<<<<< HEAD
 {% block content %}
 <div class="container mt-4">
     <h2 class="mb-3">Active Users & Sessions — {{ server.name or server.hostname }}</h2>
@@ -29,9 +30,271 @@
                 </thead>
                 <tbody id="active-sessions-body">
                     <tr><td>ubuntu</td><td>pts/0</td><td>Just Now</td><td>14205</td><td>{{ server.ip }}</td><td><button class="btn btn-sm btn-danger">Force Logout</button></td></tr>
+=======
+
+{% block title %}Active Users & Sessions — {{ server.hostname }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <div class="flex items-center gap-3">
+                <a href="/servers/{{ server.id }}" class="p-2 glass hover:bg-slate-800 rounded-xl text-slate-400 hover:text-white transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                </a>
+                <div>
+                    <h1 class="text-2xl font-bold text-white tracking-tight">Active Users & System Accounts</h1>
+                    <p class="text-xs text-slate-400 font-mono mt-0.5">Instance: <span class="text-blue-400">{{ server.hostname }}</span> ({{ server.ip_address }})</p>
+                </div>
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <span class="text-xs text-slate-500 font-mono" id="last-updated">Auto-refreshing (30s)...</span>
+            <button onclick="loadActiveTabData()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all border border-slate-700">
+                Refresh Now
+            </button>
+        </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="glass p-1.5 rounded-2xl flex items-center gap-2 max-w-md border border-slate-800">
+        <button id="tab-total-btn" onclick="switchTab('total')" class="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all text-white bg-primary shadow-lg shadow-blue-500/20">
+            Tab 1: TOTAL USERS
+        </button>
+        <button id="tab-sessions-btn" onclick="switchTab('sessions')" class="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all text-slate-400 hover:text-white hover:bg-slate-800/60">
+            Tab 2: ACTIVE SESSIONS
+        </button>
+    </div>
+
+    <!-- TAB 1: TOTAL SYSTEM USERS -->
+    <div id="tab-total-content" class="glass rounded-3xl overflow-hidden border border-slate-800 shadow-xl">
+        <div class="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/40">
+            <div>
+                <h3 class="text-lg font-bold text-white">System User Accounts (/etc/passwd)</h3>
+                <p class="text-xs text-slate-400 mt-0.5">System accounts, UID classification, and password management</p>
+            </div>
+            <span class="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-xs font-mono font-bold" id="total-users-count">0 Users</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-slate-900/80 text-slate-400 text-xs font-mono uppercase tracking-wider border-b border-slate-800">
+                        <th class="p-4">Username</th>
+                        <th class="p-4">UID</th>
+                        <th class="p-4">Shell</th>
+                        <th class="p-4">24h Login Activity</th>
+                        <th class="p-4 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="total-users-tbody" class="divide-y divide-slate-800 text-sm">
+                    <tr>
+                        <td colspan="5" class="p-8 text-center text-slate-500 font-mono">Loading system users via SSH...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- TAB 2: ACTIVE SSH SESSIONS -->
+    <div id="tab-sessions-content" class="glass rounded-3xl overflow-hidden border border-slate-800 shadow-xl hidden">
+        <div class="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/40">
+            <div>
+                <h3 class="text-lg font-bold text-white">Current Active Sessions (who -u)</h3>
+                <p class="text-xs text-slate-400 mt-0.5">Real-time logged-in TTY/pts sessions and force disconnect</p>
+            </div>
+            <span class="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-mono font-bold" id="active-sessions-count">0 Active</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-slate-900/80 text-slate-400 text-xs font-mono uppercase tracking-wider border-b border-slate-800">
+                        <th class="p-4">User</th>
+                        <th class="p-4">TTY</th>
+                        <th class="p-4">Login Time</th>
+                        <th class="p-4">PID</th>
+                        <th class="p-4">IP Address</th>
+                        <th class="p-4 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="active-sessions-tbody" class="divide-y divide-slate-800 text-sm">
+                    <tr>
+                        <td colspan="6" class="p-8 text-center text-slate-500 font-mono">Loading active sessions via SSH...</td>
+                    </tr>
+>>>>>>> c94c11b (Update security dashboard)
                 </tbody>
             </table>
         </div>
     </div>
 </div>
 {% endblock %}
+<<<<<<< HEAD
+=======
+
+{% block extra_js %}
+<script>
+    const serverId = {{ server.id }};
+    let activeTab = 'total';
+
+    function switchTab(tab) {
+        activeTab = tab;
+        const totalBtn = document.getElementById('tab-total-btn');
+        const sessBtn = document.getElementById('tab-sessions-btn');
+        const totalContent = document.getElementById('tab-total-content');
+        const sessContent = document.getElementById('tab-sessions-content');
+
+        if (tab === 'total') {
+            totalBtn.className = 'flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all text-white bg-primary shadow-lg shadow-blue-500/20';
+            sessBtn.className = 'flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all text-slate-400 hover:text-white hover:bg-slate-800/60';
+            totalContent.classList.remove('hidden');
+            sessContent.classList.add('hidden');
+        } else {
+            sessBtn.className = 'flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all text-white bg-primary shadow-lg shadow-blue-500/20';
+            totalBtn.className = 'flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all text-slate-400 hover:text-white hover:bg-slate-800/60';
+            sessContent.classList.remove('hidden');
+            totalContent.classList.add('hidden');
+        }
+        loadActiveTabData();
+    }
+
+    async function loadActiveTabData() {
+        const timeEl = document.getElementById('last-updated');
+        if (timeEl) timeEl.textContent = 'Updated: ' + new Date().toLocaleTimeString();
+
+        if (activeTab === 'total') {
+            fetchTotalUsers();
+        } else {
+            fetchActiveSessions();
+        }
+    }
+
+    async function fetchTotalUsers() {
+        const tbody = document.getElementById('total-users-tbody');
+        try {
+            const res = await fetch(`/api/servers/${serverId}/system-users`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to load users');
+
+            document.getElementById('total-users-count').textContent = `${data.users ? data.users.length : 0} Users`;
+
+            if (!data.users || data.users.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-slate-500">No users found.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = data.users.map(u => `
+                <tr class="hover:bg-slate-800/50 transition-all">
+                    <td class="p-4 font-bold text-white flex items-center gap-2">
+                        <div class="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-slate-300 text-xs font-mono">
+                            ${u.username.substring(0, 2).toUpperCase()}
+                        </div>
+                        ${u.username}
+                    </td>
+                    <td class="p-4 font-mono text-xs text-slate-400">${u.uid}</td>
+                    <td class="p-4 font-mono text-xs text-slate-400">${u.shell}</td>
+                    <td class="p-4">
+                        <span class="px-2.5 py-1 rounded-full text-xs font-mono ${u.login_status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'}">
+                            ${u.login_status || 'INACTIVE'} (${u.failed_count || 0} failed)
+                        </span>
+                    </td>
+                    <td class="p-4 text-right space-x-2">
+                        <button onclick="resetPassword('${u.username}')" class="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-bold transition-all">RESET PW</button>
+                        <button onclick="deleteUser('${u.username}')" class="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-xs font-bold transition-all">DELETE</button>
+                    </td>
+                </tr>
+            `).join('');
+        } catch (err) {
+            tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-red-400">Error: ${err.message}</td></tr>`;
+        }
+    }
+
+    async function fetchActiveSessions() {
+        const tbody = document.getElementById('active-sessions-tbody');
+        try {
+            const res = await fetch(`/api/servers/${serverId}/sessions`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to load sessions');
+
+            document.getElementById('active-sessions-count').textContent = `${data.sessions ? data.sessions.length : 0} Active`;
+
+            if (!data.sessions || data.sessions.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-500">No active SSH sessions found.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = data.sessions.map(s => `
+                <tr class="hover:bg-slate-800/50 transition-all">
+                    <td class="p-4 font-bold text-white">${s.user}</td>
+                    <td class="p-4 font-mono text-xs text-slate-300">${s.tty}</td>
+                    <td class="p-4 font-mono text-xs text-slate-400">${s.login_time}</td>
+                    <td class="p-4 font-mono text-xs text-slate-400">${s.pid}</td>
+                    <td class="p-4 font-mono text-xs text-blue-400">${s.ip}</td>
+                    <td class="p-4 text-right">
+                        <button onclick="killSession('${s.pid}', '${s.tty}')" class="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-xs font-bold transition-all">FORCE LOGOUT</button>
+                    </td>
+                </tr>
+            `).join('');
+        } catch (err) {
+            tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-red-400">Error: ${err.message}</td></tr>`;
+        }
+    }
+
+    async function resetPassword(username) {
+        const newPass = prompt(`Enter new password for user '${username}':`);
+        if (!newPass) return;
+        try {
+            const res = await fetch(`/api/servers/${serverId}/reset-password`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username, new_password: newPass })
+            });
+            const d = await res.json();
+            alert(d.message || d.detail || 'Password reset request processed.');
+            fetchTotalUsers();
+        } catch (e) {
+            alert('Error resetting password: ' + e.message);
+        }
+    }
+
+    async function deleteUser(username) {
+        if (!confirm(`Are you sure you want to delete system user '${username}' on ${server_hostname}?`)) return;
+        try {
+            const res = await fetch(`/api/servers/${serverId}/delete-user`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username })
+            });
+            const d = await res.json();
+            alert(d.message || d.detail || 'User delete request processed.');
+            fetchTotalUsers();
+        } catch (e) {
+            alert('Error deleting user: ' + e.message);
+        }
+    }
+
+    async function killSession(pid, tty) {
+        if (!confirm(`Force logout session PID ${pid} on TTY ${tty}?`)) return;
+        try {
+            const res = await fetch(`/api/servers/${serverId}/kill-session`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ pid, tty })
+            });
+            const d = await res.json();
+            alert(d.message || d.detail || 'Session terminated.');
+            fetchActiveSessions();
+        } catch (e) {
+            alert('Error terminating session: ' + e.message);
+        }
+    }
+
+    const server_hostname = "{{ server.hostname }}";
+
+    // Auto-refresh every 30 seconds
+    document.addEventListener('DOMContentLoaded', () => {
+        loadActiveTabData();
+        setInterval(loadActiveTabData, 30000);
+    });
+</script>
+{% endblock %}
+>>>>>>> c94c11b (Update security dashboard)

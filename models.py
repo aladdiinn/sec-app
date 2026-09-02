@@ -223,6 +223,7 @@ class AlertRule(db.Model):
     def __repr__(self):
         return f"<AlertRule {self.name}>"
 
+<<<<<<< HEAD
 
 class Case(db.Model):
     __tablename__ = "cases"
@@ -500,3 +501,35 @@ class NotificationRoute(db.Model):
 
     def __repr__(self):
         return f"<NotificationRoute {self.match_type}:{self.match_value} -> {self.recipient_email}>"
+=======
+class Case(db.Model):
+    __tablename__ = "cases"
+    id          = db.Column(db.Integer, primary_key=True)
+    title       = db.Column(db.String(255), nullable=False)
+    status      = db.Column(db.String(32), default="open")
+    priority    = db.Column(db.String(16), default="medium")
+    assignee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    summary     = db.Column(db.Text, nullable=True)
+    created_at  = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at  = db.Column(db.DateTime(timezone=True), onupdate=lambda: datetime.now(timezone.utc))
+
+class ThreatIndicator(db.Model):
+    __tablename__ = "threat_indicators"
+    id             = db.Column(db.Integer, primary_key=True)
+    indicator_type = db.Column(db.String(32), nullable=False)
+    value          = db.Column(db.String(512), nullable=False, index=True)
+    source         = db.Column(db.String(128))
+    severity       = db.Column(db.String(16), default="medium")
+    created_at     = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class Playbook(db.Model):
+    __tablename__ = "playbooks"
+    id          = db.Column(db.Integer, primary_key=True)
+    name        = db.Column(db.String(255), nullable=False)
+    actions     = db.Column(db.Text) # JSON string
+    is_active   = db.Column(db.Boolean, default=True)
+    created_at  = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+# Extend Alert to link to Case
+Alert.case_id = db.Column(db.Integer, db.ForeignKey("cases.id"), nullable=True)
+>>>>>>> c94c11b (Update security dashboard)

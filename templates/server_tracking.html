@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+<<<<<<< HEAD
 {% block content %}
 <div class="container mt-4">
     <h2 class="mb-3">Authentication Tracking — {{ server.name or server.hostname }}</h2>
@@ -65,5 +66,184 @@ function blockIp(serverId, ip) {
         alert(data.message || 'IP Blocked');
     });
 }
+=======
+
+{% block title %}Login Tracking & Auditing — {{ server.hostname }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+            <a href="/servers/{{ server.id }}" class="p-2 glass hover:bg-slate-800 rounded-xl text-slate-400 hover:text-white transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+            </a>
+            <div>
+                <h1 class="text-2xl font-bold text-white tracking-tight">Login Attempt Tracking & Audit Log</h1>
+                <p class="text-xs text-slate-400 font-mono mt-0.5">Instance: <span class="text-blue-400">{{ server.hostname }}</span> ({{ server.ip_address }})</p>
+            </div>
+        </div>
+        <div>
+            <button onclick="loadTrackingData()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-all border border-slate-700">
+                Refresh Logins
+            </button>
+        </div>
+    </div>
+
+    <!-- Alert Banner (JS Injected if 3+ failed logins for any user) -->
+    <div id="failed-login-alert-banner" class="hidden glass p-4 rounded-2xl bg-red-950/40 border border-red-500/40 glow-red">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-xl bg-red-500/20 text-red-400 flex items-center justify-center font-bold">🚨</div>
+            <div>
+                <h4 class="text-sm font-bold text-red-300">Security Warning: Brute-Force Activity Detected!</h4>
+                <p class="text-xs text-slate-300 mt-0.5" id="failed-login-banner-msg">Multiple failed login attempts detected in the last 24 hours.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tracking History Table -->
+    <div class="glass rounded-3xl overflow-hidden border border-slate-800 shadow-xl">
+        <div class="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/40">
+            <div>
+                <h3 class="text-lg font-bold text-white">Login Audit Log</h3>
+                <p class="text-xs text-slate-400 mt-0.5">Authentication attempts, success/fail verification, and IP blocking</p>
+            </div>
+            <span class="px-3 py-1 bg-slate-800 text-slate-400 rounded-full text-xs font-mono font-bold" id="total-logins-count">0 Events</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-slate-900/80 text-slate-400 text-xs font-mono uppercase tracking-wider border-b border-slate-800">
+                        <th class="p-4">Timestamp</th>
+                        <th class="p-4">User</th>
+                        <th class="p-4">IP Address</th>
+                        <th class="p-4">Location</th>
+                        <th class="p-4">Status</th>
+                        <th class="p-4 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="tracking-tbody" class="divide-y divide-slate-800 text-sm">
+                    {% if logs %}
+                        {% for log in logs %}
+                        <tr class="hover:bg-slate-800/50 transition-all">
+                            <td class="p-4 font-mono text-xs text-slate-400">{{ log.timestamp_formatted }}</td>
+                            <td class="p-4 font-bold text-white">{{ log.username }}</td>
+                            <td class="p-4 font-mono text-xs text-blue-400">{{ log.ip_address }}</td>
+                            <td class="p-4 text-xs text-slate-400">{{ log.location }}</td>
+                            <td class="p-4">
+                                {% if log.success %}
+                                    <span class="px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-green-500/20 text-green-400 border border-green-500/30">
+                                        ✓ SUCCESS
+                                    </span>
+                                {% else %}
+                                    <span class="px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-white/10 text-white border border-white/30">
+                                        ✗ FAILED
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td class="p-4 text-right">
+                                {% if not log.success %}
+                                    <button onclick="blockIP('{{ log.ip_address }}')" class="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-xs font-bold transition-all">
+                                        BLOCK IP
+                                    </button>
+                                {% else %}
+                                    <span class="text-xs text-slate-600 font-mono">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="6" class="p-8 text-center text-slate-500 font-mono">Loading login history...</td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const serverId = {{ server.id }};
+
+    async function loadTrackingData() {
+        const tbody = document.getElementById('tracking-tbody');
+        try {
+            const res = await fetch(`/api/servers/${serverId}/tracking`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to load tracking data');
+
+            const logs = data.logs || [];
+            document.getElementById('total-logins-count').textContent = `${logs.length} Events`;
+
+            // Check if any user has 3+ failed logins in 24h
+            const failedCounts = {};
+            logs.forEach(l => {
+                if (!l.success) {
+                    failedCounts[l.username] = (failedCounts[l.username] || 0) + 1;
+                }
+            });
+
+            const flaggedUsers = Object.keys(failedCounts).filter(u => failedCounts[u] >= 3);
+            const banner = document.getElementById('failed-login-alert-banner');
+            const bannerMsg = document.getElementById('failed-login-banner-msg');
+
+            if (flaggedUsers.length > 0) {
+                bannerMsg.textContent = `High failed login activity detected for user(s): ${flaggedUsers.join(', ')} (${flaggedUsers.map(u => failedCounts[u] + ' failures').join(', ')})`;
+                banner.classList.remove('hidden');
+            } else {
+                banner.classList.add('hidden');
+            }
+
+            if (logs.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-500">No login tracking history available.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = logs.map(l => {
+                const statusBadge = l.success 
+                    ? `<span class="px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-green-500/20 text-green-400 border border-green-500/30">✓ SUCCESS</span>`
+                    : `<span class="px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-white/10 text-white border border-white/30">✗ FAILED</span>`;
+                
+                const blockButton = !l.success
+                    ? `<button onclick="blockIP('${l.ip_address}')" class="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-xs font-bold transition-all">BLOCK IP</button>`
+                    : `<span class="text-xs text-slate-600 font-mono">—</span>`;
+
+                return `
+                    <tr class="hover:bg-slate-800/50 transition-all">
+                        <td class="p-4 font-mono text-xs text-slate-400">${l.timestamp_formatted || l.timestamp}</td>
+                        <td class="p-4 font-bold text-white">${l.username}</td>
+                        <td class="p-4 font-mono text-xs text-blue-400">${l.ip_address}</td>
+                        <td class="p-4 text-xs text-slate-400">${l.location || 'Unknown'}</td>
+                        <td class="p-4">${statusBadge}</td>
+                        <td class="p-4 text-right">${blockButton}</td>
+                    </tr>
+                `;
+            }).join('');
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    async function blockIP(ip) {
+        if (!confirm(`Are you sure you want to block IP address ${ip} via firewall?`)) return;
+        try {
+            const res = await fetch(`/api/servers/${serverId}/block-ip`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ ip })
+            });
+            const d = await res.json();
+            alert(d.message || d.detail || `IP ${ip} blocked successfully.`);
+            loadTrackingData();
+        } catch (e) {
+            alert('Error blocking IP: ' + e.message);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadTrackingData);
+>>>>>>> c94c11b (Update security dashboard)
 </script>
 {% endblock %}

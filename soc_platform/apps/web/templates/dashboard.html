@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecurePulse SOC | Command Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: '#0f172a',
+                        'dark-lighter': '#1e293b',
+                        primary: '#3b82f6',
+                        danger: '#ef4444',
+                        warning: '#f59e0b',
+                        success: '#10b981',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .glass {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .glow-red { box-shadow: 0 0 15px rgba(239, 68, 68, 0.4); }
+        .glow-blue { box-shadow: 0 0 15px rgba(59, 130, 246, 0.4); }
+    </style>
+</head>
+<body class="bg-dark text-slate-200 font-sans min-h-screen">
+
+    <!-- Sidebar -->
+    <div class="fixed left-0 top-0 h-full w-64 glass border-r border-slate-800 p-6 z-50">
+        <div class="flex items-center gap-3 mb-10">
+            <div class="w-8 h-8 bg-primary rounded-lg glow-blue flex items-center justify-center">
+                <span class="text-white font-bold">SP</span>
+            </div>
+            <h1 class="text-xl font-bold tracking-tight text-white">SECUREPULSE</h1>
+        </div>
+
+        <nav class="space-y-2">
+            <a href="#" class="flex items-center gap-3 p-3 bg-primary/10 text-primary rounded-xl font-medium">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                Dashboard
+            </a>
+            <a href="#" class="flex items-center gap-3 p-3 hover:bg-slate-800 rounded-xl transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                Incidents
+            </a>
+            <a href="#" class="flex items-center gap-3 p-3 hover:bg-slate-800 rounded-xl transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                Analytics
+            </a>
+        </nav>
+    </div>
+
+    <!-- Main Content -->
+    <main class="ml-64 p-8">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-10">
+            <div>
+                <h2 class="text-3xl font-bold text-white mb-1">SOC Command Center</h2>
+                <p class="text-slate-400">Monitoring enterprise-wide security posture.</p>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="px-4 py-2 bg-slate-800 rounded-lg flex items-center gap-2">
+                    <span class="w-2 h-2 bg-success rounded-full animate-pulse"></span>
+                    <span class="text-sm font-medium">System Online</span>
+                </div>
+                <div class="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center">
+                    <span class="text-xs">JD</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Stats Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+            <div class="glass p-6 rounded-3xl">
+                <p class="text-slate-400 text-sm font-medium mb-1">Total Alerts</p>
+                <h3 class="text-3xl font-bold text-white">{{ stats.total_alerts }}</h3>
+                <div class="mt-4 text-xs text-danger">+12% from yesterday</div>
+            </div>
+            <div class="glass p-6 rounded-3xl border-l-4 border-warning">
+                <p class="text-slate-400 text-sm font-medium mb-1">Open Cases</p>
+                <h3 class="text-3xl font-bold text-white">{{ stats.open_cases }}</h3>
+                <div class="mt-4 text-xs text-slate-500 tracking-wider">3 CRITICAL</div>
+            </div>
+            <div class="glass p-6 rounded-3xl border-l-4 border-danger">
+                <p class="text-slate-400 text-sm font-medium mb-1">Active Threats</p>
+                <h3 class="text-3xl font-bold text-white">{{ stats.active_threats }}</h3>
+                <div class="mt-4 text-xs text-danger animate-pulse">ACTION REQUIRED</div>
+            </div>
+            <div class="glass p-6 rounded-3xl">
+                <p class="text-slate-400 text-sm font-medium mb-1">Endpoints</p>
+                <h3 class="text-3xl font-bold text-white">{{ stats.online_servers }}</h3>
+                <div class="mt-4 text-xs text-success">98.5% HEALTHY</div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Alert Feed -->
+            <div class="lg:col-span-2 glass rounded-3xl overflow-hidden">
+                <div class="p-6 border-b border-slate-800 flex justify-between items-center">
+                    <h3 class="text-xl font-bold text-white">Live Incident Queue</h3>
+                    <div class="flex gap-2">
+                        <span class="px-3 py-1 bg-slate-800 rounded-full text-xs font-mono">Real-time</span>
+                        <button class="text-sm text-primary hover:underline">Filter</button>
+                    </div>
+                </div>
+                <div class="divide-y divide-slate-800">
+                    {% for alert in recent_alerts %}
+                    <div class="p-6 hover:bg-slate-800/50 transition-all flex items-center justify-between group">
+                        <div class="flex items-center gap-4">
+                            <div class="w-12 h-12 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-110
+                                {% if alert.severity == 'critical' %} bg-danger/20 text-danger border border-danger/30 glow-red
+                                {% elif alert.severity == 'high' %} bg-warning/20 text-warning border border-warning/30
+                                {% else %} bg-primary/20 text-primary border border-primary/30 {% endif %}">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                            </div>
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <p class="font-bold text-white">{{ alert.title }}</p>
+                                    <span class="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-300">T1505.003</span>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1">Host: PROD-WEB-01 • {{ alert.time }} • Assigned to: AI-AutoResponder</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <div class="hidden group-hover:flex items-center gap-1 text-xs text-success bg-success/10 px-2 py-1 rounded-full">
+                                <span class="w-1.5 h-1.5 bg-success rounded-full"></span>
+                                SOAR Active
+                            </div>
+                            <button class="px-5 py-2 bg-primary hover:bg-blue-600 rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/20">Investigate</button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Side Panels -->
+            <div class="space-y-8">
+                <!-- Threat Intelligence / Map Mockup -->
+                <div class="glass rounded-3xl p-6 relative overflow-hidden">
+                    <h3 class="text-xl font-bold text-white mb-6">Threat Origin Map</h3>
+                    <div class="h-48 w-full bg-slate-900 rounded-2xl border border-slate-800 flex items-center justify-center relative">
+                        <!-- Mock Map SVG Background -->
+                        <svg class="absolute opacity-20 w-full h-full" viewBox="0 0 800 400">
+                             <path fill="currentColor" d="M150,150 Q200,50 300,100 T450,150" />
+                             <circle cx="200" cy="100" r="3" fill="#ef4444" class="animate-ping" />
+                             <circle cx="450" cy="180" r="3" fill="#ef4444" class="animate-ping" />
+                        </svg>
+                        <div class="z-10 text-center">
+                            <p class="text-xs font-mono text-danger mb-2">LIVE ATTACK DETECTED</p>
+                            <p class="text-2xl font-bold text-white">Frankfurt, DE</p>
+                            <p class="text-[10px] text-slate-500">ASN: 16509 (Amazon.com)</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SOAR Activity Feed -->
+                <div class="glass rounded-3xl p-6">
+                    <div class="flex items-center justify-between mb-6">
+                        <h3 class="text-lg font-bold text-white">SOAR Automations</h3>
+                        <span class="text-[10px] text-slate-500">LAST 1H</span>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="flex gap-4 items-start">
+                            <div class="w-2 h-10 bg-success/50 rounded-full"></div>
+                            <div>
+                                <p class="text-sm font-bold text-white">Isolate Host: PROD-WEB-01</p>
+                                <p class="text-[10px] text-slate-500">Triggered by: Web Shell Detection</p>
+                                <p class="text-[10px] text-success mt-1">SUCCESSFUL • 2m ago</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-4 items-start opacity-60">
+                            <div class="w-2 h-10 bg-primary/50 rounded-full"></div>
+                            <div>
+                                <p class="text-sm font-bold text-white">Rotate Credentials: web-app-svc</p>
+                                <p class="text-[10px] text-slate-500">Triggered by: Periodic Security Policy</p>
+                                <p class="text-[10px] text-primary mt-1">COMPLETED • 45m ago</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+</body>
+</html>

@@ -36,7 +36,11 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+<<<<<<< HEAD
 # Jinja2 Templates setup looking in templates and templets
+=======
+# Jinja2 Templates setup with new Starlette API compatibility
+>>>>>>> c94c11b (Update security dashboard)
 templates = Jinja2Templates(directory=["templates", "templets"])
 
 # Startup Event — Initialize Database
@@ -69,6 +73,7 @@ def get_session_user(request: Request):
     finally:
         conn.close()
 
+<<<<<<< HEAD
 def render_template(request: Request, name: str, context: dict = None):
     """Safe template renderer providing request, session, and user context."""
     if context is None:
@@ -82,6 +87,21 @@ def render_template(request: Request, name: str, context: dict = None):
     }
     ctx.update(context)
     return templates.TemplateResponse(request, name, ctx)
+=======
+def require_auth(request: Request):
+    """Page middleware — redirects unauthenticated users to /login."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=302, headers={"Location": "/login"})
+    return user
+
+def require_auth_api(request: Request):
+    """API middleware — returns 401 for unauthenticated requests."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized access. Please log in.")
+    return user
+>>>>>>> c94c11b (Update security dashboard)
 
 # AsyncSSH Helper Function
 async def run_ssh_command(host: str, port: int, user: str, password: Optional[str], key_path: Optional[str], command: str) -> Optional[str]:
@@ -114,7 +134,11 @@ async def run_ssh_command(host: str, port: int, user: str, password: Optional[st
 async def login_page(request: Request):
     if get_session_user(request):
         return RedirectResponse(url="/", status_code=302)
+<<<<<<< HEAD
     return render_template(request, "login.html", {"hide_nav": True})
+=======
+    return templates.TemplateResponse(request, "login.html", {"hide_nav": True, "error": None})
+>>>>>>> c94c11b (Update security dashboard)
 
 @app.post("/auth/login")
 @app.post("/api/login")
@@ -128,7 +152,11 @@ async def auth_login(request: Request):
     password = body.get("password", "")
 
     if not username or not password:
+<<<<<<< HEAD
         return JSONResponse(status_code=400, content={"ok": False, "error": "Username and password required"})
+=======
+        return JSONResponse(status_code=400, content={"ok": False, "error": "Username/email and password required"})
+>>>>>>> c94c11b (Update security dashboard)
 
     conn = db.get_db_connection()
     if not conn:
@@ -137,6 +165,7 @@ async def auth_login(request: Request):
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM users WHERE username = %s OR email = %s;", (username, username))
             user = cur.fetchone()
+<<<<<<< HEAD
             if not user:
                 if username == "admin" and password in ["admin", "Admin@1234"]:
                     cur.execute("SELECT * FROM users WHERE is_admin = TRUE LIMIT 1;")
@@ -168,6 +197,28 @@ async def auth_login(request: Request):
     finally:
         conn.close()
 
+=======
+            if not user or not check_password_hash(user["hashed_password"], password):
+                return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid credentials"})
+            if not user["is_active"]:
+                return JSONResponse(status_code=403, content={"ok": False, "error": "Account is disabled"})
+
+            request.session["user_id"] = user["id"]
+            request.session["username"] = user.get("username", user["email"])
+            
+            return JSONResponse(content={
+                "ok": True,
+                "message": "Login successful",
+                "redirect_url": "/",
+                "user": {"id": user["id"], "username": user.get("username"), "email": user["email"]}
+            })
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+    finally:
+        conn.close()
+
+>>>>>>> c94c11b (Update security dashboard)
 @app.get("/logout")
 async def logout(request: Request):
     request.session.clear()
@@ -175,7 +226,11 @@ async def logout(request: Request):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+<<<<<<< HEAD
 # PAGE ROUTES (All UI Subpages & Sidebar Links)
+=======
+# PAGE ROUTES (All extending base.html)
+>>>>>>> c94c11b (Update security dashboard)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/", response_class=HTMLResponse)
@@ -187,12 +242,19 @@ async def dashboard_page(request: Request):
     
     servers = db.get_servers()
     alerts = db.get_alerts()
+<<<<<<< HEAD
     return render_template(request, "dashboard.html", {
         "servers": servers,
         "alerts": alerts,
         "SERVICES": "SERVICES",
         "SECURE": "SECURE",
         "CRITICAL": "CRITICAL",
+=======
+    return templates.TemplateResponse(request, "dashboard.html", {
+        "user": user,
+        "servers": servers,
+        "alerts": alerts,
+>>>>>>> c94c11b (Update security dashboard)
         "services_status": "SERVICES OPERATIONAL",
         "secure_count": len([s for s in servers if s.get("severity") == "info"]),
         "critical_count": len([s for s in servers if s.get("severity") == "critical"])
@@ -200,13 +262,20 @@ async def dashboard_page(request: Request):
 
 @app.get("/servers", response_class=HTMLResponse)
 @app.get("/server", response_class=HTMLResponse)
+<<<<<<< HEAD
 @app.get("/assets", response_class=HTMLResponse)
+=======
+>>>>>>> c94c11b (Update security dashboard)
 async def servers_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     servers = db.get_servers()
+<<<<<<< HEAD
     return render_template(request, "servers.html", {"servers": servers})
+=======
+    return templates.TemplateResponse(request, "servers.html", {"user": user, "servers": servers})
+>>>>>>> c94c11b (Update security dashboard)
 
 @app.get("/server/{server_id}", response_class=HTMLResponse)
 @app.get("/servers/{server_id}", response_class=HTMLResponse)
@@ -216,10 +285,18 @@ async def server_detail_page(request: Request, server_id: int):
         return RedirectResponse(url="/login", status_code=302)
     server = db.get_server_by_id(server_id)
     if not server:
+<<<<<<< HEAD
         return RedirectResponse(url="/servers", status_code=302)
     tracking = db.get_tracking_data(server_id)
     commands = db.get_server_commands(server_id)
     return render_template(request, "server_detail.html", {
+=======
+        raise HTTPException(status_code=404, detail="Server not found")
+    tracking = db.get_tracking_data(server_id)
+    commands = db.get_server_commands(server_id)
+    return templates.TemplateResponse(request, "server_detail.html", {
+        "user": user,
+>>>>>>> c94c11b (Update security dashboard)
         "server": server,
         "tracking": tracking,
         "commands": commands
@@ -233,8 +310,13 @@ async def server_active_users_page(request: Request, server_id: int):
         return RedirectResponse(url="/login", status_code=302)
     server = db.get_server_by_id(server_id)
     if not server:
+<<<<<<< HEAD
         return RedirectResponse(url="/servers", status_code=302)
     return render_template(request, "server_active_users.html", {"server": server})
+=======
+        raise HTTPException(status_code=404, detail="Server not found")
+    return templates.TemplateResponse(request, "server_active_users.html", {"user": user, "server": server})
+>>>>>>> c94c11b (Update security dashboard)
 
 @app.get("/server/{server_id}/tracking", response_class=HTMLResponse)
 @app.get("/servers/{server_id}/tracking", response_class=HTMLResponse)
@@ -244,11 +326,17 @@ async def server_tracking_page(request: Request, server_id: int):
         return RedirectResponse(url="/login", status_code=302)
     server = db.get_server_by_id(server_id)
     if not server:
+<<<<<<< HEAD
         return RedirectResponse(url="/servers", status_code=302)
     logs = db.get_tracking_data(server_id)
     return render_template(request, "server_tracking.html", {
         "server": server, "logs": logs, "logins": logs
     })
+=======
+        raise HTTPException(status_code=404, detail="Server not found")
+    logs = db.get_tracking_data(server_id)
+    return templates.TemplateResponse(request, "server_tracking.html", {"user": user, "server": server, "logs": logs, "logins": logs})
+>>>>>>> c94c11b (Update security dashboard)
 
 @app.get("/server/{server_id}/logins", response_class=HTMLResponse)
 @app.get("/servers/{server_id}/logins", response_class=HTMLResponse)
@@ -257,6 +345,7 @@ async def server_logins_page(request: Request, server_id: int):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     server = db.get_server_by_id(server_id)
+<<<<<<< HEAD
     if not server:
         return RedirectResponse(url="/servers", status_code=302)
     logs = db.get_tracking_data(server_id)
@@ -564,6 +653,167 @@ async def api_get_dr_audit():
             {"name": "Backup Replication", "status": "PASS", "msg": "Replication lag < 10ms"}
         ]
     }
+=======
+    logs = db.get_tracking_data(server_id)
+    return templates.TemplateResponse(request, "logins.html", {"user": user, "server": server, "logs": logs})
+
+@app.get("/server/{server_id}/sudos", response_class=HTMLResponse)
+@app.get("/servers/{server_id}/sudos", response_class=HTMLResponse)
+async def server_sudos_page(request: Request, server_id: int):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    server = db.get_server_by_id(server_id)
+    all_cmds = db.get_server_commands(server_id)
+    sudos = [c for c in all_cmds if c.get("is_sudo")]
+    return templates.TemplateResponse(request, "server_commands.html", {"user": user, "server": server, "commands": sudos})
+
+@app.get("/server/{server_id}/commands", response_class=HTMLResponse)
+@app.get("/servers/{server_id}/commands", response_class=HTMLResponse)
+async def server_commands_page(request: Request, server_id: int):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    server = db.get_server_by_id(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    cmds = db.get_server_commands(server_id)
+    return templates.TemplateResponse(request, "server_commands.html", {
+        "user": user, "server": server, "commands": cmds,
+        "total_count": len(cmds),
+        "chmod_count": len([c for c in cmds if c.get("category") == "PERM_CHANGE"]),
+        "rm_count": len([c for c in cmds if c.get("category") == "DESTRUCTIVE"]),
+        "unique_users": len(set([c.get("username") for c in cmds if c.get("username")]))
+    })
+
+@app.get("/server/{server_id}/security", response_class=HTMLResponse)
+@app.get("/servers/{server_id}/security", response_class=HTMLResponse)
+async def server_security_page(request: Request, server_id: int):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    server = db.get_server_by_id(server_id)
+    return templates.TemplateResponse(request, "server_detail.html", {"user": user, "server": server})
+
+@app.get("/server/{server_id}/crons", response_class=HTMLResponse)
+@app.get("/servers/{server_id}/crons", response_class=HTMLResponse)
+async def server_crons_page(request: Request, server_id: int):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    server = db.get_server_by_id(server_id)
+    return templates.TemplateResponse(request, "cron_jobs.html", {"user": user, "server": server})
+
+@app.get("/server/{server_id}/users", response_class=HTMLResponse)
+@app.get("/servers/{server_id}/users", response_class=HTMLResponse)
+async def server_users_subpage(request: Request, server_id: int):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    server = db.get_server_by_id(server_id)
+    return templates.TemplateResponse(request, "server_active_users.html", {"user": user, "server": server})
+
+@app.get("/alerts", response_class=HTMLResponse)
+@app.get("/incidents", response_class=HTMLResponse)
+async def alerts_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    alerts = db.get_alerts()
+    return templates.TemplateResponse(request, "alerts.html", {"user": user, "alerts": alerts})
+
+@app.get("/projects", response_class=HTMLResponse)
+async def projects_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    conn = db.get_db_connection()
+    projects = []
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM projects ORDER BY id DESC;")
+                projects = cur.fetchall()
+        finally:
+            conn.close()
+    return templates.TemplateResponse(request, "projects.html", {"user": user, "projects": projects})
+
+@app.get("/projects/{project_id}", response_class=HTMLResponse)
+async def project_detail_page(request: Request, project_id: int):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(request, "projects.html", {"user": user})
+
+@app.get("/approvals", response_class=HTMLResponse)
+async def approvals_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    conn = db.get_db_connection()
+    approvals = []
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM approvals WHERE status = 'pending' ORDER BY requested_at DESC;")
+                approvals = cur.fetchall()
+        finally:
+            conn.close()
+    return templates.TemplateResponse(request, "approvals.html", {"user": user, "approvals": approvals})
+
+@app.get("/users", response_class=HTMLResponse)
+async def users_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    conn = db.get_db_connection()
+    users_list = []
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, username, email, full_name, role, is_admin, is_active, created_at FROM users ORDER BY id ASC;")
+                users_list = cur.fetchall()
+        finally:
+            conn.close()
+    return templates.TemplateResponse(request, "users.html", {"user": user, "users": users_list, "USERNAME": "USERNAME"})
+
+@app.get("/threat-intel", response_class=HTMLResponse)
+async def threat_intel_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(request, "threat_intel.html", {"user": user})
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(request, "settings.html", {"user": user, "SETTINGS": "SETTINGS"})
+
+@app.get("/system-health", response_class=HTMLResponse)
+async def system_health_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(request, "system_health.html", {"user": user})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REST API ENDPOINTS (Expected by test_prod.py)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/servers")
+async def api_get_servers():
+    servers = db.get_servers()
+    counts = db.get_server_counts()
+    return {"servers": servers, "counts": counts}
+
+@app.get("/api/counts")
+@app.get("/api/servers/stats")
+async def api_get_counts():
+    return db.get_server_counts()
+>>>>>>> c94c11b (Update security dashboard)
 
 @app.get("/api/servers/{server_id}")
 async def api_get_server_by_id(server_id: int):
@@ -768,10 +1018,14 @@ async def api_update_project(project_id: int, request: Request):
 
 @app.post("/api/users/add")
 async def api_add_user(request: Request):
+<<<<<<< HEAD
     try:
         body = await request.json()
     except Exception:
         body = {}
+=======
+    body = await request.json()
+>>>>>>> c94c11b (Update security dashboard)
     uname = body.get("username") or body.get("email")
     pwd = body.get("password")
     role = body.get("role", "user")
@@ -783,6 +1037,7 @@ async def api_add_user(request: Request):
         try:
             with conn.cursor() as cur:
                 hashed = generate_password_hash(pwd)
+<<<<<<< HEAD
                 cur.execute("SELECT id FROM users WHERE username = %s OR email = %s;", (uname, f"{uname}@local"))
                 existing = cur.fetchone()
                 if existing:
@@ -790,6 +1045,9 @@ async def api_add_user(request: Request):
                     return {"ok": True, "id": existing["id"], "message": "User updated"}
                 
                 cur.execute("INSERT INTO users (username, email, hashed_password, role, is_active, is_admin, created_at) VALUES (%s, %s, %s, %s, TRUE, FALSE, NOW()) RETURNING id;", (uname, f"{uname}@local", hashed, role))
+=======
+                cur.execute("INSERT INTO users (username, email, hashed_password, role) VALUES (%s, %s, %s, %s) RETURNING id;", (uname, f"{uname}@local", hashed, role))
+>>>>>>> c94c11b (Update security dashboard)
                 uid = cur.fetchone()["id"]
                 return {"ok": True, "id": uid, "message": "User created"}
         except Exception as e:
@@ -813,5 +1071,9 @@ async def api_delete_user(user_id: int):
 
 if __name__ == "__main__":
     import uvicorn
+<<<<<<< HEAD
+=======
+    import os
+>>>>>>> c94c11b (Update security dashboard)
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
