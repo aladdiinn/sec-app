@@ -1,0 +1,266 @@
+{
+  "timestamp": "2026-09-02T15:46:04.725225",
+  "summary": {
+    "passed": 49,
+    "failed": 1,
+    "warnings": 1,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "status": "PASS",
+      "name": "Server reachable at http://localhost:8000 \u2192 200",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Login page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Wrong password returns 401",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Login with admin/admin successful",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Unauthenticated request redirects to login",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "/api/servers returns 3 servers",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Server object has all required fields",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "last_sudo has value: 'apt upgrade -y'",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Counts: {'total': 3, 'secure': 3, 'warning': 0, 'critical': 0}",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "/api/counts \u2192 {'total': 3, 'secure': 3, 'warning': 0, 'critical': 0, 'total_servers': 3, 'online_servers': 3, 'open_alerts': 0, 'maintenance_servers': 0}",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "dashboard (/) loads correctly",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "alerts page (/alerts) loads correctly",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "projects page (/projects) loads correctly",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "users page (/users) loads correctly",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "settings page (/settings) loads correctly",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "approvals page (/approvals) loads correctly",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "e2e-test-server / detail page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "e2e-test-server / logins page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "e2e-test-server / sudos page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "e2e-test-server / tracking page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "e2e-test-server / active-users page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "e2e-test-server / security page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "e2e-test-server / crons page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "e2e-test-server / commands page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "e2e-test-server / users page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Action 'full-log' \u2192 Action 'full-log' executed successfully on server ",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Action 'reset-password' \u2192 Action 'reset-password' executed successfully on s",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Action 'block-ip' \u2192 Action 'block-ip' executed successfully on server ",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Unknown action correctly returns 400",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Add server \u2192 id=60",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "New server appears in approvals (pending)",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Delete server works",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "/api/alerts returns 34 alerts",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Alert object has all required fields",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "/api/projects returns 10 projects",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Create project \u2192 id=43",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Update project works",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Users page loads",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Add dashboard user works",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "New user appears on users page",
+      "detail": ""
+    },
+    {
+      "status": "WARN",
+      "name": "Delete user returned 500",
+      "detail": ""
+    },
+    {
+      "status": "FAIL",
+      "name": "Agent push error",
+      "detail": "('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))"
+    },
+    {
+      "status": "PASS",
+      "name": "/api/notifications \u2192 34 unseen",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "/system-health shows 'Coming Soon' page",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "favicon.ico returns 204 (not 500)",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Tracking page has FAILED status indicator",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "Tracking page has Block IP button",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "/api/commands returns 1 dangerous commands",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "/api/login-status returns data for 0 users",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "/api/sessions returns 1 sessions",
+      "detail": ""
+    },
+    {
+      "status": "PASS",
+      "name": "/api/system-users returns 3 users",
+      "detail": ""
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <h2 class="mb-3">Dangerous Command Tracking — {{ server.name or server.hostname }}</h2>
+    <div class="card bg-dark text-white p-3">
+        <table class="table table-dark table-hover">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>User</th>
+                    <th>Command</th>
+                    <th>Category</th>
+                    <th>Risk Level</th>
+                    <th>Sudo</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in commands %}
+                <tr>
+                    <td>{{ c.executed_at_ago or c.executed_at }}</td>
+                    <td>{{ c.user or c.username }}</td>
+                    <td><code>{{ c.cmd or c.command }}</code></td>
+                    <td><span class="badge bg-info">{{ c.category or 'GENERAL' }}</span></td>
+                    <td><span class="badge bg-{{ 'danger' if c.risk_level == 'CRITICAL' else ('warning' if c.risk_level == 'HIGH' else 'secondary') }}">{{ c.risk_level or 'LOW' }}</span></td>
+                    <td>{{ 'YES' if c.is_sudo else 'NO' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center text-muted">No commands recorded</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

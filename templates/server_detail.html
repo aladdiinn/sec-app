@@ -346,22 +346,12 @@
 
      async function toggleMaintenance() {
          const active = document.getElementById('maint-toggle').checked;
-         const hoursInput = document.getElementById('maint-hours');
-         const hours = parseInt(hoursInput.value, 10);
-         // Validate hours when turning on
-         if (active && (isNaN(hours) || hours <= 0)) {
-             showToast('Please select a valid number of hours (greater than 0)', 'warning');
-             document.getElementById('maint-toggle').checked = false; // revert toggle
-             return;
-         }
          try {
-             // We always send maintenance_hours. If active, use the selected hours (must be >0). If not active, send 0 to clear.
-             const hoursToSend = active ? hours : 0;
              await apiFetch(`/api/servers/${serverId}`, {
                  method: 'PATCH',
-                 body: JSON.stringify({ maintenance_hours: hoursToSend })
+                 body: JSON.stringify({ is_maintenance: active })
              });
-             showToast(active ? `Maintenance enabled for ${hours}h` : 'Maintenance disabled', 'info');
+             showToast(active ? 'Maintenance enabled' : 'Maintenance disabled', 'info');
              setTimeout(loadServerData, 500);
          } catch (e) { 
              alert('Failed to update maintenance state: ' + e.message);

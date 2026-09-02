@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <h2 class="mb-4">Pending Instance Approvals</h2>
+    <div class="card bg-dark text-white p-3">
+        <table class="table table-dark table-hover">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>HOSTNAME</th>
+                    <th>IP ADDRESS</th>
+                    <th>TOKEN</th>
+                    <th>STATUS</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in approvals %}
+                <tr>
+                    <td>{{ a.id }}</td>
+                    <td>{{ a.hostname }}</td>
+                    <td>{{ a.ip_address }}</td>
+                    <td><code>{{ a.agent_token }}</code></td>
+                    <td><span class="badge bg-warning">{{ a.status }}</span></td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted">No pending approvals</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

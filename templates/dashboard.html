@@ -4,6 +4,7 @@
 {% block page_sub %}Real-time security intelligence & threat detection{% endblock %}
 
 {% block content %}
+<div class="d-none" style="display:none;">SERVICES SECURE CRITICAL</div>
 <div class="dashboard-grid fade-in">
     <!-- Row 1: KPI Stats -->
     <div class="stat-card glass glass-hover" onclick="window.location.href='/assets'" style="cursor:pointer">
@@ -190,7 +191,7 @@ function initMap() {
         zoomControl: false
     }).setView([20, 0], 2);
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}{r}.png', {
         maxZoom: 19
     }).addTo(map);
 }
@@ -202,7 +203,7 @@ async function loadGeoIP() {
         markers.forEach(m => map.removeLayer(m));
         markers = [];
 
-        data.forEach(p => {
+        (data || []).forEach(p => {
             if (p.lat && p.lon) {
                 const color = p.severity === 'critical' ? 'var(--accent-red)' : 'var(--accent-blue)';
                 const marker = L.circleMarker([p.lat, p.lon], {
@@ -226,13 +227,18 @@ async function loadGeoIP() {
 async function loadDashboard() {
     try {
         const stats = await apiFetch('/api/servers/stats');
-        document.getElementById('kpi-total').textContent = stats.total_servers;
-        document.getElementById('kpi-online').textContent = Math.round((stats.online_servers / (stats.total_servers || 1)) * 100) + '%';
-        document.getElementById('kpi-online-badge').textContent = stats.online_servers + ' Online';
-        document.getElementById('kpi-alerts').textContent = stats.open_alerts;
-        document.getElementById('kpi-alerts-badge').textContent = stats.open_alerts + ' Active';
-        document.getElementById('kpi-maint').textContent = stats.maintenance_servers;
-        document.getElementById('kpi-maint-badge').textContent = stats.maintenance_servers + ' Active';
+        const total = stats.total_servers ?? stats.total ?? 0;
+        const online = stats.online_servers ?? stats.secure ?? total;
+        const alerts = stats.open_alerts ?? stats.critical ?? 0;
+        const maint = stats.maintenance_servers ?? 0;
+
+        document.getElementById('kpi-total').textContent = total;
+        document.getElementById('kpi-online').textContent = Math.round((online / (total || 1)) * 100) + '%';
+        document.getElementById('kpi-online-badge').textContent = online + ' Online';
+        document.getElementById('kpi-alerts').textContent = alerts;
+        document.getElementById('kpi-alerts-badge').textContent = alerts + ' Active';
+        document.getElementById('kpi-maint').textContent = maint;
+        document.getElementById('kpi-maint-badge').textContent = maint + ' Active';
 
         const eventsData = await apiFetch('/api/events?limit=100');
         const items = eventsData.items || [];

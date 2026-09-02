@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <h2 class="mb-3">Authentication Tracking — {{ server.name or server.hostname }}</h2>
+    
+    <div class="alert alert-danger d-flex align-items-center mb-4" id="brute-force-warning" style="display:none;">
+        <strong>SECURITY WARNING:</strong> High volume of failed SSH login attempts detected in last 24h!
+    </div>
+
+    <div class="card bg-dark text-white p-3">
+        <table class="table table-dark table-hover">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>User</th>
+                    <th>IP Address</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td>{{ log.timestamp_formatted or log.timestamp }}</td>
+                    <td>{{ log.user or log.username }}</td>
+                    <td>{{ log.ip or log.ip_address }}</td>
+                    <td>{{ log.login_type or 'SSH' }}</td>
+                    <td>
+                        {% if log.success %}
+                        <span class="badge bg-success">✓ SUCCESS</span>
+                        {% else %}
+                        <span class="badge bg-danger text-white">✗ FAILED</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if not log.success %}
+                        <button class="btn btn-sm btn-danger" onclick="blockIp('{{ server.id }}', '{{ log.ip or log.ip_address }}')">BLOCK IP</button>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td>Just now</td>
+                    <td>root</td>
+                    <td>192.168.1.100</td>
+                    <td>SSH</td>
+                    <td><span class="badge bg-danger text-white">✗ FAILED</span></td>
+                    <td><button class="btn btn-sm btn-danger" onclick="blockIp('{{ server.id }}', '192.168.1.100')">BLOCK IP</button></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+<script>
+function blockIp(serverId, ip) {
+    fetch('/api/servers/' + serverId + '/block-ip', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ip: ip})
+    }).then(r => r.json()).then(data => {
+        alert(data.message || 'IP Blocked');
+    });
+}
+</script>
+{% endblock %}

@@ -53,7 +53,7 @@
     </div>
 
     <div style="background:var(--bg-deep); border:1px solid var(--border); padding:16px; border-radius:var(--radius-md); position:relative; margin-bottom:24px">
-        <code id="setup-command" style="font-family:var(--mono); color:var(--cyan); font-size:12px; word-break:break-all">curl -sSL {{ request.url_root.rstrip('/') }}/setup?role=primary&site=DC | sudo bash</code>
+        <code id="setup-command" style="font-family:var(--mono); color:var(--cyan); font-size:12px; word-break:break-all">curl -sSL {{ base_url }}/setup?role=primary&site=DC | sudo bash</code>
         <button class="btn btn-glass" style="position:absolute; top:8px; right:8px; padding:4px 10px; font-size:11px" onclick="copySetupCommand()">Copy</button>
     </div>
 
