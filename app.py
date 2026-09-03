@@ -883,3 +883,124 @@ async def api_get_rules():
         {"id": 3, "name": "Fork Bomb Execution", "category": "RESOURCE_EXHAUSTION", "severity": "CRITICAL", "enabled": True},
         {"id": 4, "name": "Unauthorized Sudo Privilege Escalation", "category": "PRIVILEGE_ESCALATION", "severity": "HIGH", "enabled": True}
     ]
+
+
+# ── Playbooks & Detection Rules API Endpoints ──────────────────────────────
+
+PLAYBOOKS_DB = [
+    {
+        "id": 1,
+        "name": "Auto Incident Response & Host Isolation",
+        "actions": [{"type": "promote_to_case"}, {"type": "isolate_host"}, {"type": "block_ip"}, {"type": "notify_slack"}]
+    },
+    {
+        "id": 2,
+        "name": "Brute Force Mitigation & IP Block",
+        "actions": [{"type": "block_ip"}, {"type": "disable_account"}, {"type": "notify_email"}]
+    },
+    {
+        "id": 3,
+        "name": "Automated System Recovery & Health Check",
+        "actions": [{"type": "run_health_check"}, {"type": "restart_service"}, {"type": "notify_slack"}]
+    }
+]
+
+RULES_DB = [
+    {
+        "id": 1,
+        "name": "Recursive Root Deletion (rm -rf /)",
+        "message": "Detects dangerous recursive root deletion attempts",
+        "event_type": "DESTRUCTIVE",
+        "severity": "critical",
+        "condition": {"field": "command", "operator": "contains", "value": "rm -rf /"},
+        "mitre_tactic": "TA0040 (Impact)",
+        "mitre_technique": "T1485 (Data Destruction)"
+    },
+    {
+        "id": 2,
+        "name": "Fork Bomb Execution",
+        "message": "Detects shell fork bomb denial-of-service signatures",
+        "event_type": "RESOURCE_EXHAUSTION",
+        "severity": "critical",
+        "condition": {"field": "command", "operator": "contains", "value": ":(){:|:&};:"},
+        "mitre_tactic": "TA0040 (Impact)",
+        "mitre_technique": "T1499 (Endpoint DoS)"
+    },
+    {
+        "id": 3,
+        "name": "Global Permission Lock (chmod 777)",
+        "message": "Detects global permission modifications on system files",
+        "event_type": "PERM_CHANGE",
+        "severity": "warning",
+        "condition": {"field": "command", "operator": "contains", "value": "chmod 777"},
+        "mitre_tactic": "TA0005 (Defense Evasion)",
+        "mitre_technique": "T1222 (File Permissions Modification)"
+    },
+    {
+        "id": 4,
+        "name": "SSH Brute Force Attempt",
+        "message": "Detects multiple failed SSH authentication attempts",
+        "event_type": "AUTHENTICATION",
+        "severity": "warning",
+        "condition": {"field": "failed_count", "operator": "greater_than", "value": "5"},
+        "mitre_tactic": "TA0006 (Credential Access)",
+        "mitre_technique": "T1110 (Brute Force)"
+    }
+]
+
+@app.get("/api/playbooks")
+async def api_get_playbooks():
+    return PLAYBOOKS_DB
+
+@app.post("/api/playbooks")
+async def api_create_playbook(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    new_id = len(PLAYBOOKS_DB) + 1
+    new_pb = {
+        "id": new_id,
+        "name": body.get("name", "New SOAR Playbook"),
+        "actions": body.get("actions", [{"type": "notify_slack"}])
+    }
+    PLAYBOOKS_DB.append(new_pb)
+    return {"ok": True, "id": new_id, "playbook": new_pb}
+
+@app.post("/api/playbooks/{pb_id}/execute/{alert_id}")
+async def api_execute_playbook(pb_id: int, alert_id: int):
+    pb = next((p for p in PLAYBOOKS_DB if p["id"] == pb_id), None)
+    if not pb:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+    db.log_alert(1, "PLAYBOOK_EXECUTION", f"Executed Playbook '{pb['name']}' on Alert #{alert_id}", severity="info")
+    return {"ok": True, "message": f"Playbook '{pb['name']}' executed successfully on alert #{alert_id}"}
+
+@app.get("/api/rules")
+async def api_get_rules():
+    return RULES_DB
+
+@app.post("/api/rules")
+async def api_create_rule(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    new_id = len(RULES_DB) + 1
+    new_rule = {
+        "id": new_id,
+        "name": body.get("name", "Custom Rule"),
+        "message": body.get("message", "Custom rule triggered"),
+        "event_type": body.get("event_type", "GENERAL"),
+        "severity": body.get("severity", "warning"),
+        "condition": body.get("condition", {"field": "command", "operator": "contains", "value": "sudo"}),
+        "mitre_tactic": body.get("mitre_tactic", "TA0005"),
+        "mitre_technique": body.get("mitre_technique", "T1059")
+    }
+    RULES_DB.append(new_rule)
+    return {"ok": True, "id": new_id, "rule": new_rule}
+
+@app.delete("/api/rules/{rule_id}")
+async def api_delete_rule(rule_id: int):
+    global RULES_DB
+    RULES_DB = [r for r in RULES_DB if r["id"] != rule_id]
+    return {"ok": True, "message": f"Rule #{rule_id} deleted"}
