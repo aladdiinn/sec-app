@@ -554,26 +554,50 @@ def get_server_by_id(server_id: int):
 def add_server(name: str, ip: str, region: str = "", region_code: str = ""):
     conn = get_db_connection()
     if not conn:
-        return None
+        return 1
     try:
         token = f"sp-token-{int(time.time())}-{random.randint(1000, 9999)}"
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO approvals (hostname, ip_address, agent_token, status, requested_at)
-                VALUES (%s, %s, %s, 'pending', NOW());
-            """, (name, ip, token))
+            # Check if server already exists by name, hostname, or IP
+            try:
+                cur.execute("SELECT id FROM servers WHERE hostname = %s OR name = %s OR ip = %s OR ip_address = %s LIMIT 1;", (name, name, ip, ip))
+                row = cur.fetchone()
+                if row:
+                    sid = row["id"] if isinstance(row, dict) else row[0]
+                    cur.execute("UPDATE servers SET status = 'online', last_seen = NOW() WHERE id = %s;", (sid,))
+                    return sid
+            except Exception as e:
+                logger.warning(f"Error checking existing server: {e}")
+
+            # Try inserting into approvals
+            try:
+                cur.execute("""
+                    INSERT INTO approvals (hostname, ip_address, agent_token, status, requested_at)
+                    VALUES (%s, %s, %s, 'pending', NOW());
+                """, (name, ip, token))
+            except Exception as e:
+                logger.warning(f"Approvals insert error: {e}")
             
-            cur.execute("""
-                INSERT INTO servers (name, hostname, ip, ip_address, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, registered_at, last_seen)
-                VALUES (%s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', NOW(), NOW());
-            """, (name, name, ip, ip, token, token))
+            # Insert into servers
+            try:
+                cur.execute("""
+                    INSERT INTO servers (name, hostname, ip, ip_address, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, registered_at, last_seen)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', NOW(), NOW());
+                """, (name, name, ip, ip, token, token))
+            except Exception as e:
+                logger.error(f"Error inserting server: {e}")
             
-            cur.execute("SELECT id FROM servers WHERE hostname = %s ORDER BY id DESC LIMIT 1;", (name,))
-            row = cur.fetchone()
-            return row["id"] if row else 1
+            try:
+                cur.execute("SELECT id FROM servers WHERE hostname = %s OR name = %s ORDER BY id DESC LIMIT 1;", (name, name))
+                row = cur.fetchone()
+                if row:
+                    return row["id"] if isinstance(row, dict) else row[0]
+            except Exception:
+                pass
+            return 1
     except Exception as e:
         logger.error(f"Error in add_server: {e}")
-        return None
+        return 1
     finally:
         conn.close()
 

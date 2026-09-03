@@ -866,3 +866,20 @@ echo "[SUCCESS] Target server $HOSTNAME ($IP) successfully registered to SOC!"
 echo "============================================================"
 """
     return Response(content=script, media_type="text/x-shellscript")
+
+@app.get("/api/threat-intel")
+async def api_get_threat_intel():
+    return [
+        {"id": 1, "type": "ipv4", "value": "185.220.101.42", "source": "AlienVault", "severity": "critical", "description": "Known Malicious Tor Exit Node"},
+        {"id": 2, "type": "domain", "value": "malware-cnc-server.top", "source": "Internal SOC", "severity": "high", "description": "C2 Infrastructure Command Node"},
+        {"id": 3, "type": "file_hash", "value": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8", "source": "MISP Threat Sharing", "severity": "medium", "description": "Ransomware Dropper Payload"}
+    ]
+
+@app.get("/api/rules")
+async def api_get_rules():
+    return [
+        {"id": 1, "name": "SSH Brute Force Detection", "category": "AUTHENTICATION", "severity": "HIGH", "enabled": True},
+        {"id": 2, "name": "Recursive Root Deletion (rm -rf /)", "category": "DESTRUCTIVE", "severity": "CRITICAL", "enabled": True},
+        {"id": 3, "name": "Fork Bomb Execution", "category": "RESOURCE_EXHAUSTION", "severity": "CRITICAL", "enabled": True},
+        {"id": 4, "name": "Unauthorized Sudo Privilege Escalation", "category": "PRIVILEGE_ESCALATION", "severity": "HIGH", "enabled": True}
+    ]
