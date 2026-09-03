@@ -819,3 +819,8 @@ if __name__ == "__main__":
     import os
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
+# Socket.IO Fallback Handler
+@app.get("/socket.io/{path:path}")
+@app.post("/socket.io/{path:path}")
+async def socket_io_fallback(path: str):
+    return Response(content="ok", media_type="text/plain")

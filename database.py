@@ -461,18 +461,27 @@ def get_server_counts():
         return counts
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) as total FROM servers;")
-            row = cur.fetchone()
-            counts["total"] = row.get("total", 0) if isinstance(row, dict) else (row[0] if row else 0)
-            
-            cur.execute("SELECT COUNT(*) as critical FROM servers WHERE severity = 'critical';")
-            row = cur.fetchone()
-            counts["critical"] = row.get("critical", 0) if isinstance(row, dict) else (row[0] if row else 0)
-            
-            cur.execute("SELECT COUNT(*) as warning FROM servers WHERE severity = 'warning';")
-            row = cur.fetchone()
-            counts["warning"] = row.get("warning", 0) if isinstance(row, dict) else (row[0] if row else 0)
-            
+            try:
+                cur.execute("SELECT COUNT(*) as total FROM servers;")
+                row = cur.fetchone()
+                counts["total"] = row.get("total", 0) if isinstance(row, dict) else (row[0] if row else 0)
+            except Exception:
+                counts["total"] = 0
+
+            try:
+                cur.execute("SELECT COUNT(*) as critical FROM servers WHERE severity = 'critical';")
+                row = cur.fetchone()
+                counts["critical"] = row.get("critical", 0) if isinstance(row, dict) else (row[0] if row else 0)
+            except Exception:
+                counts["critical"] = 0
+
+            try:
+                cur.execute("SELECT COUNT(*) as warning FROM servers WHERE severity = 'warning';")
+                row = cur.fetchone()
+                counts["warning"] = row.get("warning", 0) if isinstance(row, dict) else (row[0] if row else 0)
+            except Exception:
+                counts["warning"] = 0
+
             counts["secure"] = max(0, counts["total"] - counts["critical"] - counts["warning"])
         return counts
     except Exception as e:
