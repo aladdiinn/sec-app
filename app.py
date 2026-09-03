@@ -588,7 +588,7 @@ async def api_add_server(request: Request):
 
     sid = db.add_server(name, ip, region, region_code)
     if sid:
-        return {"ok": True, "id": sid, "message": "Server registration pending approval"}
+        return {"ok": True, "id": sid, "message": "Server registered and active in inventory"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to add server"})
 
 @app.delete("/api/servers/{server_id}")

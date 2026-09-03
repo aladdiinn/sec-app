@@ -103,7 +103,8 @@
         if (status) url += `?status=${status}`;
 
         try {
-            let data = await apiFetch(url);
+            let res = await apiFetch(url);
+            let data = Array.isArray(res) ? res : (res && res.servers ? res.servers : []);
 
             // Filter by maintenance if requested via URL
             if (filterMaint) {
