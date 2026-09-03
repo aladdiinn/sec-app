@@ -824,3 +824,45 @@ if __name__ == "__main__":
 @app.post("/socket.io/{path:path}")
 async def socket_io_fallback(path: str):
     return Response(content="ok", media_type="text/plain")
+
+# Setup Script Endpoint for Target Server Onboarding
+@app.get("/setup", response_class=Response)
+@app.get("/setup.sh", response_class=Response)
+async def setup_script(request: Request, role: Optional[str] = "node", site: Optional[str] = "Cloud"):
+    """Returns a self-installing bash script for target EC2 servers to connect to SOC."""
+    base_url = str(request.base_url).rstrip("/")
+    script = f"""#!/bin/bash
+set -e
+echo "============================================================"
+echo " SecurePulse SOC Command Center — Target Server Onboarding"
+echo "============================================================"
+echo "[SECUREPULSE] SOC Server URL : {base_url}"
+echo "[SECUREPULSE] Role           : {role}"
+echo "[SECUREPULSE] Site           : {site}"
+
+# 1. Install dependencies
+echo "[SECUREPULSE] Installing system dependencies (python3, curl)..."
+if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update -y >/dev/null 2>&1
+    sudo apt-get install -y python3 python3-pip curl >/dev/null 2>&1
+elif command -v yum >/dev/null 2>&1; then
+    sudo yum install -y python3 python3-pip curl >/dev/null 2>&1
+fi
+
+# 2. Get Server Hostname & IP
+HOSTNAME=$(hostname)
+IP=$(hostname -I | awk '{{print $1}}' || echo "127.0.0.1")
+
+# 3. Register Server in SOC Database
+echo "[SECUREPULSE] Registering endpoint $HOSTNAME ($IP) with SOC Backend..."
+
+REG_RES=$(curl -s -X POST "{base_url}/api/servers/add" \\
+    -H "Content-Type: application/json" \\
+    -d "{{\"name\": \"$HOSTNAME\", \"hostname\": \"$HOSTNAME\", \"ip\": \"$IP\", \"region\": \"{site}\", \"role\": \"{role}\"}}" || echo '{{"ok": false}}')
+
+echo "[SECUREPULSE] Registration Status: $REG_RES"
+echo "============================================================"
+echo "[SUCCESS] Target server $HOSTNAME ($IP) successfully registered to SOC!"
+echo "============================================================"
+"""
+    return Response(content=script, media_type="text/x-shellscript")
