@@ -23,7 +23,44 @@
     </div>
 
     <div id="servers-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:20px">
-        <!-- Asset Cards -->
+        {% for s in servers %}
+        <div class="card glass glass-hover fade-in" style="position:relative; display:flex; flex-direction:column">
+            {% if session.get('user_role') != 'normal' %}
+            <button onclick="event.stopPropagation(); openDeleteModal({{ s.id }}, '{{ (s.hostname or s.name or 'server')|escape }}')"
+                title="Delete server"
+                style="position:absolute; top:12px; right:12px; background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:5px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono); display:flex; align-items:center; gap:5px; z-index:2">
+                <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" fill="none" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                </svg>
+                DEL
+            </button>
+            {% endif %}
+            <div style="cursor:pointer; flex:1" onclick="window.location.href='/servers/{{ s.id }}'">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px">
+                    <div class="stat-icon {{ 'green' if s.status == 'online' else ('orange' if s.status == 'isolated' else 'red') }}" style="width:48px; height:48px">
+                        <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                    </div>
+                    <span class="badge badge-{{ 'success' if s.status == 'online' else ('warning' if s.status == 'isolated' else 'critical') }}" style="margin-right:44px">{{ (s.status or 'ONLINE')|upper }}</span>
+                </div>
+
+                <h3 class="card-title" style="font-size:18px; margin-bottom:4px">{{ s.hostname or s.name or s.ip }}</h3>
+                <p class="text-meta" style="margin-bottom:16px">{{ s.ip_address or s.ip or 'Unassigned IP' }}</p>
+
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; border-top: 1px solid var(--border); padding-top:12px">
+                    <div>
+                        <div class="text-meta" style="margin-bottom:3px">RISK LEVEL</div>
+                        <div style="font-size:13px; font-weight:700; color:{{ 'var(--red)' if s.severity == 'critical' else 'var(--green)' }}">{{ (s.severity or 'INFO')|upper }}</div>
+                    </div>
+                    <div>
+                        <div class="text-meta" style="margin-bottom:3px">LAST SEEN</div>
+                        <div style="font-size:13px; color:var(--text)">{{ s.last_sudo_ago or 'just now' }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="card glass" style="grid-column: 1/-1; text-align:center; padding:60px">No assets found in the inventory.</div>
+        {% endfor %}
     </div>
 </div>
 
@@ -95,7 +132,9 @@
 
     async function loadServers() {
         const grid = document.getElementById('servers-grid');
-        const status = document.getElementById('filter-status').value;
+        if (!grid) return;
+        const statusEl = document.getElementById('filter-status');
+        const status = statusEl ? statusEl.value : '';
         const urlParams = new URLSearchParams(window.location.search);
         const filterMaint = urlParams.get('filter') === 'maintenance';
 
@@ -106,25 +145,29 @@
             let res = await apiFetch(url);
             let data = Array.isArray(res) ? res : (res && res.servers ? res.servers : []);
 
-            // Filter by maintenance if requested via URL
             if (filterMaint) {
                 data = data.filter(s => s.is_maintenance || (s.maintenance_until && new Date(s.maintenance_until) > new Date()));
             }
 
-            if (!data.length) {
+            if (!data || !data.length) {
                 grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:60px">No assets found in the inventory.</div>';
                 return;
             }
 
-            grid.innerHTML = data.map(s => `
+            grid.innerHTML = data.map(s => {
+                const id = s.id || 1;
+                const hostname = String(s.hostname || s.name || s.ip || 'server-node');
+                const safeHostname = hostname.replace(/'/g, "\\'");
+                const ip = s.ip_address || s.ip || '127.0.0.1';
+                const statusStr = String(s.status || 'online').toLowerCase();
+                const severityStr = String(s.severity || 'info').toLowerCase();
+
+                return `
                 <div class="card glass glass-hover fade-in" style="position:relative; display:flex; flex-direction:column">
-                    <!-- Delete button top-right -->
                     ${window.USER_ROLE !== 'normal' ? `
-                    <button onclick="event.stopPropagation(); openDeleteModal(\${s.id}, '\${s.hostname.replace(/'/g, "\\\\'")}')"
+                    <button onclick="event.stopPropagation(); openDeleteModal(${id}, '${safeHostname}')"
                         title="Delete server"
-                        style="position:absolute; top:12px; right:12px; background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:5px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono); display:flex; align-items:center; gap:5px; z-index:2; transition:background 0.2s"
-                        onmouseenter="this.style.background='rgba(255,59,92,0.25)'"
-                        onmouseleave="this.style.background='rgba(255,59,92,0.1)'">
+                        style="position:absolute; top:12px; right:12px; background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:5px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono); display:flex; align-items:center; gap:5px; z-index:2">
                         <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" fill="none" stroke-width="2">
                             <polyline points="3 6 5 6 21 6"/>
                             <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
@@ -134,32 +177,34 @@
                     </button>
                     ` : ''}
 
-                    <!-- Card body — clickable to detail -->
-                    <div style="cursor:pointer; flex:1" onclick="window.location.href='/servers/${s.id}'">
+                    <div style="cursor:pointer; flex:1" onclick="window.location.href='/servers/${id}'">
                         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px">
-                            <div class="stat-icon ${s.status === 'online' ? 'green' : s.status === 'isolated' ? 'orange' : 'red'}" style="width:48px; height:48px">
+                            <div class="stat-icon ${statusStr === 'online' ? 'green' : statusStr === 'isolated' ? 'orange' : 'red'}" style="width:48px; height:48px">
                                 <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
                             </div>
-                            <span class="badge badge-${s.status === 'online' ? 'success' : s.status === 'isolated' ? 'warning' : 'critical'}" style="margin-right:44px">${s.status.toUpperCase()}</span>
+                            <span class="badge badge-${statusStr === 'online' ? 'success' : statusStr === 'isolated' ? 'warning' : 'critical'}" style="margin-right:44px">${statusStr.toUpperCase()}</span>
                         </div>
 
-                        <h3 class="card-title" style="font-size:18px; margin-bottom:4px">${s.hostname}</h3>
-                        <p class="text-meta" style="margin-bottom:16px">${s.ip_address || 'Unassigned IP'}</p>
+                        <h3 class="card-title" style="font-size:18px; margin-bottom:4px">${hostname}</h3>
+                        <p class="text-meta" style="margin-bottom:16px">${ip}</p>
 
                         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; border-top: 1px solid var(--border); padding-top:12px">
                             <div>
                                 <div class="text-meta" style="margin-bottom:3px">RISK LEVEL</div>
-                                <div style="font-size:13px; font-weight:700; color:${s.severity === 'critical' ? 'var(--red)' : 'var(--green)'}">${s.severity.toUpperCase()}</div>
+                                <div style="font-size:13px; font-weight:700; color:${severityStr === 'critical' ? 'var(--red)' : 'var(--green)'}">${severityStr.toUpperCase()}</div>
                             </div>
                             <div>
                                 <div class="text-meta" style="margin-bottom:3px">LAST SEEN</div>
-                                <div style="font-size:13px; color:var(--text)">${new Date(s.last_seen || s.registered_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                                <div style="font-size:13px; color:var(--text)">${s.last_sudo_ago || 'just now'}</div>
                             </div>
                         </div>
                     </div>
                 </div>
-            `).join('');
-        } catch (e) { console.error('Asset load error:', e); }
+                `;
+            }).join('');
+        } catch (e) {
+            console.error('Asset load error:', e);
+        }
     }
 
     function openDeleteModal(id, hostname) {
@@ -179,17 +224,21 @@
     async function confirmDelete() {
         if (!_deleteServerId) return;
         const btn = document.getElementById('btn-confirm-delete');
-        btn.disabled = true;
-        btn.textContent = 'Deleting...';
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+        }
         try {
             await apiFetch(`/api/servers/${_deleteServerId}`, { method: 'DELETE' });
-            showToast(`Server '${_deleteHostname}' deleted`, 'success');
             closeDeleteModal();
             loadServers();
         } catch (e) {
-            showToast('Delete failed: ' + e.message, 'error');
-            btn.disabled = false;
-            btn.textContent = 'Delete Permanently';
+            alert('Delete failed: ' + e.message);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Delete Permanently';
+            }
         }
     }
 
@@ -199,11 +248,14 @@
     }
 
     function updateOnboardCommand() {
-        const site = document.getElementById('onboard-site').value;
-        const role = document.getElementById('onboard-role').value;
+        const siteEl = document.getElementById('onboard-site');
+        const roleEl = document.getElementById('onboard-role');
+        const site = siteEl ? siteEl.value : 'Cloud';
+        const role = roleEl ? roleEl.value : 'none';
         const root = window.location.origin;
         const cmd = `curl -sSL "${root}/setup?role=${role}&site=${site}" | sudo bash`;
-        document.getElementById('setup-command').innerText = cmd;
+        const setupCmdEl = document.getElementById('setup-command');
+        if (setupCmdEl) setupCmdEl.innerText = cmd;
     }
 
     function closeAddServerModal() {
@@ -211,8 +263,11 @@
     }
 
     function copySetupCommand() {
-        const cmd = document.getElementById('setup-command').innerText;
-        navigator.clipboard.writeText(cmd).then(() => showToast('Command copied to clipboard', 'success'));
+        const cmdEl = document.getElementById('setup-command');
+        if (!cmdEl) return;
+        navigator.clipboard.writeText(cmdEl.innerText).then(() => {
+            if (typeof showToast === 'function') showToast('Command copied to clipboard', 'success');
+        });
     }
 
     window.addEventListener('load', loadServers);
