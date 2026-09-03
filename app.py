@@ -204,6 +204,12 @@ async def dashboard_page(request: Request):
 @app.get("/servers", response_class=HTMLResponse)
 @app.get("/server", response_class=HTMLResponse)
 @app.get("/assets", response_class=HTMLResponse)
+async def servers_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    servers = db.get_servers()
+    return render_template(request, "servers.html", {"servers": servers})
 
 @app.get("/server/{server_id}", response_class=HTMLResponse)
 @app.get("/servers/{server_id}", response_class=HTMLResponse)
