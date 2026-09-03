@@ -11,6 +11,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, Depends, Form, HTTPException, status, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,8 +25,14 @@ import database as db
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("security_monitor.app")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Initializing Database schema...")
+    db.init_db()
+    yield
+
 # Initialize FastAPI App
-app = FastAPI(title="EC2 Security Monitor", version="2.0.0")
+app = FastAPI(title="EC2 Security Monitor", version="2.0.0", lifespan=lifespan)
 
 # Secret Key from Environment Variable
 SECRET_KEY = os.getenv("SECRET_KEY", "ec2-security-monitor-production-secret-key-2026")
@@ -39,11 +46,7 @@ if os.path.exists(static_dir):
 # Jinja2 Templates setup looking in templates and templets
 templates = Jinja2Templates(directory=["templates", "templets"])
 
-# Startup Event — Initialize Database
-@app.on_event("startup")
-def on_startup():
-    logger.info("Initializing Database schema...")
-    db.init_db()
+
 
 # Favicon Handler — Returns HTTP 204 No Content
 @app.get("/favicon.ico", include_in_schema=False)

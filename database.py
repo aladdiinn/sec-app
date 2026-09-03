@@ -31,11 +31,16 @@ class DictRowWrapper:
         except Exception:
             pass
     def execute(self, query, params=None):
-        query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP")
-        if params is None:
-            res = self.cursor.execute(query_sql)
-        else:
-            res = self.cursor.execute(query_sql, params)
+        query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN")
+        try:
+            if params is None:
+                res = self.cursor.execute(query_sql)
+            else:
+                res = self.cursor.execute(query_sql, params)
+        except Exception as e:
+            if "duplicate column name" in str(e).lower() or "already exists" in str(e).lower():
+                return None
+            raise e
         if query_sql.strip().upper().startswith(("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP")):
             try:
                 self.conn.commit()
@@ -117,6 +122,22 @@ def init_db():
                 );
             """)
 
+            # Migrate missing columns in users table
+            for col, col_type in [
+                ("username", "VARCHAR(255)"),
+                ("email", "VARCHAR(255)"),
+                ("hashed_password", "VARCHAR(512)"),
+                ("role", "VARCHAR(64) DEFAULT 'user'"),
+                ("full_name", "VARCHAR(255)"),
+                ("is_admin", "BOOLEAN DEFAULT FALSE"),
+                ("is_active", "BOOLEAN DEFAULT TRUE"),
+                ("created_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP")
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except Exception:
+                    pass
+
             # Always seed/update admin user
             hashed_admin = generate_password_hash("admin")
             cur.execute("SELECT id FROM users WHERE username = %s OR email = %s;", ("admin", "admin@securepulse.local"))
@@ -156,6 +177,33 @@ def init_db():
                     registered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+
+            # Migrate missing columns in servers table
+            for col, col_type in [
+                ("name", "VARCHAR(255)"),
+                ("hostname", "VARCHAR(255)"),
+                ("ip", "VARCHAR(64)"),
+                ("ip_address", "VARCHAR(64)"),
+                ("os_info", "VARCHAR(255)"),
+                ("agent_token", "VARCHAR(512)"),
+                ("api_token", "VARCHAR(512)"),
+                ("status", "VARCHAR(32) DEFAULT 'online'"),
+                ("severity", "VARCHAR(16) DEFAULT 'info'"),
+                ("active_users", "INT DEFAULT 1"),
+                ("failed_logins", "INT DEFAULT 0"),
+                ("last_sudo", "VARCHAR(512) DEFAULT 'None'"),
+                ("last_sudo_ago", "VARCHAR(64) DEFAULT 'never'"),
+                ("ssh_port", "INT DEFAULT 22"),
+                ("ssh_user", "VARCHAR(64) DEFAULT 'ubuntu'"),
+                ("ssh_password", "VARCHAR(255)"),
+                ("ssh_key_path", "VARCHAR(255)"),
+                ("last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
+                ("registered_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP")
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except Exception:
+                    pass
 
             # Commands Table
             cur.execute("""
