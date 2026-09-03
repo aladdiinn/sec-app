@@ -1,12 +1,9 @@
 import os
 import re
-<<<<<<< HEAD
 import random
+import time
 import logging
 import sqlite3
-=======
-import logging
->>>>>>> c94c11b (Update security dashboard)
 from datetime import datetime, timezone, timedelta
 import psycopg2
 import psycopg2.extras
@@ -22,7 +19,6 @@ DB_USER = os.getenv("POSTGRES_USER", os.getenv("DB_USER", "securepulse"))
 DB_PASS = os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASS", "securepulse_pass"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-<<<<<<< HEAD
 class DictRowWrapper:
     def __init__(self, conn):
         self.conn = conn
@@ -73,14 +69,6 @@ def get_db_connection():
         if DATABASE_URL:
             url = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
             conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor, connect_timeout=2)
-=======
-def get_db_connection():
-    """Establish and return a psycopg2 database connection."""
-    try:
-        if DATABASE_URL:
-            url = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
-            conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
->>>>>>> c94c11b (Update security dashboard)
         else:
             conn = psycopg2.connect(
                 host=DB_HOST,
@@ -88,17 +76,12 @@ def get_db_connection():
                 dbname=DB_NAME,
                 user=DB_USER,
                 password=DB_PASS,
-<<<<<<< HEAD
                 cursor_factory=psycopg2.extras.RealDictCursor,
                 connect_timeout=2
-=======
-                cursor_factory=psycopg2.extras.RealDictCursor
->>>>>>> c94c11b (Update security dashboard)
             )
         conn.autocommit = True
         return conn
     except Exception as e:
-<<<<<<< HEAD
         logger.warning(f"PostgreSQL connection offline ({e}). Using local SQLite database.")
     
     try:
@@ -115,24 +98,11 @@ def init_db():
     conn = get_db_connection()
     if not conn:
         logger.warning("Could not connect to DB to initialize tables.")
-=======
-        logger.error(f"Database connection error: {e}")
-        return None
-
-def init_db():
-    """Initialize all required PostgreSQL database tables and default records."""
-    conn = get_db_connection()
-    if not conn:
-        logger.warning("Could not connect to DB to initialize tables. Will retry on request.")
->>>>>>> c94c11b (Update security dashboard)
         return
 
     try:
         with conn.cursor() as cur:
-<<<<<<< HEAD
-=======
             # Users Table
->>>>>>> c94c11b (Update security dashboard)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id SERIAL PRIMARY KEY,
@@ -147,7 +117,6 @@ def init_db():
                 );
             """)
 
-<<<<<<< HEAD
             # Always seed/update admin user
             hashed_admin = generate_password_hash("admin")
             cur.execute("SELECT id FROM users WHERE username = %s OR email = %s;", ("admin", "admin@securepulse.local"))
@@ -162,9 +131,7 @@ def init_db():
                     UPDATE users SET username = 'admin', hashed_password = %s, role = 'admin', is_admin = TRUE, is_active = TRUE WHERE id = %s;
                 """, (hashed_admin, admin_row["id"]))
 
-=======
             # Servers Table
->>>>>>> c94c11b (Update security dashboard)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS servers (
                     id SERIAL PRIMARY KEY,
@@ -173,13 +140,8 @@ def init_db():
                     ip VARCHAR(64),
                     ip_address VARCHAR(64),
                     os_info VARCHAR(255),
-<<<<<<< HEAD
                     agent_token VARCHAR(512),
                     api_token VARCHAR(512),
-=======
-                    agent_token VARCHAR(512) UNIQUE,
-                    api_token VARCHAR(512) UNIQUE,
->>>>>>> c94c11b (Update security dashboard)
                     status VARCHAR(32) DEFAULT 'online',
                     severity VARCHAR(16) DEFAULT 'info',
                     active_users INT DEFAULT 1,
@@ -195,8 +157,6 @@ def init_db():
                 );
             """)
 
-<<<<<<< HEAD
-=======
             # Commands Table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS commands (
@@ -226,7 +186,6 @@ def init_db():
             """)
 
             # Alerts Table
->>>>>>> c94c11b (Update security dashboard)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS alerts (
                     id SERIAL PRIMARY KEY,
@@ -241,34 +200,7 @@ def init_db():
                 );
             """)
 
-<<<<<<< HEAD
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS commands (
-                    id SERIAL PRIMARY KEY,
-                    server_id INT REFERENCES servers(id) ON DELETE CASCADE,
-                    username VARCHAR(64) NOT NULL,
-                    command TEXT NOT NULL,
-                    category VARCHAR(64) DEFAULT 'GENERAL',
-                    risk_level VARCHAR(16) DEFAULT 'LOW',
-                    is_sudo BOOLEAN DEFAULT FALSE,
-                    executed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS login_history (
-                    id SERIAL PRIMARY KEY,
-                    server_id INT REFERENCES servers(id) ON DELETE CASCADE,
-                    username VARCHAR(64) NOT NULL,
-                    ip_address VARCHAR(64),
-                    login_type VARCHAR(32) DEFAULT 'SSH',
-                    success BOOLEAN DEFAULT TRUE,
-                    location VARCHAR(128) DEFAULT 'Unknown',
-                    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-=======
             # Projects Table
->>>>>>> c94c11b (Update security dashboard)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS projects (
                     id SERIAL PRIMARY KEY,
@@ -277,11 +209,8 @@ def init_db():
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             """)
-<<<<<<< HEAD
-=======
 
             # Approvals Table
->>>>>>> c94c11b (Update security dashboard)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS approvals (
                     id SERIAL PRIMARY KEY,
@@ -293,17 +222,6 @@ def init_db():
                 );
             """)
 
-<<<<<<< HEAD
-            cur.execute("SELECT id FROM servers LIMIT 1;")
-            if not cur.fetchone():
-                cur.execute("""
-                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, registered_at, last_seen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW());
-                """, ("ec2-prod-web-01", "ec2-prod-web-01", "10.0.0.1", "10.0.0.1", "Ubuntu 22.04 LTS", "sp-token-12345", "sp-token-12345", "online", "info", 1, 0, "ubuntu: apt update", "2m ago"))
-
-        conn.close()
-        logger.info("Database schema initialized successfully.")
-=======
             # Audit Logs Table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -315,46 +233,27 @@ def init_db():
                 );
             """)
 
-            # Seed Default Admin User if missing (username 'admin', password 'admin')
-            cur.execute("SELECT id FROM users WHERE username = %s OR email = %s;", ("admin", "admin@securepulse.local"))
-            if not cur.fetchone():
-                hashed = generate_password_hash("admin")
-                cur.execute("""
-                    INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active)
-                    VALUES (%s, %s, %s, %s, %s, TRUE, TRUE);
-                """, ("admin", "admin@securepulse.local", hashed, "admin", "System Administrator"))
-                logger.info("Seeded default admin user (admin / admin).")
-
             # Seed a default EC2 server if empty
             cur.execute("SELECT id FROM servers LIMIT 1;")
             if not cur.fetchone():
                 cur.execute("""
-                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, registered_at, last_seen)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW());
                 """, ("ec2-prod-web-01", "ec2-prod-web-01", "10.0.0.1", "10.0.0.1", "Ubuntu 22.04 LTS", "sp-token-12345", "sp-token-12345", "online", "info", 1, 0, "ubuntu: apt update", "2m ago"))
-                logger.info("Seeded default server #1 (ec2-prod-web-01).")
 
         conn.close()
-        logger.info("Database initialization completed.")
->>>>>>> c94c11b (Update security dashboard)
+        logger.info("Database schema initialized successfully.")
     except Exception as e:
         logger.error(f"Error during init_db: {e}")
         if conn:
             conn.close()
 
 def categorize_command(cmd_str: str) -> str:
-<<<<<<< HEAD
+    """Categorize command into explicit production categories."""
     if not cmd_str:
         return "GENERAL"
-    cmd = cmd_str.strip()
-=======
-    """Categorize command into 10 explicit production categories."""
-    if not cmd_str:
-        return "GENERAL"
-    
     cmd = cmd_str.strip()
 
->>>>>>> c94c11b (Update security dashboard)
     if re.search(r':\(\)\s*\{\s*:\|:&\s*\};:', cmd) or ":(){:|:&};:" in cmd:
         return "FORK_BOMB"
 
@@ -416,10 +315,7 @@ def categorize_command(cmd_str: str) -> str:
     return "GENERAL"
 
 def log_alert(server_id: int, alert_type: str, message: str, severity: str = "warning"):
-<<<<<<< HEAD
-=======
     """Log alert with 60-minute deduplication."""
->>>>>>> c94c11b (Update security dashboard)
     conn = get_db_connection()
     if not conn:
         return
@@ -433,16 +329,9 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
             if cur.fetchone():
                 return
             title = f"{alert_type.replace('_', ' ').title()} Alert"
-<<<<<<< HEAD
-            
             cur.execute("""
                 INSERT INTO alerts (server_id, alert_type, severity, title, message, is_resolved, created_at)
                 VALUES (%s, %s, %s, %s, %s, FALSE, NOW());
-=======
-            cur.execute("""
-                INSERT INTO alerts (server_id, alert_type, severity, title, message, created_at)
-                VALUES (%s, %s, %s, %s, %s, NOW());
->>>>>>> c94c11b (Update security dashboard)
             """, (server_id, alert_type, severity, title, message))
     except Exception as e:
         logger.error(f"Error in log_alert: {e}")
@@ -450,10 +339,7 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
         conn.close()
 
 def save_agent_data(server_id: int, data: dict):
-<<<<<<< HEAD
-=======
     """Save agent telemetry with command deduplication and last_sudo update."""
->>>>>>> c94c11b (Update security dashboard)
     conn = get_db_connection()
     if not conn:
         return False
@@ -462,15 +348,12 @@ def save_agent_data(server_id: int, data: dict):
             last_sudo_val = data.get("last_sudo")
             last_sudo_ago_val = data.get("last_sudo_ago", "just now")
 
-<<<<<<< HEAD
             if not last_sudo_val and data.get("sudo_cmds"):
                 last_cmd = data["sudo_cmds"][-1]
                 if isinstance(last_cmd, dict):
                     last_sudo_val = f"{last_cmd.get('user', 'ubuntu')}: {last_cmd.get('cmd', last_cmd.get('command', ''))}"
                     last_sudo_ago_val = last_cmd.get("ago", "just now")
 
-=======
->>>>>>> c94c11b (Update security dashboard)
             if last_sudo_val:
                 cur.execute("""
                     UPDATE servers
@@ -478,15 +361,7 @@ def save_agent_data(server_id: int, data: dict):
                     WHERE id = %s;
                 """, (last_sudo_val, last_sudo_ago_val, server_id))
             else:
-<<<<<<< HEAD
                 cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
-=======
-                cur.execute("""
-                    UPDATE servers
-                    SET last_seen = NOW(), status = 'online'
-                    WHERE id = %s;
-                """, (server_id,))
->>>>>>> c94c11b (Update security dashboard)
 
             commands = data.get("commands", [])
             if isinstance(data.get("sudo_logs"), list):
@@ -531,10 +406,7 @@ def save_agent_data(server_id: int, data: dict):
         conn.close()
 
 def get_server_counts():
-<<<<<<< HEAD
-=======
     """Return counts dict: {"total": N, "secure": N, "warning": N, "critical": N}."""
->>>>>>> c94c11b (Update security dashboard)
     conn = get_db_connection()
     counts = {"total": 0, "secure": 0, "warning": 0, "critical": 0}
     if not conn:
@@ -542,7 +414,6 @@ def get_server_counts():
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) as total FROM servers;")
-<<<<<<< HEAD
             row = cur.fetchone()
             counts["total"] = row.get("total", 0) if isinstance(row, dict) else (row[0] if row else 0)
             
@@ -554,13 +425,6 @@ def get_server_counts():
             row = cur.fetchone()
             counts["warning"] = row.get("warning", 0) if isinstance(row, dict) else (row[0] if row else 0)
             
-=======
-            counts["total"] = cur.fetchone()["total"]
-            cur.execute("SELECT COUNT(*) as critical FROM servers WHERE severity = 'critical';")
-            counts["critical"] = cur.fetchone()["critical"]
-            cur.execute("SELECT COUNT(*) as warning FROM servers WHERE severity = 'warning';")
-            counts["warning"] = cur.fetchone()["warning"]
->>>>>>> c94c11b (Update security dashboard)
             counts["secure"] = max(0, counts["total"] - counts["critical"] - counts["warning"])
         return counts
     except Exception as e:
@@ -570,10 +434,7 @@ def get_server_counts():
         conn.close()
 
 def get_servers():
-<<<<<<< HEAD
-=======
     """Fetch all servers including name, ip, last_sudo, and last_sudo_ago."""
->>>>>>> c94c11b (Update security dashboard)
     conn = get_db_connection()
     servers = []
     if not conn:
@@ -588,10 +449,7 @@ def get_servers():
                 s["ip"] = s.get("ip") or s.get("ip_address")
                 s["active_users"] = s.get("active_users", 1)
                 s["failed_logins"] = s.get("failed_logins", 0)
-<<<<<<< HEAD
                 s["api_token"] = s.get("api_token") or s.get("agent_token") or "sp-token-12345"
-=======
->>>>>>> c94c11b (Update security dashboard)
 
                 if not s.get("last_sudo") or s.get("last_sudo") == "None":
                     cur.execute("""
@@ -628,10 +486,7 @@ def get_server_by_id(server_id: int):
             s = dict(row)
             s["name"] = s.get("name") or s.get("hostname")
             s["ip"] = s.get("ip") or s.get("ip_address")
-<<<<<<< HEAD
             s["api_token"] = s.get("api_token") or s.get("agent_token") or "sp-token-12345"
-=======
->>>>>>> c94c11b (Update security dashboard)
             return s
     except Exception as e:
         logger.error(f"Error in get_server_by_id: {e}")
@@ -644,8 +499,6 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = ""):
     if not conn:
         return None
     try:
-<<<<<<< HEAD
-        import time, random
         token = f"sp-token-{int(time.time())}-{random.randint(1000, 9999)}"
         with conn.cursor() as cur:
             cur.execute("""
@@ -661,22 +514,6 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = ""):
             cur.execute("SELECT id FROM servers WHERE hostname = %s ORDER BY id DESC LIMIT 1;", (name,))
             row = cur.fetchone()
             return row["id"] if row else 1
-=======
-        token = f"sp-token-{int(datetime.now().timestamp())}"
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO approvals (hostname, ip_address, agent_token, status)
-                VALUES (%s, %s, %s, 'pending') RETURNING id;
-            """, (name, ip, token))
-            app_id = cur.fetchone()["id"]
-            
-            cur.execute("""
-                INSERT INTO servers (name, hostname, ip, ip_address, agent_token, api_token, status, severity)
-                VALUES (%s, %s, %s, %s, %s, %s, 'online', 'info') RETURNING id;
-            """, (name, name, ip, ip, token, token))
-            srv_id = cur.fetchone()["id"]
-            return srv_id
->>>>>>> c94c11b (Update security dashboard)
     except Exception as e:
         logger.error(f"Error in add_server: {e}")
         return None
