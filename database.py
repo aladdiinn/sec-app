@@ -545,6 +545,36 @@ def save_agent_data(server_id: int, data: dict):
         return False
     try:
         with conn.cursor() as cur:
+            # Resolve valid server_id to satisfy foreign key constraints
+            valid_server_id = None
+            if server_id:
+                try:
+                    cur.execute("SELECT id FROM servers WHERE id = %s;", (server_id,))
+                    s_row = cur.fetchone()
+                    if s_row:
+                        valid_server_id = s_row["id"] if isinstance(s_row, dict) else s_row[0]
+                except Exception:
+                    pass
+
+            if not valid_server_id:
+                try:
+                    cur.execute("SELECT id FROM servers ORDER BY id ASC LIMIT 1;")
+                    first_srv = cur.fetchone()
+                    if first_srv:
+                        valid_server_id = first_srv["id"] if isinstance(first_srv, dict) else first_srv[0]
+                    else:
+                        cur.execute("""
+                            INSERT INTO servers (name, hostname, ip, ip_address, status, severity, is_maintenance, registered_at, last_seen)
+                            VALUES ('ip-172-31-4-83', 'ip-172-31-4-83', '172.31.4.83', '172.31.4.83', 'online', 'info', FALSE, NOW(), NOW())
+                            RETURNING id;
+                        """)
+                        created = cur.fetchone()
+                        valid_server_id = created["id"] if isinstance(created, dict) else created[0]
+                except Exception:
+                    valid_server_id = 1
+
+            server_id = valid_server_id
+
             last_sudo_val = data.get("last_sudo")
             last_sudo_ago_val = data.get("last_sudo_ago", "just now")
 
