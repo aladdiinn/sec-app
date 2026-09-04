@@ -3,7 +3,7 @@
 # EMBEDDED REAL-TIME HOST SECURITY WATCHER
 # Continuously monitors /var/log/auth.log, journalctl, and bash history
 # ══════════════════════════════════════════════════════════════════════════════
-import subprocess, glob, threading
+import time, subprocess, glob, threading, os, re
 
 _watcher_auth_pos = 0
 _watcher_hist_positions = {}
