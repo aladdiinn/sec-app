@@ -146,7 +146,7 @@
             let data = Array.isArray(res) ? res : (res && res.servers ? res.servers : []);
 
             if (filterMaint) {
-                data = data.filter(s => s.is_maintenance || (s.maintenance_until && new Date(s.maintenance_until) > new Date()));
+                data = data.filter(s => s.is_maintenance === true || s.is_maintenance === 1 || (s.maintenance_until && new Date(s.maintenance_until) > new Date()));
             }
 
             if (!data || !data.length) {

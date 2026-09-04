@@ -526,6 +526,7 @@ def get_servers():
                     s["ip_address"] = s.get("ip_address") or s.get("ip") or "127.0.0.1"
                     s["status"] = (s.get("status") or "online").lower()
                     s["severity"] = (s.get("severity") or "info").lower()
+                    s["is_maintenance"] = bool(s.get("is_maintenance", False))
                     s["active_users"] = s.get("active_users", 1)
                     s["failed_logins"] = s.get("failed_logins", 0)
                     s["api_token"] = s.get("api_token") or s.get("agent_token") or "sp-token-12345"
@@ -576,7 +577,7 @@ def get_servers():
                     logger.error(f"Error seeding fallback server: {ex}")
                     servers.append(fallback_server)
 
-        return servers if servers else [fallback_server]
+        return servers
     except Exception as e:
         logger.error(f"Error in get_servers: {e}")
         return [fallback_server]
@@ -660,6 +661,12 @@ def delete_server(server_id: int):
         return False
     try:
         with conn.cursor() as cur:
+            # Cascade delete all related records first
+            for table in ["commands", "alerts", "login_history", "tracking_logs"]:
+                try:
+                    cur.execute(f"DELETE FROM {table} WHERE server_id = %s;", (server_id,))
+                except Exception:
+                    pass
             cur.execute("DELETE FROM servers WHERE id = %s;", (server_id,))
         return True
     except Exception as e:
