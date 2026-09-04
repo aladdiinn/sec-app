@@ -169,18 +169,24 @@
 
             const sevColors = { critical: 'badge-critical', warning: 'badge-warning', info: 'badge-info' };
 
-            tbody.innerHTML = rules.map(r => `
+            tbody.innerHTML = rules.map(r => {
+                const cField = (r.condition && typeof r.condition === 'object' ? r.condition.field : 'command') || 'command';
+                const cOp = (r.condition && typeof r.condition === 'object' ? r.condition.operator : 'contains') || 'contains';
+                const cVal = (r.condition && typeof r.condition === 'object' ? r.condition.value : String(r.condition || '')) || '';
+
+                return `
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.05); transition: background 0.2s" onmouseover="this.style.background='rgba(255,255,255,0.03)'" onmouseout="this.style.background=''">
                     <td style="padding:12px; color:var(--text-muted); font-family:var(--font-mono)">${r.id}</td>
                     <td style="padding:12px">
                         <div style="font-weight:600; color:var(--text-primary)">${r.name}</div>
                         <div style="font-size:11px; color:var(--text-muted); margin-top:2px">${r.message || ''}</div>
                     </td>
-                    <td style="padding:12px"><code style="color:var(--accent-cyan); font-size:12px">${r.event_type}</code></td>
-                    <td style="padding:12px"><span class="badge ${sevColors[r.severity] || 'badge-info'}">${r.severity.toUpperCase()}</span></td>
+                    <td style="padding:12px"><code style="color:var(--accent-cyan); font-size:12px">${r.event_type || 'GENERAL'}</code></td>
+                    <td style="padding:12px"><span class="badge ${sevColors[r.severity] || 'badge-info'}">${(r.severity || 'info').toUpperCase()}</span></td>
                     <td style="padding:12px; font-size:12px; color:var(--text-secondary)">
-                        <code style="font-size:11px">${r.condition.field} <span style="color:var(--accent-blue)">${r.condition.operator}</span> "${r.condition.value}"</code>
-                    </td>
+                        <code style="font-size:11px">${cField} <span style="color:var(--accent-blue)">${cOp}</span> "${cVal}"</code>
+                    </td>`;
+            }).join('');
                     <td style="padding:12px">
                         ${r.mitre_tactic ? `
                             <span class="badge" style="background:rgba(139,92,246,0.1); color:#a78bfa; border:1px solid rgba(139,92,246,0.3); font-size:10px">${r.mitre_tactic}</span>

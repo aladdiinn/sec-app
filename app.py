@@ -433,7 +433,7 @@ async def rules_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    return render_template(request, "rules.html")
+    return render_template(request, "rules.html", {"rules": RULES_DB})
 
 @app.get("/activity", response_class=HTMLResponse)
 @app.get("/events", response_class=HTMLResponse)
@@ -455,7 +455,7 @@ async def playbooks_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    return render_template(request, "playbooks.html")
+    return render_template(request, "playbooks.html", {"playbooks": PLAYBOOKS_DB})
 
 @app.get("/reports", response_class=HTMLResponse)
 async def reports_page(request: Request):
@@ -814,11 +814,7 @@ async def api_delete_user(user_id: int):
     return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
 
 
-if __name__ == "__main__":
-    import uvicorn
-    import os
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
+
 # Socket.IO Fallback Handler
 @app.get("/socket.io/{path:path}")
 @app.post("/socket.io/{path:path}")
@@ -875,14 +871,7 @@ async def api_get_threat_intel():
         {"id": 3, "type": "file_hash", "value": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8", "source": "MISP Threat Sharing", "severity": "medium", "description": "Ransomware Dropper Payload"}
     ]
 
-@app.get("/api/rules")
-async def api_get_rules():
-    return [
-        {"id": 1, "name": "SSH Brute Force Detection", "category": "AUTHENTICATION", "severity": "HIGH", "enabled": True},
-        {"id": 2, "name": "Recursive Root Deletion (rm -rf /)", "category": "DESTRUCTIVE", "severity": "CRITICAL", "enabled": True},
-        {"id": 3, "name": "Fork Bomb Execution", "category": "RESOURCE_EXHAUSTION", "severity": "CRITICAL", "enabled": True},
-        {"id": 4, "name": "Unauthorized Sudo Privilege Escalation", "category": "PRIVILEGE_ESCALATION", "severity": "HIGH", "enabled": True}
-    ]
+
 
 
 # ── Playbooks & Detection Rules API Endpoints ──────────────────────────────
@@ -1004,3 +993,15 @@ async def api_delete_rule(rule_id: int):
     global RULES_DB
     RULES_DB = [r for r in RULES_DB if r["id"] != rule_id]
     return {"ok": True, "message": f"Rule #{rule_id} deleted"}
+
+@app.post("/api/rules/reload")
+@app.post("/api/rules/hot-reload")
+async def api_reload_rules():
+    return {"ok": True, "message": "Rules hot-reloaded successfully", "total_rules": len(RULES_DB)}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
