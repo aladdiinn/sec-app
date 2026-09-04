@@ -482,6 +482,13 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 INSERT INTO alerts (server_id, alert_type, severity, title, message, is_resolved, created_at)
                 VALUES (%s, %s, %s, %s, %s, FALSE, NOW());
             """, (server_id, alert_type, severity, title, message))
+            try:
+                cur.execute("""
+                    INSERT INTO incidents (title, severity, description, status, assigned_to, server_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, 'open', 'Unassigned', %s, NOW(), NOW());
+                """, (title, severity, message, server_id))
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"Error in log_alert: {e}")
     finally:
