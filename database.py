@@ -198,6 +198,7 @@ def init_db():
                 ("ssh_password", "VARCHAR(255)"),
                 ("ssh_key_path", "VARCHAR(255)"),
                 ("last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
+                ("is_maintenance", "BOOLEAN DEFAULT FALSE"),
                 ("registered_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP")
             ]:
                 try:
@@ -557,7 +558,7 @@ def get_servers():
                 try:
                     cur.execute("""
                         INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, registered_at, last_seen)
-                        VALUES ('ip-172-31-4-83', 'ip-172-31-4-83', '172.31.4.83', '172.31.4.83', 'Linux (Ubuntu)', 'sp-token-default', 'sp-token-default', 'online', 'info', 1, 0, 'None', 'never', NOW(), NOW());
+                        VALUES ('ip-172-31-4-83', 'ip-172-31-4-83', '172.31.4.83', '172.31.4.83', 'Linux (Ubuntu)', 'sp-token-default', 'sp-token-default', 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW());
                     """)
                     cur.execute("SELECT * FROM servers ORDER BY id ASC;")
                     rows = cur.fetchall()

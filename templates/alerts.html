@@ -74,13 +74,14 @@
         el.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-muted)">Loading incidents...</div>';
 
         try {
-            const data = await apiFetch(url);
-            if (!data.items.length) {
+            const res = await apiFetch(url);
+            const items = Array.isArray(res) ? res : (res && res.items ? res.items : []);
+            if (!items.length) {
                 el.innerHTML = '<div class="card glass"><div style="text-align:center; padding:40px; color:var(--text-muted)">No active incidents found. Everything looks safe.</div></div>';
                 return;
             }
 
-            el.innerHTML = data.items.map(a => `
+            el.innerHTML = items.map(a => `
                 <div class="card glass fade-in" style="border-left: 4px solid var(--accent-${a.severity === 'critical' ? 'red' : a.severity === 'warning' ? 'orange' : 'blue'})">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start">
                         <div style="flex:1">

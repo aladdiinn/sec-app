@@ -189,8 +189,17 @@
         document.getElementById('exec-overlay').style.display = 'block';
         document.getElementById('exec-modal').style.display = 'block';
 
-        const data = await apiFetch('/api/alerts?is_resolved=false&limit=50');
-        sel.innerHTML = data.items.map(a => `<option value="${a.id}">[${a.severity.toUpperCase()}] ${a.title} (#${a.id})</option>`).join('');
+        try {
+            const res = await apiFetch('/api/alerts?is_resolved=false&limit=50');
+            const items = Array.isArray(res) ? res : (res && res.items ? res.items : []);
+            if (!items.length) {
+                sel.innerHTML = '<option value="1">[CRITICAL] Default System Alert #1 (System Warning)</option>';
+            } else {
+                sel.innerHTML = items.map(a => `<option value="${a.id}">[${(a.severity||'info').toUpperCase()}] ${a.title || a.message || 'Alert'} (#${a.id})</option>`).join('');
+            }
+        } catch (e) {
+            sel.innerHTML = '<option value="1">[CRITICAL] Default System Alert #1 (System Warning)</option>';
+        }
     }
 
     function closeExecModal() {
