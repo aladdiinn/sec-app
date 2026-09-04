@@ -631,13 +631,20 @@ def save_agent_data(server_id: int, data: dict):
             if isinstance(data.get("sudo_cmds"), list):
                 commands.extend(data.get("sudo_cmds", []))
 
-            # Fetch active detection rules
+            # Fetch active detection rules and threat intel IOCs
             active_rules = []
+            active_iocs = []
             try:
                 cur.execute("SELECT name, pattern, severity, event_type, mitre_tactic, mitre_technique FROM detection_rules WHERE enabled = TRUE;")
                 active_rules = cur.fetchall()
             except Exception as ex_rfetch:
                 logger.debug(f"Rules fetch error: {ex_rfetch}")
+
+            try:
+                cur.execute("SELECT ioc_value, ioc_type, severity, description FROM threat_intel;")
+                active_iocs = cur.fetchall()
+            except Exception as ex_tfetch:
+                logger.debug(f"Threat intel fetch error: {ex_tfetch}")
 
             for cmd_obj in commands:
                 username = cmd_obj.get("user", cmd_obj.get("username", "root"))
@@ -663,6 +670,21 @@ def save_agent_data(server_id: int, data: dict):
                         INSERT INTO commands (server_id, username, command, category, risk_level, is_sudo, executed_at)
                         VALUES (%s, %s, %s, %s, %s, %s, NOW());
                     """, (server_id, username, cmd_str, category, risk_level, is_sudo))
+
+                # Check Threat Intel table for known malicious domains, IPs, URLs, hashes
+                ti_matched = False
+                for ioc in active_iocs:
+                    ioc_val = (ioc.get("ioc_value") or "").strip()
+                    if not ioc_val: continue
+                    if ioc_val.lower() in cmd_str.lower():
+                        ti_matched = True
+                        log_alert(
+                            server_id,
+                            "THREAT_INTEL_MATCH",
+                            f"Threat Intel Hit ({ioc.get('ioc_type', 'DOMAIN').upper()}): {ioc_val} ({ioc.get('description', 'Known Malicious')}) detected in command: {cmd_str}",
+                            severity=ioc.get("severity", "critical").lower()
+                        )
+                        break
 
                 # Check custom detection rules first
                 rule_matched = False
@@ -711,6 +733,19 @@ def save_agent_data(server_id: int, data: dict):
                             severity=r.get("severity", "critical").lower()
                         )
                         break  # Only one rule alert per event!
+
+                # Check event text against Threat Intel IOCs
+                for ioc in active_iocs:
+                    ioc_val = (ioc.get("ioc_value") or "").strip()
+                    if not ioc_val: continue
+                    if ioc_val.lower() in ev_text.lower():
+                        log_alert(
+                            server_id,
+                            "THREAT_INTEL_MATCH",
+                            f"Threat Intel Hit ({ioc.get('ioc_type', 'DOMAIN').upper()}): {ioc_val} ({ioc.get('description', 'Known Malicious')}) in event: {ev_text}",
+                            severity=ioc.get("severity", "critical").lower()
+                        )
+                        break
 
             # 2. Ingest logins & check against threat intel + failed thresholds
             raw_logins = data.get("logins", []) or data.get("events", [])

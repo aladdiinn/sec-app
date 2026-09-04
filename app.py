@@ -21,7 +21,8 @@ MALICIOUS_PAYLOAD_RULES = [
     ("Firewall Disablement (UFW)", r'ufw\s+disable', "ufw disable"),
     ("Crontab Persistence", r'crontab\s+-[er]', "crontab -r"),
     ("Mass Process Kill", r'killall\s+-9|pkill\s+-9', "killall -9 test"),
-    ("Curl Pipe to Shell", r'curl.*\|\s*(bash|sh)|wget.*\|\s*(bash|sh)', "curl | bash")
+    ("Curl Pipe to Shell", r'curl.*\|\s*(bash|sh)|wget.*\|\s*(bash|sh)', "curl | bash"),
+    ("Threat Intel C2 Domain", r'malware-cnc-c2\.top', "curl http://malware-cnc-c2.top")
 ]
 
 def scan_fim_changes():
