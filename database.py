@@ -286,8 +286,8 @@ def init_db():
             cur.execute("SELECT id FROM servers LIMIT 1;")
             if not cur.fetchone():
                 cur.execute("""
-                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, registered_at, last_seen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW());
+                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()), FALSE;
                 """, ("ec2-prod-web-01", "ec2-prod-web-01", "10.0.0.1", "10.0.0.1", "Ubuntu 22.04 LTS", "sp-token-12345", "sp-token-12345", "online", "info", 1, 0, "ubuntu: apt update", "2m ago"))
 
         conn.close()
@@ -557,7 +557,7 @@ def get_servers():
             if not servers:
                 try:
                     cur.execute("""
-                        INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, registered_at, last_seen)
+                        INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
                         VALUES ('ip-172-31-4-83', 'ip-172-31-4-83', '172.31.4.83', '172.31.4.83', 'Linux (Ubuntu)', 'sp-token-default', 'sp-token-default', 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW());
                     """)
                     cur.execute("SELECT * FROM servers ORDER BY id ASC;")
@@ -634,7 +634,7 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = ""):
             # Insert into servers with full fields populated
             try:
                 cur.execute("""
-                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, registered_at, last_seen)
+                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', NOW(), NOW());
                 """, (name, name, ip, ip, "Linux (Ubuntu)", token, token))
             except Exception as e:

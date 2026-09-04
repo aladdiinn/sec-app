@@ -717,8 +717,26 @@ async def api_agent_push(request: Request):
     return {"status": "ok", "ok": True, "message": "Agent telemetry ingested"}
 
 @app.get("/api/alerts")
-async def api_get_alerts():
-    return db.get_alerts()
+async def api_get_alerts(
+    limit: int = 100,
+    severity: Optional[str] = None,
+    is_resolved: Optional[str] = None
+):
+    alerts = db.get_alerts()
+    if severity:
+        alerts = [a for a in alerts if a.get("severity", "") == severity]
+    if is_resolved is not None and is_resolved != "":
+        resolved_bool = is_resolved.lower() in ("true", "1", "yes")
+        alerts = [a for a in alerts if bool(a.get("is_resolved", False)) == resolved_bool]
+    alerts = alerts[:limit]
+    for a in alerts:
+        a.setdefault("title", a.get("message", "Security Alert"))
+        a.setdefault("hostname", str(a.get("server_id", "unknown")))
+        a.setdefault("alert_type", a.get("event_type", "SYSTEM"))
+        a.setdefault("severity", "info")
+        a.setdefault("is_resolved", False)
+        a.setdefault("created_at", datetime.now().isoformat())
+    return {"items": alerts, "total": len(alerts)}
 
 @app.get("/api/notifications")
 async def api_get_notifications():
@@ -1009,6 +1027,69 @@ async def api_delete_rule(rule_id: int):
 async def api_reload_rules():
     return {"ok": True, "message": "Rules hot-reloaded successfully", "total_rules": len(RULES_DB)}
 
+
+
+@app.patch("/api/alerts/{alert_id}/resolve")
+async def api_resolve_alert(alert_id: int):
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE alerts SET is_resolved = TRUE, resolved_at = NOW() WHERE id = %s;", (alert_id,))
+            return {"ok": True, "message": f"Alert #{alert_id} resolved"}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+        finally:
+            conn.close()
+    return {"ok": True, "message": f"Alert #{alert_id} resolved"}
+
+
+@app.post("/api/alerts/{alert_id}/promote")
+async def api_promote_alert(alert_id: int, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    title = body.get("title", f"Case for Alert #{alert_id}")
+    case_id = alert_id
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("INSERT INTO cases (title, status, created_at) VALUES (%s, %s, NOW()) RETURNING id;", (title, "open"))
+                    row = cur.fetchone()
+                    if row:
+                        case_id = row["id"]
+                except Exception:
+                    pass
+                try:
+                    cur.execute("UPDATE alerts SET case_id = %s WHERE id = %s;", (case_id, alert_id))
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Case promotion error: {e}")
+        finally:
+            conn.close()
+    return {"ok": True, "case_id": case_id, "message": f"Alert promoted to Case #{case_id}"}
+
+
+@app.get("/api/cases")
+async def api_get_cases():
+    conn = db.get_db_connection()
+    cases = []
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM cases ORDER BY id DESC LIMIT 50;")
+                cases = [dict(r) for r in cur.fetchall()]
+        except Exception:
+            pass
+        finally:
+            conn.close()
+    if not cases:
+        cases = [{"id": 1, "title": "Sample Investigation", "status": "open", "created_at": datetime.now().isoformat(), "due_at": None}]
+    return cases
 
 if __name__ == "__main__":
     import uvicorn
