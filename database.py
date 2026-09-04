@@ -431,6 +431,29 @@ def init_db():
                 except Exception:
                     pass
 
+            # Seed Default Threat Intel IOCs
+            default_iocs = [
+                ('malware-cnc-c2.top', 'domain', 'critical', 'Active Command & Control Server', 'ThreatConnect'),
+                ('cobalt-stage.xyz', 'domain', 'critical', 'Cobalt Strike C2 Beacon Domain', 'AlienVault OTX'),
+                ('dark-nexus-c2.net', 'domain', 'critical', 'Mirai / DarkNexus Botnet C2', 'Abuse.ch'),
+                ('lockbit-payload.biz', 'domain', 'critical', 'LockBit Ransomware Staging Server', 'Mandiant'),
+                ('pool.supportxmr.com', 'domain', 'warning', 'Monero Cryptomining Pool Endpoint', 'CISA Feed'),
+                ('exfil-gateway.cc', 'domain', 'critical', 'Covert Data Exfiltration Tunnel', 'CrowdStrike'),
+                ('aws-account-verify-login.click', 'domain', 'high', 'AWS Credential Phishing Infrastructure', 'PhishTank'),
+                ('update-cdn-trojan.com', 'domain', 'critical', 'Fake Software Update Trojan Dropper', 'VirusTotal'),
+                ('185.220.101.42', 'ipv4', 'critical', 'Known Tor Exit Node & Scanner', 'AlienVault OTX'),
+                ('45.142.195.12', 'ipv4', 'warning', 'SSH Brute-Force Botnet IP', 'AbuseIPDB')
+            ]
+            for ioc_val, ioc_typ, ioc_sev, ioc_desc, ioc_src in default_iocs:
+                try:
+                    cur.execute("""
+                        INSERT INTO threat_intel (ioc_value, ioc_type, severity, description, source)
+                        SELECT %s, %s, %s, %s, %s
+                        WHERE NOT EXISTS (SELECT 1 FROM threat_intel WHERE ioc_value = %s);
+                    """, (ioc_val, ioc_typ, ioc_sev, ioc_desc, ioc_src, ioc_val))
+                except Exception:
+                    pass
+
         conn.close()
         logger.info("Database schema initialized successfully.")
     except Exception as e:
