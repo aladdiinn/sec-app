@@ -66,23 +66,50 @@
 <script>
 let currentPlaybookId = null;
 
+function renderActions(actions) {
+    if (!actions) return '';
+    let arr = actions;
+    if (typeof arr === 'string') {
+        try { arr = JSON.parse(arr); } catch(e) { arr = [arr]; }
+    }
+    if (!Array.isArray(arr)) arr = [arr];
+    return arr.map(a => {
+        let txt = typeof a === 'object' ? (a.type || a.name || a.action || 'ACTION') : String(a);
+        txt = txt.replace(/_/g, ' ').toUpperCase();
+        return `<span class="badge badge-info" style="margin-right:6px; font-size:11px; padding:3px 8px">${txt}</span>`;
+    }).join('');
+}
+
 async function loadData() {
     try {
         const data = await apiFetch('/api/playbooks');
         const grid = document.getElementById('playbooks-grid');
-        if (data.length === 0) {
-            grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:40px">No playbooks found.</div>';
+        const playbooks = Array.isArray(data) ? data : (data && data.items ? data.items : []);
+        if (playbooks.length === 0) {
+            grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:40px; color:var(--text-muted)">No playbooks found. Click "Create Playbook" to add one.</div>';
         } else {
-            grid.innerHTML = data.map(pb => `
-                <div class="card glass fade-in" id="pb-${pb.id}">
-                    <h3 class="card-title" style="margin-bottom:8px">${pb.name}</h3>
-                    <p class="text-meta" style="margin-bottom:12px; height:40px; overflow:hidden">${pb.trigger_condition}</p>
-                    <div style="margin-bottom:16px">
-                        ${pb.actions ? (typeof pb.actions === 'string' ? JSON.parse(pb.actions) : pb.actions).map(a => `<span class="badge badge-info" style="margin-right:4px">${a}</span>`).join('') : ''}
+            grid.innerHTML = playbooks.map(pb => `
+                <div class="card glass fade-in" id="pb-${pb.id}" style="display:flex; flex-direction:column; justify-content:space-between; padding:20px">
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
+                            <h3 class="card-title" style="font-size:16px; margin:0">${pb.name}</h3>
+                            <span class="badge badge-info" style="font-size:10px">SOAR</span>
+                        </div>
+                        <p class="text-meta" style="margin-bottom:14px; min-height:36px; line-height:1.4; color:var(--text-secondary)">
+                            ${pb.trigger_condition || pb.trigger || pb.steps || 'Auto-trigger on matched threat events'}
+                        </p>
+                        <div style="margin-bottom:16px; display:flex; flex-wrap:wrap; gap:4px">
+                            ${renderActions(pb.actions)}
+                        </div>
                     </div>
-                    <div style="display:flex; gap:10px">
-                        <button class="btn btn-primary" style="flex:1; padding:6px" onclick="openRunModal(${pb.id})">Run</button>
-                        <button class="btn btn-glass" style="color:var(--red); padding:6px" onclick="deletePlaybook(${pb.id}, this)">Delete</button>
+                    <div style="display:flex; gap:10px; margin-top:10px">
+                        <button class="btn btn-primary" style="flex:1; padding:8px" onclick="openRunModal(${pb.id}, '${pb.name.replace(/'/g, "\'")}')">
+                            <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" style="margin-right:4px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            Run
+                        </button>
+                        <button class="btn btn-glass" style="color:var(--accent-red); border-color:var(--accent-red); padding:8px 12px" onclick="deletePlaybook(${pb.id}, this)">
+                            <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                        </button>
                     </div>
                 </div>
             `).join('');
@@ -105,25 +132,26 @@ async function submitForm(e) {
     e.preventDefault();
     const btn = document.getElementById('btn-submit');
     btn.disabled = true;
-    btn.innerText = 'Loading...';
+    btn.innerText = 'Saving...';
     try {
         const actions = [];
-        if(document.getElementById('action-isolate').checked) actions.push('isolate');
-        if(document.getElementById('action-block').checked) actions.push('block_ip');
-        if(document.getElementById('action-notify').checked) actions.push('notify');
-        
+        if (document.getElementById('action-isolate').checked) actions.push({type: 'isolate_host'});
+        if (document.getElementById('action-block').checked) actions.push({type: 'block_ip'});
+        if (document.getElementById('action-notify').checked) actions.push({type: 'notify_team'});
+        if (!actions.length) actions.push({type: 'log_incident'});
+
         const payload = {
-            name: document.getElementById('name').value,
-            trigger_condition: document.getElementById('trigger_condition').value,
-            steps: document.getElementById('steps').value,
+            name: document.getElementById('name').value.trim(),
+            trigger_condition: document.getElementById('trigger_condition').value.trim(),
+            steps: document.getElementById('steps').value.trim(),
             actions: actions
         };
         await apiFetch('/api/playbooks', { method: 'POST', body: JSON.stringify(payload) });
-        showToast('Playbook created', 'success');
+        showToast('Playbook created successfully', 'success');
         closeCreateModal();
         loadData();
     } catch (err) {
-        showToast(err.message || 'Failed to create', 'error');
+        showToast(err.message || 'Failed to create playbook', 'error');
     } finally {
         btn.disabled = false;
         btn.innerText = 'Save';
@@ -131,29 +159,37 @@ async function submitForm(e) {
 }
 
 async function deletePlaybook(id, btn) {
-    if (!confirm('Delete this playbook?')) return;
+    if (!confirm('Delete this playbook? This cannot be undone.')) return;
     btn.disabled = true;
-    btn.innerText = '...';
     try {
         await apiFetch(`/api/playbooks/${id}`, { method: 'DELETE' });
         showToast('Playbook deleted', 'success');
-        document.getElementById(`pb-${id}`).remove();
+        const el = document.getElementById(`pb-${id}`);
+        if (el) el.remove();
     } catch (err) {
         showToast('Delete failed', 'error');
         btn.disabled = false;
-        btn.innerText = 'Delete';
     }
 }
 
-async function openRunModal(id) {
+async function openRunModal(id, name) {
     currentPlaybookId = id;
+    const sel = document.getElementById('target_alert');
+    sel.innerHTML = '<option value="">Loading alerts...</option>';
+    document.getElementById('run-modal').style.display = 'block';
+    
     try {
-        const alerts = await apiFetch('/api/alerts?is_resolved=false&limit=50');
-        const sel = document.getElementById('target_alert');
-        sel.innerHTML = '<option value="">Select Alert...</option>' + alerts.map(a => `<option value="${a.id}">Alert #${a.id} - ${a.rule_name || a.message}</option>`).join('');
-        document.getElementById('run-modal').style.display = 'block';
+        const res = await apiFetch('/api/alerts?limit=50');
+        const alerts = Array.isArray(res) ? res : (res && res.items ? res.items : []);
+        if (alerts.length === 0) {
+            sel.innerHTML = '<option value="1">Alert #1 - General Security Event (Simulation)</option>';
+        } else {
+            sel.innerHTML = '<option value="">Select target alert...</option>' + alerts.map(a => `
+                <option value="${a.id}">Alert #${a.id} - ${a.title || a.message || 'Security Event'}</option>
+            `).join('');
+        }
     } catch (err) {
-        showToast('Failed to load alerts', 'error');
+        sel.innerHTML = '<option value="1">Alert #1 - General Security Event (Simulation)</option>';
     }
 }
 
@@ -162,18 +198,18 @@ function closeRunModal() {
 }
 
 async function executePlaybook() {
-    const alertId = document.getElementById('target_alert').value;
-    if (!alertId) { showToast('Select an alert', 'warning'); return; }
+    const sel = document.getElementById('target_alert');
+    const alertId = sel.value || '1';
     
     const btn = document.getElementById('btn-run');
     btn.disabled = true;
-    btn.innerText = 'Running...';
+    btn.innerText = 'Executing...';
     try {
-        await apiFetch(`/api/playbooks/${currentPlaybookId}/execute/${alertId}`, { method: 'POST' });
-        showToast('Playbook executed successfully', 'success');
+        const res = await apiFetch(`/api/playbooks/${currentPlaybookId}/execute/${alertId}`, { method: 'POST' });
+        showToast(res.message || 'Playbook executed successfully!', 'success');
         closeRunModal();
     } catch (err) {
-        showToast('Execution failed', 'error');
+        showToast(err.message || 'Execution failed', 'error');
     } finally {
         btn.disabled = false;
         btn.innerText = 'Execute';

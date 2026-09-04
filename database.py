@@ -390,6 +390,33 @@ def init_db():
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()), FALSE;
                 """, ("ec2-prod-web-01", "ec2-prod-web-01", "10.0.0.1", "10.0.0.1", "Ubuntu 22.04 LTS", "sp-token-12345", "sp-token-12345", "online", "info", 1, 0, "ubuntu: apt update", "2m ago"))
 
+            # Seed 15 Production Detection Rules mapped to MITRE ATT&CK
+            default_rules = [
+                ('SSH Brute Force Attempt', 'Failed password|authentication failure|AUTH_FAIL', 'critical', 'AUTH_FAIL', 'Credential Access', 'T1110.001'),
+                ('Recursive Root Deletion', 'rm -rf /', 'critical', 'DESTRUCTIVE', 'Impact', 'T1485'),
+                ('Fork Bomb Denial of Service', ':(){:|:&};:', 'critical', 'FORK_BOMB', 'Impact', 'T1499'),
+                ('Shadow File Dumping', '/etc/shadow', 'critical', 'CREDENTIAL_ACCESS', 'Credential Access', 'T1003.008'),
+                ('Sudoers Tampering', '/etc/sudoers', 'critical', 'PRIVILEGE_ESCALATION', 'Privilege Escalation', 'T1548.003'),
+                ('Global Permission Modification', 'chmod 777', 'warning', 'PERM_CHANGE', 'Defense Evasion', 'T1222.002'),
+                ('Netcat Reverse Shell', 'nc -e|nc -c|ncat -e', 'critical', 'REVERSE_SHELL', 'Command and Control', 'T1059'),
+                ('Bash TCP Reverse Shell', '/dev/tcp/', 'critical', 'REVERSE_SHELL', 'Command and Control', 'T1059.004'),
+                ('Firewall Disablement (UFW)', 'ufw disable', 'critical', 'DEFENSE_EVASION', 'Defense Evasion', 'T1562.004'),
+                ('Firewall Flush (iptables -F)', 'iptables -F', 'critical', 'DEFENSE_EVASION', 'Defense Evasion', 'T1562.004'),
+                ('Curl Pipe to Shell', 'curl.*\\|\\s*(bash|sh)|wget.*\\|\\s*(bash|sh)', 'critical', 'EXECUTION', 'Execution', 'T1059'),
+                ('Crontab Persistence', 'crontab -e|crontab -r', 'warning', 'PERSISTENCE', 'Persistence', 'T1053.003'),
+                ('Mass Process Kill', 'killall -9|pkill -9', 'warning', 'PROCESS_KILL', 'Impact', 'T1489'),
+                ('Cryptomining Signature', 'xmrig|minerd|stratum\\+tcp', 'critical', 'MALWARE', 'Impact', 'T1496'),
+                ('SSH Key Injection', 'authorized_keys', 'warning', 'PERSISTENCE', 'Persistence', 'T1098.004')
+            ]
+            for r_name, r_pat, r_sev, r_type, r_tac, r_tech in default_rules:
+                try:
+                    cur.execute("""
+                        INSERT INTO detection_rules (name, pattern, severity, enabled, event_type, mitre_tactic, mitre_technique)
+                        VALUES (%s, %s, %s, TRUE, %s, %s, %s);
+                    """, (r_name, r_pat, r_sev, r_type, r_tac, r_tech))
+                except Exception:
+                    pass
+
         conn.close()
         logger.info("Database schema initialized successfully.")
     except Exception as e:
@@ -572,23 +599,51 @@ def save_agent_data(server_id: int, data: dict):
                         log_alert(server_id, category, alert_msg, severity="critical")
 
 
-            # 1. Check custom detection rules from DB against commands
+            # 1. Check custom detection rules from DB against commands AND events
             try:
                 cur.execute("SELECT name, pattern, severity, event_type, mitre_tactic, mitre_technique FROM detection_rules WHERE enabled = TRUE;")
                 rules = cur.fetchall()
+                
+                # Check commands
                 for cmd_obj in commands:
                     cmd_str = cmd_obj.get("command", cmd_obj.get("cmd", ""))
                     if not cmd_str: continue
                     for r in rules:
                         pat = r.get("pattern", "")
-                        if pat and (pat.lower() in cmd_str.lower() or re.search(re.escape(pat), cmd_str, re.IGNORECASE)):
+                        if not pat: continue
+                        matched = False
+                        try:
+                            if re.search(pat, cmd_str, re.IGNORECASE): matched = True
+                        except Exception:
+                            if pat.lower() in cmd_str.lower(): matched = True
+                        
+                        if matched:
                             log_alert(
                                 server_id,
                                 r.get("event_type", "DETECTION_RULE"),
                                 f"Detection Rule [{r.get('name')}]: {cmd_str}",
-                                severity=r.get("severity", "warning").lower(),
-                                mitre_tactic=r.get("mitre_tactic"),
-                                mitre_technique=r.get("mitre_technique")
+                                severity=r.get("severity", "warning").lower()
+                            )
+
+                # Check auth / login / syslog events against rules
+                raw_events = data.get("events", []) or data.get("logins", [])
+                for ev in raw_events:
+                    ev_text = f"{ev.get('type', '')} {ev.get('user', '')} {ev.get('ip', '')} {ev.get('message', '')}"
+                    for r in rules:
+                        pat = r.get("pattern", "")
+                        if not pat: continue
+                        matched = False
+                        try:
+                            if re.search(pat, ev_text, re.IGNORECASE): matched = True
+                        except Exception:
+                            if pat.lower() in ev_text.lower(): matched = True
+                        
+                        if matched:
+                            log_alert(
+                                server_id,
+                                r.get("event_type", "AUTH_FAIL"),
+                                f"Detection Rule [{r.get('name')}]: {ev_text}",
+                                severity=r.get("severity", "critical").lower()
                             )
             except Exception as ex_rule:
                 logger.debug(f"Rule match check error: {ex_rule}")
@@ -1101,8 +1156,37 @@ def get_detection_rules():
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM detection_rules ORDER BY created_at DESC;")
-            return cur.fetchall()
+            cur.execute("SELECT * FROM detection_rules ORDER BY id ASC;")
+            rules = cur.fetchall()
+            if not rules or len(rules) < 5:
+                default_rules = [
+                    ('SSH Brute Force Attempt', 'Failed password|authentication failure|AUTH_FAIL', 'critical', 'AUTH_FAIL', 'Credential Access', 'T1110.001'),
+                    ('Recursive Root Deletion', 'rm -rf /', 'critical', 'DESTRUCTIVE', 'Impact', 'T1485'),
+                    ('Fork Bomb Denial of Service', ':(){:|:&};:', 'critical', 'FORK_BOMB', 'Impact', 'T1499'),
+                    ('Shadow File Dumping', '/etc/shadow', 'critical', 'CREDENTIAL_ACCESS', 'Credential Access', 'T1003.008'),
+                    ('Sudoers Tampering', '/etc/sudoers', 'critical', 'PRIVILEGE_ESCALATION', 'Privilege Escalation', 'T1548.003'),
+                    ('Global Permission Modification', 'chmod 777', 'warning', 'PERM_CHANGE', 'Defense Evasion', 'T1222.002'),
+                    ('Netcat Reverse Shell', 'nc -e|nc -c|ncat -e', 'critical', 'REVERSE_SHELL', 'Command and Control', 'T1059'),
+                    ('Bash TCP Reverse Shell', '/dev/tcp/', 'critical', 'REVERSE_SHELL', 'Command and Control', 'T1059.004'),
+                    ('Firewall Disablement (UFW)', 'ufw disable', 'critical', 'DEFENSE_EVASION', 'Defense Evasion', 'T1562.004'),
+                    ('Firewall Flush (iptables -F)', 'iptables -F', 'critical', 'DEFENSE_EVASION', 'Defense Evasion', 'T1562.004'),
+                    ('Curl Pipe to Shell', r'curl.*\|\s*(bash|sh)|wget.*\|\s*(bash|sh)', 'critical', 'EXECUTION', 'Execution', 'T1059'),
+                    ('Crontab Persistence', 'crontab -e|crontab -r', 'warning', 'PERSISTENCE', 'Persistence', 'T1053.003'),
+                    ('Mass Process Kill', 'killall -9|pkill -9', 'warning', 'PROCESS_KILL', 'Impact', 'T1489'),
+                    ('Cryptomining Signature', r'xmrig|minerd|stratum\+tcp', 'critical', 'MALWARE', 'Impact', 'T1496'),
+                    ('SSH Key Injection', 'authorized_keys', 'warning', 'PERSISTENCE', 'Persistence', 'T1098.004')
+                ]
+                for r_name, r_pat, r_sev, r_type, r_tac, r_tech in default_rules:
+                    try:
+                        cur.execute("""
+                            INSERT INTO detection_rules (name, pattern, severity, enabled, event_type, mitre_tactic, mitre_technique)
+                            VALUES (%s, %s, %s, TRUE, %s, %s, %s);
+                        """, (r_name, r_pat, r_sev, r_type, r_tac, r_tech))
+                    except Exception:
+                        pass
+                cur.execute("SELECT * FROM detection_rules ORDER BY id ASC;")
+                rules = cur.fetchall()
+            return rules
     except Exception as e:
         logger.error(f"Error in get_detection_rules: {e}")
         return []
@@ -1200,8 +1284,25 @@ def get_playbooks():
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM playbooks ORDER BY created_at DESC;")
-            return cur.fetchall()
+            cur.execute("SELECT * FROM playbooks ORDER BY id ASC;")
+            pbs = cur.fetchall()
+            if not pbs:
+                default_pbs = [
+                    ('Auto Host Isolation on Ransomware', 'command contains rm -rf or alert contains DESTRUCTIVE', '1. Isolate host network; 2. Terminate malicious PID; 3. Notify SOC on Slack', '[{"type":"isolate_host"},{"type":"block_ip"},{"type":"notify_slack"}]'),
+                    ('SSH Brute Force Auto-Mitigation', 'failed_count >= 5 or alert contains AUTH_FAIL', '1. Block IP on iptables; 2. Alert oncall engineer', '[{"type":"block_ip"},{"type":"notify_slack"}]'),
+                    ('Service Recovery on Crash', 'status == offline or alert contains SERVICE_STOP', '1. Ping health check; 2. Restart service unit', '[{"type":"run_health_check"},{"type":"restart_service"}]')
+                ]
+                for p_name, p_trig, p_steps, p_act in default_pbs:
+                    try:
+                        cur.execute("""
+                            INSERT INTO playbooks (name, trigger_condition, steps, actions)
+                            VALUES (%s, %s, %s, %s);
+                        """, (p_name, p_trig, p_steps, p_act))
+                    except Exception:
+                        pass
+                cur.execute("SELECT * FROM playbooks ORDER BY id ASC;")
+                pbs = cur.fetchall()
+            return pbs
     except Exception as e:
         logger.error(f"Error in get_playbooks: {e}")
         return []
