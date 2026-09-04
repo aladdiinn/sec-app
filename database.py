@@ -390,14 +390,27 @@ def init_db():
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()), FALSE;
                 """, ("ec2-prod-web-01", "ec2-prod-web-01", "10.0.0.1", "10.0.0.1", "Ubuntu 22.04 LTS", "sp-token-12345", "sp-token-12345", "online", "info", 1, 0, "ubuntu: apt update", "2m ago"))
 
+            # Update existing rules for chmod/chown and SSH
+            try:
+                cur.execute("UPDATE detection_rules SET pattern = 'chmod|chown' WHERE name = 'Global Permission Modification' AND pattern = 'chmod 777';")
+                cur.execute("UPDATE detection_rules SET pattern = 'Failed password|authentication failure|AUTH_FAIL|Invalid user' WHERE name = 'SSH Brute Force Attempt' AND pattern NOT LIKE '%Invalid user%';")
+                cur.execute("""
+                    INSERT INTO detection_rules (name, pattern, severity, enabled, event_type, mitre_tactic, mitre_technique)
+                    SELECT 'File Integrity Monitoring (FIM)', 'FIM Alert|file_modified|file_created', 'warning', TRUE, 'FILE_INTEGRITY', 'Defense Evasion', 'T1070'
+                    WHERE NOT EXISTS (SELECT 1 FROM detection_rules WHERE name = 'File Integrity Monitoring (FIM)');
+                """)
+            except Exception as ex_mig:
+                logger.debug(f"Rule migration error: {ex_mig}")
+
             # Seed 15 Production Detection Rules mapped to MITRE ATT&CK
             default_rules = [
-                ('SSH Brute Force Attempt', 'Failed password|authentication failure|AUTH_FAIL', 'critical', 'AUTH_FAIL', 'Credential Access', 'T1110.001'),
+                ('SSH Brute Force Attempt', 'Failed password|authentication failure|AUTH_FAIL|Invalid user', 'critical', 'AUTH_FAIL', 'Credential Access', 'T1110.001'),
                 ('Recursive Root Deletion', 'rm -rf /', 'critical', 'DESTRUCTIVE', 'Impact', 'T1485'),
                 ('Fork Bomb Denial of Service', ':(){:|:&};:', 'critical', 'FORK_BOMB', 'Impact', 'T1499'),
                 ('Shadow File Dumping', '/etc/shadow', 'critical', 'CREDENTIAL_ACCESS', 'Credential Access', 'T1003.008'),
                 ('Sudoers Tampering', '/etc/sudoers', 'critical', 'PRIVILEGE_ESCALATION', 'Privilege Escalation', 'T1548.003'),
-                ('Global Permission Modification', 'chmod 777', 'warning', 'PERM_CHANGE', 'Defense Evasion', 'T1222.002'),
+                ('Global Permission Modification', 'chmod|chown', 'warning', 'PERM_CHANGE', 'Defense Evasion', 'T1222.002'),
+                ('File Integrity Monitoring (FIM)', 'FIM Alert|file_modified|file_created', 'warning', 'FILE_INTEGRITY', 'Defense Evasion', 'T1070'),
                 ('Netcat Reverse Shell', 'nc -e|nc -c|ncat -e', 'critical', 'REVERSE_SHELL', 'Command and Control', 'T1059'),
                 ('Bash TCP Reverse Shell', '/dev/tcp/', 'critical', 'REVERSE_SHELL', 'Command and Control', 'T1059.004'),
                 ('Firewall Disablement (UFW)', 'ufw disable', 'critical', 'DEFENSE_EVASION', 'Defense Evasion', 'T1562.004'),
@@ -429,6 +442,9 @@ def categorize_command(cmd_str: str) -> str:
     if not cmd_str:
         return "GENERAL"
     cmd = cmd_str.strip()
+
+    if "FIM Alert" in cmd or "file_modified" in cmd or "file_created" in cmd:
+        return "FILE_INTEGRITY"
 
     if re.search(r':\(\)\s*\{\s*:\|:&\s*\};:', cmd) or ":(){:|:&};:" in cmd:
         return "FORK_BOMB"
@@ -517,6 +533,21 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 except Exception:
                     pass
 
+            # Strict Deduplication: Suppress identical alert within 15-second window
+            try:
+                cur.execute("""
+                    SELECT id FROM alerts 
+                    WHERE (server_id = %s OR (server_id IS NULL AND %s IS NULL))
+                      AND message = %s 
+                      AND created_at >= NOW() - INTERVAL '15 seconds'
+                    LIMIT 1;
+                """, (valid_server_id, valid_server_id, message))
+                if cur.fetchone():
+                    logger.debug(f"Suppressed duplicate alert within 15s window: {message}")
+                    return
+            except Exception as ex_dedup:
+                logger.debug(f"Dedup check warning: {ex_dedup}")
+
             title = f"{alert_type.replace('_', ' ').title()} Alert"
             try:
                 cur.execute("""
@@ -599,6 +630,14 @@ def save_agent_data(server_id: int, data: dict):
             if isinstance(data.get("sudo_cmds"), list):
                 commands.extend(data.get("sudo_cmds", []))
 
+            # Fetch active detection rules
+            active_rules = []
+            try:
+                cur.execute("SELECT name, pattern, severity, event_type, mitre_tactic, mitre_technique FROM detection_rules WHERE enabled = TRUE;")
+                active_rules = cur.fetchall()
+            except Exception as ex_rfetch:
+                logger.debug(f"Rules fetch error: {ex_rfetch}")
+
             for cmd_obj in commands:
                 username = cmd_obj.get("user", cmd_obj.get("username", "root"))
                 cmd_str = cmd_obj.get("command", cmd_obj.get("cmd", ""))
@@ -609,7 +648,7 @@ def save_agent_data(server_id: int, data: dict):
 
                 category = categorize_command(cmd_str)
                 risk_level = "CRITICAL" if category in ["DESTRUCTIVE", "PERM_CHANGE", "KERNEL", "FORK_BOMB"] else (
-                    "HIGH" if category in ["PROCESS_KILL", "SERVICE_STOP", "REBOOT", "NETWORK"] else "LOW"
+                    "HIGH" if category in ["PROCESS_KILL", "SERVICE_STOP", "REBOOT", "NETWORK", "FILE_INTEGRITY"] else "LOW"
                 )
 
                 cur.execute("""
@@ -624,59 +663,53 @@ def save_agent_data(server_id: int, data: dict):
                         VALUES (%s, %s, %s, %s, %s, %s, NOW());
                     """, (server_id, username, cmd_str, category, risk_level, is_sudo))
 
-                    if category in ["PERM_CHANGE", "DESTRUCTIVE"] or "chmod" in cmd_str or "chown" in cmd_str:
-                        alert_msg = f"Dangerous command ({category}) executed by {username}: {cmd_str}"
-                        log_alert(server_id, category, alert_msg, severity="critical")
+                # Check custom detection rules first
+                rule_matched = False
+                for r in active_rules:
+                    pat = r.get("pattern", "")
+                    if not pat: continue
+                    matched = False
+                    try:
+                        if re.search(pat, cmd_str, re.IGNORECASE): matched = True
+                    except Exception:
+                        if pat.lower() in cmd_str.lower(): matched = True
+                    
+                    if matched:
+                        rule_matched = True
+                        log_alert(
+                            server_id,
+                            r.get("event_type", "DETECTION_RULE"),
+                            f"Detection Rule [{r.get('name')}]: {cmd_str}",
+                            severity=r.get("severity", "warning").lower()
+                        )
+                        break  # Only one rule alert per command!
 
+                # Fallback alert if no custom rule matched but command is dangerous or FIM
+                if not rule_matched and (category in ["PERM_CHANGE", "DESTRUCTIVE", "FILE_INTEGRITY"] or "chmod" in cmd_str or "chown" in cmd_str or "FIM Alert" in cmd_str):
+                    alert_msg = f"Dangerous command ({category}) executed by {username}: {cmd_str}"
+                    log_alert(server_id, category, alert_msg, severity="critical" if category in ["DESTRUCTIVE", "FORK_BOMB"] else "warning")
 
-            # 1. Check custom detection rules from DB against commands AND events
-            try:
-                cur.execute("SELECT name, pattern, severity, event_type, mitre_tactic, mitre_technique FROM detection_rules WHERE enabled = TRUE;")
-                rules = cur.fetchall()
-                
-                # Check commands
-                for cmd_obj in commands:
-                    cmd_str = cmd_obj.get("command", cmd_obj.get("cmd", ""))
-                    if not cmd_str: continue
-                    for r in rules:
-                        pat = r.get("pattern", "")
-                        if not pat: continue
-                        matched = False
-                        try:
-                            if re.search(pat, cmd_str, re.IGNORECASE): matched = True
-                        except Exception:
-                            if pat.lower() in cmd_str.lower(): matched = True
-                        
-                        if matched:
-                            log_alert(
-                                server_id,
-                                r.get("event_type", "DETECTION_RULE"),
-                                f"Detection Rule [{r.get('name')}]: {cmd_str}",
-                                severity=r.get("severity", "warning").lower()
-                            )
-
-                # Check auth / login / syslog events against rules
-                raw_events = data.get("events", []) or data.get("logins", [])
-                for ev in raw_events:
-                    ev_text = f"{ev.get('type', '')} {ev.get('user', '')} {ev.get('ip', '')} {ev.get('message', '')}"
-                    for r in rules:
-                        pat = r.get("pattern", "")
-                        if not pat: continue
-                        matched = False
-                        try:
-                            if re.search(pat, ev_text, re.IGNORECASE): matched = True
-                        except Exception:
-                            if pat.lower() in ev_text.lower(): matched = True
-                        
-                        if matched:
-                            log_alert(
-                                server_id,
-                                r.get("event_type", "AUTH_FAIL"),
-                                f"Detection Rule [{r.get('name')}]: {ev_text}",
-                                severity=r.get("severity", "critical").lower()
-                            )
-            except Exception as ex_rule:
-                logger.debug(f"Rule match check error: {ex_rule}")
+            # Check auth / login / syslog events against rules with single match break
+            raw_events = data.get("events", []) or data.get("logins", [])
+            for ev in raw_events:
+                ev_text = f"{ev.get('type', '')} {ev.get('user', '')} {ev.get('ip', '')} {ev.get('message', '')}"
+                for r in active_rules:
+                    pat = r.get("pattern", "")
+                    if not pat: continue
+                    matched = False
+                    try:
+                        if re.search(pat, ev_text, re.IGNORECASE): matched = True
+                    except Exception:
+                        if pat.lower() in ev_text.lower(): matched = True
+                    
+                    if matched:
+                        log_alert(
+                            server_id,
+                            r.get("event_type", "AUTH_FAIL"),
+                            f"Detection Rule [{r.get('name')}]: {ev_text}",
+                            severity=r.get("severity", "critical").lower()
+                        )
+                        break  # Only one rule alert per event!
 
             # 2. Ingest logins & check against threat intel + failed thresholds
             raw_logins = data.get("logins", []) or data.get("events", [])
@@ -1190,12 +1223,13 @@ def get_detection_rules():
             rules = cur.fetchall()
             if not rules or len(rules) < 5:
                 default_rules = [
-                    ('SSH Brute Force Attempt', 'Failed password|authentication failure|AUTH_FAIL', 'critical', 'AUTH_FAIL', 'Credential Access', 'T1110.001'),
+                    ('SSH Brute Force Attempt', 'Failed password|authentication failure|AUTH_FAIL|Invalid user', 'critical', 'AUTH_FAIL', 'Credential Access', 'T1110.001'),
                     ('Recursive Root Deletion', 'rm -rf /', 'critical', 'DESTRUCTIVE', 'Impact', 'T1485'),
                     ('Fork Bomb Denial of Service', ':(){:|:&};:', 'critical', 'FORK_BOMB', 'Impact', 'T1499'),
                     ('Shadow File Dumping', '/etc/shadow', 'critical', 'CREDENTIAL_ACCESS', 'Credential Access', 'T1003.008'),
                     ('Sudoers Tampering', '/etc/sudoers', 'critical', 'PRIVILEGE_ESCALATION', 'Privilege Escalation', 'T1548.003'),
-                    ('Global Permission Modification', 'chmod 777', 'warning', 'PERM_CHANGE', 'Defense Evasion', 'T1222.002'),
+                    ('Global Permission Modification', 'chmod|chown', 'warning', 'PERM_CHANGE', 'Defense Evasion', 'T1222.002'),
+                ('File Integrity Monitoring (FIM)', 'FIM Alert|file_modified|file_created', 'warning', 'FILE_INTEGRITY', 'Defense Evasion', 'T1070'),
                     ('Netcat Reverse Shell', 'nc -e|nc -c|ncat -e', 'critical', 'REVERSE_SHELL', 'Command and Control', 'T1059'),
                     ('Bash TCP Reverse Shell', '/dev/tcp/', 'critical', 'REVERSE_SHELL', 'Command and Control', 'T1059.004'),
                     ('Firewall Disablement (UFW)', 'ufw disable', 'critical', 'DEFENSE_EVASION', 'Defense Evasion', 'T1562.004'),

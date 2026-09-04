@@ -1,40 +1,201 @@
 
 # ══════════════════════════════════════════════════════════════════════════════
-# EMBEDDED REAL-TIME HOST SECURITY WATCHER
-# Continuously monitors /var/log/auth.log, journalctl, and bash history
+# EMBEDDED REAL-TIME HOST SECURITY WATCHER + FIM (FILE INTEGRITY MONITORING)
+# Continuously monitors SSH logs, shell commands, and filesystem changes
 # ══════════════════════════════════════════════════════════════════════════════
 import time, subprocess, glob, threading, os, re
 
 _watcher_auth_pos = 0
 _watcher_hist_positions = {}
+_seen_event_signatures = set()
+_fim_baseline = {}
+_fim_initialized = False
+
+def scan_fim_changes():
+    """Real-time File Integrity Monitoring (FIM): detects chmod, chown, file modifications & creations."""
+    global _fim_baseline, _fim_initialized
+    fim_commands = []
+    
+    # Critical system files and user application paths
+    watch_paths = [
+        "/application",
+        "/etc/passwd",
+        "/etc/shadow",
+        "/etc/sudoers",
+        "/etc/ssh"
+    ]
+
+    current_items = {}
+    for base_path in watch_paths:
+        if not os.path.exists(base_path):
+            continue
+        if os.path.isfile(base_path):
+            try:
+                st = os.stat(base_path)
+                current_items[base_path] = {
+                    "mode": oct(st.st_mode)[-3:],
+                    "uid": st.st_uid,
+                    "gid": st.st_gid,
+                    "ctime": st.st_ctime,
+                    "mtime": st.st_mtime,
+                    "size": st.st_size,
+                    "is_dir": False
+                }
+            except Exception:
+                pass
+        elif os.path.isdir(base_path):
+            try:
+                try:
+                    st_base = os.stat(base_path)
+                    current_items[base_path] = {
+                        "mode": oct(st_base.st_mode)[-3:],
+                        "uid": st_base.st_uid,
+                        "gid": st_base.st_gid,
+                        "ctime": st_base.st_ctime,
+                        "mtime": st_base.st_mtime,
+                        "size": st_base.st_size,
+                        "is_dir": True
+                    }
+                except Exception:
+                    pass
+
+                for root, dirs, files in os.walk(base_path):
+                    if any(skip in root for skip in ["venv", ".git", "__pycache__", "logs", "node_modules", ".cache"]):
+                        continue
+                    for dname in list(dirs):
+                        if dname in [".git", "venv", "__pycache__", "node_modules"]:
+                            dirs.remove(dname)
+                            continue
+                        dpath = os.path.join(root, dname)
+                        try:
+                            st = os.stat(dpath)
+                            current_items[dpath] = {
+                                "mode": oct(st.st_mode)[-3:],
+                                "uid": st.st_uid,
+                                "gid": st.st_gid,
+                                "ctime": st.st_ctime,
+                                "mtime": st.st_mtime,
+                                "size": st.st_size,
+                                "is_dir": True
+                            }
+                        except Exception:
+                            pass
+                    for fname in files:
+                        fpath = os.path.join(root, fname)
+                        try:
+                            st = os.stat(fpath)
+                            current_items[fpath] = {
+                                "mode": oct(st.st_mode)[-3:],
+                                "uid": st.st_uid,
+                                "gid": st.st_gid,
+                                "ctime": st.st_ctime,
+                                "mtime": st.st_mtime,
+                                "size": st.st_size,
+                                "is_dir": False
+                            }
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+    if not _fim_initialized:
+        _fim_baseline = current_items
+        _fim_initialized = True
+        logger.info(f"FIM baseline initialized with {len(_fim_baseline)} targets.")
+        return fim_commands
+
+    for item_path, meta in current_items.items():
+        if item_path in _fim_baseline:
+            old = _fim_baseline[item_path]
+            # 1. Detect permission change (chmod)
+            if old["mode"] != meta["mode"]:
+                cmd = f"chmod {meta['mode']} {item_path}"
+                logger.info(f"[FIM PERM CHANGE] {cmd} (was {old['mode']})")
+                fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
+                _fim_baseline[item_path] = meta
+            # 2. Detect ownership change (chown)
+            elif old["uid"] != meta["uid"] or old["gid"] != meta["gid"]:
+                cmd = f"chown {meta['uid']}:{meta['gid']} {item_path}"
+                logger.info(f"[FIM CHOWN CHANGE] {cmd}")
+                fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
+                _fim_baseline[item_path] = meta
+            # 3. Detect repeated chmod / metadata touch (ctime change without content change)
+            elif old["ctime"] != meta["ctime"] and abs(old["ctime"] - meta["ctime"]) > 1.0:
+                if not meta["is_dir"] and (old["size"] != meta["size"] or old["mtime"] != meta["mtime"]):
+                    cmd = f"FIM Alert: File modified - {item_path}"
+                    logger.info(f"[FIM FILE MODIFIED] {item_path}")
+                    fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
+                else:
+                    cmd = f"chmod {meta['mode']} {item_path}"
+                    logger.info(f"[FIM PERM TOUCH] {cmd}")
+                    fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
+                _fim_baseline[item_path] = meta
+            # 4. Detect file content modification (mtime change)
+            elif not meta["is_dir"] and old["mtime"] != meta["mtime"] and abs(old["mtime"] - meta["mtime"]) > 1.0:
+                cmd = f"FIM Alert: File modified - {item_path}"
+                logger.info(f"[FIM FILE MODIFIED] {item_path}")
+                fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
+                _fim_baseline[item_path] = meta
+        else:
+            # 5. Detect new creation
+            itype = "Directory" if meta["is_dir"] else "File"
+            cmd = f"FIM Alert: New {itype} created - {item_path}"
+            logger.info(f"[FIM CREATED] {item_path}")
+            fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
+            _fim_baseline[item_path] = meta
+
+    # 6. Detect deletions
+    deleted = [p for p in _fim_baseline if p not in current_items]
+    for p in deleted:
+        cmd = f"FIM Alert: File deleted - {p}"
+        logger.info(f"[FIM DELETED] {p}")
+        fim_commands.append({"user": "root", "command": cmd, "is_sudo": True})
+        del _fim_baseline[p]
+
+    return fim_commands
 
 def run_background_host_watcher():
-    """Background daemon thread that monitors real SSH failures and bash commands."""
-    global _watcher_auth_pos, _watcher_hist_positions
-    logger.info("Host security watcher starting...")
-    time.sleep(3)  # Give app time to initialize
+    """Background daemon thread that monitors real SSH failures, bash commands, and FIM."""
+    global _watcher_auth_pos, _watcher_hist_positions, _seen_event_signatures
+    logger.info("Host security watcher + FIM starting...")
+    time.sleep(3)
+
+    # Initialize baseline
+    scan_fim_changes()
 
     while True:
         try:
             events = []
             commands = []
 
-            # 1. Read SSH events via journalctl (Works on all modern Ubuntu/Debian versions)
+            # 1. Read SSH events via journalctl with STRICT deduplication
             try:
-                # Check last 5 seconds of ssh logs
                 res = subprocess.run(
-                    ["journalctl", "-u", "ssh", "--since", "4 seconds ago", "--no-pager", "-q"],
+                    ["journalctl", "-u", "ssh", "--since", "5 seconds ago", "--no-pager", "-q"],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2
                 )
                 if res.stdout:
                     for line in res.stdout.splitlines():
                         line_str = line.strip()
+                        if not line_str: continue
+
+                        # Extract signature to avoid duplicate ingestion across polls
+                        sig = line_str
+                        if sig in _seen_event_signatures:
+                            continue
+
                         fail_m = re.search(r'Failed password for (?:invalid user )?(\S+) from (\S+)', line_str)
                         if fail_m:
+                            _seen_event_signatures.add(sig)
                             events.append({"type": "AUTH_FAIL", "user": fail_m.group(1), "ip": fail_m.group(2), "message": line_str})
-                        inv_m = re.search(r'Invalid user (\S+) from (\S+)', line_str)
-                        if inv_m and not fail_m:
-                            events.append({"type": "AUTH_FAIL", "user": inv_m.group(1), "ip": inv_m.group(2), "message": line_str})
+                        else:
+                            inv_m = re.search(r'Invalid user (\S+) from (\S+)', line_str)
+                            if inv_m:
+                                _seen_event_signatures.add(sig)
+                                events.append({"type": "AUTH_FAIL", "user": inv_m.group(1), "ip": inv_m.group(2), "message": line_str})
+
+                        if len(_seen_event_signatures) > 4000:
+                            _seen_event_signatures.clear()
             except Exception:
                 pass
 
@@ -52,11 +213,11 @@ def run_background_host_watcher():
                             af.seek(_watcher_auth_pos)
                             for aline in af:
                                 astr = aline.strip()
-                                # Match failed ssh
+                                if not astr or astr in _seen_event_signatures: continue
                                 fm = re.search(r'Failed password for (?:invalid user )?(\S+) from (\S+)', astr)
-                                if fm and not any(e.get("message") == astr for e in events):
+                                if fm:
+                                    _seen_event_signatures.add(astr)
                                     events.append({"type": "AUTH_FAIL", "user": fm.group(1), "ip": fm.group(2), "message": astr})
-                                # Match sudo commands
                                 sm = re.search(r'sudo:\s+(\S+)\s+:.*?COMMAND=(.+)$', astr)
                                 if sm:
                                     commands.append({"user": sm.group(1), "command": sm.group(2).strip(), "is_sudo": True})
@@ -64,7 +225,12 @@ def run_background_host_watcher():
                 except Exception:
                     pass
 
-            # 3. Monitor shell histories (/root/.bash_history and /home/*/.bash_history)
+            # 3. Monitor FIM (File Integrity Monitoring for chmod/chown/modifications)
+            fim_cmds = scan_fim_changes()
+            if fim_cmds:
+                commands.extend(fim_cmds)
+
+            # 4. Monitor shell histories
             for hpath in ["/root/.bash_history"] + glob.glob("/home/*/.bash_history"):
                 if not os.path.exists(hpath): continue
                 try:
@@ -86,15 +252,16 @@ def run_background_host_watcher():
                 except Exception:
                     pass
 
-            # If any security events or commands detected, ingest immediately!
+            # Ingest events/commands immediately
             if events or commands:
-                logger.info(f"Host watcher detected {len(events)} events and {len(commands)} commands. Ingesting...")
+                logger.info(f"Host watcher: {len(events)} SSH events, {len(commands)} commands/FIM changes detected. Ingesting...")
                 db.save_agent_data(1, {"events": events, "commands": commands})
 
         except Exception as ex_watch:
             logger.debug(f"Watcher loop error: {ex_watch}")
 
         time.sleep(2)
+
 
 """
 EC2 Security Monitor / SOC Command Center — Production-Ready FastAPI Backend

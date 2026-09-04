@@ -192,7 +192,8 @@
 
         async function fetchNotifications() {
             try {
-                const res = await apiFetch('/api/notifications');
+                const raw = await apiFetch('/api/notifications');
+                const res = Array.isArray(raw) ? raw : (raw.notifications || []);
                 const unread = res.filter(n => !n.is_read);
                 
                 if (unread.length > 0) {
