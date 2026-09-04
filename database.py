@@ -31,7 +31,7 @@ class DictRowWrapper:
         except Exception:
             pass
     def execute(self, query, params=None):
-        query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN")
+        query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN").replace("ILIKE", "LIKE").replace("JSONB", "TEXT")
         try:
             if params is None:
                 res = self.cursor.execute(query_sql)
@@ -281,6 +281,106 @@ def init_db():
                     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            # New Tables
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS incidents (
+                    id SERIAL PRIMARY KEY,
+                    title VARCHAR(255) NOT NULL,
+                    severity VARCHAR(16) DEFAULT 'warning',
+                    description TEXT,
+                    status VARCHAR(32) DEFAULT 'open',
+                    assigned_to VARCHAR(128),
+                    server_id INT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS detection_rules (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    pattern TEXT NOT NULL,
+                    severity VARCHAR(16) DEFAULT 'warning',
+                    enabled BOOLEAN DEFAULT TRUE,
+                    event_type VARCHAR(64) DEFAULT 'GENERAL',
+                    mitre_tactic VARCHAR(128),
+                    mitre_technique VARCHAR(128),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS threat_intel (
+                    id SERIAL PRIMARY KEY,
+                    ioc_value VARCHAR(512) NOT NULL,
+                    ioc_type VARCHAR(32) DEFAULT 'ipv4',
+                    severity VARCHAR(16) DEFAULT 'warning',
+                    description TEXT,
+                    source VARCHAR(128) DEFAULT 'Manual',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS playbooks (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    trigger_condition TEXT,
+                    actions JSONB DEFAULT '[]',
+                    steps TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS reports (
+                    id SERIAL PRIMARY KEY,
+                    title VARCHAR(255),
+                    date_from DATE,
+                    date_to DATE,
+                    content JSONB,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            # Alerts Alter
+            for col, col_type in [
+                ('case_id', 'INT'),
+                ('mitre_tactic', 'VARCHAR(128)'),
+                ('mitre_technique', 'VARCHAR(128)'),
+                ('score', 'INT DEFAULT 0'),
+                ('auto_promoted', 'BOOLEAN DEFAULT FALSE')
+            ]:
+                try: cur.execute(f"ALTER TABLE alerts ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+            
+            # Audit Logs Alter
+            for col, col_type in [
+                ('username', 'VARCHAR(128)'),
+                ('target_type', 'VARCHAR(64)'),
+                ('target_id', 'INT'),
+                ('detail', 'TEXT')
+            ]:
+                try: cur.execute(f"ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+
+            # Servers Alter
+            for col, col_type in [
+                ('project_id', 'INT'),
+                ('maintenance_until', 'TIMESTAMP WITH TIME ZONE')
+            ]:
+                try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+
+            # Projects Alter
+            for col, col_type in [
+                ('server_ids', "TEXT DEFAULT '[]'")
+            ]:
+                try: cur.execute(f"ALTER TABLE projects ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
 
             # Seed a default EC2 server if empty
             cur.execute("SELECT id FROM servers LIMIT 1;")
@@ -446,6 +546,74 @@ def save_agent_data(server_id: int, data: dict):
                     if category in ["PERM_CHANGE", "DESTRUCTIVE"] or "chmod" in cmd_str or "chown" in cmd_str:
                         alert_msg = f"Dangerous command ({category}) executed by {username}: {cmd_str}"
                         log_alert(server_id, category, alert_msg, severity="critical")
+
+
+            # 1. Check custom detection rules from DB against commands
+            try:
+                cur.execute("SELECT name, pattern, severity, event_type, mitre_tactic, mitre_technique FROM detection_rules WHERE enabled = TRUE;")
+                rules = cur.fetchall()
+                for cmd_obj in commands:
+                    cmd_str = cmd_obj.get("command", cmd_obj.get("cmd", ""))
+                    if not cmd_str: continue
+                    for r in rules:
+                        pat = r.get("pattern", "")
+                        if pat and (pat.lower() in cmd_str.lower() or re.search(re.escape(pat), cmd_str, re.IGNORECASE)):
+                            log_alert(
+                                server_id,
+                                r.get("event_type", "DETECTION_RULE"),
+                                f"Detection Rule [{r.get('name')}]: {cmd_str}",
+                                severity=r.get("severity", "warning").lower(),
+                                mitre_tactic=r.get("mitre_tactic"),
+                                mitre_technique=r.get("mitre_technique")
+                            )
+            except Exception as ex_rule:
+                logger.debug(f"Rule match check error: {ex_rule}")
+
+            # 2. Ingest logins & check against threat intel + failed thresholds
+            raw_logins = data.get("logins", []) or data.get("events", [])
+            if isinstance(raw_logins, list):
+                # Fetch threshold from settings
+                warn_thresh = 3
+                crit_thresh = 10
+                try:
+                    cur.execute("SELECT key, value FROM settings WHERE key IN ('failed_logins_warning', 'failed_logins_critical');")
+                    for s_row in cur.fetchall():
+                        if s_row.get("key") == "failed_logins_warning": warn_thresh = int(s_row.get("value", 3))
+                        elif s_row.get("key") == "failed_logins_critical": crit_thresh = int(s_row.get("value", 10))
+                except Exception:
+                    pass
+
+                for login in raw_logins:
+                    ip = login.get("ip") or login.get("ip_address")
+                    user = login.get("user") or login.get("username", "unknown")
+                    success = login.get("success", False if login.get("type") == "AUTH_FAIL" else True)
+                    count = login.get("count", 1)
+                    if ip:
+                        cur.execute('''
+                            INSERT INTO login_history (server_id, username, ip_address, login_type, success, timestamp)
+                            VALUES (%s, %s, %s, %s, %s, NOW());
+                        ''', (server_id, user, ip, 'SSH', success))
+
+                        # Check Threat Intel table for known bad IP
+                        try:
+                            cur.execute("SELECT ioc_value, severity, description FROM threat_intel WHERE ioc_type = 'ipv4' AND ioc_value = %s;", (ip,))
+                            ioc = cur.fetchone()
+                            if ioc:
+                                log_alert(
+                                    server_id,
+                                    "THREAT_INTEL_MATCH",
+                                    f"Login attempt from Known Malicious IP {ip} ({ioc.get('description', 'IOC Match')})",
+                                    severity=ioc.get("severity", "critical").lower()
+                                )
+                        except Exception:
+                            pass
+
+                        # Threshold check on failed logins
+                        if not success:
+                            if count >= crit_thresh:
+                                log_alert(server_id, "BRUTE_FORCE", f"Critical brute force detected: {count} failed logins for user {user} from {ip}", severity="critical")
+                            elif count >= warn_thresh:
+                                log_alert(server_id, "AUTH_FAIL", f"Multiple failed login attempts ({count}) for user {user} from {ip}", severity="warning")
 
         return True
     except Exception as e:
@@ -787,3 +955,556 @@ def format_time_ago(dt):
         return f"{seconds // 3600}h ago"
     else:
         return f"{seconds // 86400}d ago"
+
+# ================= NEW DATABASE FUNCTIONS =================
+
+def get_incidents(status=None, severity=None, limit=100):
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            query = "SELECT * FROM incidents WHERE 1=1"
+            params = []
+            if status:
+                query += " AND status = %s"
+                params.append(status)
+            if severity:
+                query += " AND severity = %s"
+                params.append(severity)
+            query += " ORDER BY created_at DESC LIMIT %s"
+            params.append(limit)
+            cur.execute(query, params)
+            return cur.fetchall()
+    except Exception as e:
+        logger.error(f"Error in get_incidents: {e}")
+        return []
+    finally:
+        conn.close()
+
+def create_incident(title, severity, description, assigned_to, server_id=None):
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO incidents (title, severity, description, assigned_to, server_id, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, NOW(), NOW()) RETURNING id;
+            """, (title, severity, description, assigned_to, server_id))
+            return cur.fetchone()['id']
+    except Exception as e:
+        logger.error(f"Error in create_incident: {e}")
+        return None
+    finally:
+        conn.close()
+
+def update_incident(incident_id, **kwargs):
+    conn = get_db_connection()
+    if not conn or not kwargs: return False
+    try:
+        with conn.cursor() as cur:
+            updates = []
+            params = []
+            for k, v in kwargs.items():
+                if k in ['title', 'severity', 'description', 'status', 'assigned_to', 'server_id']:
+                    updates.append(f"{k} = %s")
+                    params.append(v)
+            if updates:
+                updates.append("updated_at = NOW()")
+                query = f"UPDATE incidents SET {', '.join(updates)} WHERE id = %s;"
+                params.append(incident_id)
+                cur.execute(query, params)
+                return True
+            return False
+    except Exception as e:
+        logger.error(f"Error in update_incident: {e}")
+        return False
+    finally:
+        conn.close()
+
+def delete_incident(incident_id):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM incidents WHERE id = %s;", (incident_id,))
+            return True
+    except Exception as e:
+        logger.error(f"Error in delete_incident: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_detection_rules():
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM detection_rules ORDER BY created_at DESC;")
+            return cur.fetchall()
+    except Exception as e:
+        logger.error(f"Error in get_detection_rules: {e}")
+        return []
+    finally:
+        conn.close()
+
+def create_detection_rule(name, pattern, severity, event_type, mitre_tactic=None, mitre_technique=None):
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO detection_rules (name, pattern, severity, event_type, mitre_tactic, mitre_technique, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW()) RETURNING id;
+            """, (name, pattern, severity, event_type, mitre_tactic, mitre_technique))
+            return cur.fetchone()['id']
+    except Exception as e:
+        logger.error(f"Error in create_detection_rule: {e}")
+        return None
+    finally:
+        conn.close()
+
+def toggle_detection_rule(rule_id):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE detection_rules SET enabled = NOT enabled WHERE id = %s RETURNING enabled;", (rule_id,))
+            res = cur.fetchone()
+            if res: return res['enabled']
+            return False
+    except Exception as e:
+        logger.error(f"Error in toggle_detection_rule: {e}")
+        return False
+    finally:
+        conn.close()
+
+def delete_detection_rule(rule_id):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM detection_rules WHERE id = %s;", (rule_id,))
+            return True
+    except Exception as e:
+        logger.error(f"Error in delete_detection_rule: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_threat_intel():
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM threat_intel ORDER BY created_at DESC;")
+            return cur.fetchall()
+    except Exception as e:
+        logger.error(f"Error in get_threat_intel: {e}")
+        return []
+    finally:
+        conn.close()
+
+def create_threat_intel(ioc_value, ioc_type, severity, description, source='Manual'):
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO threat_intel (ioc_value, ioc_type, severity, description, source, created_at)
+                VALUES (%s, %s, %s, %s, %s, NOW()) RETURNING id;
+            """, (ioc_value, ioc_type, severity, description, source))
+            return cur.fetchone()['id']
+    except Exception as e:
+        logger.error(f"Error in create_threat_intel: {e}")
+        return None
+    finally:
+        conn.close()
+
+def delete_threat_intel(ioc_id):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM threat_intel WHERE id = %s;", (ioc_id,))
+            return True
+    except Exception as e:
+        logger.error(f"Error in delete_threat_intel: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_playbooks():
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM playbooks ORDER BY created_at DESC;")
+            return cur.fetchall()
+    except Exception as e:
+        logger.error(f"Error in get_playbooks: {e}")
+        return []
+    finally:
+        conn.close()
+
+def create_playbook(name, trigger_condition, steps, actions=None):
+    if actions is None:
+        actions = []
+    import json
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO playbooks (name, trigger_condition, actions, steps, created_at)
+                VALUES (%s, %s, %s, %s, NOW()) RETURNING id;
+            """, (name, trigger_condition, json.dumps(actions), steps))
+            return cur.fetchone()['id']
+    except Exception as e:
+        logger.error(f"Error in create_playbook: {e}")
+        return None
+    finally:
+        conn.close()
+
+def delete_playbook(pb_id):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM playbooks WHERE id = %s;", (pb_id,))
+            return True
+    except Exception as e:
+        logger.error(f"Error in delete_playbook: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_settings():
+    conn = get_db_connection()
+    if not conn: return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM settings;")
+            rows = cur.fetchall()
+            return {r['key']: r['value'] for r in rows}
+    except Exception as e:
+        logger.error(f"Error in get_settings: {e}")
+        return {}
+    finally:
+        conn.close()
+
+def save_setting(key, value):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO settings (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+            """, (key, str(value)))
+            return True
+    except Exception as e:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT key FROM settings WHERE key = %s", (key,))
+                if cur.fetchone():
+                    cur.execute("UPDATE settings SET value = %s WHERE key = %s", (str(value), key))
+                else:
+                    cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s)", (key, str(value)))
+                return True
+        except:
+            return False
+    finally:
+        conn.close()
+
+def get_reports():
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM reports ORDER BY created_at DESC;")
+            return cur.fetchall()
+    except Exception as e:
+        logger.error(f"Error in get_reports: {e}")
+        return []
+    finally:
+        conn.close()
+
+def create_report(title, date_from, date_to):
+    import json
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            # Query real data for report
+            cur.execute("SELECT COUNT(*) as total, SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) as crit, SUM(CASE WHEN severity='warning' THEN 1 ELSE 0 END) as warn FROM alerts WHERE created_at >= %s AND created_at <= %s", (date_from, date_to))
+            alert_stats = cur.fetchone()
+            total_alerts = alert_stats.get('total', 0) if alert_stats else 0
+            critical_count = alert_stats.get('crit', 0) if alert_stats else 0
+            warning_count = alert_stats.get('warn', 0) if alert_stats else 0
+
+            cur.execute("SELECT s.id, s.hostname, COUNT(a.id) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id WHERE a.created_at >= %s AND a.created_at <= %s GROUP BY s.id, s.hostname ORDER BY cnt DESC LIMIT 5", (date_from, date_to))
+            top_servers = [{'server_id': r['id'], 'hostname': r['hostname'], 'alert_count': r['cnt']} for r in cur.fetchall()]
+
+            cur.execute("SELECT command, COUNT(*) as cnt FROM commands WHERE executed_at >= %s AND executed_at <= %s GROUP BY command ORDER BY cnt DESC LIMIT 5", (date_from, date_to))
+            top_commands = [{'command': r['command'], 'count': r['cnt']} for r in cur.fetchall()]
+
+            cur.execute("SELECT COUNT(*) as total FROM login_history WHERE success = FALSE AND timestamp >= %s AND timestamp <= %s", (date_from, date_to))
+            failed_logins_total = cur.fetchone()['total'] if cur.fetchone() else 0
+
+            content = {
+                'total_alerts': total_alerts,
+                'critical_count': critical_count,
+                'warning_count': warning_count,
+                'top_servers': top_servers,
+                'top_commands': top_commands,
+                'failed_logins_total': failed_logins_total
+            }
+
+            cur.execute("""
+                INSERT INTO reports (title, date_from, date_to, content, created_at)
+                VALUES (%s, %s, %s, %s, NOW()) RETURNING id;
+            """, (title, date_from, date_to, json.dumps(content)))
+            return cur.fetchone()['id']
+    except Exception as e:
+        logger.error(f"Error in create_report: {e}")
+        return None
+    finally:
+        conn.close()
+
+def log_audit(username, action, target_type, target_id, detail):
+    conn = get_db_connection()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO audit_logs (username, action, target_type, target_id, detail, timestamp)
+                VALUES (%s, %s, %s, %s, %s, NOW());
+            """, (username, action, target_type, target_id, detail))
+    except Exception as e:
+        logger.error(f"Error in log_audit: {e}")
+    finally:
+        conn.close()
+
+def get_audit_logs(username=None, action=None, limit=100):
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            query = "SELECT * FROM audit_logs WHERE 1=1"
+            params = []
+            if username:
+                query += " AND username = %s"
+                params.append(username)
+            if action:
+                query += " AND action = %s"
+                params.append(action)
+            query += " ORDER BY timestamp DESC LIMIT %s"
+            params.append(limit)
+            cur.execute(query, params)
+            return cur.fetchall()
+    except Exception as e:
+        logger.error(f"Error in get_audit_logs: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_activity_feed(limit=20):
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 'Alert' as type, a.title as description, a.severity as severity, s.hostname as hostname, a.created_at as timestamp
+                FROM alerts a LEFT JOIN servers s ON a.server_id = s.id
+                UNION ALL
+                SELECT 'Command' as type, command as description, risk_level as severity, s.hostname as hostname, c.executed_at as timestamp
+                FROM commands c LEFT JOIN servers s ON c.server_id = s.id
+                UNION ALL
+                SELECT 'Login' as type, username || (CASE WHEN success THEN ' logged in' ELSE ' failed to log in' END) as description, 
+                       (CASE WHEN success THEN 'info' ELSE 'warning' END) as severity, s.hostname as hostname, lh.timestamp as timestamp
+                FROM login_history lh LEFT JOIN servers s ON lh.server_id = s.id
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """, (limit,))
+            return cur.fetchall()
+    except Exception as e:
+        logger.error(f"Error in get_activity_feed: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_dashboard_counts():
+    conn = get_db_connection()
+    counts = {'total_servers': 0, 'online_servers': 0, 'critical_alerts': 0, 'maintenance_servers': 0, 'total_alerts': 0, 'unresolved_alerts': 0}
+    if not conn: return counts
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) as c FROM servers;")
+            res = cur.fetchone()
+            counts['total_servers'] = res['c'] if res else 0
+            cur.execute("SELECT COUNT(*) as c FROM servers WHERE status = 'online';")
+            res = cur.fetchone()
+            counts['online_servers'] = res['c'] if res else 0
+            cur.execute("SELECT COUNT(*) as c FROM alerts WHERE severity = 'critical' AND is_resolved = FALSE;")
+            res = cur.fetchone()
+            counts['critical_alerts'] = res['c'] if res else 0
+            cur.execute("SELECT COUNT(*) as c FROM servers WHERE is_maintenance = TRUE;")
+            res = cur.fetchone()
+            counts['maintenance_servers'] = res['c'] if res else 0
+            cur.execute("SELECT COUNT(*) as c FROM alerts;")
+            res = cur.fetchone()
+            counts['total_alerts'] = res['c'] if res else 0
+            cur.execute("SELECT COUNT(*) as c FROM alerts WHERE is_resolved = FALSE;")
+            res = cur.fetchone()
+            counts['unresolved_alerts'] = res['c'] if res else 0
+            return counts
+    except Exception as e:
+        logger.error(f"Error in get_dashboard_counts: {e}")
+        return counts
+    finally:
+        conn.close()
+
+def get_severity_distribution():
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT severity, COUNT(*) as count FROM alerts WHERE is_resolved = FALSE GROUP BY severity;")
+            return cur.fetchall()
+    except Exception as e:
+        logger.error(f"Error in get_severity_distribution: {e}")
+        return []
+    finally:
+        conn.close()
+
+def search_all(query):
+    conn = get_db_connection()
+    results = {'servers': [], 'alerts': [], 'incidents': [], 'commands': []}
+    if not conn or not query: return results
+    try:
+        with conn.cursor() as cur:
+            q = f"%{query}%"
+            cur.execute("SELECT id, hostname, ip FROM servers WHERE hostname ILIKE %s OR ip ILIKE %s LIMIT 10", (q, q))
+            results['servers'] = cur.fetchall()
+            cur.execute("SELECT id, title, severity FROM alerts WHERE title ILIKE %s OR message ILIKE %s LIMIT 10", (q, q))
+            results['alerts'] = cur.fetchall()
+            cur.execute("SELECT id, title, severity FROM incidents WHERE title ILIKE %s OR description ILIKE %s LIMIT 10", (q, q))
+            results['incidents'] = cur.fetchall()
+            cur.execute("SELECT id, command, username FROM commands WHERE command ILIKE %s LIMIT 10", (q,))
+            results['commands'] = cur.fetchall()
+            return results
+    except Exception as e:
+        logger.error(f"Error in search_all: {e}")
+        return results
+    finally:
+        conn.close()
+
+def toggle_maintenance(server_id):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("UPDATE servers SET is_maintenance = NOT is_maintenance WHERE id = %s RETURNING is_maintenance;", (server_id,))
+                res = cur.fetchone()
+                if res: return res['is_maintenance']
+                return False
+            except Exception:
+                try:
+                    cur.execute("UPDATE servers SET is_maintenance = CASE WHEN is_maintenance = 1 THEN 0 ELSE 1 END WHERE id = %s RETURNING is_maintenance;", (server_id,))
+                    res = cur.fetchone()
+                    if res: return res['is_maintenance']
+                    return False
+                except:
+                    return False
+    except Exception as e:
+        logger.error(f"Error in toggle_maintenance: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+
+
+import urllib.request
+
+_geo_cache = {}
+
+def lookup_ip_geo(ip: str):
+    """Resolve IP location using ip-api.com with in-memory caching."""
+    if not ip or ip in ["127.0.0.1", "localhost", "::1"] or ip.startswith("10.") or ip.startswith("192.168.") or ip.startswith("172."):
+        return {"lat": 37.7749, "lon": -122.4194, "city": "Internal", "country": "Private Network"}
+    if ip in _geo_cache:
+        return _geo_cache[ip]
+    try:
+        req = urllib.request.Request(f"http://ip-api.com/json/{ip}?fields=status,country,city,lat,lon", headers={"User-Agent": "SecurePulse-SOC/1.0"})
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            data = json.loads(resp.read().decode())
+            if data.get("status") == "success":
+                geo = {
+                    "lat": float(data.get("lat", 20.0)),
+                    "lon": float(data.get("lon", 0.0)),
+                    "city": data.get("city", "Unknown"),
+                    "country": data.get("country", "Unknown")
+                }
+                _geo_cache[ip] = geo
+                return geo
+    except Exception:
+        pass
+    geo = {"lat": 20.0, "lon": 0.0, "city": "Unknown", "country": "Internet"}
+    _geo_cache[ip] = geo
+    return geo
+
+def get_threat_map_points():
+    """Return geo-located threat dots from real failed logins and servers in DB."""
+    conn = get_db_connection()
+    points = []
+    if not conn:
+        return points
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT ip_address, COUNT(*) as fail_count
+                FROM login_history
+                WHERE success = FALSE AND ip_address IS NOT NULL AND ip_address != ''
+                GROUP BY ip_address
+                ORDER BY fail_count DESC
+                LIMIT 50;
+            """)
+            rows = cur.fetchall()
+            for r in rows:
+                ip = r.get("ip_address")
+                count = r.get("fail_count", 1)
+                geo = lookup_ip_geo(ip)
+                severity = "critical" if count >= 10 else "warning"
+                points.append({
+                    "ip": ip,
+                    "lat": geo["lat"],
+                    "lon": geo["lon"],
+                    "city": geo["city"],
+                    "country": geo["country"],
+                    "severity": severity,
+                    "count": count
+                })
+            
+            # Monitored servers as info dots
+            cur.execute("SELECT id, hostname, ip FROM servers LIMIT 10;")
+            servers = cur.fetchall()
+            for s in servers:
+                sip = s.get("ip") or "127.0.0.1"
+                sgeo = lookup_ip_geo(sip)
+                points.append({
+                    "ip": sip,
+                    "lat": sgeo["lat"],
+                    "lon": sgeo["lon"],
+                    "city": sgeo["city"],
+                    "country": sgeo["country"],
+                    "severity": "info",
+                    "hostname": s.get("hostname")
+                })
+        return points
+    except Exception as e:
+        logger.error(f"Error in get_threat_map_points: {e}")
+        return points
+    finally:
+        conn.close()

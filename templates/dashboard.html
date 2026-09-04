@@ -4,7 +4,6 @@
 {% block page_sub %}Real-time security intelligence & threat detection{% endblock %}
 
 {% block content %}
-<div class="d-none" style="display:none;">SERVICES SECURE CRITICAL</div>
 <div class="dashboard-grid fade-in">
     <!-- Row 1: KPI Stats -->
     <div class="stat-card glass glass-hover" onclick="window.location.href='/assets'" style="cursor:pointer">
@@ -67,7 +66,6 @@
             <h2 class="card-title">Global Threat Visualization</h2>
             <div style="display:flex; gap:10px">
                 <span class="badge badge-info">Real-time</span>
-                <button class="btn btn-glass" style="padding:4px 8px" onclick="loadGeoIP()">Refresh Map</button>
             </div>
         </div>
         <div id="threat-map" style="height:450px; border-radius:var(--radius-md); background:var(--bg-deep);"></div>
@@ -85,82 +83,46 @@
                 <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Total</div>
             </div>
         </div>
-        <div style="margin-top:20px; display:grid; grid-template-columns: 1fr 1fr; gap:10px">
-            <div class="glass" style="padding:10px; border-radius:var(--radius-sm); text-align:center">
-                <div class="text-meta">Critical</div>
-                <div id="leg-crit" style="color:var(--red); font-weight:700">0</div>
-            </div>
-            <div class="glass" style="padding:10px; border-radius:var(--radius-sm); text-align:center">
-                <div class="text-meta">Warning</div>
-                <div id="leg-warn" style="color:var(--amber); font-weight:700">0</div>
-            </div>
-        </div>
     </div>
 
-    <!-- Active Brute Force -->
-    <div class="card glass">
-        <div class="card-header">
-            <h2 class="card-title">Active Brute-Force</h2>
-            <span class="badge badge-critical">Intercepted</span>
-        </div>
-        <div id="brute-force-list" style="display:flex; flex-direction:column; gap:12px">
-            <div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">No active attacks detected</div>
-        </div>
-    </div>
-</div>
-
-<div class="dashboard-grid fade-in" style="grid-template-columns: 1fr 2fr;">
     <!-- Live Activity Feed -->
     <div class="card glass">
         <div class="card-header">
             <h2 class="card-title">Live Activity</h2>
-            <div class="pulse" style="width:6px; height:6px; border-radius:50%; background:var(--accent-cyan)"></div>
+            <div class="pulse" style="width:6px; height:6px; border-radius:50%; background:var(--cyan)"></div>
         </div>
         <div id="live-feed" style="display:flex; flex-direction:column; gap:16px">
             <div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">Waiting for events...</div>
         </div>
     </div>
+</div>
 
-     <!-- Recent Alerts -->
-     <div class="card glass">
-         <div class="card-header">
-             <h2 class="card-title">Recent Security Alerts</h2>
-             <a href="/alerts" class="btn btn-glass" style="padding:4px 12px">View All</a>
-         </div>
-         <table class="data-table">
-             <thead>
-                 <tr>
-                     <th>Severity</th>
-                     <th>Alert</th>
-                     <th>Source</th>
-                     <th>Time</th>
-                     <th>Actions</th>
-                 </tr>
-             </thead>
-             <tbody id="open-alerts-list">
-                 <!-- Populated by JS -->
-             </tbody>
-         </table>
-     </div>
-
-     <!-- Maintenance Servers -->
-     <div class="card glass">
-         <div class="card-header">
-             <h2 class="card-title">Servers in Maintenance</h2>
-             <a href="/maintenance" class="btn btn-glass" style="padding:4px 12px">View All</a>
-         </div>
-         <div id="maintenance-servers-list" style="display:flex; flex-direction:column; gap:8px">
-             <div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">No servers in maintenance</div>
-         </div>
-     </div>
- </div>
+<div class="dashboard-grid fade-in" style="grid-template-columns: 1fr;">
+    <!-- Recent Alerts -->
+    <div class="card glass">
+        <div class="card-header">
+            <h2 class="card-title">Recent Security Alerts</h2>
+        </div>
+        <table style="width:100%; text-align:left; border-collapse:collapse">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border)">
+                    <th style="padding:12px; color:var(--text-meta)">SEVERITY</th>
+                    <th style="padding:12px; color:var(--text-meta)">ALERT</th>
+                    <th style="padding:12px; color:var(--text-meta)">TIME</th>
+                </tr>
+            </thead>
+            <tbody id="open-alerts-list">
+                <tr><td colspan="3" style="text-align:center; padding:20px">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
 let sevDonut = null;
 let map = null;
-let markers = [];
 
 function initCharts() {
     const ctx = document.getElementById('sev-donut').getContext('2d');
@@ -175,160 +137,95 @@ function initCharts() {
                 hoverOffset: 8
             }]
         },
-        options: {
-            cutout: '80%',
-            plugins: { legend: { display: false } },
-            responsive: true,
-            maintainAspectRatio: false
-        }
+        options: { cutout: '80%', plugins: { legend: { display: false } }, responsive: true, maintainAspectRatio: false }
     });
 }
 
 function initMap() {
     if (map) return;
-    map = L.map('threat-map', {
-        attributionControl: false,
-        zoomControl: false
-    }).setView([20, 0], 2);
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: ''
-    }).addTo(map);
-    // Dark overlay for the map
+    map = L.map('threat-map', { attributionControl: false, zoomControl: false }).setView([20, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
     document.getElementById('threat-map').style.filter = 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.1)';
 }
 
-async function loadGeoIP() {
-    initMap();
+async function loadCounts() {
     try {
-        const data = await apiFetch('/api/dashboard/geoip');
-        markers.forEach(m => map.removeLayer(m));
-        markers = [];
-
-        (data || []).forEach(p => {
-            if (p.lat && p.lon) {
-                const color = p.severity === 'critical' ? 'var(--accent-red)' : 'var(--accent-blue)';
-                const marker = L.circleMarker([p.lat, p.lon], {
-                    radius: 6,
-                    fillColor: color,
-                    color: 'white',
-                    weight: 1,
-                    opacity: 1,
-                    fillOpacity: 0.8
-                }).addTo(map);
-                
-                marker.bindTooltip(`<b>${p.ip}</b><br>${p.city}, ${p.country}`, {
-                    direction: 'top'
-                });
-                markers.push(marker);
-            }
-        });
-    } catch (e) { console.error('Map error:', e); }
+        const counts = await apiFetch('/api/dashboard/counts');
+        document.getElementById('kpi-total').textContent = counts.total || 0;
+        document.getElementById('kpi-online').textContent = counts.online || 0;
+        document.getElementById('kpi-online-badge').textContent = (counts.online || 0) + ' Online';
+        document.getElementById('kpi-alerts').textContent = counts.alerts || 0;
+        document.getElementById('kpi-alerts-badge').textContent = (counts.alerts || 0) + ' Alerts';
+        document.getElementById('kpi-maint').textContent = counts.maintenance || 0;
+        document.getElementById('kpi-maint-badge').textContent = (counts.maintenance || 0) + ' Servers';
+    } catch(e) {}
 }
 
-async function loadDashboard() {
+async function loadActivity() {
     try {
-        const stats = await apiFetch('/api/servers/stats');
-        const total = stats.total_servers ?? stats.total ?? 0;
-        const online = stats.online_servers ?? stats.secure ?? total;
-        const alerts = stats.open_alerts ?? stats.critical ?? 0;
-        const maint = stats.maintenance_servers ?? 0;
+        const activity = await apiFetch('/api/dashboard/live-activity');
+        const feedEl = document.getElementById('live-feed');
+        if (!activity || activity.length === 0) {
+            feedEl.innerHTML = '<div class="text-meta" style="text-align:center; padding:20px">No recent activity</div>';
+        } else {
+            feedEl.innerHTML = activity.slice(0, 10).map(e => `
+                <div style="display:flex; gap:12px; align-items:center">
+                    <div style="width:8px; height:8px; border-radius:50%; background:var(--${e.severity === 'critical' ? 'red' : e.severity === 'warning' ? 'orange' : 'cyan'})"></div>
+                    <div style="flex:1">
+                        <div style="font-size:13px; font-weight:500">${e.detail || e.message || 'Event'}</div>
+                        <div class="text-meta" style="margin-top:2px">${new Date(e.timestamp || e.created_at).toLocaleTimeString()}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+    } catch(e) {}
+}
 
-        document.getElementById('kpi-total').textContent = total;
-        document.getElementById('kpi-online').textContent = Math.round((online / (total || 1)) * 100) + '%';
-        document.getElementById('kpi-online-badge').textContent = online + ' Online';
-        document.getElementById('kpi-alerts').textContent = alerts;
-        document.getElementById('kpi-alerts-badge').textContent = alerts + ' Active';
-        document.getElementById('kpi-maint').textContent = maint;
-        document.getElementById('kpi-maint-badge').textContent = maint + ' Active';
-
-        const eventsData = await apiFetch('/api/events?limit=100');
-        const items = eventsData.items || [];
-        
-        const info = items.filter(e => e.severity === 'info').length;
-        const warn = items.filter(e => e.severity === 'warning').length;
-        const crit = items.filter(e => e.severity === 'critical').length;
-        
+async function loadSeverity() {
+    try {
+        const data = await apiFetch('/api/dashboard/severity');
+        const info = data.info || 0;
+        const warn = data.warning || 0;
+        const crit = data.critical || 0;
         sevDonut.data.datasets[0].data = [info, warn, crit];
         sevDonut.update();
-        document.getElementById('donut-total').textContent = items.length;
-        document.getElementById('leg-warn').textContent = warn;
-        document.getElementById('leg-crit').textContent = crit;
-
-         // Feed
-         const feedEl = document.getElementById('live-feed');
-         feedEl.innerHTML = items.slice(0, 5).map(e => `
-             <div style="display:flex; gap:12px; align-items:center">
-                 <div style="width:8px; height:8px; border-radius:50%; background:var(--accent-${e.severity === 'critical' ? 'red' : e.severity === 'warning' ? 'orange' : 'blue'})"></div>
-                 <div style="flex:1">
-                     <div style="font-size:13px; font-weight:500">${e.description.slice(0, 40)}...</div>
-                     <div class="text-meta" style="margin-top:2px">${e.hostname || 'System'} · ${new Date(e.created_at).toLocaleTimeString()}</div>
-                 </div>
-             </div>
-         `).join('');
-
-         // Alerts
-         const alertsData = await apiFetch('/api/alerts?is_resolved=false&limit=5');
-         const alertList = document.getElementById('open-alerts-list');
-         alertList.innerHTML = alertsData.items.map(a => `
-             <tr>
-                 <td><span class="badge badge-${a.severity === 'critical' ? 'critical' : 'warning'}">${a.severity}</span></td>
-                 <td style="font-weight:600">${a.title}</td>
-                 <td>${a.hostname || 'Unknown'}</td>
-                 <td class="text-meta">${new Date(a.created_at).toLocaleTimeString()}</td>
-                 <td><button class="btn btn-glass" style="padding:4px 8px" onclick="resolveAlert(${a.id})">Resolve</button></td>
-             </tr>
-         `).join('');
-
-         // Brute Force
-         const bruteData = await apiFetch('/api/dashboard/brute-force');
-         const bruteList = document.getElementById('brute-force-list');
-         if (bruteData.length > 0) {
-             bruteList.innerHTML = bruteData.map(b => `
-                 <div class="glass" style="padding:10px; border-radius:var(--radius-sm); border-left: 3px solid var(--red)">
-                     <div style="display:flex; justify-content:space-between">
-                         <span style="font-family:var(--mono); font-weight:700; color:var(--red)">${b.ip}</span>
-                         <span class="text-meta">${b.count} attempts</span>
-                     </div>
-                     <div class="text-sub" style="margin-top:3px">Target: ${b.target}</div>
-                 </div>
-             `).join('');
-         }
-
-         // Maintenance Servers
-         const maintData = await apiFetch('/api/servers/maintenance');
-         const maintList = document.getElementById('maintenance-servers-list');
-         if (maintData.length > 0) {
-             maintList.innerHTML = maintData.map(s => `
-                 <div class="glass" style="padding:10px; border-radius:var(--radius-sm); border-left: 3px solid var(--amber)">
-                     <div style="display:flex; justify-content:space-between">
-                         <span style="font-family:var(--mono); font-weight:600">${s.hostname}</span>
-                         <span class="text-meta">${s.is_maintenance ? 'Permanent' : 'Until ' + new Date(s.maintenance_until).toLocaleString()}</span>
-                     </div>
-                     <div class="text-sub" style="margin-top:3px">Status: ${s.status}</div>
-                 </div>
-             `).join('');
-         } else {
-             document.getElementById('maintenance-servers-list').innerHTML = '<div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">No servers in maintenance</div>';
-         }
-
-    } catch (e) { console.error('Dashboard load error:', e); }
+        document.getElementById('donut-total').textContent = info + warn + crit;
+    } catch(e) {}
 }
 
-async function resolveAlert(id) {
+async function loadAlerts() {
     try {
-        await apiFetch(`/api/alerts/${id}/resolve`, { method: 'PATCH' });
-        showToast('Alert resolved successfully', 'success');
-        loadDashboard();
-    } catch (e) { showToast('Failed to resolve alert', 'error'); }
+        const data = await apiFetch('/api/alerts?is_resolved=false&limit=5');
+        const alertList = document.getElementById('open-alerts-list');
+        if (data.length === 0) {
+            alertList.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:20px" class="text-meta">No open alerts</td></tr>';
+        } else {
+            alertList.innerHTML = data.map(a => `
+                <tr style="border-bottom:1px solid var(--border)">
+                    <td style="padding:12px"><span class="badge badge-${a.severity === 'critical' ? 'critical' : 'warning'}">${(a.severity||'info').toUpperCase()}</span></td>
+                    <td style="padding:12px; font-weight:600">${a.message || a.rule_name || 'Alert'}</td>
+                    <td style="padding:12px" class="text-meta">${new Date(a.created_at).toLocaleTimeString()}</td>
+                </tr>
+            `).join('');
+        }
+    } catch(e) {}
 }
 
 window.addEventListener('load', () => {
     initCharts();
-    loadDashboard();
-    loadGeoIP();
-    setInterval(loadDashboard, 10000);
+    initMap();
+    
+    // Initial load
+    loadCounts();
+    loadActivity();
+    loadSeverity();
+    loadAlerts();
+
+    // Intervals
+    setInterval(loadCounts, 60000);
+    setInterval(loadActivity, 30000);
+    setInterval(loadSeverity, 60000);
+    setInterval(loadAlerts, 60000);
 });
 </script>
 {% endblock %}

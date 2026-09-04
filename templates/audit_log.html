@@ -1,59 +1,144 @@
 {% extends "base.html" %}
 {% set active = 'audit_log' %}
 {% block page_title %}Audit Log{% endblock %}
-{% block page_sub %}Immutable record of all admin actions for compliance{% endblock %}
+{% block page_sub %}Comprehensive record of system and user actions{% endblock %}
 
 {% block content %}
-<div class="page fade-up">
-    
+<div class="fade-in">
+    <div class="card glass" style="margin-bottom:20px; display:flex; gap:16px; align-items:flex-end">
+        <div style="flex:1">
+            <label class="text-meta">Username</label>
+            <input id="f-username" type="text" class="glass" style="width:100%; padding:8px" placeholder="admin">
+        </div>
+        <div style="flex:1">
+            <label class="text-meta">Action</label>
+            <select id="f-action" class="glass" style="width:100%; padding:8px">
+                <option value="">All Actions</option>
+                <option value="login">Login</option>
+                <option value="update">Update</option>
+                <option value="delete">Delete</option>
+                <option value="create">Create</option>
+            </select>
+        </div>
+        <div style="flex:1">
+            <label class="text-meta">Date From</label>
+            <input id="f-from" type="date" class="glass" style="width:100%; padding:8px">
+        </div>
+        <div style="flex:1">
+            <label class="text-meta">Date To</label>
+            <input id="f-to" type="date" class="glass" style="width:100%; padding:8px">
+        </div>
+        <div>
+            <button class="btn btn-primary" onclick="applyFilters()">Filter</button>
+            <button class="btn btn-glass" onclick="exportCsv()">Export CSV</button>
+        </div>
+    </div>
 
-    <div class="card">
-        <div id="audit-wrap">
-            <div class="center-spinner">
-                <div class="spinner"></div>
-            </div>
+    <div class="card glass" style="overflow-x:auto">
+        <table style="width:100%; border-collapse:collapse; text-align:left">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border)">
+                    <th style="padding:12px; color:var(--text-meta)">ID</th>
+                    <th style="padding:12px; color:var(--text-meta)">TIMESTAMP</th>
+                    <th style="padding:12px; color:var(--text-meta)">USER</th>
+                    <th style="padding:12px; color:var(--text-meta)">ACTION</th>
+                    <th style="padding:12px; color:var(--text-meta)">TARGET</th>
+                    <th style="padding:12px; color:var(--text-meta)">DETAIL</th>
+                </tr>
+            </thead>
+            <tbody id="audit-table-body">
+                <tr><td colspan="6" style="padding:20px; text-align:center">Loading...</td></tr>
+            </tbody>
+        </table>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px">
+            <button class="btn btn-glass" onclick="prevPage()" id="btn-prev">Previous</button>
+            <span class="text-meta" id="page-info">Page 1</span>
+            <button class="btn btn-glass" onclick="nextPage()" id="btn-next">Next</button>
         </div>
     </div>
 </div>
+{% endblock %}
 
+{% block extra_js %}
 <script>
-    async function loadAuditLog() {
-        const wrap = document.getElementById('audit-wrap');
-        try {
-            const data = await apiFetch('/api/audit-logs');
-            if (!data.items || !data.items.length) {
-                wrap.innerHTML = '<div class="empty-state"><p>No audit records found</p></div>';
-                return;
-            }
+let currentPage = 1;
+const limit = 50;
 
-            wrap.innerHTML = `
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Timestamp</th>
-                            <th>Admin</th>
-                            <th>Action</th>
-                            <th>Target</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${data.items.map(l => `
-                            <tr>
-                                <td class="mono" style="font-size:11px">${new Date(l.timestamp).toLocaleString()}</td>
-                                <td><strong>${l.user_email}</strong></td>
-                                <td><span class="badge badge-blue">${l.action}</span></td>
-                                <td class="mono" style="font-size:12px; color:var(--text-secondary)">${l.target || '—'}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
-        } catch (e) { 
-            console.error('Audit log error:', e); 
-            wrap.innerHTML = '<div class="empty-state"><p>Error loading data</p></div>';
+function getQueryParams() {
+    const params = new URLSearchParams(window.location.search);
+    document.getElementById('f-username').value = params.get('username') || '';
+    document.getElementById('f-action').value = params.get('action') || '';
+    document.getElementById('f-from').value = params.get('from') || '';
+    document.getElementById('f-to').value = params.get('to') || '';
+    return params;
+}
+
+async function loadData(page = 1) {
+    currentPage = page;
+    const params = getQueryParams();
+    params.set('limit', limit);
+    params.set('offset', (page - 1) * limit);
+
+    try {
+        const data = await apiFetch(`/api/audit-log?${params.toString()}`);
+        const tbody = document.getElementById('audit-table-body');
+        if (data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="padding:20px; text-align:center">No records found.</td></tr>';
+            document.getElementById('btn-next').disabled = true;
+        } else {
+            tbody.innerHTML = data.map(log => `
+                <tr style="border-bottom:1px solid var(--border)">
+                    <td style="padding:12px">#${log.id}</td>
+                    <td style="padding:12px">${new Date(log.timestamp || log.created_at).toLocaleString()}</td>
+                    <td style="padding:12px">${log.username}</td>
+                    <td style="padding:12px"><span class="badge badge-info">${log.action.toUpperCase()}</span></td>
+                    <td style="padding:12px">${log.target_type} (${log.target_id})</td>
+                    <td style="padding:12px" style="font-family:var(--mono); font-size:12px">${log.detail || '-'}</td>
+                </tr>
+            `).join('');
+            document.getElementById('btn-next').disabled = data.length < limit;
         }
+        document.getElementById('page-info').innerText = `Page ${currentPage}`;
+        document.getElementById('btn-prev').disabled = currentPage === 1;
+    } catch (err) {
+        showToast('Failed to load audit log', 'error');
     }
+}
 
-    document.addEventListener('DOMContentLoaded', loadAuditLog);
+function applyFilters() {
+    const params = new URLSearchParams();
+    if(document.getElementById('f-username').value) params.set('username', document.getElementById('f-username').value);
+    if(document.getElementById('f-action').value) params.set('action', document.getElementById('f-action').value);
+    if(document.getElementById('f-from').value) params.set('from', document.getElementById('f-from').value);
+    if(document.getElementById('f-to').value) params.set('to', document.getElementById('f-to').value);
+    window.history.pushState({}, '', `${window.location.pathname}?${params.toString()}`);
+    loadData(1);
+}
+
+function prevPage() { if (currentPage > 1) loadData(currentPage - 1); }
+function nextPage() { loadData(currentPage + 1); }
+
+async function exportCsv() {
+    try {
+        const params = getQueryParams();
+        params.set('limit', 10000);
+        const data = await apiFetch(`/api/audit-log?${params.toString()}`);
+        let csv = 'ID,Timestamp,User,Action,TargetType,TargetID,Detail\n';
+        data.forEach(log => {
+            csv += `${log.id},"${log.timestamp || log.created_at}","${log.username}","${log.action}","${log.target_type}","${log.target_id}","${(log.detail||'').replace(/"/g, '""')}"\n`;
+        });
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'audit_log.csv';
+        a.click();
+        showToast('Export successful', 'success');
+    } catch (err) {
+        showToast('Export failed', 'error');
+    }
+}
+
+window.addEventListener('load', () => loadData(1));
 </script>
 {% endblock %}

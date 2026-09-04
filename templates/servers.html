@@ -12,6 +12,7 @@
                 <option value="">All Statuses</option>
                 <option value="online">Online</option>
                 <option value="offline">Offline</option>
+                <option value="maintenance">Maintenance</option>
             </select>
         </div>
         <button class="btn btn-primary" onclick="showAddServerModal()">
@@ -23,44 +24,7 @@
     </div>
 
     <div id="servers-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:20px">
-        {% for s in servers %}
-        <div class="card glass glass-hover fade-in" style="position:relative; display:flex; flex-direction:column">
-            {% if session.get('user_role') != 'normal' %}
-            <button onclick="event.stopPropagation(); openDeleteModal({{ s.id }}, '{{ (s.hostname or s.name or 'server')|escape }}')"
-                title="Delete server"
-                style="position:absolute; top:12px; right:12px; background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:5px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono); display:flex; align-items:center; gap:5px; z-index:2">
-                <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" fill="none" stroke-width="2">
-                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                </svg>
-                DEL
-            </button>
-            {% endif %}
-            <div style="cursor:pointer; flex:1" onclick="window.location.href='/servers/{{ s.id }}'">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px">
-                    <div class="stat-icon {{ 'green' if s.status == 'online' else ('orange' if s.status == 'isolated' else 'red') }}" style="width:48px; height:48px">
-                        <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
-                    </div>
-                    <span class="badge badge-{{ 'success' if s.status == 'online' else ('warning' if s.status == 'isolated' else 'critical') }}" style="margin-right:44px">{{ (s.status or 'ONLINE')|upper }}</span>
-                </div>
-
-                <h3 class="card-title" style="font-size:18px; margin-bottom:4px">{{ s.hostname or s.name or s.ip }}</h3>
-                <p class="text-meta" style="margin-bottom:16px">{{ s.ip_address or s.ip or 'Unassigned IP' }}</p>
-
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; border-top: 1px solid var(--border); padding-top:12px">
-                    <div>
-                        <div class="text-meta" style="margin-bottom:3px">RISK LEVEL</div>
-                        <div style="font-size:13px; font-weight:700; color:{{ 'var(--red)' if s.severity == 'critical' else 'var(--green)' }}">{{ (s.severity or 'INFO')|upper }}</div>
-                    </div>
-                    <div>
-                        <div class="text-meta" style="margin-bottom:3px">LAST SEEN</div>
-                        <div style="font-size:13px; color:var(--text)">{{ s.last_sudo_ago or 'just now' }}</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        {% else %}
-        <div class="card glass" style="grid-column: 1/-1; text-align:center; padding:60px">No assets found in the inventory.</div>
-        {% endfor %}
+        <!-- Loaded by JS -->
     </div>
 </div>
 
@@ -69,7 +33,6 @@
     <h2 class="card-title" style="font-size:24px; margin-bottom:12px">Onboard Asset</h2>
     <p class="text-sub" style="margin-bottom:24px">Configure asset metadata before generating the setup command.</p>
 
-    <!-- Tag Selectors -->
     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:20px">
         <div>
             <label class="stat-label">ASSET SITE</label>
@@ -98,91 +61,61 @@
         <button class="btn btn-glass" onclick="closeAddServerModal()">Close</button>
     </div>
 </div>
-
-<!-- Delete Confirm Modal -->
-<div id="delete-overlay" onclick="closeDeleteModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:998; backdrop-filter:blur(4px)"></div>
-<div id="delete-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:36px; border-radius:var(--radius-lg); z-index:999; width:420px; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--red)">
-    <div style="display:flex; align-items:center; gap:14px; margin-bottom:16px">
-        <div class="stat-icon red" style="width:40px; height:40px; flex-shrink:0">
-            <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-        </div>
-        <div>
-            <h3 class="card-title" style="margin:0; color:var(--red)">Delete Asset</h3>
-            <p class="text-sub" style="margin:4px 0 0 0">This will permanently remove the server and ALL its events and alerts.</p>
-        </div>
-    </div>
-    <p style="font-family:var(--mono); font-size:12px; color:var(--text); background:var(--bg2); padding:10px 14px; border-radius:var(--radius-sm); margin-bottom:20px">
-        Server: <strong id="delete-hostname" style="color:var(--red)">—</strong>
-    </p>
-    <div style="display:flex; gap:10px; justify-content:flex-end">
-        <button class="btn btn-glass" onclick="closeDeleteModal()">Cancel</button>
-        <button class="btn btn-primary" id="btn-confirm-delete" style="border-color:var(--red); background:rgba(255,59,92,0.15); color:var(--red)" onclick="confirmDelete()">
-            <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="margin-right:5px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-            Delete Permanently
-        </button>
-    </div>
-</div>
-
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    let _deleteServerId = null;
-    let _deleteHostname = '';
-
     async function loadServers() {
         const grid = document.getElementById('servers-grid');
-        if (!grid) return;
-        const statusEl = document.getElementById('filter-status');
-        const status = statusEl ? statusEl.value : '';
-        const urlParams = new URLSearchParams(window.location.search);
-        const filterMaint = urlParams.get('filter') === 'maintenance';
-
+        const status = document.getElementById('filter-status').value;
         let url = `/api/servers`;
         if (status) url += `?status=${status}`;
 
         try {
-            let res = await apiFetch(url);
-            let data = Array.isArray(res) ? res : (res && res.servers ? res.servers : []);
+            let data = await apiFetch(url);
+            if (!Array.isArray(data)) data = data.servers || [];
 
-            if (filterMaint) {
-                data = data.filter(s => s.is_maintenance === true || s.is_maintenance === 1 || (s.maintenance_until && new Date(s.maintenance_until) > new Date()));
-            }
-
-            if (!data || !data.length) {
-                grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:60px">No assets found in the inventory.</div>';
+            if (!data.length) {
+                grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:60px">No assets found.</div>';
                 return;
             }
 
             grid.innerHTML = data.map(s => {
-                const id = s.id || 1;
-                const hostname = String(s.hostname || s.name || s.ip || 'server-node');
-                const safeHostname = hostname.replace(/'/g, "\\'");
+                const id = s.id;
+                const hostname = String(s.hostname || s.name || s.ip || 'server-node').replace(/'/g, "\\'");
                 const ip = s.ip_address || s.ip || '127.0.0.1';
-                const statusStr = String(s.status || 'online').toLowerCase();
+                const isMaint = s.is_maintenance || (s.maintenance_until && new Date(s.maintenance_until) > new Date());
+                const statusStr = isMaint ? 'maintenance' : String(s.status || 'online').toLowerCase();
                 const severityStr = String(s.severity || 'info').toLowerCase();
+                
+                const statIconColor = statusStr === 'online' ? 'green' : (statusStr === 'maintenance' ? 'orange' : 'red');
+                const badgeClass = statusStr === 'online' ? 'success' : (statusStr === 'maintenance' ? 'warning' : 'critical');
 
                 return `
-                <div class="card glass glass-hover fade-in" style="position:relative; display:flex; flex-direction:column">
+                <div class="card glass glass-hover fade-in" id="srv-card-${id}" style="position:relative; display:flex; flex-direction:column">
                     ${window.USER_ROLE !== 'normal' ? `
-                    <button onclick="event.stopPropagation(); openDeleteModal(${id}, '${safeHostname}')"
-                        title="Delete server"
-                        style="position:absolute; top:12px; right:12px; background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:5px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono); display:flex; align-items:center; gap:5px; z-index:2">
-                        <svg viewBox="0 0 24 24" width="11" height="11" stroke="currentColor" fill="none" stroke-width="2">
-                            <polyline points="3 6 5 6 21 6"/>
-                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                        </svg>
-                        DEL
-                    </button>
+                    <div style="position:absolute; top:12px; right:12px; z-index:2; display:flex; gap:5px">
+                        <button onclick="event.stopPropagation(); toggleMaintenance(${id}, ${isMaint}, this)"
+                            title="Toggle Maintenance"
+                            class="btn btn-glass"
+                            style="padding:4px 8px; font-size:10px">
+                            ${isMaint ? 'UNMAINT' : 'MAINT'}
+                        </button>
+                        <button onclick="event.stopPropagation(); deleteServer(${id})"
+                            title="Delete server"
+                            class="btn btn-glass"
+                            style="background:rgba(255,59,92,0.1); border-color:rgba(255,59,92,0.4); color:var(--red); padding:4px 8px; font-size:10px">
+                            DEL
+                        </button>
+                    </div>
                     ` : ''}
 
-                    <div style="cursor:pointer; flex:1" onclick="window.location.href='/servers/${id}'">
+                    <div style="cursor:pointer; flex:1; margin-top:20px" onclick="window.location.href='/servers/${id}'">
                         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px">
-                            <div class="stat-icon ${statusStr === 'online' ? 'green' : statusStr === 'isolated' ? 'orange' : 'red'}" style="width:48px; height:48px">
+                            <div class="stat-icon ${statIconColor}" style="width:48px; height:48px">
                                 <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
                             </div>
-                            <span class="badge badge-${statusStr === 'online' ? 'success' : statusStr === 'isolated' ? 'warning' : 'critical'}" style="margin-right:44px">${statusStr.toUpperCase()}</span>
+                            <span class="badge badge-${badgeClass}" id="srv-badge-${id}" style="margin-right:0">${statusStr.toUpperCase()}</span>
                         </div>
 
                         <h3 class="card-title" style="font-size:18px; margin-bottom:4px">${hostname}</h3>
@@ -203,42 +136,32 @@
                 `;
             }).join('');
         } catch (e) {
-            console.error('Asset load error:', e);
+            showToast('Asset load error', 'error');
         }
     }
 
-    function openDeleteModal(id, hostname) {
-        _deleteServerId = id;
-        _deleteHostname = hostname;
-        document.getElementById('delete-hostname').textContent = hostname;
-        document.getElementById('delete-overlay').style.display = 'block';
-        document.getElementById('delete-modal').style.display = 'block';
-    }
-
-    function closeDeleteModal() {
-        document.getElementById('delete-overlay').style.display = 'none';
-        document.getElementById('delete-modal').style.display = 'none';
-        _deleteServerId = null;
-    }
-
-    async function confirmDelete() {
-        if (!_deleteServerId) return;
-        const btn = document.getElementById('btn-confirm-delete');
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = 'Deleting...';
-        }
+    async function deleteServer(id) {
+        if (!confirm('Are you sure you want to permanently delete this asset?')) return;
         try {
-            await apiFetch(`/api/servers/${_deleteServerId}`, { method: 'DELETE' });
-            closeDeleteModal();
-            loadServers();
+            await apiFetch(`/api/servers/${id}`, { method: 'DELETE' });
+            document.getElementById(`srv-card-${id}`).remove();
+            showToast('Asset deleted', 'success');
         } catch (e) {
-            alert('Delete failed: ' + e.message);
-        } finally {
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = 'Delete Permanently';
-            }
+            showToast(e.message || 'Delete failed', 'error');
+        }
+    }
+
+    async function toggleMaintenance(id, isMaint, btn) {
+        btn.disabled = true;
+        btn.innerText = '...';
+        try {
+            await apiFetch(`/api/servers/${id}/maintenance`, { method: 'POST' });
+            showToast(`Maintenance mode ${isMaint ? 'disabled' : 'enabled'}`, 'success');
+            loadServers(); // Reload to refresh all attributes and filters properly
+        } catch (e) {
+            showToast('Maintenance toggle failed', 'error');
+            btn.disabled = false;
+            btn.innerText = isMaint ? 'UNMAINT' : 'MAINT';
         }
     }
 
@@ -248,14 +171,10 @@
     }
 
     function updateOnboardCommand() {
-        const siteEl = document.getElementById('onboard-site');
-        const roleEl = document.getElementById('onboard-role');
-        const site = siteEl ? siteEl.value : 'Cloud';
-        const role = roleEl ? roleEl.value : 'none';
+        const site = document.getElementById('onboard-site').value;
+        const role = document.getElementById('onboard-role').value;
         const root = window.location.origin;
-        const cmd = `curl -sSL "${root}/setup?role=${role}&site=${site}" | sudo bash`;
-        const setupCmdEl = document.getElementById('setup-command');
-        if (setupCmdEl) setupCmdEl.innerText = cmd;
+        document.getElementById('setup-command').innerText = `curl -sSL "${root}/setup?role=${role}&site=${site}" | sudo bash`;
     }
 
     function closeAddServerModal() {
@@ -263,10 +182,8 @@
     }
 
     function copySetupCommand() {
-        const cmdEl = document.getElementById('setup-command');
-        if (!cmdEl) return;
-        navigator.clipboard.writeText(cmdEl.innerText).then(() => {
-            if (typeof showToast === 'function') showToast('Command copied to clipboard', 'success');
+        navigator.clipboard.writeText(document.getElementById('setup-command').innerText).then(() => {
+            showToast('Command copied to clipboard', 'success');
         });
     }
 

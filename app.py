@@ -588,6 +588,8 @@ async def api_add_server(request: Request):
 
     sid = db.add_server(name, ip, region, region_code)
     if sid:
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'ADD_SERVER', 'server', sid, f"Added server {name} ({ip})")
         return {"ok": True, "id": sid, "message": "Server registered and active in inventory"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to add server"})
 
@@ -717,26 +719,79 @@ async def api_agent_push(request: Request):
     return {"status": "ok", "ok": True, "message": "Agent telemetry ingested"}
 
 @app.get("/api/alerts")
-async def api_get_alerts(
-    limit: int = 100,
-    severity: Optional[str] = None,
-    is_resolved: Optional[str] = None
-):
-    alerts = db.get_alerts()
-    if severity:
-        alerts = [a for a in alerts if a.get("severity", "") == severity]
-    if is_resolved is not None and is_resolved != "":
-        resolved_bool = is_resolved.lower() in ("true", "1", "yes")
-        alerts = [a for a in alerts if bool(a.get("is_resolved", False)) == resolved_bool]
-    alerts = alerts[:limit]
-    for a in alerts:
-        a.setdefault("title", a.get("message", "Security Alert"))
-        a.setdefault("hostname", str(a.get("server_id", "unknown")))
-        a.setdefault("alert_type", a.get("event_type", "SYSTEM"))
-        a.setdefault("severity", "info")
-        a.setdefault("is_resolved", False)
-        a.setdefault("created_at", datetime.now().isoformat())
-    return {"items": alerts, "total": len(alerts)}
+async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None):
+    conn = db.get_db_connection()
+    if not conn: return {"items": [], "total": 0}
+    try:
+        with conn.cursor() as cur:
+            query = "SELECT a.*, s.hostname FROM alerts a LEFT JOIN servers s ON a.server_id = s.id WHERE 1=1"
+            params = []
+            
+            # Support both is_resolved and status query params
+            resolved_val = None
+            if is_resolved is not None and is_resolved != "":
+                resolved_val = is_resolved.lower() in ("true", "1", "yes")
+            elif status is not None and status != "":
+                if status.lower() == "resolved": resolved_val = True
+                elif status.lower() == "open" or status.lower() == "unresolved": resolved_val = False
+                
+            if resolved_val is not None:
+                query += " AND a.is_resolved = %s"
+                params.append(resolved_val)
+            if severity:
+                query += " AND a.severity = %s"
+                params.append(severity)
+            
+            query += " ORDER BY a.created_at DESC LIMIT %s"
+            params.append(limit)
+            cur.execute(query, params)
+            items = cur.fetchall()
+            for a in items:
+                a['created_at_ago'] = db.format_time_ago(a.get('created_at'))
+            return {"items": items, "total": len(items)}
+    except Exception as e:
+        logger.error(f"Error in api_get_alerts: {e}")
+        return {"items": [], "total": 0}
+    finally:
+        conn.close()
+
+@app.get("/api/alerts/{id}")
+async def api_get_alert_by_id(id: int):
+    conn = db.get_db_connection()
+    if not conn: raise HTTPException(status_code=500)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT a.*, s.hostname FROM alerts a LEFT JOIN servers s ON a.server_id = s.id WHERE a.id = %s", (id,))
+            res = cur.fetchone()
+            if not res: raise HTTPException(status_code=404)
+            return res
+    finally:
+        conn.close()
+
+@app.patch("/api/alerts/{id}")
+async def api_patch_alert(id: int, request: Request):
+    body = await request.json()
+    conn = db.get_db_connection()
+    if not conn: raise HTTPException(status_code=500)
+    try:
+        with conn.cursor() as cur:
+            updates = []
+            params = []
+            for k in ['is_resolved', 'severity', 'case_id']:
+                if k in body:
+                    updates.append(f"{k} = %s")
+                    params.append(body[k])
+            if updates:
+                query = f"UPDATE alerts SET {', '.join(updates)} WHERE id = %s RETURNING *"
+                params.append(id)
+                cur.execute(query, params)
+                res = cur.fetchone()
+                uname = request.session.get('username', 'system')
+                db.log_audit(uname, 'UPDATE_ALERT', 'alert', id, f"Updated alert {id}")
+                return {"ok": True, "alert": res}
+            return {"ok": False, "message": "No updates provided"}
+    finally:
+        conn.close()
 
 @app.get("/api/notifications")
 async def api_get_notifications():
@@ -883,11 +938,31 @@ echo "============================================================"
 
 @app.get("/api/threat-intel")
 async def api_get_threat_intel():
-    return [
-        {"id": 1, "type": "ipv4", "value": "185.220.101.42", "source": "AlienVault", "severity": "critical", "description": "Known Malicious Tor Exit Node"},
-        {"id": 2, "type": "domain", "value": "malware-cnc-server.top", "source": "Internal SOC", "severity": "high", "description": "C2 Infrastructure Command Node"},
-        {"id": 3, "type": "file_hash", "value": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8", "source": "MISP Threat Sharing", "severity": "medium", "description": "Ransomware Dropper Payload"}
-    ]
+    return db.get_threat_intel()
+
+@app.post("/api/threat-intel")
+async def api_create_threat_intel(request: Request):
+    body = await request.json()
+    ioc = body.get("ioc_value")
+    ioc_type = body.get("ioc_type", "ipv4")
+    severity = body.get("severity", "warning")
+    desc = body.get("description", "")
+    source = body.get("source", "Manual")
+    
+    tid = db.create_threat_intel(ioc, ioc_type, severity, desc, source)
+    if tid:
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'ADD_THREAT_INTEL', 'threat_intel', tid, f"Added IOC {ioc}")
+        return {"ok": True, "id": tid}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Failed"})
+
+@app.delete("/api/threat-intel/{id}")
+async def api_delete_threat_intel(id: int, request: Request):
+    if db.delete_threat_intel(id):
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'DELETE_THREAT_INTEL', 'threat_intel', id, f"Deleted IOC {id}")
+        return {"ok": True}
+    return JSONResponse(status_code=400, content={"ok": False})
 
 
 
@@ -957,22 +1032,29 @@ RULES_DB = [
 
 @app.get("/api/playbooks")
 async def api_get_playbooks():
-    return PLAYBOOKS_DB
+    return db.get_playbooks()
 
 @app.post("/api/playbooks")
 async def api_create_playbook(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    new_id = len(PLAYBOOKS_DB) + 1
-    new_pb = {
-        "id": new_id,
-        "name": body.get("name", "New SOAR Playbook"),
-        "actions": body.get("actions", [{"type": "notify_slack"}])
-    }
-    PLAYBOOKS_DB.append(new_pb)
-    return {"ok": True, "id": new_id, "playbook": new_pb}
+    body = await request.json()
+    name = body.get("name")
+    trigger = body.get("trigger_condition", "")
+    steps = body.get("steps", "")
+    actions = body.get("actions", [])
+    pid = db.create_playbook(name, trigger, steps, actions)
+    if pid:
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'ADD_PLAYBOOK', 'playbook', pid, f"Added playbook {name}")
+        return {"ok": True, "id": pid}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Failed"})
+
+@app.delete("/api/playbooks/{id}")
+async def api_delete_playbook(id: int, request: Request):
+    if db.delete_playbook(id):
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'DELETE_PLAYBOOK', 'playbook', id, f"Deleted playbook {id}")
+        return {"ok": True}
+    return JSONResponse(status_code=400, content={"ok": False})
 
 @app.post("/api/playbooks/{pb_id}/execute/{alert_id}")
 @app.post("/api/playbooks/{pb_id}/execute")
@@ -1091,29 +1173,219 @@ async def api_get_cases():
         cases = [{"id": 1, "title": "Sample Investigation", "status": "open", "created_at": datetime.now().isoformat(), "due_at": None}]
     return cases
 
+@app.get("/api/audit-log")
+@app.get("/api/audit_logs")
+async def api_get_audit_logs():
+    return db.get_audit_logs()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS FOR EXTENDED DB
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Incidents
+@app.get("/api/incidents")
+async def api_get_incidents(status: str = None, severity: str = None):
+    return db.get_incidents(status, severity)
+
+@app.post("/api/incidents")
+async def api_create_incident(request: Request):
+    body = await request.json()
+    iid = db.create_incident(
+        body.get("title"),
+        body.get("severity", "warning"),
+        body.get("description", ""),
+        body.get("assigned_to", ""),
+        body.get("server_id")
+    )
+    if iid:
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'CREATE_INCIDENT', 'incident', iid, f"Created incident: {body.get('title')}")
+        return {"ok": True, "id": iid}
+    return JSONResponse(status_code=400, content={"ok": False})
+
+@app.put("/api/incidents/{id}")
+async def api_update_incident(id: int, request: Request):
+    body = await request.json()
+    if db.update_incident(id, **body):
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'UPDATE_INCIDENT', 'incident', id, f"Updated incident {id}")
+        return {"ok": True}
+    return JSONResponse(status_code=400, content={"ok": False})
+
+@app.delete("/api/incidents/{id}")
+async def api_delete_incident(id: int, request: Request):
+    if db.delete_incident(id):
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'DELETE_INCIDENT', 'incident', id, f"Deleted incident {id}")
+        return {"ok": True}
+    return JSONResponse(status_code=400, content={"ok": False})
+
+
+# Detection Rules
+@app.get("/api/detection/rules")
+async def api_get_detection_rules():
+    return db.get_detection_rules()
+
+@app.post("/api/detection/rules")
+async def api_create_detection_rule(request: Request):
+    body = await request.json()
+    rid = db.create_detection_rule(
+        body.get("name"),
+        body.get("pattern"),
+        body.get("severity", "warning"),
+        body.get("event_type", "GENERAL"),
+        body.get("mitre_tactic"),
+        body.get("mitre_technique")
+    )
+    if rid:
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'CREATE_RULE', 'rule', rid, f"Created rule: {body.get('name')}")
+        return {"ok": True, "id": rid}
+    return JSONResponse(status_code=400, content={"ok": False})
+
+@app.put("/api/detection/rules/{id}")
+async def api_toggle_detection_rule(id: int, request: Request):
+    res = db.toggle_detection_rule(id)
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'TOGGLE_RULE', 'rule', id, f"Toggled rule {id} to {res}")
+    return {"ok": True, "enabled": res}
+
+@app.delete("/api/detection/rules/{id}")
+async def api_delete_detection_rule(id: int, request: Request):
+    if db.delete_detection_rule(id):
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'DELETE_RULE', 'rule', id, f"Deleted rule {id}")
+        return {"ok": True}
+    return JSONResponse(status_code=400, content={"ok": False})
+
+
+# Settings
+@app.get("/api/settings")
+async def api_get_settings():
+    return db.get_settings()
+
+@app.post("/api/settings")
+async def api_save_settings(request: Request):
+    body = await request.json()
+    for k, v in body.items():
+        db.save_setting(k, v)
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'UPDATE_SETTINGS', 'settings', 0, "Updated settings")
+    return {"ok": True}
+
+@app.post("/api/settings/test-webhook")
+async def api_test_webhook(request: Request):
+    import urllib.request, urllib.error
+    settings = db.get_settings()
+    url = settings.get("webhook_url")
+    if not url: return JSONResponse(status_code=400, content={"ok": False, "message": "No webhook URL configured"})
+    try:
+        req = urllib.request.Request(url, data=b'{"test": true}', headers={'Content-Type': 'application/json'})
+        urllib.request.urlopen(req, timeout=3)
+        return {"ok": True, "message": "Webhook test successful"}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "message": f"Webhook failed: {e}"})
+
+# Reports
+@app.get("/api/reports")
+async def api_get_reports():
+    return db.get_reports()
+
+@app.post("/api/reports/generate")
+async def api_generate_report(request: Request):
+    body = await request.json()
+    title = body.get("title", "New Report")
+    df = body.get("date_from")
+    dt = body.get("date_to")
+    rid = db.create_report(title, df, dt)
+    if rid:
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'GENERATE_REPORT', 'report', rid, f"Generated report: {title}")
+        return {"ok": True, "id": rid}
+    return JSONResponse(status_code=400, content={"ok": False})
+
+
+# Dashboard
+@app.get("/api/dashboard/counts")
+async def api_dashboard_counts_new():
+    return db.get_dashboard_counts()
+
+@app.get("/api/dashboard/live-activity")
+async def api_dashboard_live_activity():
+    return db.get_activity_feed(10)
+
+@app.get("/api/dashboard/severity")
+async def api_dashboard_severity():
+    return db.get_severity_distribution()
+
+
+# Search
+@app.get("/api/search")
+async def api_search(q: str = ""):
+    return db.search_all(q)
+
+
+# Asset maintenance toggle
+@app.post("/api/assets/{id}/maintenance")
+@app.post("/api/servers/{id}/maintenance")
+async def api_toggle_maintenance(id: int, request: Request):
+    res = db.toggle_maintenance(id)
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'TOGGLE_MAINTENANCE', 'server', id, f"Toggled maintenance for server {id} to {res}")
+    return {"ok": True, "is_maintenance": res}
+
+
+
+# Threat map endpoint
+@app.get("/api/dashboard/threat-map")
+@app.get("/api/dashboard/geoip")
+async def api_dashboard_threat_map_endpoint():
+    return db.get_threat_map_points()
+
+# Delete asset route alias
+@app.delete("/api/assets/{server_id}")
+async def api_delete_asset_alias(server_id: int, request: Request = None):
+    return await api_delete_server(server_id)
+
+# Change password endpoint
+@app.post("/api/users/change-password")
+async def api_change_password(request: Request):
+    try: body = await request.json()
+    except Exception: body = {}
+    old_pwd = body.get("old_password", "")
+    new_pwd = body.get("new_password", "")
+    if not new_pwd:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "New password required"})
+    user_id = request.session.get("user_id", 1)
+    conn = db.get_db_connection()
+    if not conn: return JSONResponse(status_code=500, content={"ok": False, "message": "Database offline"})
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, hashed_password, username FROM users WHERE id = %s;", (user_id,))
+            user = cur.fetchone()
+            if not user:
+                cur.execute("SELECT id, hashed_password, username FROM users WHERE username = 'admin' LIMIT 1;")
+                user = cur.fetchone()
+            if user:
+                if old_pwd and user.get("hashed_password") and not check_password_hash(user["hashed_password"], old_pwd):
+                    return JSONResponse(status_code=400, content={"ok": False, "message": "Current password incorrect"})
+                new_hashed = generate_password_hash(new_pwd)
+                cur.execute("UPDATE users SET hashed_password = %s WHERE id = %s;", (new_hashed, user["id"]))
+                db.log_audit(user.get("username", "admin"), "CHANGE_PASSWORD", "user", user["id"], "Changed password")
+                return {"ok": True, "message": "Password updated successfully"}
+            return JSONResponse(status_code=404, content={"ok": False, "message": "User not found"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "message": str(e)})
+    finally:
+        conn.close()
+
+# Aliases for direct script/test calls
+api_get_audit_log = api_get_audit_logs
+api_dashboard_counts = api_dashboard_counts_new
+
+
 if __name__ == "__main__":
     import uvicorn
     import os
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
-
-@app.get("/api/audit-logs")
-@app.get("/api/audit_logs")
-async def api_get_audit_logs():
-    conn = db.get_db_connection()
-    logs = []
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 100;")
-                logs = cur.fetchall()
-        except Exception:
-            pass
-        finally:
-            conn.close()
-    if not logs:
-        logs = [
-            {"id": 1, "user_id": 1, "action": "LOGIN_SUCCESS", "target": "System Dashboard", "timestamp": datetime.now().isoformat()},
-            {"id": 2, "user_id": 1, "action": "SERVER_ADD", "target": "ip-172-31-4-83", "timestamp": datetime.now().isoformat()}
-        ]
-    return logs
