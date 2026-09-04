@@ -1,3 +1,101 @@
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EMBEDDED REAL-TIME HOST SECURITY WATCHER
+# Continuously monitors /var/log/auth.log, journalctl, and bash history
+# ══════════════════════════════════════════════════════════════════════════════
+import subprocess, glob, threading
+
+_watcher_auth_pos = 0
+_watcher_hist_positions = {}
+
+def run_background_host_watcher():
+    """Background daemon thread that monitors real SSH failures and bash commands."""
+    global _watcher_auth_pos, _watcher_hist_positions
+    logger.info("Host security watcher starting...")
+    time.sleep(3)  # Give app time to initialize
+
+    while True:
+        try:
+            events = []
+            commands = []
+
+            # 1. Read SSH events via journalctl (Works on all modern Ubuntu/Debian versions)
+            try:
+                # Check last 5 seconds of ssh logs
+                res = subprocess.run(
+                    ["journalctl", "-u", "ssh", "--since", "4 seconds ago", "--no-pager", "-q"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2
+                )
+                if res.stdout:
+                    for line in res.stdout.splitlines():
+                        line_str = line.strip()
+                        fail_m = re.search(r'Failed password for (?:invalid user )?(\S+) from (\S+)', line_str)
+                        if fail_m:
+                            events.append({"type": "AUTH_FAIL", "user": fail_m.group(1), "ip": fail_m.group(2), "message": line_str})
+                        inv_m = re.search(r'Invalid user (\S+) from (\S+)', line_str)
+                        if inv_m and not fail_m:
+                            events.append({"type": "AUTH_FAIL", "user": inv_m.group(1), "ip": inv_m.group(2), "message": line_str})
+            except Exception:
+                pass
+
+            # 2. Also check /var/log/auth.log if available
+            auth_path = "/var/log/auth.log" if os.path.exists("/var/log/auth.log") else ("/var/log/syslog" if os.path.exists("/var/log/syslog") else None)
+            if auth_path:
+                try:
+                    fsize = os.path.getsize(auth_path)
+                    if _watcher_auth_pos == 0:
+                        _watcher_auth_pos = max(0, fsize - 5000)
+                    if fsize < _watcher_auth_pos:
+                        _watcher_auth_pos = 0
+                    if fsize > _watcher_auth_pos:
+                        with open(auth_path, "r", encoding="utf-8", errors="ignore") as af:
+                            af.seek(_watcher_auth_pos)
+                            for aline in af:
+                                astr = aline.strip()
+                                # Match failed ssh
+                                fm = re.search(r'Failed password for (?:invalid user )?(\S+) from (\S+)', astr)
+                                if fm and not any(e.get("message") == astr for e in events):
+                                    events.append({"type": "AUTH_FAIL", "user": fm.group(1), "ip": fm.group(2), "message": astr})
+                                # Match sudo commands
+                                sm = re.search(r'sudo:\s+(\S+)\s+:.*?COMMAND=(.+)$', astr)
+                                if sm:
+                                    commands.append({"user": sm.group(1), "command": sm.group(2).strip(), "is_sudo": True})
+                            _watcher_auth_pos = af.tell()
+                except Exception:
+                    pass
+
+            # 3. Monitor shell histories (/root/.bash_history and /home/*/.bash_history)
+            for hpath in ["/root/.bash_history"] + glob.glob("/home/*/.bash_history"):
+                if not os.path.exists(hpath): continue
+                try:
+                    hsize = os.path.getsize(hpath)
+                    lpos = _watcher_hist_positions.get(hpath, 0)
+                    if lpos == 0:
+                        lpos = max(0, hsize - 2000)
+                        _watcher_hist_positions[hpath] = lpos
+                    if hsize < lpos: lpos = 0
+                    if hsize > lpos:
+                        with open(hpath, "r", encoding="utf-8", errors="ignore") as hf:
+                            hf.seek(lpos)
+                            user = "root" if "/root/" in hpath else (hpath.split("/home/")[1].split("/")[0] if "/home/" in hpath else "user")
+                            for hline in hf:
+                                hstr = hline.strip()
+                                if hstr and not hstr.startswith("#"):
+                                    commands.append({"user": user, "command": hstr, "is_sudo": "sudo" in hstr})
+                            _watcher_hist_positions[hpath] = hf.tell()
+                except Exception:
+                    pass
+
+            # If any security events or commands detected, ingest immediately!
+            if events or commands:
+                logger.info(f"Host watcher detected {len(events)} events and {len(commands)} commands. Ingesting...")
+                db.save_agent_data(1, {"events": events, "commands": commands})
+
+        except Exception as ex_watch:
+            logger.debug(f"Watcher loop error: {ex_watch}")
+
+        time.sleep(2)
+
 """
 EC2 Security Monitor / SOC Command Center — Production-Ready FastAPI Backend
 Built with FastAPI, PostgreSQL (psycopg2), Jinja2, Vanilla JS, and AsyncSSH.
@@ -29,6 +127,12 @@ logger = logging.getLogger("security_monitor.app")
 async def lifespan(app: FastAPI):
     logger.info("Initializing Database schema...")
     db.init_db()
+    try:
+        t = threading.Thread(target=run_background_host_watcher, daemon=True)
+        t.start()
+        logger.info("Embedded Host Security Watcher started.")
+    except Exception as e:
+        logger.warning(f"Could not start host watcher: {e}")
     yield
 
 # Initialize FastAPI App
