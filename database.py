@@ -1117,6 +1117,25 @@ def get_alerts():
     finally:
         conn.close()
 
+def get_alert_by_id(alert_id: int):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT a.*, s.hostname FROM alerts a LEFT JOIN servers s ON a.server_id = s.id WHERE a.id = %s;", (alert_id,))
+            r = cur.fetchone()
+            if r:
+                item = dict(r)
+                item["created_at_ago"] = format_time_ago(item.get("created_at"))
+                return item
+            return None
+    except Exception as e:
+        logger.error(f"Error in get_alert_by_id: {e}")
+        return None
+    finally:
+        conn.close()
+
 def get_login_status_per_user(server_id: int) -> dict:
     conn = get_db_connection()
     result = {}

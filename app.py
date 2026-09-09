@@ -1160,7 +1160,7 @@ async def api_agent_push(request: Request):
     return {"status": "ok", "ok": True, "message": "Agent telemetry ingested"}
 
 @app.get("/api/alerts")
-async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None):
+async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None):
     conn = db.get_db_connection()
     if not conn: return {"items": [], "total": 0}
     try:
@@ -1186,6 +1186,16 @@ async def api_get_alerts(request: Request = None, limit: int = 100, severity: st
                 query += " AND a.severity = %s"
                 params.append(severity)
             
+            if q and q.strip():
+                clean_q = q.strip()
+                digits = re.sub(r"[^\d]", "", clean_q)
+                if digits:
+                    query += " AND (a.id = %s OR a.title ILIKE %s OR a.message ILIKE %s OR s.hostname ILIKE %s)"
+                    params.extend([int(digits), f"%{clean_q}%", f"%{clean_q}%", f"%{clean_q}%"])
+                else:
+                    query += " AND (a.title ILIKE %s OR a.message ILIKE %s OR s.hostname ILIKE %s)"
+                    params.extend([f"%{clean_q}%", f"%{clean_q}%", f"%{clean_q}%"])
+
             query += " ORDER BY a.created_at DESC LIMIT %s"
             params.append(limit)
             cur.execute(query, params)
@@ -1523,28 +1533,59 @@ async def api_delete_playbook(id: int, request: Request):
 
 @app.post("/api/playbooks/{pb_id}/execute/{alert_id}")
 @app.post("/api/playbooks/{pb_id}/execute")
-async def api_execute_playbook(pb_id: int, alert_id: Optional[str] = "1", request: Request = None):
+async def api_execute_playbook(pb_id: int, alert_id: Optional[str] = None, request: Request = None):
+    # Retrieve raw alert_id from path, JSON body, or query param
+    raw_aid = alert_id
+    if request:
+        try:
+            body = await request.json()
+            if isinstance(body, dict) and body.get("alert_id"):
+                raw_aid = str(body.get("alert_id"))
+        except Exception:
+            pass
+        if not raw_aid:
+            raw_aid = request.query_params.get("alert_id")
+
+    # Sanitize string: e.g. '#alert101', '#101', 'alert101', '101' -> '101'
+    clean_digits = re.sub(r"[^\d]", "", str(raw_aid or ""))
     try:
-        aid = int(alert_id)
+        aid = int(clean_digits) if clean_digits else 1
     except Exception:
         aid = 1
     
-    # Query database first
+    # Query database for alert details if it exists
+    target_alert = db.get_alert_by_id(aid)
+    server_id = target_alert.get("server_id") if (target_alert and target_alert.get("server_id")) else 1
+    alert_title = target_alert.get("title") or target_alert.get("message") or f"Security Event #{aid}" if target_alert else f"Alert #{aid}"
+    hostname = target_alert.get("hostname") or "ip-172-31-4-83" if target_alert else "agent"
+
+    # Query database first for playbook
     playbooks = db.get_playbooks()
     pb = next((p for p in playbooks if p.get("id") == pb_id), None)
     if not pb:
         pb = next((p for p in PLAYBOOKS_DB if p.get("id") == pb_id), None)
     
     pb_name = pb.get("name") if pb else f"Playbook #{pb_id}"
-    db.log_alert(1, "PLAYBOOK_EXECUTION", f"SOAR Playbook '{pb_name}' triggered and completed on Alert #{aid}", severity="info")
+    
+    # Execute any configured actions
+    action_notes = []
+    if pb and pb.get("actions"):
+        acts = pb.get("actions")
+        if isinstance(acts, str):
+            try: acts = json.loads(acts)
+            except Exception: acts = [acts]
+        if isinstance(acts, list):
+            for a in acts:
+                atype = a.get("type", str(a)) if isinstance(a, dict) else str(a)
+                action_notes.append(atype.replace('_', ' ').title())
+
+    actions_str = f" [Actions: {', '.join(action_notes)}]" if action_notes else ""
+    log_msg = f"SOAR Playbook '{pb_name}' executed on Alert #{aid} ({alert_title}) for host {hostname}{actions_str}"
+
+    db.log_alert(server_id, "PLAYBOOK_EXECUTION", log_msg, severity="info")
     uname = request.session.get('username', 'system') if request and hasattr(request, 'session') else 'system'
-    db.log_audit(uname, "RUN_PLAYBOOK", "playbook", pb_id, f"Executed playbook '{pb_name}' on alert #{aid}")
-    return {"ok": True, "message": f"Playbook '{pb_name}' executed successfully on alert #{aid}"}
-    pb = next((p for p in PLAYBOOKS_DB if p["id"] == pb_id), None)
-    if not pb:
-        raise HTTPException(status_code=404, detail="Playbook not found")
-    db.log_alert(1, "PLAYBOOK_EXECUTION", f"Executed Playbook '{pb['name']}' on Alert #{alert_id}", severity="info")
-    return {"ok": True, "message": f"Playbook '{pb['name']}' executed successfully on alert #{alert_id}"}
+    db.log_audit(uname, "RUN_PLAYBOOK", "playbook", pb_id, f"Executed playbook '{pb_name}' on Alert #{aid}")
+    return {"ok": True, "message": f"Playbook '{pb_name}' executed successfully on Alert #{aid} ({alert_title})"}
 
 @app.get("/api/rules")
 async def api_get_rules():
