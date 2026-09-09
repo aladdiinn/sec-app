@@ -3,6 +3,35 @@
 {% block page_title %}SOC Command Center{% endblock %}
 {% block page_sub %}Real-time security intelligence & threat detection{% endblock %}
 
+
+<style>
+/* Dark SOC Leaflet Popup Styling */
+.leaflet-popup-content-wrapper {
+    background: #0b1320 !important;
+    color: #e2e8f0 !important;
+    border: 1px solid var(--cyan, #00e5ff) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.7), 0 0 15px rgba(0, 229, 255, 0.25) !important;
+    padding: 2px !important;
+}
+.leaflet-popup-tip {
+    background: #0b1320 !important;
+    border: 1px solid var(--cyan, #00e5ff) !important;
+}
+.leaflet-popup-content {
+    margin: 12px 14px !important;
+    line-height: 1.5 !important;
+}
+.leaflet-container a.leaflet-popup-close-button {
+    color: #94a3b8 !important;
+    padding: 6px 8px !important;
+    font-size: 16px !important;
+}
+.leaflet-container a.leaflet-popup-close-button:hover {
+    color: #00e5ff !important;
+}
+</style>
+
 {% block content %}
 <div class="dashboard-grid fade-in">
     <!-- Row 1: KPI Stats -->
@@ -181,6 +210,27 @@ function initMap() {
     window.addEventListener('resize', () => { if (map) map.invalidateSize(); });
 }
 
+async function clearMapThreat(ip, btn) {
+    if (!confirm(`Dismiss threat for ${ip} and resolve related alerts?`)) return;
+    btn.disabled = true;
+    btn.textContent = 'Clearing...';
+    try {
+        await apiFetch('/api/dashboard/threat-map/clear', {
+            method: 'POST',
+            body: JSON.stringify({ ip: ip })
+        });
+        showToast(`Threat ${ip} cleared successfully`, 'success');
+        if (map) map.closePopup();
+        loadThreatMap();
+        loadCounts();
+        loadAlerts();
+    } catch(e) {
+        showToast('Failed to clear threat: ' + e.message, 'error');
+        btn.disabled = false;
+        btn.textContent = '✕ Dismiss / Clear Alert';
+    }
+}
+
 async function loadThreatMap() {
     if (!map) return;
     try {
@@ -208,12 +258,20 @@ async function loadThreatMap() {
             });
 
             const tipHtml = `
-                <div style="font-family:var(--font-mono, monospace); font-size:11px; padding:4px; min-width:140px; color:#fff">
-                    <div style="font-weight:700; color:${color}; margin-bottom:3px">${(pt.severity || 'INFO').toUpperCase()} THREAT</div>
-                    <div><strong>IP:</strong> ${pt.ip || 'Unknown'}</div>
-                    <div><strong>Location:</strong> ${pt.city || 'Unknown'}, ${pt.country || 'Unknown'}</div>
-                    ${pt.count ? `<div><strong>Events:</strong> ${pt.count}</div>` : ''}
-                    ${pt.hostname ? `<div><strong>Host:</strong> ${pt.hostname}</div>` : ''}
+                <div style="font-family:var(--font-mono, monospace); font-size:11px; min-width:200px; color:#e2e8f0">
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.12); padding-bottom:6px; margin-bottom:8px">
+                        <span style="font-weight:700; color:${color}; font-size:12px; letter-spacing:0.5px">${(pt.severity || 'INFO').toUpperCase()} THREAT</span>
+                        <span style="background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:3px; font-size:10px; color:#94a3b8">${pt.count || 1} Event${(pt.count||1)>1?'s':''}</span>
+                    </div>
+                    <div style="margin-bottom:5px"><span style="color:#94a3b8">IP Address:</span> <strong style="color:#38bdf8">${pt.ip || 'Unknown'}</strong></div>
+                    <div style="margin-bottom:5px"><span style="color:#94a3b8">Location:</span> <strong style="color:#f8fafc">${pt.city || 'Unknown'}, ${pt.country || 'Global'}</strong></div>
+                    ${pt.hostname ? `<div style="margin-bottom:5px"><span style="color:#94a3b8">Target Host:</span> <strong style="color:#a78bfa">${pt.hostname}</strong></div>` : ''}
+                    ${pt.description ? `<div style="margin-bottom:5px"><span style="color:#94a3b8">Intel:</span> <span style="color:#cbd5e1">${pt.description}</span></div>` : ''}
+                    <div style="margin-top:12px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.12)">
+                        <button type="button" class="btn" onclick="clearMapThreat('${pt.ip}', this)" style="width:100%; padding:6px 10px; font-size:11px; background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; cursor:pointer; border-radius:4px; font-weight:600; text-align:center">
+                            ✕ Dismiss / Clear Alert
+                        </button>
+                    </div>
                 </div>
             `;
             circle.bindPopup(tipHtml);

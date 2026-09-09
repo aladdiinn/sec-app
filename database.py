@@ -1768,85 +1768,178 @@ def lookup_ip_geo(ip: str):
     _geo_cache[ip] = geo
     return geo
 
-def get_threat_map_points():
-    """Return geo-located threat dots from real failed logins, threat intel, and servers in DB."""
+def clear_threat(ip: str):
+    """Resolve alerts and dismiss threat marker for given IP."""
     conn = get_db_connection()
-    points = []
-    if not conn:
-        return _get_fallback_threat_points()
+    if not conn: return False
     try:
         with conn.cursor() as cur:
+            try:
+                cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
+            except Exception:
+                pass
+
+            # 1. Resolve alerts mentioning this IP
+            try:
+                cur.execute("UPDATE alerts SET is_resolved = TRUE, resolved_at = NOW() WHERE message LIKE %s OR title LIKE %s;", (f"%{ip}%", f"%{ip}%"))
+            except Exception:
+                pass
+
+            # 2. Clear login history for this IP
+            try:
+                cur.execute("DELETE FROM login_history WHERE ip_address = %s;", (ip,))
+            except Exception:
+                pass
+
+            # 3. Clear threat intel IOC for this IP
+            try:
+                cur.execute("DELETE FROM threat_intel WHERE ioc_value = %s;", (ip,))
+            except Exception:
+                pass
+
+            # 4. Save into settings table
+            dismissed = []
+            try:
+                cur.execute("SELECT value FROM settings WHERE key = 'dismissed_threat_ips';")
+                row = cur.fetchone()
+                if row and row.get("value"):
+                    try: dismissed = json.loads(row["value"])
+                    except: pass
+            except Exception:
+                pass
+
+            if ip not in dismissed:
+                dismissed.append(ip)
+                saved = False
+                try:
+                    cur.execute("""
+                        INSERT INTO settings (key, value) VALUES ('dismissed_threat_ips', %s)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+                    """, (json.dumps(dismissed),))
+                    saved = True
+                except Exception:
+                    pass
+
+                if not saved:
+                    try:
+                        cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('dismissed_threat_ips', %s);", (json.dumps(dismissed),))
+                    except Exception:
+                        pass
+
+            try:
+                conn.commit()
+            except Exception:
+                pass
+            return True
+    except Exception as e:
+        logger.error(f"Error in clear_threat: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_threat_map_points():
+    """Return geo-located threat dots from real failed logins, threat intel, and servers in DB, excluding dismissed IPs."""
+    conn = get_db_connection()
+    points = []
+    dismissed = []
+    if not conn:
+        return _get_fallback_threat_points(dismissed)
+    try:
+        with conn.cursor() as cur:
+            # Load dismissed IPs
+            try:
+                cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);")
+                cur.execute("SELECT value FROM settings WHERE key = 'dismissed_threat_ips';")
+                row = cur.fetchone()
+                if row and row.get("value"):
+                    dismissed = json.loads(row["value"])
+            except Exception:
+                pass
+
             # 1. Failed SSH / Login attempts
-            cur.execute("""
-                SELECT ip_address, COUNT(*) as fail_count
-                FROM login_history
-                WHERE ip_address IS NOT NULL AND ip_address != ''
-                GROUP BY ip_address
-                ORDER BY fail_count DESC
-                LIMIT 50;
-            """)
-            rows = cur.fetchall()
-            for r in rows:
-                ip = r.get("ip_address")
-                count = r.get("fail_count", 1)
-                geo = lookup_ip_geo(ip)
-                severity = "critical" if count >= 5 else "warning"
-                points.append({
-                    "ip": ip,
-                    "lat": geo["lat"],
-                    "lon": geo["lon"],
-                    "city": geo["city"],
-                    "country": geo["country"],
-                    "severity": severity,
-                    "count": count
-                })
+            try:
+                cur.execute("""
+                    SELECT ip_address, COUNT(*) as fail_count
+                    FROM login_history
+                    WHERE ip_address IS NOT NULL AND ip_address != ''
+                    GROUP BY ip_address
+                    ORDER BY fail_count DESC
+                    LIMIT 50;
+                """)
+                rows = cur.fetchall()
+                for r in rows:
+                    ip = r.get("ip_address")
+                    if ip in dismissed: continue
+                    count = r.get("fail_count", 1)
+                    geo = lookup_ip_geo(ip)
+                    severity = "critical" if count >= 5 else "warning"
+                    points.append({
+                        "ip": ip,
+                        "lat": geo["lat"],
+                        "lon": geo["lon"],
+                        "city": geo["city"],
+                        "country": geo["country"],
+                        "severity": severity,
+                        "count": count
+                    })
+            except Exception:
+                pass
             
             # 2. Monitored servers as online info dots
-            cur.execute("SELECT id, hostname, ip, status FROM servers LIMIT 20;")
-            servers = cur.fetchall()
-            for s in servers:
-                sip = s.get("ip") or "127.0.0.1"
-                sgeo = lookup_ip_geo(sip)
-                points.append({
-                    "ip": sip,
-                    "lat": sgeo["lat"],
-                    "lon": sgeo["lon"],
-                    "city": sgeo["city"],
-                    "country": sgeo["country"],
-                    "severity": "info" if s.get("status") == "online" else "warning",
-                    "hostname": s.get("hostname"),
-                    "count": 1
-                })
+            try:
+                cur.execute("SELECT id, hostname, ip, status FROM servers LIMIT 20;")
+                servers = cur.fetchall()
+                for s in servers:
+                    sip = s.get("ip") or "127.0.0.1"
+                    if sip in dismissed: continue
+                    sgeo = lookup_ip_geo(sip)
+                    points.append({
+                        "ip": sip,
+                        "lat": sgeo["lat"],
+                        "lon": sgeo["lon"],
+                        "city": sgeo["city"],
+                        "country": sgeo["country"],
+                        "severity": "info" if s.get("status") == "online" else "warning",
+                        "hostname": s.get("hostname"),
+                        "count": 1
+                    })
+            except Exception:
+                pass
 
             # 3. Known Threat Intel IOCs
-            cur.execute("SELECT ioc_value, ioc_type, severity, description FROM threat_intel WHERE ioc_type = 'ipv4' LIMIT 15;")
-            for ti in cur.fetchall():
-                tip = ti.get("ioc_value")
-                tgeo = lookup_ip_geo(tip)
-                points.append({
-                    "ip": tip,
-                    "lat": tgeo["lat"],
-                    "lon": tgeo["lon"],
-                    "city": tgeo["city"],
-                    "country": tgeo["country"],
-                    "severity": ti.get("severity", "critical"),
-                    "count": 1,
-                    "description": ti.get("description", "Known Threat IOC")
-                })
+            try:
+                cur.execute("SELECT ioc_value, ioc_type, severity, description FROM threat_intel WHERE ioc_type = 'ipv4' LIMIT 15;")
+                for ti in cur.fetchall():
+                    tip = ti.get("ioc_value")
+                    if tip in dismissed: continue
+                    tgeo = lookup_ip_geo(tip)
+                    points.append({
+                        "ip": tip,
+                        "lat": tgeo["lat"],
+                        "lon": tgeo["lon"],
+                        "city": tgeo["city"],
+                        "country": tgeo["country"],
+                        "severity": ti.get("severity", "critical"),
+                        "count": 1,
+                        "description": ti.get("description", "Known Threat IOC")
+                    })
+            except Exception:
+                pass
 
         # Enrich with global threat radar points if points list is small
         if len(points) < 6:
-            points.extend(_get_fallback_threat_points())
+            points.extend(_get_fallback_threat_points(dismissed))
 
         return points
     except Exception as e:
         logger.error(f"Error in get_threat_map_points: {e}")
-        return _get_fallback_threat_points()
+        return _get_fallback_threat_points(dismissed)
     finally:
         conn.close()
 
-def _get_fallback_threat_points():
-    return [
+def _get_fallback_threat_points(dismissed=None):
+    if dismissed is None: dismissed = []
+    base = [
         {"ip": "185.220.101.42", "lat": 52.5200, "lon": 13.4050, "city": "Berlin", "country": "Germany", "severity": "critical", "count": 14},
         {"ip": "45.142.195.12", "lat": 55.7558, "lon": 37.6173, "city": "Moscow", "country": "Russia", "severity": "warning", "count": 8},
         {"ip": "103.203.57.18", "lat": 28.6139, "lon": 77.2090, "city": "New Delhi", "country": "India", "severity": "info", "count": 3, "hostname": "ip-172-31-4-83"},
@@ -1855,6 +1948,7 @@ def _get_fallback_threat_points():
         {"ip": "185.191.171.1", "lat": 51.5074, "lon": -0.1278, "city": "London", "country": "United Kingdom", "severity": "critical", "count": 12},
         {"ip": "103.253.42.99", "lat": 1.3521, "lon": 103.8198, "city": "Singapore", "country": "Singapore", "severity": "warning", "count": 6}
     ]
+    return [p for p in base if p["ip"] not in dismissed]
 
 
 # ══════════════════════════════════════════════════════════════════════════════

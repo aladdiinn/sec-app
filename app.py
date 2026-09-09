@@ -1828,11 +1828,26 @@ async def api_toggle_maintenance(id: int, request: Request):
 
 
 
-# Threat map endpoint
+# Threat map endpoints
 @app.get("/api/dashboard/threat-map")
 @app.get("/api/dashboard/geoip")
 async def api_dashboard_threat_map_endpoint():
     return db.get_threat_map_points()
+
+@app.post("/api/dashboard/threat-map/clear")
+@app.post("/api/threats/clear")
+async def api_clear_threat(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    ip = body.get("ip", "").strip()
+    if not ip:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "IP address required"})
+    db.clear_threat(ip)
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'CLEAR_THREAT', 'threat_map', 0, f"Dismissed and cleared threat for IP {ip}")
+    return {"ok": True, "message": f"Threat {ip} cleared and alerts resolved"}
 
 # Delete asset route alias
 @app.delete("/api/assets/{server_id}")
