@@ -1966,55 +1966,100 @@ def restart_managed_services(server_id: int, service_name: str = None):
         run_user = s.get("user") or s.get("username") or "root"
         bin_path = (s.get("path") or "").rstrip("/")
 
-        # Auto-detect intelligent restart command if not explicitly specified
-        if not restart_cmd:
-            if s_name.lower() in ["ssh", "sshd", "nginx", "apache2", "mysql", "postgresql", "docker"]:
-                restart_cmd = f"sudo systemctl restart {s_name}"
-            elif bin_path and os.path.exists(f"{bin_path}/bin/startup.sh"):
-                restart_cmd = (
-                    f"pkill -9 -f '{bin_path}' 2>/dev/null || pkill -9 -f '{s_name}' 2>/dev/null || true; "
-                    "sleep 1; "
-                    "if [ -z \"$JAVA_HOME\" ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; "
-                    f"sudo -u {run_user} env JAVA_HOME=\"$JAVA_HOME\" sh '{bin_path}/bin/startup.sh'"
-                )
-            else:
-                restart_cmd = (
-                    f"pkill -9 -f '{s_name}' 2>/dev/null || true; "
-                    "sleep 1; "
-                    f"if [ -f '{bin_path}/bin/startup.sh' ]; then "
-                    "  if [ -z \"$JAVA_HOME\" ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; "
-                    f"  sudo -u {run_user} env JAVA_HOME=\"$JAVA_HOME\" sh '{bin_path}/bin/startup.sh'; "
-                    f"else sudo systemctl restart {s_name} 2>/dev/null || echo 'Executed restart for {s_name}'; fi"
-                )
-        else:
-            # If user provided a command that uses startup.sh without JAVA_HOME, ensure JAVA_HOME is exported
-            if "startup.sh" in restart_cmd and "JAVA_HOME" not in restart_cmd:
-                restart_cmd = f"if [ -z \"$JAVA_HOME\" ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; {restart_cmd}"
+        is_tomcat = (
+            "tomcat" in s_name.lower() or 
+            "catalina" in s_name.lower() or 
+            (bin_path and ("tomcat" in bin_path.lower() or os.path.exists(f"{bin_path}/bin/startup.sh")))
+        )
 
-        # Execute restart command
-        try:
-            proc = subprocess.run(
-                restart_cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=15
+        if not restart_cmd and s_name.lower() in ["ssh", "sshd", "nginx", "apache2", "mysql", "postgresql", "docker"]:
+            exec_cmd = f"sudo systemctl restart {s_name}"
+            try:
+                proc = subprocess.run(exec_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+                stdout_text = (proc.stdout or "").strip()
+                stderr_text = (proc.stderr or "").strip()
+                out = f"{stdout_text}\n{stderr_text}".strip() or f"Service '{s_name}' restarted successfully."
+                ret = proc.returncode
+            except Exception as ex:
+                out = str(ex)
+                ret = 1
+            cmd_display = exec_cmd
+
+        elif not restart_cmd and is_tomcat:
+            # 1. Kill old Tomcat process for this user (safe from killing the executing shell)
+            stop_script = f"pkill -9 -u {run_user} -f '[B]ootstrap|[t]omcat' 2>/dev/null || true"
+            try:
+                subprocess.run(stop_script, shell=True, timeout=5)
+            except Exception:
+                pass
+            time.sleep(1)
+
+            # 2. Start Tomcat inside its bin directory as run_user with auto-detected JAVA_HOME
+            start_script = (
+                f"sudo -u {run_user} bash -c \""
+                f"cd '{bin_path}/bin' 2>/dev/null || cd '{bin_path}'; "
+                f"if [ -z \\\"$JAVA_HOME\\\" ] && [ -x /usr/bin/java ]; then "
+                f"  export JAVA_HOME=\\$(dirname \\$(dirname \\$(readlink -f /usr/bin/java))); "
+                f"fi; "
+                f"./startup.sh 2>/dev/null || sh startup.sh\""
             )
-            stdout_text = (proc.stdout or "").strip()
-            stderr_text = (proc.stderr or "").strip()
-            if stdout_text and stderr_text:
-                out = f"{stdout_text}\n{stderr_text}"
-            else:
-                out = stdout_text or stderr_text or f"Service '{s_name}' restart command completed with code {proc.returncode}."
-            ret = proc.returncode
-        except Exception as ex_exec:
-            out = f"Command execution exception: {str(ex_exec)}"
-            ret = 1
+            cmd_display = f"kill -9 (tomcat) && cd '{bin_path}/bin' && sudo -u {run_user} ./startup.sh"
+            try:
+                proc = subprocess.run(start_script, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+                stdout_text = (proc.stdout or "").strip()
+                stderr_text = (proc.stderr or "").strip()
+                out = f"{stdout_text}\n{stderr_text}".strip() or f"Tomcat '{s_name}' started successfully."
+                ret = proc.returncode
+            except Exception as ex:
+                out = str(ex)
+                ret = 1
+
+        elif restart_cmd:
+            # User provided a custom command
+            exec_cmd = restart_cmd
+            if "startup.sh" in exec_cmd and "JAVA_HOME" not in exec_cmd:
+                exec_cmd = f"if [ -z \"$JAVA_HOME\" ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; {exec_cmd}"
+            cmd_display = restart_cmd
+            try:
+                proc = subprocess.run(exec_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+                stdout_text = (proc.stdout or "").strip()
+                stderr_text = (proc.stderr or "").strip()
+                out = f"{stdout_text}\n{stderr_text}".strip() or f"Command finished with code {proc.returncode}."
+                ret = proc.returncode
+            except Exception as ex:
+                out = str(ex)
+                ret = 1
+
+        else:
+            # Generic service restart fallback
+            safe_char = f"[{s_name[0]}]{s_name[1:]}" if len(s_name) > 1 else s_name
+            try:
+                subprocess.run(f"pkill -9 -u {run_user} -f '{safe_char}' 2>/dev/null || true", shell=True, timeout=5)
+            except Exception:
+                pass
+            time.sleep(1)
+
+            exec_cmd = (
+                f"if [ -f '{bin_path}/bin/startup.sh' ]; then "
+                f"  sudo -u {run_user} sh '{bin_path}/bin/startup.sh'; "
+                f"else "
+                f"  sudo systemctl restart {s_name} 2>/dev/null || echo 'Restarted {s_name}'; "
+                f"fi"
+            )
+            cmd_display = exec_cmd
+            try:
+                proc = subprocess.run(exec_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+                stdout_text = (proc.stdout or "").strip()
+                stderr_text = (proc.stderr or "").strip()
+                out = f"{stdout_text}\n{stderr_text}".strip() or f"Executed restart for {s_name}."
+                ret = proc.returncode
+            except Exception as ex:
+                out = str(ex)
+                ret = 1
 
         results.append({
             "service": s_name,
-            "command": restart_cmd,
+            "command": cmd_display,
             "returncode": ret,
             "output": out
         })
