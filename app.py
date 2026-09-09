@@ -890,6 +890,13 @@ async def audit_log_page(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     return render_template(request, "audit_log.html")
 
+@app.get("/scanner", response_class=HTMLResponse)
+async def scanner_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return render_template(request, "scanner.html")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # REST API ENDPOINTS (Expected by UI & test_prod.py)
@@ -2079,6 +2086,76 @@ async def api_export_server_report(server_id: int):
     </html>
     """
     return HTMLResponse(content=html)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DOMAIN VAPT & SHCHECK SECURITY SCANNER API ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+import scanner_engine
+
+@app.post("/api/scanner/headers")
+async def api_scanner_headers(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    url = body.get("url", "")
+    follow = body.get("follow_redirects", True)
+    return scanner_engine.analyze_http_headers(url, follow_redirects=follow)
+
+@app.post("/api/scanner/ssl")
+async def api_scanner_ssl(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    url = body.get("url", "")
+    return scanner_engine.analyze_ssl_certificate(url)
+
+@app.post("/api/scanner/ports")
+async def api_scanner_ports(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    host = body.get("host", "")
+    prange = body.get("range", "common")
+    return scanner_engine.scan_common_ports(host, port_range=prange)
+
+@app.post("/api/scanner/dns")
+async def api_scanner_dns(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    domain = body.get("domain", "")
+    return scanner_engine.lookup_dns_records(domain)
+
+@app.post("/api/scanner/whois")
+async def api_scanner_whois(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    domain = body.get("domain", "")
+    return scanner_engine.lookup_whois_rdap(domain)
+
+@app.post("/api/scanner/tech")
+async def api_scanner_tech(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    url = body.get("url", "")
+    return scanner_engine.fingerprint_technologies(url)
+
+@app.post("/api/scanner/vapt")
+async def api_scanner_vapt(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    url = body.get("url", "")
+    return scanner_engine.run_full_domain_vapt(url)
 
 if __name__ == "__main__":
     import uvicorn
