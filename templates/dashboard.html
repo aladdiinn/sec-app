@@ -166,11 +166,11 @@ function initMap() {
         maxBounds: [[-85, -180], [85, 180]]
     }).setView([20, 0], 2);
 
-    // High quality Dark Matter Tiles (Clean SOC Aesthetic)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        subdomains: 'abcd',
-        maxZoom: 19,
-        noWrap: true
+    // High quality Dark Basemap without API key requirement or watermarks
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 16,
+        noWrap: true,
+        attribution: 'Esri, DeLorme, NAVTEQ'
     }).addTo(map);
 
     mapMarkersLayer = L.layerGroup().addTo(map);

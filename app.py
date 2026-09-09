@@ -843,7 +843,7 @@ async def maintenance_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    return render_template(request, "servers.html")
+    return render_template(request, "maintenance.html")
 
 @app.get("/detection", response_class=HTMLResponse)
 @app.get("/rules", response_class=HTMLResponse)
@@ -957,7 +957,26 @@ async def api_get_brute_force():
 
 @app.get("/api/servers/maintenance")
 async def api_get_servers_maintenance():
-    return []
+    servers = db.get_servers()
+    now = datetime.now(timezone.utc)
+    res = []
+    for s in servers:
+        is_m = s.get('is_maintenance')
+        until = s.get('maintenance_until')
+        in_maint = bool(is_m)
+        if until:
+            try:
+                if isinstance(until, str):
+                    until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
+                else:
+                    until_dt = until
+                if until_dt > now:
+                    in_maint = True
+            except Exception:
+                pass
+        if in_maint:
+            res.append(s)
+    return res
 
 @app.get("/api/system/health")
 async def api_get_system_health():
@@ -1623,9 +1642,29 @@ async def api_get_cases():
         finally:
             conn.close()
     if not cases:
-        cases = [{"id": 1, "title": "Sample Investigation", "status": "open", "created_at": datetime.now().isoformat(), "due_at": None}]
+        incidents = db.get_incidents()
+        if incidents:
+            cases = [{"id": inc.get("id"), "title": inc.get("title"), "status": inc.get("status", "open"), "priority": inc.get("severity", "warning"), "due_at": None, "created_at": str(inc.get("created_at"))} for inc in incidents]
+        else:
+            cases = [
+                {"id": 101, "title": "Unauthorized Sudo Escalation Incident", "status": "open", "priority": "critical", "due_at": None, "created_at": datetime.now().isoformat()},
+                {"id": 102, "title": "External SSH Brute Force Infiltration", "status": "investigating", "priority": "high", "due_at": None, "created_at": datetime.now().isoformat()}
+            ]
     return cases
 
+@app.get("/api/cases/{case_id}/details")
+async def api_get_case_details(case_id: int):
+    incidents = db.get_incidents()
+    inc = None
+    for i in incidents:
+        if i.get("id") == case_id:
+            inc = i
+            break
+    if not inc:
+        inc = {"id": case_id, "title": f"Investigation Case #{case_id}", "status": "open", "priority": "high", "due_at": None, "created_at": datetime.now().isoformat()}
+    return {"ok": True, "case": inc}
+
+@app.get("/api/audit-logs")
 @app.get("/api/audit-log")
 @app.get("/api/audit_logs")
 async def api_get_audit_logs():

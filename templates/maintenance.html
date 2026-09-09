@@ -1,11 +1,50 @@
 {% extends "base.html" %}
 {% set active = 'maintenance' %}
 {% block page_title %}Maintenance Management{% endblock %}
-{% block page_sub %}Manage server maintenance windows and suppression states{% endblock %}
+{% block page_sub %}Manage server maintenance windows, alerts suppression, and operational downtimes{% endblock %}
 
 {% block content %}
 <div class="fade-in">
-    <div id="maintenance-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap:20px">
+    <!-- Quick Action Bar -->
+    <div class="card glass" style="margin-bottom:24px; padding:18px 24px">
+        <h3 class="card-title" style="margin-bottom:12px; font-size:14px; color:var(--cyan)">SCHEDULE MAINTENANCE</h3>
+        <div style="display:grid; grid-template-columns: 2fr 1fr 1fr auto; gap:12px; align-items:flex-end">
+            <div>
+                <label class="text-meta" style="display:block; margin-bottom:6px">Target Host</label>
+                <select id="maint-target-server" class="mono" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px">
+                    <option value="">Loading servers...</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-meta" style="display:block; margin-bottom:6px">Window Duration</label>
+                <select id="maint-target-hours" class="mono" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px">
+                    <option value="1">1 Hour</option>
+                    <option value="2">2 Hours</option>
+                    <option value="4">4 Hours</option>
+                    <option value="8">8 Hours</option>
+                    <option value="24">24 Hours</option>
+                    <option value="999">Indefinite / Permanent</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-meta" style="display:block; margin-bottom:6px">Mode</label>
+                <select id="maint-mode" class="mono" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px">
+                    <option value="suppress">Mute Alerts & Notifications</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="enableMaintenanceForServer()" style="padding:9px 18px; font-size:12px; white-space:nowrap">
+                + Enable Maintenance
+            </button>
+        </div>
+    </div>
+
+    <!-- Maintenance Status Cards -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <h3 class="card-title" style="margin:0">Servers Currently In Maintenance</h3>
+        <span id="maint-count-badge" class="badge badge-warning">— Active Windows</span>
+    </div>
+
+    <div id="maintenance-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap:20px">
         <div class="center-spinner"><div class="spinner"></div></div>
     </div>
 </div>
@@ -13,54 +52,115 @@
 
 {% block extra_js %}
 <script>
+    let allServers = [];
+
+    async function loadServersDropdown() {
+        try {
+            const servers = await apiFetch('/api/servers');
+            allServers = Array.isArray(servers) ? servers : (servers.items || []);
+            const sel = document.getElementById('maint-target-server');
+            if (allServers.length === 0) {
+                sel.innerHTML = '<option value="">No servers registered</option>';
+            } else {
+                sel.innerHTML = allServers.map(s => `
+                    <option value="${s.id}">${s.hostname || s.name} (${s.ip || s.ip_address || '127.0.0.1'})</option>
+                `).join('');
+            }
+        } catch(e) {
+            console.error('Error loading servers for dropdown:', e);
+        }
+    }
+
     async function loadMaintenance() {
         const grid = document.getElementById('maintenance-grid');
         try {
             const data = await apiFetch('/api/servers/maintenance');
-            if (data.length === 0) {
-                grid.innerHTML = '<div class="card glass" style="grid-column:1/-1; text-align:center; padding:60px">No servers currently in maintenance.</div>';
+            const items = Array.isArray(data) ? data : (data.items || []);
+            document.getElementById('maint-count-badge').textContent = `${items.length} Active Windows`;
+
+            if (items.length === 0) {
+                grid.innerHTML = '<div class="card glass" style="grid-column:1/-1; text-align:center; padding:60px; color:var(--text-muted)">No servers currently in maintenance. Alerts and monitoring are fully active for all hosts.</div>';
                 return;
             }
 
-            grid.innerHTML = data.map(s => `
-                <div class="card glass fade-in">
+            grid.innerHTML = items.map(s => {
+                const sName = s.hostname || s.name || `Server #${s.id}`;
+                const sIp = s.ip || s.ip_address || '—';
+                const hasUntil = s.maintenance_until && new Date(s.maintenance_until) > new Date();
+                const untilText = hasUntil ? new Date(s.maintenance_until).toLocaleString() : 'Permanent / Indefinite';
+
+                return `
+                <div class="card glass fade-in" style="border-left: 3px solid var(--amber)">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:15px">
                         <div>
-                            <h3 class="card-title">${s.hostname}</h3>
-                            <p class="text-meta">${s.ip_address}</p>
+                            <h3 class="card-title" style="margin:0">${sName}</h3>
+                            <p class="mono text-meta" style="margin-top:3px">${sIp}</p>
                         </div>
                         <span class="badge badge-warning">MAINTENANCE</span>
                     </div>
-                    <div style="margin-bottom:20px; padding:12px; background:rgba(245,158,11,0.1); border-radius:6px; border:1px solid rgba(245,158,11,0.2)">
-                        <div class="text-meta" style="color:var(--amber)">STATUS</div>
-                        <div style="font-size:13px; font-weight:600">
-                            ${s.is_maintenance ? 'Permanent Suppression' : 'Timed Suppression'}
+                    <div style="margin-bottom:20px; padding:12px; background:rgba(245,158,11,0.08); border-radius:6px; border:1px solid rgba(245,158,11,0.2)">
+                        <div class="text-meta" style="color:var(--amber); font-size:10px; text-transform:uppercase">SUPPRESSION WINDOW</div>
+                        <div style="font-size:13px; font-weight:600; margin-top:2px">
+                            ${hasUntil ? 'Timed Maintenance Window' : 'Permanent Alert Suppression'}
                         </div>
-                        ${s.maintenance_until ? `
-                            <div class="text-meta" style="margin-top:8px">UNTIL</div>
-                            <div style="font-size:12px">${new Date(s.maintenance_until).toLocaleString()}</div>
-                        ` : ''}
+                        <div class="text-meta" style="margin-top:8px; font-size:11px">
+                            Active Until: <strong style="color:var(--text)">${untilText}</strong>
+                        </div>
                     </div>
                     <div style="display:flex; gap:10px">
-                        <button class="btn btn-primary" style="flex:1" onclick="window.location.href='/servers/${s.id}'">Manage</button>
-                        <button class="btn btn-glass" style="flex:1; border-color:var(--red); color:var(--red)" onclick="stopMaintenance(${s.id})">Stop Maintenance</button>
+                        <button class="btn btn-primary" style="flex:1; font-size:11px" onclick="window.location.href='/servers/${s.id}'">Manage Asset</button>
+                        <button class="btn btn-glass" style="flex:1; border-color:var(--red); color:var(--red); font-size:11px" onclick="stopMaintenance(${s.id}, '${sName}')">Stop Maintenance</button>
                     </div>
                 </div>
-            `).join('');
-        } catch (e) { showToast('Error loading maintenance data', 'error'); }
+            `;
+            }).join('');
+        } catch (e) {
+            showToast('Error loading maintenance data: ' + e.message, 'error');
+        }
     }
 
-    async function stopMaintenance(id) {
+    async function enableMaintenanceForServer() {
+        const sId = document.getElementById('maint-target-server').value;
+        const hours = parseInt(document.getElementById('maint-target-hours').value, 10);
+        if (!sId) return showToast('Please select a target host', 'warning');
+
         try {
-            await apiFetch(\`/api/servers/\${id}\`, {
+            if (hours >= 999) {
+                await apiFetch(`/api/servers/${sId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ is_maintenance: true, maintenance_hours: 0 })
+                });
+                showToast('Host set to Indefinite Maintenance', 'success');
+            } else {
+                await apiFetch(`/api/servers/${sId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ is_maintenance: true, maintenance_hours: hours })
+                });
+                showToast(`Host set to ${hours}h Maintenance window`, 'success');
+            }
+            loadMaintenance();
+        } catch(e) {
+            showToast('Failed to enable maintenance: ' + e.message, 'error');
+        }
+    }
+
+    async function stopMaintenance(id, name) {
+        if (!confirm(`End maintenance mode for ${name}? Live alerts will resume immediately.`)) return;
+        try {
+            await apiFetch(`/api/servers/${id}`, {
                 method: 'PATCH',
                 body: JSON.stringify({ is_maintenance: false, maintenance_hours: 0 })
             });
-            showToast('Maintenance stopped', 'success');
+            showToast(`Maintenance stopped for ${name}`, 'success');
             loadMaintenance();
-        } catch (e) { showToast('Failed to stop maintenance', 'error'); }
+        } catch (e) {
+            showToast('Failed to stop maintenance: ' + e.message, 'error');
+        }
     }
 
-    window.addEventListener('load', loadMaintenance);
+    window.addEventListener('load', () => {
+        loadServersDropdown();
+        loadMaintenance();
+    });
 </script>
 {% endblock %}
