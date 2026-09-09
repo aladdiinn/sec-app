@@ -4,6 +4,9 @@ import random
 import time
 import logging
 import sqlite3
+import json
+import subprocess
+import urllib.request
 from datetime import datetime, timezone, timedelta
 import psycopg2
 import psycopg2.extras
@@ -396,7 +399,7 @@ def init_db():
             if not cur.fetchone():
                 cur.execute("""
                     INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()), FALSE;
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, NOW(), NOW());
                 """, ("ec2-prod-web-01", "ec2-prod-web-01", "10.0.0.1", "10.0.0.1", "Ubuntu 22.04 LTS", "sp-token-12345", "sp-token-12345", "online", "info", 1, 0, "ubuntu: apt update", "2m ago"))
 
             # Update existing rules for chmod/chown and SSH
@@ -1897,15 +1900,23 @@ def get_managed_services(server_id: int):
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT managed_services FROM servers WHERE id = %s;", (server_id,))
-            row = cur.fetchone()
-            if not row: return []
-            ms = row.get("managed_services")
-            if isinstance(ms, list): return ms
-            if isinstance(ms, str):
-                try: return json.loads(ms)
-                except: return []
-            return []
+            try:
+                cur.execute("SELECT managed_services FROM servers WHERE id = %s;", (server_id,))
+                row = cur.fetchone()
+                if not row: return []
+                ms = row.get("managed_services")
+                if isinstance(ms, list): return ms
+                if isinstance(ms, str):
+                    try: return json.loads(ms)
+                    except: return []
+                return []
+            except Exception as ex_q:
+                try:
+                    cur.execute("ALTER TABLE servers ADD COLUMN IF NOT EXISTS managed_services TEXT DEFAULT '[]';")
+                    if hasattr(conn, 'commit'): conn.commit()
+                except:
+                    pass
+                return []
     except Exception as e:
         logger.error(f"Error in get_managed_services: {e}")
         return []
@@ -1918,7 +1929,15 @@ def save_managed_services(server_id: int, services_list: list):
     if not conn: return False
     try:
         with conn.cursor() as cur:
+            try:
+                cur.execute("ALTER TABLE servers ADD COLUMN IF NOT EXISTS managed_services TEXT DEFAULT '[]';")
+            except Exception:
+                pass
             cur.execute("UPDATE servers SET managed_services = %s WHERE id = %s;", (json.dumps(services_list), server_id))
+            try:
+                conn.commit()
+            except Exception:
+                pass
             return True
     except Exception as e:
         logger.error(f"Error in save_managed_services: {e}")
@@ -1927,34 +1946,70 @@ def save_managed_services(server_id: int, services_list: list):
         conn.close()
 
 def restart_managed_services(server_id: int, service_name: str = None):
-    """Execute restart logic for configured services on target server."""
+    """Execute restart logic for configured services on target server with environment awareness."""
     services = get_managed_services(server_id)
     if not services:
-        services = [{"name": "system-core", "user": "root", "path": "/bin", "restart_cmd": "echo 'Service status check OK'"}]
+        if service_name:
+            services = [{"name": service_name, "user": "root", "path": "", "restart_cmd": ""}]
+        else:
+            return []
 
     results = []
+    matched = False
     for s in services:
         s_name = s.get("name", "service")
         if service_name and s_name.lower() != service_name.lower():
             continue
 
-        restart_cmd = s.get("restart_cmd")
+        matched = True
+        restart_cmd = (s.get("restart_cmd") or "").strip()
         run_user = s.get("user") or s.get("username") or "root"
-        bin_path = s.get("path", "")
+        bin_path = (s.get("path") or "").rstrip("/")
 
+        # Auto-detect intelligent restart command if not explicitly specified
         if not restart_cmd:
-            if s_name in ["ssh", "sshd", "nginx", "apache2", "mysql", "postgresql", "docker"]:
+            if s_name.lower() in ["ssh", "sshd", "nginx", "apache2", "mysql", "postgresql", "docker"]:
                 restart_cmd = f"sudo systemctl restart {s_name}"
+            elif bin_path and os.path.exists(f"{bin_path}/bin/startup.sh"):
+                restart_cmd = (
+                    f"pkill -9 -f '{bin_path}' 2>/dev/null || pkill -9 -f '{s_name}' 2>/dev/null || true; "
+                    "sleep 1; "
+                    "if [ -z \"$JAVA_HOME\" ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; "
+                    f"sudo -u {run_user} env JAVA_HOME=\"$JAVA_HOME\" sh '{bin_path}/bin/startup.sh'"
+                )
             else:
-                restart_cmd = f"pkill -f {s_name} 2>/dev/null || true; if [ -f '{bin_path}/bin/startup.sh' ]; then sudo -u {run_user} sh '{bin_path}/bin/startup.sh'; else sudo systemctl restart {s_name} 2>/dev/null || echo 'Restarted {s_name}'; fi"
+                restart_cmd = (
+                    f"pkill -9 -f '{s_name}' 2>/dev/null || true; "
+                    "sleep 1; "
+                    f"if [ -f '{bin_path}/bin/startup.sh' ]; then "
+                    "  if [ -z \"$JAVA_HOME\" ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; "
+                    f"  sudo -u {run_user} env JAVA_HOME=\"$JAVA_HOME\" sh '{bin_path}/bin/startup.sh'; "
+                    f"else sudo systemctl restart {s_name} 2>/dev/null || echo 'Executed restart for {s_name}'; fi"
+                )
+        else:
+            # If user provided a command that uses startup.sh without JAVA_HOME, ensure JAVA_HOME is exported
+            if "startup.sh" in restart_cmd and "JAVA_HOME" not in restart_cmd:
+                restart_cmd = f"if [ -z \"$JAVA_HOME\" ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; {restart_cmd}"
 
         # Execute restart command
         try:
-            proc = subprocess.run(restart_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
-            out = proc.stdout.strip() or proc.stderr.strip() or f"Service '{s_name}' restarted successfully."
+            proc = subprocess.run(
+                restart_cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=15
+            )
+            stdout_text = (proc.stdout or "").strip()
+            stderr_text = (proc.stderr or "").strip()
+            if stdout_text and stderr_text:
+                out = f"{stdout_text}\n{stderr_text}"
+            else:
+                out = stdout_text or stderr_text or f"Service '{s_name}' restart command completed with code {proc.returncode}."
             ret = proc.returncode
         except Exception as ex_exec:
-            out = str(ex_exec)
+            out = f"Command execution exception: {str(ex_exec)}"
             ret = 1
 
         results.append({
@@ -1970,14 +2025,22 @@ def restart_managed_services(server_id: int, service_name: str = None):
             "RESTART_SERVICE",
             "server",
             server_id,
-            f"Restarted service '{s_name}' (exit code {ret})"
+            f"Restarted service '{s_name}' (exit code {ret}): {out[:80]}"
         )
         log_alert(
             server_id,
             "SERVICE_RESTART",
-            f"Managed service '{s_name}' restart playbook executed: {out[:100]}",
+            f"Managed service '{s_name}' restart executed (code {ret}): {out[:120]}",
             severity="info" if ret == 0 else "warning"
         )
+
+    if not matched and service_name:
+        results.append({
+            "service": service_name,
+            "command": "none",
+            "returncode": 1,
+            "output": f"Service '{service_name}' not configured on this host."
+        })
 
     return results
 

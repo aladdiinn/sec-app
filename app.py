@@ -1916,7 +1916,9 @@ async def api_add_service(server_id: int, request: Request):
         "path": path,
         "restart_cmd": restart_cmd
     })
-    db.save_managed_services(server_id, services)
+    ok = db.save_managed_services(server_id, services)
+    if not ok:
+        return JSONResponse(status_code=500, content={"ok": False, "message": "Failed to persist managed service to database"})
     uname = request.session.get('username', 'system')
     db.log_audit(uname, 'ADD_MANAGED_SERVICE', 'server', server_id, f"Added managed service {name}")
     return {"ok": True, "services": services}
@@ -1926,7 +1928,9 @@ async def api_add_service(server_id: int, request: Request):
 async def api_delete_service(server_id: int, service_name: str, request: Request):
     services = db.get_managed_services(server_id)
     services = [s for s in services if s.get("name", "").lower() != service_name.lower()]
-    db.save_managed_services(server_id, services)
+    ok = db.save_managed_services(server_id, services)
+    if not ok:
+        return JSONResponse(status_code=500, content={"ok": False, "message": "Failed to persist service deletion to database"})
     uname = request.session.get('username', 'system')
     db.log_audit(uname, 'DELETE_MANAGED_SERVICE', 'server', server_id, f"Deleted managed service {service_name}")
     return {"ok": True, "services": services}

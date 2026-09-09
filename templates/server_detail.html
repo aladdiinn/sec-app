@@ -246,18 +246,19 @@
                 document.getElementById('maint-until-text').textContent = '';
             }
 
-            // Load Managed Services
-            if (s.managed_services) {
-                if (typeof s.managed_services === 'string') {
-                    try { managedServices = JSON.parse(s.managed_services); }
-                    catch(e) { managedServices = []; }
-                } else if (Array.isArray(s.managed_services)) {
-                    managedServices = s.managed_services;
-                } else {
-                    managedServices = [];
+            // Load Managed Services from dedicated API
+            try {
+                const srvRes = await apiFetch(`/api/servers/${serverId}/services`);
+                managedServices = srvRes.services || [];
+            } catch(e) {
+                if (s.managed_services) {
+                    if (typeof s.managed_services === 'string') {
+                        try { managedServices = JSON.parse(s.managed_services); }
+                        catch(err) { managedServices = []; }
+                    } else if (Array.isArray(s.managed_services)) {
+                        managedServices = s.managed_services;
+                    }
                 }
-            } else {
-                managedServices = [];
             }
             renderServices();
 
@@ -437,7 +438,18 @@
             const res = await apiFetch(`/api/servers/${serverId}/services/${encodeURIComponent(serviceName)}/restart`, {
                 method: 'POST'
             });
-            showToast(`Service '${serviceName}' restart command executed`, 'success');
+            const r = (res.results && res.results.length > 0) ? res.results[0] : null;
+            if (r) {
+                if (r.returncode === 0) {
+                    showToast(`Service '${serviceName}' restarted successfully!`, 'success');
+                    alert(`✅ Service '${serviceName}' Restart Succeeded:\n\nCommand:\n${r.command}\n\nOutput:\n${r.output || '(No output)'}`);
+                } else {
+                    showToast(`Restart failed with exit code ${r.returncode}`, 'error');
+                    alert(`❌ Service '${serviceName}' Restart Failed (Code ${r.returncode}):\n\nCommand:\n${r.command}\n\nOutput:\n${r.output}`);
+                }
+            } else {
+                showToast(`Service '${serviceName}' restart command executed`, 'info');
+            }
             loadServerData();
         } catch (e) {
             showToast('Service restart failed: ' + e.message, 'error');
@@ -453,18 +465,18 @@
             const res = await apiFetch(`/api/servers/${serverId}/restart-services`, {
                 method: 'POST'
             });
+            const results = res.results || [];
+            let allSuccess = results.length > 0 && results.every(r => r.returncode === 0);
+            let summary = results.map(r => `• ${r.service} (code ${r.returncode}):\n${r.output}`).join('\n\n');
             
-            let success = true;
-            res.results.forEach(r => {
-                if (r.returncode !== 0) success = false;
-            });
-            
-            if (success) {
+            if (allSuccess) {
                 showToast('Playbook executed successfully', 'success');
+                alert(`✅ Playbook Executed Successfully:\n\n${summary}`);
             } else {
-                showToast('Playbook executed with some errors (check logs)', 'warning');
-                console.log('Restart results:', res.results);
+                showToast('Playbook completed with warnings/errors', 'warning');
+                alert(`⚠️ Playbook Execution Results:\n\n${summary || 'No services configured.'}`);
             }
+            loadServerData();
         } catch (e) {
             alert('Failed to run restart playbook: ' + e.message);
         }
