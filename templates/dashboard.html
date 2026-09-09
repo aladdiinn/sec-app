@@ -35,9 +35,9 @@
     <div class="stat-card glass glass-hover" onclick="window.location.href='/incidents'" style="cursor:pointer">
         <div class="stat-header">
             <div class="stat-icon red">
-                <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             </div>
-            <span class="badge badge-critical" id="kpi-alerts-badge">0 High</span>
+            <span class="badge badge-critical" id="kpi-alerts-badge">0 Critical</span>
         </div>
         <div class="stat-info">
             <div class="stat-value" id="kpi-alerts">0</div>
@@ -61,14 +61,17 @@
 
 <div class="dashboard-grid fade-in" style="grid-template-columns: 2fr 1fr; grid-template-rows: auto auto;">
     <!-- Threat Map -->
-    <div class="card glass" style="grid-row: span 2;">
+    <div class="card glass" style="grid-row: span 2; display:flex; flex-direction:column;">
         <div class="card-header">
             <h2 class="card-title">Global Threat Visualization</h2>
-            <div style="display:flex; gap:10px">
-                <span class="badge badge-info">Real-time</span>
+            <div style="display:flex; gap:10px; align-items:center">
+                <span class="pulse" style="width:7px; height:7px; border-radius:50%; background:var(--red);"></span>
+                <span class="badge badge-critical" id="map-threat-count">Live Telemetry</span>
             </div>
         </div>
-        <div id="threat-map" style="height:450px; border-radius:var(--radius-md); background:var(--bg-deep);"></div>
+        <div id="threat-map-container" style="flex:1; min-height:460px; position:relative; overflow:hidden; border-radius:var(--radius-md);">
+            <div id="threat-map" style="width:100%; height:100%; min-height:460px; background:#0a0e17;"></div>
+        </div>
     </div>
 
     <!-- Severity Distribution -->
@@ -91,7 +94,7 @@
             <h2 class="card-title">Live Activity</h2>
             <div class="pulse" style="width:6px; height:6px; border-radius:50%; background:var(--cyan)"></div>
         </div>
-        <div id="live-feed" style="display:flex; flex-direction:column; gap:16px">
+        <div id="live-feed" style="display:flex; flex-direction:column; gap:14px; max-height:240px; overflow-y:auto">
             <div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">Waiting for events...</div>
         </div>
     </div>
@@ -100,19 +103,21 @@
 <div class="dashboard-grid fade-in" style="grid-template-columns: 1fr;">
     <!-- Recent Alerts -->
     <div class="card glass">
-        <div class="card-header">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center">
             <h2 class="card-title">Recent Security Alerts</h2>
+            <button class="btn btn-glass" style="padding:4px 10px; font-size:11px" onclick="window.location.href='/incidents'">View All Incidents &rarr;</button>
         </div>
         <table style="width:100%; text-align:left; border-collapse:collapse">
             <thead>
                 <tr style="border-bottom:1px solid var(--border)">
                     <th style="padding:12px; color:var(--text-meta)">SEVERITY</th>
                     <th style="padding:12px; color:var(--text-meta)">ALERT</th>
+                    <th style="padding:12px; color:var(--text-meta)">HOST</th>
                     <th style="padding:12px; color:var(--text-meta)">TIME</th>
                 </tr>
             </thead>
             <tbody id="open-alerts-list">
-                <tr><td colspan="3" style="text-align:center; padding:20px">Loading...</td></tr>
+                <tr><td colspan="4" style="text-align:center; padding:20px">Loading alerts...</td></tr>
             </tbody>
         </table>
     </div>
@@ -123,6 +128,7 @@
 <script>
 let sevDonut = null;
 let map = null;
+let mapMarkersLayer = null;
 
 function initCharts() {
     const ctx = document.getElementById('sev-donut').getContext('2d');
@@ -132,86 +138,195 @@ function initCharts() {
             labels: ['Info', 'Warning', 'Critical'],
             datasets: [{
                 data: [0, 0, 0],
-                backgroundColor: ['#3b82f6', '#f59e0b', '#ef4444'],
+                backgroundColor: ['#00e5ff', '#f59e0b', '#ef4444'],
                 borderWidth: 0,
-                hoverOffset: 8
+                hoverOffset: 6
             }]
         },
-        options: { cutout: '80%', plugins: { legend: { display: false } }, responsive: true, maintainAspectRatio: false }
+        options: {
+            cutout: '75%',
+            plugins: { legend: { display: false } },
+            responsive: true,
+            maintainAspectRatio: false
+        }
     });
 }
 
 function initMap() {
     if (map) return;
-    map = L.map('threat-map', { attributionControl: false, zoomControl: false }).setView([20, 0], 2);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
-    document.getElementById('threat-map').style.filter = 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.1)';
+    const mapEl = document.getElementById('threat-map');
+    if (!mapEl) return;
+
+    map = L.map('threat-map', {
+        attributionControl: false,
+        zoomControl: true,
+        minZoom: 2,
+        maxZoom: 18,
+        worldCopyJump: false,
+        maxBounds: [[-85, -180], [85, 180]]
+    }).setView([20, 0], 2);
+
+    // High quality Dark Matter Tiles (Clean SOC Aesthetic)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        subdomains: 'abcd',
+        maxZoom: 19,
+        noWrap: true
+    }).addTo(map);
+
+    mapMarkersLayer = L.layerGroup().addTo(map);
+
+    // Fix leaflet container sizing issues
+    setTimeout(() => { if (map) map.invalidateSize(); }, 200);
+    setTimeout(() => { if (map) map.invalidateSize(); }, 800);
+    window.addEventListener('resize', () => { if (map) map.invalidateSize(); });
+}
+
+async function loadThreatMap() {
+    if (!map) return;
+    try {
+        const points = await apiFetch('/api/dashboard/threat-map');
+        if (mapMarkersLayer) mapMarkersLayer.clearLayers();
+
+        const pts = Array.isArray(points) ? points : [];
+        const countBadge = document.getElementById('map-threat-count');
+        if (countBadge) countBadge.textContent = `${pts.length} Threats Tracked`;
+
+        pts.forEach(pt => {
+            if (!pt.lat || !pt.lon) return;
+            const isCrit = pt.severity === 'critical';
+            const isWarn = pt.severity === 'warning';
+            const color = isCrit ? '#ef4444' : (isWarn ? '#f59e0b' : '#00e5ff');
+            const radius = isCrit ? 9 : (isWarn ? 7 : 5);
+
+            const circle = L.circleMarker([pt.lat, pt.lon], {
+                radius: radius,
+                fillColor: color,
+                color: color,
+                weight: 2,
+                opacity: 0.9,
+                fillOpacity: 0.6
+            });
+
+            const tipHtml = `
+                <div style="font-family:var(--font-mono, monospace); font-size:11px; padding:4px; min-width:140px; color:#fff">
+                    <div style="font-weight:700; color:${color}; margin-bottom:3px">${(pt.severity || 'INFO').toUpperCase()} THREAT</div>
+                    <div><strong>IP:</strong> ${pt.ip || 'Unknown'}</div>
+                    <div><strong>Location:</strong> ${pt.city || 'Unknown'}, ${pt.country || 'Unknown'}</div>
+                    ${pt.count ? `<div><strong>Events:</strong> ${pt.count}</div>` : ''}
+                    ${pt.hostname ? `<div><strong>Host:</strong> ${pt.hostname}</div>` : ''}
+                </div>
+            `;
+            circle.bindPopup(tipHtml);
+            circle.bindTooltip(`${pt.city || pt.ip} (${(pt.severity || 'info').toUpperCase()})`, { direction: 'top', offset: [0, -5] });
+            mapMarkersLayer.addLayer(circle);
+        });
+
+        map.invalidateSize();
+    } catch (e) {
+        console.error('Threat map load error:', e);
+    }
 }
 
 async function loadCounts() {
     try {
         const counts = await apiFetch('/api/dashboard/counts');
-        document.getElementById('kpi-total').textContent = counts.total || 0;
-        document.getElementById('kpi-online').textContent = counts.online || 0;
-        document.getElementById('kpi-online-badge').textContent = (counts.online || 0) + ' Online';
-        document.getElementById('kpi-alerts').textContent = counts.alerts || 0;
-        document.getElementById('kpi-alerts-badge').textContent = (counts.alerts || 0) + ' Alerts';
-        document.getElementById('kpi-maint').textContent = counts.maintenance || 0;
-        document.getElementById('kpi-maint-badge').textContent = (counts.maintenance || 0) + ' Servers';
-    } catch(e) {}
+        const total = counts.total ?? counts.total_servers ?? 0;
+        const online = counts.online ?? counts.online_servers ?? 0;
+        const alerts = counts.alerts ?? counts.critical_alerts ?? 0;
+        const maint = counts.maintenance ?? counts.maintenance_servers ?? 0;
+
+        document.getElementById('kpi-total').textContent = total;
+        document.getElementById('kpi-online').textContent = online;
+        document.getElementById('kpi-online-badge').textContent = online + ' Online';
+        document.getElementById('kpi-alerts').textContent = alerts;
+        document.getElementById('kpi-alerts-badge').textContent = alerts + ' Critical';
+        document.getElementById('kpi-maint').textContent = maint;
+        document.getElementById('kpi-maint-badge').textContent = maint + ' Servers';
+    } catch(e) {
+        console.error('loadCounts error:', e);
+    }
 }
 
 async function loadActivity() {
     try {
-        const activity = await apiFetch('/api/dashboard/live-activity');
+        const raw = await apiFetch('/api/dashboard/live-activity');
+        const activity = Array.isArray(raw) ? raw : (raw.items || []);
         const feedEl = document.getElementById('live-feed');
         if (!activity || activity.length === 0) {
             feedEl.innerHTML = '<div class="text-meta" style="text-align:center; padding:20px">No recent activity</div>';
         } else {
             feedEl.innerHTML = activity.slice(0, 10).map(e => `
                 <div style="display:flex; gap:12px; align-items:center">
-                    <div style="width:8px; height:8px; border-radius:50%; background:var(--${e.severity === 'critical' ? 'red' : e.severity === 'warning' ? 'orange' : 'cyan'})"></div>
-                    <div style="flex:1">
-                        <div style="font-size:13px; font-weight:500">${e.detail || e.message || 'Event'}</div>
-                        <div class="text-meta" style="margin-top:2px">${new Date(e.timestamp || e.created_at).toLocaleTimeString()}</div>
+                    <div style="width:8px; height:8px; border-radius:50%; flex-shrink:0; background:${e.severity === 'critical' ? 'var(--red)' : e.severity === 'warning' ? 'var(--amber)' : 'var(--cyan)'}"></div>
+                    <div style="flex:1; min-width:0">
+                        <div style="font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${e.description || e.detail || e.message || ''}">
+                            ${e.description || e.detail || e.message || e.title || 'Security Event'}
+                        </div>
+                        <div class="text-meta" style="margin-top:2px; font-size:11px">
+                            ${new Date(e.timestamp || e.created_at || Date.now()).toLocaleTimeString()} ${e.hostname ? '· ' + e.hostname : ''}
+                        </div>
                     </div>
                 </div>
             `).join('');
         }
-    } catch(e) {}
+    } catch(e) {
+        console.error('loadActivity error:', e);
+    }
 }
 
 async function loadSeverity() {
     try {
         const data = await apiFetch('/api/dashboard/severity');
-        const info = data.info || 0;
-        const warn = data.warning || 0;
-        const crit = data.critical || 0;
-        sevDonut.data.datasets[0].data = [info, warn, crit];
-        sevDonut.update();
+        let info = 0, warn = 0, crit = 0;
+
+        if (Array.isArray(data)) {
+            data.forEach(r => {
+                const s = (r.severity || '').toLowerCase();
+                const c = int(r.count || 0);
+                if (s === 'critical') crit += c;
+                else if (s === 'warning') warn += c;
+                else info += c;
+            });
+        } else if (typeof data === 'object' && data !== null) {
+            info = data.info || 0;
+            warn = data.warning || 0;
+            crit = data.critical || 0;
+        }
+
+        if (sevDonut) {
+            sevDonut.data.datasets[0].data = [info, warn, crit];
+            sevDonut.update();
+        }
         document.getElementById('donut-total').textContent = info + warn + crit;
-    } catch(e) {}
+    } catch(e) {
+        console.error('loadSeverity error:', e);
+    }
 }
 
 async function loadAlerts() {
     try {
-        const data = await apiFetch('/api/alerts?is_resolved=false&limit=5');
+        const raw = await apiFetch('/api/alerts?is_resolved=false&limit=6');
         const alertList = document.getElementById('open-alerts-list');
-        if (data.length === 0) {
-            alertList.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:20px" class="text-meta">No open alerts</td></tr>';
+        const items = Array.isArray(raw) ? raw : (raw.items || []);
+
+        if (items.length === 0) {
+            alertList.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px" class="text-meta">No open alerts — all systems secure</td></tr>';
         } else {
-            alertList.innerHTML = data.map(a => `
+            alertList.innerHTML = items.map(a => `
                 <tr style="border-bottom:1px solid var(--border)">
                     <td style="padding:12px"><span class="badge badge-${a.severity === 'critical' ? 'critical' : 'warning'}">${(a.severity||'info').toUpperCase()}</span></td>
-                    <td style="padding:12px; font-weight:600">${a.message || a.rule_name || 'Alert'}</td>
+                    <td style="padding:12px; font-weight:600; color:var(--text)">${a.message || a.title || 'Security Alert'}</td>
+                    <td style="padding:12px; font-family:var(--font-mono); font-size:12px; color:var(--cyan)">${a.hostname || 'ip-172-31-4-83'}</td>
                     <td style="padding:12px" class="text-meta">${new Date(a.created_at).toLocaleTimeString()}</td>
                 </tr>
             `).join('');
         }
-    } catch(e) {}
+    } catch(e) {
+        console.error('loadAlerts error:', e);
+    }
 }
 
-window.addEventListener('load', () => {
+window.addEventListener('DOMContentLoaded', () => {
     initCharts();
     initMap();
     
@@ -220,12 +335,14 @@ window.addEventListener('load', () => {
     loadActivity();
     loadSeverity();
     loadAlerts();
+    loadThreatMap();
 
-    // Intervals
-    setInterval(loadCounts, 60000);
-    setInterval(loadActivity, 30000);
-    setInterval(loadSeverity, 60000);
-    setInterval(loadAlerts, 60000);
+    // Background auto-refresh intervals
+    setInterval(loadCounts, 30000);
+    setInterval(loadActivity, 15000);
+    setInterval(loadSeverity, 30000);
+    setInterval(loadAlerts, 20000);
+    setInterval(loadThreatMap, 60000);
 });
 </script>
 {% endblock %}

@@ -934,18 +934,22 @@ async def api_get_geoip():
     return points
 
 @app.get("/api/events")
-async def api_get_events(limit: int = 100):
-    alerts = db.get_alerts()
-    items = []
-    for a in alerts:
-        items.append({
-            "id": a.get("id"),
-            "severity": a.get("severity", "info"),
-            "description": a.get("message", "System event"),
-            "hostname": a.get("hostname", "ec2-prod-web-01"),
-            "created_at": a.get("created_at_ago", "just now")
-        })
-    return {"items": items}
+async def api_get_events(server_id: Optional[int] = None, limit: int = 100):
+    if server_id:
+        items = db.get_server_events(server_id, limit)
+    else:
+        raw_feed = db.get_activity_feed(limit)
+        items = []
+        for a in raw_feed:
+            items.append({
+                "id": a.get("id", 1),
+                "severity": a.get("severity", "info"),
+                "event_type": a.get("type", "EVENT"),
+                "description": a.get("description") or a.get("detail") or "System event",
+                "hostname": a.get("hostname", "ec2-host"),
+                "created_at": str(a.get("timestamp", ""))
+            })
+    return {"items": items, "total": len(items)}
 
 @app.get("/api/dashboard/brute-force")
 async def api_get_brute_force():
@@ -1137,13 +1141,16 @@ async def api_agent_push(request: Request):
     return {"status": "ok", "ok": True, "message": "Agent telemetry ingested"}
 
 @app.get("/api/alerts")
-async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None):
+async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None):
     conn = db.get_db_connection()
     if not conn: return {"items": [], "total": 0}
     try:
         with conn.cursor() as cur:
             query = "SELECT a.*, s.hostname FROM alerts a LEFT JOIN servers s ON a.server_id = s.id WHERE 1=1"
             params = []
+            if server_id:
+                query += " AND a.server_id = %s"
+                params.append(server_id)
             
             # Support both is_resolved and status query params
             resolved_val = None
@@ -1829,6 +1836,150 @@ async def api_change_password(request: Request):
 api_get_audit_log = api_get_audit_logs
 api_dashboard_counts = api_dashboard_counts_new
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SERVER MANAGEMENT & MANAGED SERVICES REST APIS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.patch("/api/servers/{server_id}")
+@app.patch("/api/assets/{server_id}")
+async def api_patch_server(server_id: int, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    
+    updates = {}
+    if "is_maintenance" in body:
+        updates["is_maintenance"] = bool(body["is_maintenance"])
+    if "maintenance_hours" in body:
+        hours = int(body["maintenance_hours"])
+        until = datetime.now(timezone.utc) + timedelta(hours=hours)
+        updates["maintenance_until"] = until
+        updates["is_maintenance"] = True
+    if "hostname" in body:
+        updates["hostname"] = body["hostname"]
+    if "status" in body:
+        updates["status"] = body["status"]
+
+    if updates:
+        db.update_server(server_id, **updates)
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, 'UPDATE_SERVER', 'server', server_id, f"Updated server {server_id}: {updates}")
+
+    server = db.get_server_by_id(server_id)
+    return {"ok": True, "server": server}
+
+@app.post("/api/servers/{server_id}/isolate")
+@app.post("/api/assets/{server_id}/isolate")
+async def api_isolate_server(server_id: int, request: Request):
+    db.update_server(server_id, status='isolated')
+    db.log_alert(server_id, "HOST_ISOLATION", f"Host {server_id} was programmatically isolated from network", severity="critical")
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'ISOLATE_HOST', 'server', server_id, "Programmatic host isolation triggered")
+    return {"ok": True, "message": "Host isolated successfully"}
+
+@app.post("/api/servers/{server_id}/reconnect")
+@app.post("/api/assets/{server_id}/reconnect")
+async def api_reconnect_server(server_id: int, request: Request):
+    db.update_server(server_id, status='online')
+    db.log_alert(server_id, "HOST_RECONNECTED", f"Host {server_id} network connectivity restored", severity="info")
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'RECONNECT_HOST', 'server', server_id, "Host connectivity restored")
+    return {"ok": True, "message": "Host reconnected successfully"}
+
+@app.get("/api/servers/{server_id}/services")
+@app.get("/api/assets/{server_id}/services")
+async def api_get_services(server_id: int):
+    services = db.get_managed_services(server_id)
+    return {"ok": True, "services": services}
+
+@app.post("/api/servers/{server_id}/services")
+@app.post("/api/assets/{server_id}/services")
+async def api_add_service(server_id: int, request: Request):
+    body = await request.json()
+    name = body.get("name", "").strip()
+    user = body.get("user", "root").strip()
+    path = body.get("path", "").strip()
+    restart_cmd = body.get("restart_cmd", "").strip()
+
+    if not name or not path:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Name and Path are required"})
+
+    services = db.get_managed_services(server_id)
+    # Remove if existing service with same name
+    services = [s for s in services if s.get("name", "").lower() != name.lower()]
+    services.append({
+        "name": name,
+        "user": user,
+        "path": path,
+        "restart_cmd": restart_cmd
+    })
+    db.save_managed_services(server_id, services)
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'ADD_MANAGED_SERVICE', 'server', server_id, f"Added managed service {name}")
+    return {"ok": True, "services": services}
+
+@app.delete("/api/servers/{server_id}/services/{service_name}")
+@app.delete("/api/assets/{server_id}/services/{service_name}")
+async def api_delete_service(server_id: int, service_name: str, request: Request):
+    services = db.get_managed_services(server_id)
+    services = [s for s in services if s.get("name", "").lower() != service_name.lower()]
+    db.save_managed_services(server_id, services)
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'DELETE_MANAGED_SERVICE', 'server', server_id, f"Deleted managed service {service_name}")
+    return {"ok": True, "services": services}
+
+@app.post("/api/servers/{server_id}/restart-services")
+@app.post("/api/assets/{server_id}/restart-services")
+async def api_restart_all_services(server_id: int, request: Request):
+    results = db.restart_managed_services(server_id)
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'RUN_RESTART_PLAYBOOK', 'server', server_id, f"Executed restart playbook on {len(results)} services")
+    return {"ok": True, "results": results}
+
+@app.post("/api/servers/{server_id}/services/{service_name}/restart")
+@app.post("/api/assets/{server_id}/services/{service_name}/restart")
+async def api_restart_single_service(server_id: int, service_name: str, request: Request):
+    results = db.restart_managed_services(server_id, service_name=service_name)
+    return {"ok": True, "results": results}
+
+@app.get("/api/servers/{server_id}/export-report")
+async def api_export_server_report(server_id: int):
+    server = db.get_server_by_id(server_id)
+    events = db.get_server_events(server_id, 50)
+    services = db.get_managed_services(server_id)
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Asset Security Report - {server.get('hostname', 'Server')}</title>
+        <style>
+            body {{ font-family: monospace; padding: 40px; background: #fff; color: #111; }}
+            h1, h2 {{ border-bottom: 2px solid #333; padding-bottom: 5px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
+            th, td {{ border: 1px solid #ccc; padding: 8px; text-align: left; font-size: 12px; }}
+            th {{ background: #eee; }}
+        </style>
+    </head>
+    <body onload="window.print()">
+        <h1>Asset Security Audit Report</h1>
+        <p><strong>Hostname:</strong> {server.get('hostname')} | <strong>IP:</strong> {server.get('ip')} | <strong>Status:</strong> {server.get('status')}</p>
+        <p><strong>Generated At:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+        <h2>Configured Managed Services ({len(services)})</h2>
+        <ul>
+            {"".join(f"<li><strong>{s.get('name')}</strong> (User: {s.get('user')}) - Path: {s.get('path')}</li>" for s in services) or "<li>No managed services configured</li>"}
+        </ul>
+        <h2>Recent Security Events ({len(events)})</h2>
+        <table>
+            <tr><th>Type</th><th>Description</th><th>Severity</th><th>Timestamp</th></tr>
+            {"".join(f"<tr><td>{e.get('event_type')}</td><td>{e.get('description')}</td><td>{e.get('severity')}</td><td>{e.get('created_at')}</td></tr>" for e in events)}
+        </table>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
 if __name__ == "__main__":
     import uvicorn

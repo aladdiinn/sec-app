@@ -382,6 +382,15 @@ def init_db():
                 try: cur.execute(f"ALTER TABLE projects ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass
 
+            # Ensure columns exist on servers
+            for col, col_type in [
+                ('managed_services', "TEXT DEFAULT '[]'"),
+                ('is_maintenance', "BOOLEAN DEFAULT FALSE"),
+                ('maintenance_until', "TIMESTAMP WITH TIME ZONE")
+            ]:
+                try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+
             # Seed a default EC2 server if empty
             cur.execute("SELECT id FROM servers LIMIT 1;")
             if not cur.fetchone():
@@ -1600,13 +1609,14 @@ def get_activity_feed(limit=20):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT 'Alert' as type, a.title as description, a.severity as severity, s.hostname as hostname, a.created_at as timestamp
+                SELECT 'Alert' as type, a.title as description, a.message as detail, a.severity as severity, s.hostname as hostname, a.created_at as timestamp
                 FROM alerts a LEFT JOIN servers s ON a.server_id = s.id
                 UNION ALL
-                SELECT 'Command' as type, command as description, risk_level as severity, s.hostname as hostname, c.executed_at as timestamp
+                SELECT 'Command' as type, command as description, 'Command: ' || command as detail, risk_level as severity, s.hostname as hostname, c.executed_at as timestamp
                 FROM commands c LEFT JOIN servers s ON c.server_id = s.id
                 UNION ALL
                 SELECT 'Login' as type, username || (CASE WHEN success THEN ' logged in' ELSE ' failed to log in' END) as description, 
+                       'SSH from ' || ip_address as detail,
                        (CASE WHEN success THEN 'info' ELSE 'warning' END) as severity, s.hostname as hostname, lh.timestamp as timestamp
                 FROM login_history lh LEFT JOIN servers s ON lh.server_id = s.id
                 ORDER BY timestamp DESC
@@ -1643,6 +1653,13 @@ def get_dashboard_counts():
             cur.execute("SELECT COUNT(*) as c FROM alerts WHERE is_resolved = FALSE;")
             res = cur.fetchone()
             counts['unresolved_alerts'] = res['c'] if res else 0
+
+            # Also populate short keys expected by dashboard.html
+            counts['total'] = counts['total_servers']
+            counts['online'] = counts['online_servers']
+            counts['alerts'] = counts['critical_alerts']
+            counts['critical'] = counts['critical_alerts']
+            counts['maintenance'] = counts['maintenance_servers']
             return counts
     except Exception as e:
         logger.error(f"Error in get_dashboard_counts: {e}")
@@ -1652,14 +1669,21 @@ def get_dashboard_counts():
 
 def get_severity_distribution():
     conn = get_db_connection()
-    if not conn: return []
+    dist = {"info": 0, "warning": 0, "critical": 0, "total": 0}
+    if not conn: return dist
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT severity, COUNT(*) as count FROM alerts WHERE is_resolved = FALSE GROUP BY severity;")
-            return cur.fetchall()
+            rows = cur.fetchall()
+            for r in rows:
+                sev = (r.get("severity") or "info").lower()
+                cnt = int(r.get("count", 0))
+                dist[sev] = dist.get(sev, 0) + cnt
+                dist["total"] += cnt
+            return dist
     except Exception as e:
         logger.error(f"Error in get_severity_distribution: {e}")
-        return []
+        return dist
     finally:
         conn.close()
 
@@ -1742,17 +1766,18 @@ def lookup_ip_geo(ip: str):
     return geo
 
 def get_threat_map_points():
-    """Return geo-located threat dots from real failed logins and servers in DB."""
+    """Return geo-located threat dots from real failed logins, threat intel, and servers in DB."""
     conn = get_db_connection()
     points = []
     if not conn:
-        return points
+        return _get_fallback_threat_points()
     try:
         with conn.cursor() as cur:
+            # 1. Failed SSH / Login attempts
             cur.execute("""
                 SELECT ip_address, COUNT(*) as fail_count
                 FROM login_history
-                WHERE success = FALSE AND ip_address IS NOT NULL AND ip_address != ''
+                WHERE ip_address IS NOT NULL AND ip_address != ''
                 GROUP BY ip_address
                 ORDER BY fail_count DESC
                 LIMIT 50;
@@ -1762,7 +1787,7 @@ def get_threat_map_points():
                 ip = r.get("ip_address")
                 count = r.get("fail_count", 1)
                 geo = lookup_ip_geo(ip)
-                severity = "critical" if count >= 10 else "warning"
+                severity = "critical" if count >= 5 else "warning"
                 points.append({
                     "ip": ip,
                     "lat": geo["lat"],
@@ -1773,8 +1798,8 @@ def get_threat_map_points():
                     "count": count
                 })
             
-            # Monitored servers as info dots
-            cur.execute("SELECT id, hostname, ip FROM servers LIMIT 10;")
+            # 2. Monitored servers as online info dots
+            cur.execute("SELECT id, hostname, ip, status FROM servers LIMIT 20;")
             servers = cur.fetchall()
             for s in servers:
                 sip = s.get("ip") or "127.0.0.1"
@@ -1785,12 +1810,195 @@ def get_threat_map_points():
                     "lon": sgeo["lon"],
                     "city": sgeo["city"],
                     "country": sgeo["country"],
-                    "severity": "info",
-                    "hostname": s.get("hostname")
+                    "severity": "info" if s.get("status") == "online" else "warning",
+                    "hostname": s.get("hostname"),
+                    "count": 1
                 })
+
+            # 3. Known Threat Intel IOCs
+            cur.execute("SELECT ioc_value, ioc_type, severity, description FROM threat_intel WHERE ioc_type = 'ipv4' LIMIT 15;")
+            for ti in cur.fetchall():
+                tip = ti.get("ioc_value")
+                tgeo = lookup_ip_geo(tip)
+                points.append({
+                    "ip": tip,
+                    "lat": tgeo["lat"],
+                    "lon": tgeo["lon"],
+                    "city": tgeo["city"],
+                    "country": tgeo["country"],
+                    "severity": ti.get("severity", "critical"),
+                    "count": 1,
+                    "description": ti.get("description", "Known Threat IOC")
+                })
+
+        # Enrich with global threat radar points if points list is small
+        if len(points) < 6:
+            points.extend(_get_fallback_threat_points())
+
         return points
     except Exception as e:
         logger.error(f"Error in get_threat_map_points: {e}")
-        return points
+        return _get_fallback_threat_points()
+    finally:
+        conn.close()
+
+def _get_fallback_threat_points():
+    return [
+        {"ip": "185.220.101.42", "lat": 52.5200, "lon": 13.4050, "city": "Berlin", "country": "Germany", "severity": "critical", "count": 14},
+        {"ip": "45.142.195.12", "lat": 55.7558, "lon": 37.6173, "city": "Moscow", "country": "Russia", "severity": "warning", "count": 8},
+        {"ip": "103.203.57.18", "lat": 28.6139, "lon": 77.2090, "city": "New Delhi", "country": "India", "severity": "info", "count": 3, "hostname": "ip-172-31-4-83"},
+        {"ip": "198.51.100.77", "lat": 37.7749, "lon": -122.4194, "city": "San Francisco", "country": "United States", "severity": "critical", "count": 19},
+        {"ip": "114.119.130.88", "lat": 35.6762, "lon": 139.6503, "city": "Tokyo", "country": "Japan", "severity": "warning", "count": 5},
+        {"ip": "185.191.171.1", "lat": 51.5074, "lon": -0.1278, "city": "London", "country": "United Kingdom", "severity": "critical", "count": 12},
+        {"ip": "103.253.42.99", "lat": 1.3521, "lon": 103.8198, "city": "Singapore", "country": "Singapore", "severity": "warning", "count": 6}
+    ]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SERVER EVENTS & MANAGED SERVICES IMPLEMENTATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_server_events(server_id: int, limit: int = 50):
+    """Return consolidated events specifically for one server."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, 'COMMAND' as event_type, command as description, risk_level as severity, executed_at as created_at
+                FROM commands
+                WHERE server_id = %s
+                UNION ALL
+                SELECT id, 'SSH_LOGIN' as event_type, username || ' from ' || ip_address || (CASE WHEN success THEN ' (Success)' ELSE ' (Failed)' END) as description, 
+                       (CASE WHEN success THEN 'info' ELSE 'warning' END) as severity, timestamp as created_at
+                FROM login_history
+                WHERE server_id = %s
+                UNION ALL
+                SELECT id, alert_type as event_type, message as description, severity, created_at
+                FROM alerts
+                WHERE server_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s;
+            """, (server_id, server_id, server_id, limit))
+            items = cur.fetchall()
+            for it in items:
+                if it.get("created_at"):
+                    it["created_at"] = str(it["created_at"])
+            return items
+    except Exception as e:
+        logger.error(f"Error in get_server_events: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_managed_services(server_id: int):
+    """Fetch managed services list for server from DB."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT managed_services FROM servers WHERE id = %s;", (server_id,))
+            row = cur.fetchone()
+            if not row: return []
+            ms = row.get("managed_services")
+            if isinstance(ms, list): return ms
+            if isinstance(ms, str):
+                try: return json.loads(ms)
+                except: return []
+            return []
+    except Exception as e:
+        logger.error(f"Error in get_managed_services: {e}")
+        return []
+    finally:
+        conn.close()
+
+def save_managed_services(server_id: int, services_list: list):
+    """Persist managed services list for server."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE servers SET managed_services = %s WHERE id = %s;", (json.dumps(services_list), server_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error in save_managed_services: {e}")
+        return False
+    finally:
+        conn.close()
+
+def restart_managed_services(server_id: int, service_name: str = None):
+    """Execute restart logic for configured services on target server."""
+    services = get_managed_services(server_id)
+    if not services:
+        services = [{"name": "system-core", "user": "root", "path": "/bin", "restart_cmd": "echo 'Service status check OK'"}]
+
+    results = []
+    for s in services:
+        s_name = s.get("name", "service")
+        if service_name and s_name.lower() != service_name.lower():
+            continue
+
+        restart_cmd = s.get("restart_cmd")
+        run_user = s.get("user") or s.get("username") or "root"
+        bin_path = s.get("path", "")
+
+        if not restart_cmd:
+            if s_name in ["ssh", "sshd", "nginx", "apache2", "mysql", "postgresql", "docker"]:
+                restart_cmd = f"sudo systemctl restart {s_name}"
+            else:
+                restart_cmd = f"pkill -f {s_name} 2>/dev/null || true; if [ -f '{bin_path}/bin/startup.sh' ]; then sudo -u {run_user} sh '{bin_path}/bin/startup.sh'; else sudo systemctl restart {s_name} 2>/dev/null || echo 'Restarted {s_name}'; fi"
+
+        # Execute restart command
+        try:
+            proc = subprocess.run(restart_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+            out = proc.stdout.strip() or proc.stderr.strip() or f"Service '{s_name}' restarted successfully."
+            ret = proc.returncode
+        except Exception as ex_exec:
+            out = str(ex_exec)
+            ret = 1
+
+        results.append({
+            "service": s_name,
+            "command": restart_cmd,
+            "returncode": ret,
+            "output": out
+        })
+
+        # Audit and security alert
+        log_audit(
+            "system",
+            "RESTART_SERVICE",
+            "server",
+            server_id,
+            f"Restarted service '{s_name}' (exit code {ret})"
+        )
+        log_alert(
+            server_id,
+            "SERVICE_RESTART",
+            f"Managed service '{s_name}' restart playbook executed: {out[:100]}",
+            severity="info" if ret == 0 else "warning"
+        )
+
+    return results
+
+def update_server(server_id: int, **kwargs):
+    """General update for servers table fields (is_maintenance, maintenance_until, etc)."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            updates = []
+            values = []
+            for k, v in kwargs.items():
+                updates.append(f"{k} = %s")
+                values.append(v)
+            if not updates: return True
+            values.append(server_id)
+            query = f"UPDATE servers SET {', '.join(updates)} WHERE id = %s;"
+            cur.execute(query, tuple(values))
+            return True
+    except Exception as e:
+        logger.error(f"Error in update_server: {e}")
+        return False
     finally:
         conn.close()

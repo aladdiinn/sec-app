@@ -263,41 +263,43 @@
 
             // Load Events
             const eventsData = await apiFetch(`/api/events?server_id=${serverId}&limit=50`);
-            const eventsEl = document.getElementById('server-events-list');
-            const totalEvt = eventsData.total || eventsData.items.length;
+            const eventItems = Array.isArray(eventsData) ? eventsData : (eventsData.items || []);
+            const totalEvt = eventsData.total ?? eventItems.length ?? 0;
             document.getElementById('server-total-events').textContent = totalEvt;
             document.getElementById('events-count-badge').textContent = totalEvt + ' events';
 
-            if (eventsData.items.length > 0) {
-                document.getElementById('server-last-login').textContent = relTime(eventsData.items[0].created_at);
-                eventsEl.innerHTML = eventsData.items.map(e => `
-                    <div class="feed-item feed-item--${e.severity}" style="display:grid; grid-template-columns:1fr auto; gap:10px; align-items:start">
+            const eventsEl = document.getElementById('server-events-list');
+            if (eventItems.length > 0) {
+                document.getElementById('server-last-login').textContent = relTime(eventItems[0].created_at || eventItems[0].timestamp);
+                eventsEl.innerHTML = eventItems.map(e => `
+                    <div class="feed-item feed-item--${e.severity || 'info'}" style="display:grid; grid-template-columns:1fr auto; gap:10px; align-items:start; padding:10px; border-bottom:1px solid var(--border)">
                         <div>
-                            <span class="mono" style="font-weight:600; font-size:13px">${e.event_type}</span>
-                            <p class="text-sub" style="margin:3px 0 0 0">${e.description}</p>
+                            <span class="mono" style="font-weight:600; font-size:13px; color:var(--cyan)">${e.event_type || 'EVENT'}</span>
+                            <p class="text-sub" style="margin:3px 0 0 0">${e.description || e.message || 'Event recorded'}</p>
                         </div>
-                        <span class="text-meta" style="white-space:nowrap">${new Date(e.created_at).toLocaleString()}</span>
+                        <span class="text-meta" style="white-space:nowrap">${new Date(e.created_at || e.timestamp || Date.now()).toLocaleString()}</span>
                     </div>
                 `).join('');
             } else {
-                eventsEl.innerHTML = '<div class="empty-state"><p>No events recorded</p></div>';
+                eventsEl.innerHTML = '<div class="empty-state" style="padding:20px; text-align:center"><p class="text-meta">No events recorded for this asset</p></div>';
             }
 
             // Load Alerts
             const alertsData = await apiFetch(`/api/alerts?server_id=${serverId}&limit=30`);
-            const alertsEl = document.getElementById('server-alerts-list');
-            const openCount = alertsData.items.filter(a => !a.is_resolved).length;
+            const alertItems = Array.isArray(alertsData) ? alertsData : (alertsData.items || []);
+            const openCount = alertItems.filter(a => !a.is_resolved).length;
             document.getElementById('server-open-alerts').textContent = openCount;
             document.getElementById('alerts-count-badge').textContent = openCount + ' open';
 
-            if (alertsData.items.length > 0) {
-                alertsEl.innerHTML = alertsData.items.map(a => `
-                    <div class="alert-item alert-item--${a.severity}" style="opacity: ${a.is_resolved ? 0.6 : 1}">
-                        <div class="alert-top">
-                            <span class="alert-title">${a.title}</span>
-                            <span class="badge ${a.is_resolved ? 'badge-gray' : 'badge-red'}">${a.is_resolved ? 'Resolved' : 'Open'}</span>
+            const alertsEl = document.getElementById('server-alerts-list');
+            if (alertItems.length > 0) {
+                alertsEl.innerHTML = alertItems.map(a => `
+                    <div class="alert-item alert-item--${a.severity || 'warning'}" style="padding:10px; border-bottom:1px solid var(--border); opacity: ${a.is_resolved ? 0.6 : 1}">
+                        <div style="display:flex; justify-content:space-between; align-items:center">
+                            <span class="alert-title" style="font-weight:600">${a.title || a.alert_type || 'Security Alert'}</span>
+                            <span class="badge ${a.is_resolved ? 'badge-gray' : (a.severity === 'critical' ? 'badge-critical' : 'badge-warning')}">${a.is_resolved ? 'Resolved' : 'Open'}</span>
                         </div>
-                        <p class="alert-msg text-sub">${a.message}</p>
+                        <p class="alert-msg text-sub" style="margin:4px 0">${a.message || ''}</p>
                         <div style="display:flex; justify-content:space-between; margin-top:6px; align-items:center">
                             <span class="text-meta">${relTime(a.created_at)}</span>
                             ${!a.is_resolved ? `<button class="btn btn-ghost" style="padding:3px 10px; font-size:11px" onclick="resolveDetailAlert(${a.id}, this)">Resolve</button>` : ''}
@@ -305,7 +307,7 @@
                     </div>
                 `).join('');
             } else {
-                alertsEl.innerHTML = '<div class="empty-state"><p>No alerts recorded</p></div>';
+                alertsEl.innerHTML = '<div class="empty-state" style="padding:20px; text-align:center"><p class="text-meta">No alerts recorded for this asset</p></div>';
             }
 
         } catch (e) { console.error('Server detail error:', e); }
@@ -320,6 +322,14 @@
         } catch (e) { btn.disabled = false; showToast('Failed to resolve alert', 'error'); }
     }
 
+    function relTime(dateStr) {
+        if (!dateStr) return '—';
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+        const diff = Math.floor((new Date() - date) / 1000);
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
         return `${Math.floor(diff / 86400)}d ago`;
     }
 
@@ -330,13 +340,20 @@
             return;
         }
         list.innerHTML = managedServices.map((s, idx) => `
-            <div class="service-row" style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:var(--bg3); border-radius:4px; border:1px solid var(--border)">
-                <div class="service-info">
-                    <div class="mono" style="font-size:12px; color:var(--cyan)">${s.name} <span style="color:var(--text3); font-size:10px">as ${s.user || s.username || 'root'}</span></div>
-                    <div class="mono" style="font-size:10px; color:var(--text3); margin-top:2px">${s.path}</div>
+            <div class="service-row" style="display:flex; justify-content:space-between; align-items:center; padding:12px; background:rgba(0,229,255,0.03); border-radius:6px; border:1px solid var(--border)">
+                <div class="service-info" style="flex:1">
+                    <div style="display:flex; align-items:center; gap:8px">
+                        <span class="mono" style="font-size:13px; font-weight:700; color:var(--cyan)">${s.name}</span>
+                        <span class="badge badge-info" style="font-size:9px">User: ${s.user || s.username || 'root'}</span>
+                    </div>
+                    <div class="mono text-meta" style="font-size:10px; margin-top:3px">${s.path}</div>
+                    ${s.restart_cmd ? `<div class="mono" style="font-size:10px; color:var(--text-muted); margin-top:2px">Cmd: ${s.restart_cmd}</div>` : ''}
                 </div>
-                <div class="service-actions">
-                    <button type="button" class="btn btn-ghost" style="padding:4px; color:var(--red)" onclick="removeService('${s.name}')">
+                <div class="service-actions" style="display:flex; gap:8px; align-items:center">
+                    <button type="button" class="btn btn-glass" style="padding:4px 8px; font-size:10px; color:var(--green); border-color:var(--green)" onclick="restartSingleService('${s.name}', this)">
+                        ▶ Restart
+                    </button>
+                    <button type="button" class="btn btn-ghost" style="padding:4px 8px; color:var(--red)" title="Delete Service" onclick="removeService('${s.name}')">
                         <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                     </button>
                 </div>
@@ -408,6 +425,25 @@
             renderServices();
         } catch (e) {
             alert('Failed to remove service: ' + e.message);
+        }
+    }
+
+
+    async function restartSingleService(serviceName, btn) {
+        if (!confirm(`Restart managed service '${serviceName}' now?`)) return;
+        btn.disabled = true;
+        btn.textContent = '⏳ ...';
+        try {
+            const res = await apiFetch(`/api/servers/${serverId}/services/${encodeURIComponent(serviceName)}/restart`, {
+                method: 'POST'
+            });
+            showToast(`Service '${serviceName}' restart command executed`, 'success');
+            loadServerData();
+        } catch (e) {
+            showToast('Service restart failed: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '▶ Restart';
         }
     }
 
