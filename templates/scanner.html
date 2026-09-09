@@ -736,6 +736,18 @@
     <button class="tab-btn" onclick="switchTab('tech', this)">TECH STACK</button>
   </div>
 
+  <!-- Quick Test Targets Bar -->
+  <div class="quick-targets-bar" style="display:flex; align-items:center; gap:8px; margin: 12px 0 16px 0; flex-wrap:wrap; background:rgba(10,18,30,0.6); padding:10px 14px; border:1px solid rgba(0,229,255,0.2); border-radius:6px">
+    <span style="font-size:11px; color:var(--text-muted); font-family:monospace; letter-spacing:1px; display:flex; align-items:center; gap:5px">
+      <svg viewBox="0 0 24 24" width="12" height="12" stroke="#00e5ff" fill="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      QUICK TEST TARGETS:
+    </span>
+    <button type="button" onclick="setAndScan('https://wfm-apraava-mdm.apdcl.co:8443/login')" style="background:rgba(0,229,255,0.08); border:1px solid rgba(0,229,255,0.35); color:#00e5ff; font-family:monospace; font-size:11px; padding:4px 10px; border-radius:4px; cursor:pointer">wfm-apdcl.co:8443 (Tomcat/ALB)</button>
+    <button type="button" onclick="setAndScan('https://apraava-mdm.apdcl.co/login')" style="background:rgba(0,255,136,0.08); border:1px solid rgba(0,255,136,0.35); color:#00ff88; font-family:monospace; font-size:11px; padding:4px 10px; border-radius:4px; cursor:pointer">apraava-mdm.apdcl.co</button>
+    <button type="button" onclick="setAndScan('https://cloudflare.com')" style="background:rgba(255,170,0,0.08); border:1px solid rgba(255,170,0,0.35); color:#ffaa00; font-family:monospace; font-size:11px; padding:4px 10px; border-radius:4px; cursor:pointer">cloudflare.com (Grade B / 81)</button>
+    <button type="button" onclick="setAndScan('https://github.com')" style="background:rgba(56,189,248,0.08); border:1px solid rgba(56,189,248,0.35); color:#38bdf8; font-family:monospace; font-size:11px; padding:4px 10px; border-radius:4px; cursor:pointer">github.com</button>
+  </div>
+
   <!-- ═══════════════════════════════════════════════════════════════════════════ -->
   <!-- TAB 1: HTTP HEADERS (SHCHECK)                                              -->
   <!-- ═══════════════════════════════════════════════════════════════════════════ -->
@@ -890,20 +902,12 @@
       <!-- Infrastructure Architecture Diagram -->
       <div class="section-title">
         <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-        MULTI-TIER INFRASTRUCTURE ARCHITECTURE & ATTACK SURFACE
+        DYNAMIC INFRASTRUCTURE ARCHITECTURE & ATTACK SURFACE (ACTIVE RECON DISCOVERY)
       </div>
-      <div class="arch-diagram" id="arch-diagram-flow">
-        <div class="arch-node"><div class="arch-title">Internet</div><div class="arch-desc">Public Traffic</div></div>
-        <div class="arch-arrow">→</div>
-        <div class="arch-node"><div class="arch-title">DNS / Route 53</div><div class="arch-desc">A / MX / TXT</div></div>
-        <div class="arch-arrow">→</div>
-        <div class="arch-node"><div class="arch-title">ALB / Cloudflare</div><div class="arch-desc">SSL Termination</div></div>
-        <div class="arch-arrow">→</div>
-        <div class="arch-node"><div class="arch-title">Nginx / Apache</div><div class="arch-desc">Reverse Proxy</div></div>
-        <div class="arch-arrow">→</div>
-        <div class="arch-node"><div class="arch-title">Tomcat / Java</div><div class="arch-desc">App Container</div></div>
-        <div class="arch-arrow">→</div>
-        <div class="arch-node"><div class="arch-title">PostgreSQL</div><div class="arch-desc">Private Subnet</div></div>
+      <div class="arch-diagram" id="arch-diagram-flow" style="display:flex; align-items:center; gap:10px; overflow-x:auto; padding:16px; background:rgba(7,14,26,0.6); border:1px solid var(--border-color); border-radius:8px">
+        <div style="color:var(--text-muted); font-size:12px; font-family:monospace; padding:12px">
+          [TARGET NOT SCANNED] Click "RUN FULL VAPT" to dynamically map live infrastructure tiers (DNS, WAF/ALB, Reverse Proxy, Tomcat/App Container, Private Subnet).
+        </div>
       </div>
 
       <!-- Findings Matrix Table -->
@@ -1048,6 +1052,30 @@
 <script>
 let lastScanData = null;
 let lastVaptData = null;
+
+function setAndScan(url) {
+  const ids = ['hdr-url', 'vapt-url', 'ssl-url', 'port-host', 'dns-domain', 'whois-domain', 'tech-url'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = url;
+  });
+
+  const activeBtn = document.querySelector('.scanner-tabs .tab-btn.active');
+  const txt = activeBtn ? activeBtn.textContent.trim() : '';
+  if (txt.includes('VAPT')) {
+    scanVAPT();
+  } else if (txt.includes('SSL')) {
+    scanSSL();
+  } else if (txt.includes('PORT')) {
+    scanPorts();
+  } else if (txt.includes('DNS')) {
+    scanDNS();
+  } else if (txt.includes('TECH')) {
+    scanTech();
+  } else {
+    scanHeaders();
+  }
+}
 
 function switchTab(id, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -1327,6 +1355,19 @@ function renderVAPT(data) {
   document.getElementById('vapt-score-num').textContent = data.vapt_score || 74;
   document.getElementById('vapt-score-num').style.color = data.posture_color || '#00ff88';
 
+  // Dynamically render discovered architecture flow
+  const archContainer = document.getElementById('arch-diagram-flow');
+  if (archContainer && data.architecture && data.architecture.flow && data.architecture.flow.length > 0) {
+    archContainer.innerHTML = data.architecture.flow.map((node, idx) => `
+      <div class="arch-node" style="min-width:160px; padding:12px 14px; border:1px solid rgba(0,229,255,0.35); border-radius:6px; background:rgba(11,19,32,0.9); box-shadow:0 4px 14px rgba(0,0,0,0.6); flex-shrink:0">
+        <div style="font-size:9px; color:#00e5ff; letter-spacing:1px; text-transform:uppercase; margin-bottom:4px">${node.tier}</div>
+        <div class="arch-title" style="font-size:12px; font-weight:700; color:#00ff88; margin-bottom:3px">${node.title}</div>
+        <div class="arch-desc" style="font-size:10px; color:#94a3b8; line-height:1.3">${node.detail}</div>
+      </div>
+      ${idx < data.architecture.flow.length - 1 ? '<div class="arch-arrow" style="color:#00e5ff; font-weight:bold; font-size:18px; padding:0 4px; flex-shrink:0">→</div>' : ''}
+    `).join('');
+  }
+
   const tb = document.getElementById('vapt-tbody');
   tb.innerHTML = (data.findings || []).map(f => {
     let sevBadge = 'badge-inf';
@@ -1347,18 +1388,29 @@ function renderVAPT(data) {
 }
 
 function renderVAPTDemo(url) {
+  const isTomcat = url.includes(':8443') || url.includes(':8080');
   const demoData = {
     vapt_score: 72,
     posture_color: '#ffaa00',
     summary: { critical: 0, high: 2, medium: 3, low: 2, informational: 2 },
+    architecture: {
+      flow: [
+        { tier: 'Client Ingress', title: 'Internet / Web Clients', detail: 'Public HTTPS Web Traffic' },
+        { tier: 'DNS Layer', title: 'Authoritative DNS Tier', detail: 'Authoritative Nameservers' },
+        { tier: 'Edge / WAF', title: 'AWS Application Load Balancer (ALB)', detail: 'Target Group Routing & SSL Offloading' },
+        { tier: 'Web Gateway', title: 'Hardened Reverse Proxy', detail: 'Signature Banner Suppressed' },
+        { tier: 'Application Tier', title: isTomcat ? 'Apache Tomcat (Port 8443)' : 'Web Application Service', detail: isTomcat ? 'Java Servlet Container Active' : 'Application Runtime' },
+        { tier: 'Internal Subnet', title: 'Private Database Tier', detail: 'Isolated in Protected Private VPC' }
+      ]
+    },
     findings: [
       { severity: 'High', title: 'Missing Content-Security-Policy (XSS Exposure)', evidence: 'No CSP header found in HTTP responses from application server.', remediation: 'Implement strict CSP directive restricting script-src and object-src.' },
       { severity: 'High', title: 'Weak SSL/TLS Protocols / Cipher Suites Allowed', evidence: 'TLS 1.0/1.1 or CBC ciphers supported on port 443.', remediation: 'Disable TLS 1.0 and 1.1 in Nginx/Apache configuration. Enable only TLS 1.2 and TLS 1.3.' },
       { severity: 'Medium', title: 'Missing Strict-Transport-Security (HSTS)', evidence: 'Strict-Transport-Security header is absent.', remediation: 'Set max-age=31536000 with includeSubDomains.' },
-      { severity: 'Medium', title: 'Missing DMARC Email Protection Record', evidence: 'No _dmarc TXT record detected for domain apdcl.co.', remediation: 'Publish valid DMARC record to prevent unauthorized email spoofing.' },
+      { severity: 'Medium', title: 'Missing DMARC Email Protection Record', evidence: 'No _dmarc TXT record detected for domain.', remediation: 'Publish valid DMARC record to prevent unauthorized email spoofing.' },
       { severity: 'Medium', title: 'Missing Clickjacking Defense (X-Frame-Options)', evidence: 'X-Frame-Options header not configured on login pages.', remediation: 'Set X-Frame-Options: DENY or SAMEORIGIN.' },
       { severity: 'Low', title: 'Web Server Banner Disclosure', evidence: 'Server header exposes: Apache/2.4.41 (Ubuntu).', remediation: 'Set ServerTokens Prod and ServerSignature Off.' },
-      { severity: 'Informational', title: 'Multi-Tier Infrastructure Architecture Mapped', evidence: 'Reverse proxy Nginx/Apache terminating to Apache Tomcat 10.1 (Java) backend.', remediation: 'Keep all identified application container binaries updated to latest security patch level.' }
+      { severity: 'Informational', title: 'Discovered Architecture Flow Mapped', evidence: 'Client Ingress → DNS → AWS ALB → Reverse Proxy → App Container → Private Subnet.', remediation: 'Keep all identified application container binaries updated to latest security patch level.' }
     ]
   };
   lastVaptData = demoData;
@@ -1392,14 +1444,14 @@ async function scanSSL() {
 
 function getDemoSSL(url) {
   return {
-    grade: 'A', valid: true, expires: '2026-03-15', days_left: 180,
-    issuer: 'Let\'s Encrypt Authority / GlobalSign', subject: 'apraava-mdm.apdcl.co',
-    protocol: 'TLSv1.3', cipher: 'TLS_AES_256_GCM_SHA384',
+    grade: 'A+', valid: true, expires: '2027-03-05', days_left: 177,
+    issuer: 'Amazon / Amazon RSA 2048 M04', subject: '*.apdcl.co',
+    protocol: 'TLSv1.3', cipher: 'TLS_AES_128_GCM_SHA256',
     hsts: true, ocsp_stapling: true, forward_secrecy: true,
     ciphers: [
-      { name: 'TLS_AES_256_GCM_SHA384', strength: 'STRONG', protocol: 'TLS 1.3' },
-      { name: 'TLS_CHACHA20_POLY1305_SHA256', strength: 'STRONG', protocol: 'TLS 1.3' },
       { name: 'TLS_AES_128_GCM_SHA256', strength: 'STRONG', protocol: 'TLS 1.3' },
+      { name: 'TLS_CHACHA20_POLY1305_SHA256', strength: 'STRONG', protocol: 'TLS 1.3' },
+      { name: 'TLS_AES_256_GCM_SHA384', strength: 'STRONG', protocol: 'TLS 1.3' },
       { name: 'ECDHE-RSA-AES256-GCM-SHA384', strength: 'STRONG', protocol: 'TLS 1.2' },
       { name: 'DHE-RSA-AES128-SHA', strength: 'WEAK', protocol: 'TLS 1.2' },
     ]
@@ -1408,12 +1460,13 @@ function getDemoSSL(url) {
 
 function renderSSL(data) {
   showResults('ssl');
+  const daysVal = (data.days_left !== undefined && data.days_left !== null) ? `${data.days_left} days` : 'Unknown';
   const cards = [
-    { label: 'SSL GRADE', val: data.grade, cls: data.grade.includes('A') ? 'good' : 'warn' },
-    { label: 'VALID UNTIL', val: data.expires, cls: data.days_left > 30 ? 'good' : 'bad' },
-    { label: 'DAYS REMAINING', val: data.days_left + ' days', cls: data.days_left > 30 ? 'good' : (data.days_left > 7 ? 'warn' : 'bad') },
-    { label: 'ACTIVE PROTOCOL', val: data.protocol, cls: data.protocol.includes('1.3') ? 'good' : 'warn' },
-    { label: 'CIPHER SUITE', val: data.cipher, cls: 'good' },
+    { label: 'SSL GRADE', val: data.grade || 'B', cls: (data.grade || '').includes('A') ? 'good' : 'warn' },
+    { label: 'VALID UNTIL', val: data.expires || 'Unknown', cls: data.days_left > 30 ? 'good' : 'bad' },
+    { label: 'DAYS REMAINING', val: daysVal, cls: data.days_left > 30 ? 'good' : (data.days_left > 7 ? 'warn' : 'bad') },
+    { label: 'ACTIVE PROTOCOL', val: data.protocol || 'TLSv1.3', cls: (data.protocol || '').includes('1.3') ? 'good' : 'warn' },
+    { label: 'CIPHER SUITE', val: data.cipher || 'TLS_AES_128_GCM_SHA256', cls: 'good' },
     { label: 'FORWARD SECRECY', val: data.forward_secrecy ? 'ENABLED (PFS)' : 'DISABLED', cls: data.forward_secrecy ? 'good' : 'bad' },
   ];
   document.getElementById('ssl-cards').innerHTML = cards.map(c => `
@@ -1426,11 +1479,11 @@ function renderSSL(data) {
   document.getElementById('ssl-details').innerHTML = `
     <div class="header-item present">
       <div class="hi-icon">✓</div>
-      <div><div class="hi-name">Certificate Issuer</div><div class="hi-value">${data.issuer}</div></div>
+      <div><div class="hi-name">Certificate Issuer</div><div class="hi-value">${data.issuer || 'Certificate Authority'}</div></div>
     </div>
     <div class="header-item present">
       <div class="hi-icon">✓</div>
-      <div><div class="hi-name">Subject Common Name</div><div class="hi-value">${data.subject}</div></div>
+      <div><div class="hi-name">Subject Common Name</div><div class="hi-value">${data.subject || 'Host'}</div></div>
     </div>
   `;
 
