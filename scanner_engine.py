@@ -234,25 +234,89 @@ def analyze_http_headers(raw_url: str, follow_redirects: bool = True):
             "value": val or ""
         })
 
-    # Information Disclosure Inspection
+    # Information & Version Disclosure Inspection
     info_disclosure = []
     server_banner = headers_dict.get("server")
     if server_banner:
-        info_disclosure.append({"key": "Server", "value": server_banner})
-        current_score -= 5
+        has_ver = bool(re.search(r'\d+\.\d+', server_banner))
+        has_os = any(os_n in server_banner.lower() for os_n in ["ubuntu", "debian", "centos", "redhat", "fedora", "windows", "linux", "unix"])
+        badge = "EXACT VERSION & OS DISCLOSED" if (has_ver and has_os) else ("EXACT VERSION DISCLOSED" if has_ver else "SOFTWARE BANNER EXPOSED")
+        info_disclosure.append({
+            "key": "Server",
+            "value": server_banner,
+            "badge": badge,
+            "has_version": has_ver
+        })
+        current_score -= (10 if has_ver else 5)
+        recommendations.append({
+            "header": "Server Version Disclosure Suppression",
+            "recommendation": f"Web server banner exposes '{server_banner}'. Suppress version tokens: In Apache, set 'ServerTokens Prod' and 'ServerSignature Off' in apache2.conf. In Nginx, set 'server_tokens off;' in nginx.conf."
+        })
     else:
         # Bonus for hiding server banner
         current_score += 5
     
     powered_by = headers_dict.get("x-powered-by")
     if powered_by:
-        info_disclosure.append({"key": "X-Powered-By", "value": powered_by})
-        current_score -= 5
+        has_ver = bool(re.search(r'\d+\.\d+', powered_by))
+        badge = "EXACT VERSION DISCLOSED" if has_ver else "FRAMEWORK BANNER EXPOSED"
+        info_disclosure.append({
+            "key": "X-Powered-By",
+            "value": powered_by,
+            "badge": badge,
+            "has_version": has_ver
+        })
+        current_score -= (10 if has_ver else 5)
+        recommendations.append({
+            "header": "Remove X-Powered-By Header",
+            "recommendation": f"Technology stack exposed via X-Powered-By: '{powered_by}'. In PHP, set 'expose_php = Off' in php.ini. In Node.js/Express, use 'app.disable(\"x-powered-by\");'. In IIS, remove the custom header in web.config."
+        })
 
     aspnet_version = headers_dict.get("x-aspnet-version")
     if aspnet_version:
-        info_disclosure.append({"key": "X-AspNet-Version", "value": aspnet_version})
+        info_disclosure.append({
+            "key": "X-AspNet-Version",
+            "value": aspnet_version,
+            "badge": "FRAMEWORK VERSION EXPOSED",
+            "has_version": True
+        })
+        current_score -= 10
+        recommendations.append({
+            "header": "Remove X-AspNet-Version Header",
+            "recommendation": "Suppress ASP.NET version disclosure by adding <httpRuntime enableVersionHeader=\"false\" /> inside <system.web> in web.config."
+        })
+
+    aspnet_mvc = headers_dict.get("x-aspnetmvc-version")
+    if aspnet_mvc:
+        info_disclosure.append({
+            "key": "X-AspNetMvc-Version",
+            "value": aspnet_mvc,
+            "badge": "MVC VERSION EXPOSED",
+            "has_version": True
+        })
         current_score -= 5
+
+    x_generator = headers_dict.get("x-generator")
+    if x_generator:
+        has_ver = bool(re.search(r'\d+\.\d+', x_generator))
+        info_disclosure.append({
+            "key": "X-Generator",
+            "value": x_generator,
+            "badge": "CMS / APP VERSION EXPOSED" if has_ver else "CMS GENERATOR EXPOSED",
+            "has_version": has_ver
+        })
+        current_score -= 5
+
+    via_hdr = headers_dict.get("via")
+    if via_hdr:
+        has_ver = bool(re.search(r'\d+\.\d+', via_hdr))
+        info_disclosure.append({
+            "key": "Via",
+            "value": via_hdr,
+            "badge": "PROXY VERSION EXPOSED" if has_ver else "PROXY BANNER EXPOSED",
+            "has_version": has_ver
+        })
+        current_score -= 3
 
     # Check cookies security
     has_httponly = any("httponly" in str(v).lower() or "httponly" in str(headers_dict.get("set-cookie", "")).lower() for v in cookies_dict.values())
@@ -997,14 +1061,27 @@ def run_full_domain_vapt(raw_url: str):
             "remediation": f"Publish TXT record at _dmarc.{domain}: 'v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain}'."
         })
 
-    # 4. Low
-    if header_res.get("server") and header_res.get("server") != "Hidden / Generic":
+    # 4. Low / Medium for Version Disclosure
+    server_hdr = header_res.get("server")
+    if server_hdr and server_hdr != "Hidden / Generic":
+        has_v = bool(re.search(r'\d+\.\d+', server_hdr))
+        has_o = any(os_n in server_hdr.lower() for os_n in ["ubuntu", "debian", "centos", "redhat", "fedora", "windows", "linux", "unix"])
+        sev = "Medium" if (has_v or has_o) else "Low"
         findings.append({
-            "severity": "Low",
-            "title": "Server Banner Information Disclosure",
-            "evidence": f"Response reveals server signature: '{header_res.get('server')}'.",
-            "remediation": "Disable server version tokens (e.g. 'server_tokens off' in Nginx, 'ServerTokens Prod' in Apache)."
+            "severity": sev,
+            "title": f"Web Server Version & OS Disclosure ({server_hdr})" if has_v else f"Server Banner Information Disclosure ({server_hdr})",
+            "evidence": f"HTTP 'Server' response header discloses: '{server_hdr}'. Revealing exact software versions facilitates automated exploit indexing and targeted CVE attacks (CWE-200).",
+            "remediation": "Suppress server version tokens: In Apache, set 'ServerTokens Prod' and 'ServerSignature Off'. In Nginx, set 'server_tokens off;'."
         })
+
+    for id_item in header_res.get("info_disclosure", []):
+        if id_item["key"] != "Server":
+            findings.append({
+                "severity": "Medium" if id_item.get("has_version") else "Low",
+                "title": f"Application Framework Disclosure ({id_item['key']}: {id_item['value']})",
+                "evidence": f"Response header '{id_item['key']}' reveals underlying framework/runtime: '{id_item['value']}'.",
+                "remediation": f"Disable or suppress '{id_item['key']}' in application server or reverse proxy configuration."
+            })
 
     missing_perm_policy = any(h["name"] == "Permissions-Policy" and h["status"] == "missing" for h in header_res.get("headers", []))
     if missing_perm_policy:

@@ -537,9 +537,23 @@ function renderHeaderResults(data){
   const idBox = document.getElementById('info-disclosure-box');
   if(data.info_disclosure && data.info_disclosure.length > 0){
     idBox.style.display = 'block';
-    document.getElementById('info-rows').innerHTML = data.info_disclosure.map(i =>
-      `<div class="info-row"><span class="info-key">${i.key}</span><span class="info-val">${i.value}</span></div>`
-    ).join('');
+    document.getElementById('info-rows').innerHTML = data.info_disclosure.map(i => {
+      const isVer = i.has_version || (i.badge && i.badge.includes('VERSION'));
+      const badgeColor = isVer ? '#ff4444' : '#ffaa00';
+      const badgeBg = isVer ? 'rgba(255,68,68,0.15)' : 'rgba(255,170,0,0.15)';
+      const badgeLabel = i.badge || (isVer ? 'EXACT VERSION EXPOSED' : 'BANNER EXPOSED');
+      return `
+        <div class="info-row" style="display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid rgba(255,170,0,0.15)">
+          <div>
+            <span class="info-key" style="color:#ffaa00; font-weight:700">${i.key}:</span>
+            <span class="info-val" style="color:#f1f5f9; font-family:monospace; margin-left:8px">${i.value}</span>
+          </div>
+          <span style="font-size:10px; font-weight:700; color:${badgeColor}; background:${badgeBg}; border:1px solid ${badgeColor}40; padding:2px 8px; border-radius:4px">
+            ⚠ ${badgeLabel}
+          </span>
+        </div>
+      `;
+    }).join('');
   } else {
     idBox.style.display = 'none';
   }
