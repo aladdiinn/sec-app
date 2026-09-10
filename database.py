@@ -1152,13 +1152,16 @@ def format_time_ago(dt):
 
 # ================= NEW DATABASE FUNCTIONS =================
 
-def get_incidents(status=None, severity=None, limit=100):
+def get_incidents(status=None, severity=None, limit=100, project_id=None):
     conn = get_db_connection()
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            query = "SELECT i.*, COALESCE(s.hostname, 'ip-172-31-4-83') as hostname FROM incidents i LEFT JOIN servers s ON i.server_id = s.id WHERE 1=1"
+            query = "SELECT i.*, COALESCE(s.hostname, s.name) as hostname FROM incidents i LEFT JOIN servers s ON i.server_id = s.id WHERE 1=1"
             params = []
+            if project_id:
+                query += " AND s.project_id = %s"
+                params.append(project_id)
             if status:
                 query += " AND i.status = %s"
                 params.append(status)
@@ -1471,9 +1474,12 @@ def get_projects():
                 ]
                 for name, desc, icon in default_projects:
                     try:
-                        cur.execute("INSERT INTO projects (name, description) VALUES (%s, %s);", (name, desc))
+                        cur.execute("INSERT INTO projects (name, description) SELECT %s, %s WHERE NOT EXISTS (SELECT 1 FROM projects WHERE name = %s);", (name, desc, name))
                     except Exception:
                         pass
+                if hasattr(conn, 'commit'):
+                    try: conn.commit()
+                    except Exception: pass
                 cur.execute("""
                     SELECT p.id, p.name, p.description, p.created_at,
                            COUNT(DISTINCT s.id) as server_count,
@@ -1489,7 +1495,7 @@ def get_projects():
                 projects = cur.fetchall()
                 try:
                     cur.execute("UPDATE servers SET project_id = 1 WHERE project_id IS NULL;")
-                    conn.commit()
+                    if hasattr(conn, 'commit'): conn.commit()
                 except Exception:
                     pass
 
@@ -1505,6 +1511,8 @@ def get_projects():
                 p["warning_count"] = p.get("warning_count", 0)
                 p["total_alerts"] = p.get("total_alerts", 0)
                 p["last_activity"] = "Active"
+                if p.get("created_at") is not None:
+                    p["created_at"] = str(p["created_at"])
             return projects
     except Exception as e:
         logger.error(f"Error in get_projects: {e}")

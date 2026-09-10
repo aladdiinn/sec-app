@@ -780,20 +780,20 @@ async def alerts_page(request: Request):
     alerts = db.get_alerts()
     return render_template(request, "alerts.html", {"alerts": alerts, "ALERT": "ALERT"})
 
+@app.get("/projects/select", response_class=HTMLResponse)
+async def view_projects_select(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    projects = db.get_projects()
+    return render_template(request, "project_select.html", {"projects": projects})
+
 @app.get("/projects", response_class=HTMLResponse)
 async def projects_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    conn = db.get_db_connection()
-    projects = []
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM projects ORDER BY id DESC;")
-                projects = cur.fetchall()
-        finally:
-            conn.close()
+    projects = db.get_projects()
     return render_template(request, "projects.html", {"projects": projects})
 
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
@@ -801,7 +801,8 @@ async def project_detail_page(request: Request, project_id: int):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    return render_template(request, "projects.html")
+    request.session["project_id"] = project_id
+    return RedirectResponse(url=f"/dashboard?project_id={project_id}", status_code=302)
 
 @app.get("/approvals", response_class=HTMLResponse)
 async def approvals_page(request: Request):
@@ -1277,10 +1278,7 @@ async def api_get_notifications():
     alerts = db.get_alerts()
     return {"notifications": alerts, "unseen_count": len(alerts)}
 
-@app.get("/projects/select")
-async def view_projects_select(request: Request):
-    projects = db.get_projects()
-    return render_template(request, "project_select.html", {"projects": projects})
+
 
 @app.post("/api/projects/select/{project_id}")
 async def api_select_project(project_id: int, request: Request):
@@ -2020,8 +2018,9 @@ async def api_get_audit_logs():
 
 # Incidents
 @app.get("/api/incidents")
-async def api_get_incidents(status: str = None, severity: str = None):
-    return db.get_incidents(status, severity)
+async def api_get_incidents(request: Request, status: str = None, severity: str = None):
+    pid = request.query_params.get("project_id") or request.session.get("project_id")
+    return db.get_incidents(status=status, severity=severity, project_id=pid)
 
 @app.post("/api/incidents")
 async def api_create_incident(request: Request):
