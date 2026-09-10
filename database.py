@@ -629,16 +629,11 @@ def save_agent_data(server_id: int, data: dict):
                     first_srv = cur.fetchone()
                     if first_srv:
                         valid_server_id = first_srv["id"] if isinstance(first_srv, dict) else first_srv[0]
-                    else:
-                        cur.execute("""
-                            INSERT INTO servers (name, hostname, ip, ip_address, status, severity, is_maintenance, registered_at, last_seen)
-                            VALUES ('ip-172-31-4-83', 'ip-172-31-4-83', '172.31.4.83', '172.31.4.83', 'online', 'info', FALSE, NOW(), NOW())
-                            RETURNING id;
-                        """)
-                        created = cur.fetchone()
-                        valid_server_id = created["id"] if isinstance(created, dict) else created[0]
                 except Exception:
-                    valid_server_id = 1
+                    pass
+
+            if not valid_server_id:
+                return True
 
             server_id = valid_server_id
 
@@ -940,7 +935,7 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = ""):
             try:
                 cur.execute("""
                     INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', NOW(), NOW());
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW());
                 """, (name, name, ip, ip, "Linux (Ubuntu)", token, token))
             except Exception as e:
                 logger.error(f"Error inserting server: {e}")
@@ -964,14 +959,50 @@ def delete_server(server_id: int):
     if not conn:
         return False
     try:
+        if hasattr(conn, 'autocommit'):
+            conn.autocommit = True
         with conn.cursor() as cur:
-            # Cascade delete all related records first
-            for table in ["commands", "alerts", "login_history", "tracking_logs"]:
+            # Fetch hostname and ip before deleting to clean up approvals
+            hname = None
+            ip_addr = None
+            try:
+                cur.execute("SELECT hostname, name, ip, ip_address FROM servers WHERE id = %s;", (server_id,))
+                srv = cur.fetchone()
+                if srv:
+                    hname = srv.get("hostname") or srv.get("name") if isinstance(srv, dict) else (srv[0] if srv else None)
+                    ip_addr = srv.get("ip") or srv.get("ip_address") if isinstance(srv, dict) else (srv[2] if srv and len(srv)>2 else None)
+            except Exception:
+                pass
+
+            # Cascade delete all related records across all tables referencing server_id
+            tables = [
+                "events", "alerts", "project_endpoints", "commands", "login_history",
+                "tracking_logs", "incidents", "managed_services", "fim_baselines",
+                "fim_logs", "open_ports", "processes", "installed_packages",
+                "system_users", "user_sessions", "network_connections"
+            ]
+            for table in tables:
                 try:
+                    cur.execute(f"SAVEPOINT sp_{table};")
                     cur.execute(f"DELETE FROM {table} WHERE server_id = %s;", (server_id,))
+                    cur.execute(f"RELEASE SAVEPOINT sp_{table};")
+                except Exception as ex_t:
+                    try: cur.execute(f"ROLLBACK TO SAVEPOINT sp_{table};")
+                    except Exception: pass
+
+            if hname or ip_addr:
+                try:
+                    cur.execute("SAVEPOINT sp_appr;")
+                    cur.execute("DELETE FROM approvals WHERE hostname = %s OR ip_address = %s;", (hname, ip_addr))
+                    cur.execute("RELEASE SAVEPOINT sp_appr;")
                 except Exception:
-                    pass
+                    try: cur.execute("ROLLBACK TO SAVEPOINT sp_appr;")
+                    except Exception: pass
+
             cur.execute("DELETE FROM servers WHERE id = %s;", (server_id,))
+            if hasattr(conn, 'commit'):
+                try: conn.commit()
+                except Exception: pass
         return True
     except Exception as e:
         logger.error(f"Error in delete_server: {e}")
@@ -1226,8 +1257,10 @@ def delete_incident(incident_id):
     conn = get_db_connection()
     if not conn: return False
     try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM incidents WHERE id = %s;", (incident_id,))
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM incidents WHERE id = %s;", (incident_id,))
+                if hasattr(conn, 'commit'): conn.commit()
             return True
     except Exception as e:
         logger.error(f"Error in delete_incident: {e}")
@@ -1313,8 +1346,10 @@ def delete_detection_rule(rule_id):
     conn = get_db_connection()
     if not conn: return False
     try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM detection_rules WHERE id = %s;", (rule_id,))
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM detection_rules WHERE id = %s;", (rule_id,))
+                if hasattr(conn, 'commit'): conn.commit()
             return True
     except Exception as e:
         logger.error(f"Error in delete_detection_rule: {e}")
@@ -1355,8 +1390,10 @@ def delete_threat_intel(ioc_id):
     conn = get_db_connection()
     if not conn: return False
     try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM threat_intel WHERE id = %s;", (ioc_id,))
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM threat_intel WHERE id = %s;", (ioc_id,))
+                if hasattr(conn, 'commit'): conn.commit()
             return True
     except Exception as e:
         logger.error(f"Error in delete_threat_intel: {e}")
@@ -1744,7 +1781,7 @@ def get_dashboard_counts(project_id=None):
                 cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE is_maintenance = TRUE OR status = 'maintenance' OR status = 'isolated';")
                 maint_servers = (cur.fetchone() or {}).get("cnt", 0)
 
-                cur.execute("SELECT COUNT(*) as cnt FROM alerts WHERE severity = 'critical' AND (is_resolved IS FALSE OR is_resolved = 0);")
+                cur.execute("SELECT COUNT(*) as cnt FROM alerts WHERE severity = 'critical' AND (is_resolved IS NOT TRUE);")
                 crit_alerts = (cur.fetchone() or {}).get("cnt", 0)
 
                 cur.execute("SELECT COUNT(*) as cnt FROM alerts;")
@@ -2273,6 +2310,43 @@ def update_server(server_id: int, **kwargs):
             return True
     except Exception as e:
         logger.error(f"Error in update_server: {e}")
+        return False
+    finally:
+        conn.close()
+
+def delete_project(project_id: int):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        if hasattr(conn, 'autocommit'):
+            conn.autocommit = True
+        with conn.cursor() as cur:
+            # Unassign all servers from this project
+            try:
+                cur.execute("UPDATE servers SET project_id = NULL WHERE project_id = %s;", (project_id,))
+            except Exception:
+                pass
+
+            # Cascade clean up all project child tables
+            tables = ["project_endpoints", "project_dashboard", "project_alerts", "project_logs"]
+            for table in tables:
+                try:
+                    cur.execute(f"SAVEPOINT sp_{table};")
+                    cur.execute(f"DELETE FROM {table} WHERE project_id = %s;", (project_id,))
+                    cur.execute(f"RELEASE SAVEPOINT sp_{table};")
+                except Exception:
+                    try:
+                        cur.execute(f"DELETE FROM {table} WHERE project_id = %s;", (project_id,))
+                    except Exception:
+                        pass
+
+            cur.execute("DELETE FROM projects WHERE id = %s;", (project_id,))
+            if hasattr(conn, 'commit'):
+                try: conn.commit()
+                except Exception: pass
+        return True
+    except Exception as e:
+        logger.error(f"Error in delete_project: {e}")
         return False
     finally:
         conn.close()

@@ -1301,47 +1301,101 @@ async def api_exit_project(request: Request):
 
 @app.get("/api/projects")
 async def api_get_projects():
-    conn = db.get_db_connection()
-    projects = []
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM projects ORDER BY id DESC;")
-                projects = cur.fetchall()
-        finally:
-            conn.close()
-    return projects
+    return db.get_projects()
 
 @app.post("/api/projects")
 async def api_create_project(request: Request):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
     name = body.get("name", "New Project")
     desc = body.get("description", "")
+    server_ids = body.get("server_ids", [])
+    
     conn = db.get_db_connection()
     if conn:
         try:
-            with conn.cursor() as cur:
-                cur.execute("INSERT INTO projects (name, description) VALUES (%s, %s) RETURNING id;", (name, desc))
-                pid = cur.fetchone()["id"]
-                return {"ok": True, "id": pid}
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("INSERT INTO projects (name, description) VALUES (%s, %s) RETURNING id;", (name, desc))
+                    row = cur.fetchone()
+                    pid = row["id"] if isinstance(row, dict) else row[0]
+                    if server_ids and isinstance(server_ids, list):
+                        for sid in server_ids:
+                            try:
+                                cur.execute("UPDATE servers SET project_id = %s WHERE id = %s;", (pid, int(sid)))
+                            except Exception:
+                                pass
+                    if hasattr(conn, 'commit'):
+                        conn.commit()
+                    return {"ok": True, "id": pid, "message": "Project created"}
         finally:
             conn.close()
     return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to create project"})
 
+@app.get("/api/projects/{project_id}/assets")
+async def api_get_project_assets(project_id: int):
+    all_servers = db.get_servers()
+    for s in all_servers:
+        s["assigned"] = (s.get("project_id") == project_id)
+    return {"servers": all_servers}
+
+@app.post("/api/projects/{project_id}/assets")
+@app.post("/api/projects/{project_id}/assign-servers")
+async def api_assign_project_assets(project_id: int, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    server_ids = body.get("server_ids", [])
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    # Unassign servers previously assigned to this project
+                    cur.execute("UPDATE servers SET project_id = NULL WHERE project_id = %s;", (project_id,))
+                    # Assign selected server_ids to this project
+                    if server_ids and isinstance(server_ids, list):
+                        for sid in server_ids:
+                            try:
+                                cur.execute("UPDATE servers SET project_id = %s WHERE id = %s;", (project_id, int(sid)))
+                            except Exception:
+                                pass
+                    if hasattr(conn, 'commit'):
+                        conn.commit()
+                    return {"ok": True, "message": "Project assets updated"}
+        finally:
+            conn.close()
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to assign assets"})
+
 @app.put("/api/projects/{project_id}")
 async def api_update_project(project_id: int, request: Request):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
     name = body.get("name")
     desc = body.get("description")
     conn = db.get_db_connection()
     if conn:
         try:
-            with conn.cursor() as cur:
-                cur.execute("UPDATE projects SET name = %s, description = %s WHERE id = %s;", (name, desc, project_id))
-                return {"ok": True, "message": "Project updated"}
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE projects SET name = %s, description = %s WHERE id = %s;", (name, desc, project_id))
+                    if hasattr(conn, 'commit'):
+                        conn.commit()
+                    return {"ok": True, "message": "Project updated"}
         finally:
             conn.close()
     return JSONResponse(status_code=400, content={"ok": False, "message": "Update failed"})
+
+@app.delete("/api/projects/{project_id}")
+async def api_delete_project(project_id: int):
+    if db.delete_project(project_id):
+        return {"ok": True, "message": "Project deleted"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
 
 @app.post("/api/users/add")
 async def api_add_user(request: Request):

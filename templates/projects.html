@@ -5,68 +5,198 @@
 
 {% block content %}
 <div class="fade-in">
-    <div style="display:flex; justify-content:space-between; margin-bottom:20px">
-        <h2 class="card-title">Projects / Workspaces</h2>
-        <button class="btn btn-primary" onclick="openCreateModal()">New Project</button>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px">
+        <div>
+            <h2 class="card-title" style="font-size:20px; font-family:var(--orbitron,monospace); letter-spacing:2px">PROJECTS / WORKSPACES</h2>
+            <p class="text-sub" style="margin-top:4px">Assign assets to projects for focused SOC view mode monitoring</p>
+        </div>
+        <button class="btn btn-primary" onclick="openCreateModal()" style="display:flex; align-items:center; gap:8px">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            New Project
+        </button>
     </div>
 
-    <div id="projects-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:20px">
+    <div id="projects-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:20px">
         <!-- Projects loaded here -->
     </div>
 </div>
 
-<!-- Create Modal -->
-<div id="create-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:30px; z-index:100; border-radius:8px; width:400px; box-shadow:0 10px 40px rgba(0,0,0,0.5)">
-    <h3 class="card-title" style="margin-bottom:16px">Create Project</h3>
+<!-- ── CREATE PROJECT MODAL ── -->
+<div id="create-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:520px; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--border)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
+        <h3 class="card-title" style="font-size:18px; font-family:var(--orbitron,monospace); color:var(--cyan); letter-spacing:2px">CREATE NEW PROJECT</h3>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeCreateModal()">✕</button>
+    </div>
+    
     <form id="create-form" onsubmit="submitForm(event)">
-        <div style="margin-bottom:12px">
-            <label class="text-meta">Project Name</label>
-            <input id="name" type="text" class="glass" style="width:100%; padding:8px" required>
+        <div style="margin-bottom:16px">
+            <label class="stat-label" style="display:block; margin-bottom:6px">PROJECT NAME</label>
+            <input id="name" type="text" class="glass" placeholder="e.g. APDCL MDM Infrastructure" style="width:100%; padding:10px 14px; border-radius:4px; color:var(--text); outline:none" required>
         </div>
+
         <div style="margin-bottom:20px">
-            <label class="text-meta">Description</label>
-            <textarea id="description" class="glass" style="width:100%; padding:8px; height:80px"></textarea>
+            <label class="stat-label" style="display:block; margin-bottom:6px">DESCRIPTION</label>
+            <textarea id="description" class="glass" placeholder="Brief explanation of project scope..." style="width:100%; padding:10px 14px; height:70px; border-radius:4px; color:var(--text); outline:none; resize:none"></textarea>
         </div>
-        <div style="display:flex; justify-content:flex-end; gap:10px">
+
+        <!-- Asset Selection Section -->
+        <div style="margin-bottom:24px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                <label class="stat-label" style="color:var(--cyan)">ASSIGN INITIAL ASSETS (OPTIONAL)</label>
+                <div style="font-size:10px; display:flex; gap:10px">
+                    <a href="javascript:void(0)" onclick="selectAllCreateAssets(true)" style="color:var(--cyan); text-decoration:none">Select All</a>
+                    <a href="javascript:void(0)" onclick="selectAllCreateAssets(false)" style="color:var(--text-sub); text-decoration:none">Clear</a>
+                </div>
+            </div>
+            <div id="create-assets-list" style="max-height:160px; overflow-y:auto; background:rgba(8,12,24,0.7); border:1px solid var(--border); border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px">
+                <div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">Loading available assets...</div>
+            </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:12px">
             <button type="button" class="btn btn-glass" onclick="closeCreateModal()">Cancel</button>
-            <button type="submit" class="btn btn-primary" id="btn-submit">Create</button>
+            <button type="submit" class="btn btn-primary" id="btn-submit">Create Project</button>
         </div>
     </form>
+</div>
+
+<!-- ── MANAGE / ADD ASSETS MODAL FOR EXISTING PROJECT ── -->
+<div id="manage-assets-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:540px; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--cyan)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <div>
+            <h3 class="card-title" style="font-size:16px; font-family:var(--orbitron,monospace); color:var(--cyan); letter-spacing:2px" id="manage-modal-title">MANAGE PROJECT ASSETS</h3>
+            <p class="text-sub" style="font-size:11px; margin-top:2px" id="manage-modal-sub">Check assets to include in this project</p>
+        </div>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeManageAssetsModal()">✕</button>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+        <input type="text" id="manage-asset-search" class="glass" placeholder="Search servers by name/IP..." oninput="filterManageAssets()" style="padding:8px 12px; font-size:11px; width:240px; border-radius:4px; color:var(--text)">
+        <div style="font-size:10px; display:flex; gap:10px">
+            <a href="javascript:void(0)" onclick="selectAllManageAssets(true)" style="color:var(--cyan); text-decoration:none">Select All</a>
+            <a href="javascript:void(0)" onclick="selectAllManageAssets(false)" style="color:var(--text-sub); text-decoration:none">Clear All</a>
+        </div>
+    </div>
+
+    <div id="manage-assets-list" style="max-height:220px; overflow-y:auto; background:rgba(8,12,24,0.8); border:1px solid var(--border); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px; margin-bottom:24px">
+        <!-- Loaded by JS -->
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center">
+        <span class="text-meta" id="manage-selected-count">0 assets selected</span>
+        <div style="display:flex; gap:10px">
+            <button class="btn btn-glass" onclick="closeManageAssetsModal()">Cancel</button>
+            <button class="btn btn-primary" id="btn-save-assets" onclick="saveProjectAssets()">Save Asset Assignments</button>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
+let currentProjects = [];
+let allAvailableServers = [];
+let activeManagingProjectId = None;
+
 async function loadData() {
     try {
-        const data = await apiFetch('/api/projects');
-        const grid = document.getElementById('projects-grid');
-        if (data.length === 0) {
-            grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:40px">No projects found.</div>';
-        } else {
-            grid.innerHTML = data.map(p => `
-                <div class="card glass fade-in" id="proj-${p.id}" style="position:relative; cursor:pointer" onclick="window.location.href='/projects/${p.id}'">
-                    <button onclick="event.stopPropagation(); deleteProject(${p.id}, this)"
-                        style="position:absolute; top:12px; right:12px; background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:5px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono);">
-                        DEL
-                    </button>
-                    <h3 class="card-title" style="margin-bottom:8px">${p.name}</h3>
-                    <p class="text-meta" style="margin-bottom:16px; height:40px; overflow:hidden">${p.description || 'No description'}</p>
-                    <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:12px">
-                        <span class="text-meta">Servers Assigned</span>
-                        <span class="badge badge-info">${p.server_count || 0}</span>
-                    </div>
-                </div>
-            `).join('');
-        }
+        currentProjects = await apiFetch('/api/projects');
+        renderProjects();
     } catch (err) {
         showToast('Failed to load projects', 'error');
     }
 }
 
-function openCreateModal() {
+function renderProjects() {
+    const grid = document.getElementById('projects-grid');
+    if (!currentProjects || currentProjects.length === 0) {
+        grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:50px">No projects found. Click "New Project" to create one.</div>';
+        return;
+    }
+
+    grid.innerHTML = currentProjects.map(p => {
+        const id = p.id;
+        const name = String(p.name || 'Unnamed Project').replace(/'/g, "\\'");
+        const desc = p.description || 'No description provided';
+        const serverCount = p.server_count || 0;
+        const critCount = p.critical_count || 0;
+
+        return `
+        <div class="card glass glass-hover fade-in" id="proj-${id}" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:20px">
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
+                    <h3 class="card-title" style="font-size:16px; font-family:var(--orbitron,monospace); color:var(--cyan); letter-spacing:1px">${p.name}</h3>
+                    <button onclick="event.stopPropagation(); deleteProject(${id}, '${name}', this)"
+                        title="Delete project"
+                        style="background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono);">
+                        DEL
+                    </button>
+                </div>
+                <p class="text-meta" style="margin-bottom:18px; line-height:1.5; height:36px; overflow:hidden">${desc}</p>
+            </div>
+
+            <div>
+                <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:12px; margin-bottom:16px">
+                    <span class="text-meta">SERVERS ASSIGNED</span>
+                    <span class="badge ${serverCount > 0 ? 'badge-info' : 'badge-secondary'}">${serverCount} assets</span>
+                </div>
+
+                <div style="display:flex; gap:8px">
+                    <button class="btn btn-glass" style="flex:1; font-size:10px; padding:8px; border-color:var(--cyan); color:var(--cyan)" onclick="openManageAssetsModal(${id}, '${name}')">
+                        ⚙ MANAGE ASSETS
+                    </button>
+                    <button class="btn btn-primary" style="font-size:10px; padding:8px 12px" onclick="enterProjectView(${id})">
+                        ENTER ›
+                    </button>
+                </div>
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+/* ── Enter project mode ───────────────────────────────────── */
+async function enterProjectView(projectId) {
+    try {
+        const res = await apiFetch(`/api/projects/select/${projectId}`, { method: 'POST' });
+        if (res.ok) window.location.href = res.redirect || '/dashboard';
+    } catch(e) {
+        window.location.href = `/dashboard?project_id=${projectId}`;
+    }
+}
+
+/* ── Create project with asset checkboxes ────────────────── */
+async function openCreateModal() {
     document.getElementById('create-form').reset();
     document.getElementById('create-modal').style.display = 'block';
+    
+    const listEl = document.getElementById('create-assets-list');
+    listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">Loading assets...</div>';
+
+    try {
+        let servers = await apiFetch('/api/servers');
+        if (!Array.isArray(servers)) servers = servers.servers || [];
+        allAvailableServers = servers;
+
+        if (servers.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:10px; color:var(--text-sub); font-size:11px">No assets registered yet</div>';
+            return;
+        }
+
+        listEl.innerHTML = servers.map(s => `
+            <label style="display:flex; align-items:center; gap:10px; font-size:12px; cursor:pointer; padding:4px 6px; border-radius:3px" class="glass-hover">
+                <input type="checkbox" class="create-asset-chk" value="${s.id}" style="accent-color:var(--cyan)">
+                <span style="font-family:var(--mono); color:var(--text)">${s.hostname || s.name}</span>
+                <span style="font-size:10px; color:var(--text-sub)">(${s.ip_address || s.ip})</span>
+            </label>
+        `).join('');
+    } catch(e) {
+        listEl.innerHTML = '<div style="text-align:center; padding:10px; color:var(--red); font-size:11px">Failed to load assets</div>';
+    }
+}
+
+function selectAllCreateAssets(check) {
+    document.querySelectorAll('.create-asset-chk').forEach(c => c.checked = check);
 }
 
 function closeCreateModal() {
@@ -77,26 +207,123 @@ async function submitForm(e) {
     e.preventDefault();
     const btn = document.getElementById('btn-submit');
     btn.disabled = true;
-    btn.innerText = 'Loading...';
+    btn.innerText = 'Creating...';
+
+    const selectedIds = Array.from(document.querySelectorAll('.create-asset-chk:checked')).map(c => parseInt(c.value));
+
     try {
         const payload = {
             name: document.getElementById('name').value,
-            description: document.getElementById('description').value
+            description: document.getElementById('description').value,
+            server_ids: selectedIds
         };
         await apiFetch('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
-        showToast('Project created', 'success');
+        showToast('Project created successfully', 'success');
         closeCreateModal();
         loadData();
     } catch (err) {
-        showToast(err.message || 'Failed to create', 'error');
+        showToast(err.message || 'Failed to create project', 'error');
     } finally {
         btn.disabled = false;
-        btn.innerText = 'Create';
+        btn.innerText = 'Create Project';
     }
 }
 
-async function deleteProject(id, btn) {
-    if (!confirm('Are you sure you want to delete this project?')) return;
+/* ── Manage assets for existing project ───────────────────── */
+async function openManageAssetsModal(projectId, projectName) {
+    activeManagingProjectId = projectId;
+    document.getElementById('manage-modal-title').textContent = `MANAGE ASSETS: ${projectName.toUpperCase()}`;
+    document.getElementById('manage-assets-modal').style.display = 'block';
+    
+    const listEl = document.getElementById('manage-assets-list');
+    listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">Loading assets...</div>';
+
+    try {
+        const res = await apiFetch(`/api/projects/${projectId}/assets`);
+        const servers = res.servers || [];
+        allAvailableServers = servers;
+        renderManageAssetList(servers);
+    } catch (e) {
+        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--red); font-size:11px">Failed to load project assets</div>';
+    }
+}
+
+function renderManageAssetList(servers) {
+    const listEl = document.getElementById('manage-assets-list');
+    if (servers.length === 0) {
+        listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">No assets registered in SOC platform</div>';
+        updateSelectedCount();
+        return;
+    }
+
+    listEl.innerHTML = servers.map(s => {
+        const isChecked = s.assigned ? 'checked' : '';
+        return `
+        <label style="display:flex; align-items:center; justify-content:space-between; font-size:12px; cursor:pointer; padding:6px 10px; border-radius:4px; background:rgba(255,255,255,0.02)" class="glass-hover">
+            <div style="display:flex; align-items:center; gap:10px">
+                <input type="checkbox" class="manage-asset-chk" value="${s.id}" ${isChecked} onchange="updateSelectedCount()" style="accent-color:var(--cyan); width:15px; height:15px">
+                <span style="font-family:var(--mono); color:var(--text); font-weight:600">${s.hostname || s.name}</span>
+                <span style="font-size:11px; color:var(--text-sub)">(${s.ip_address || s.ip})</span>
+            </div>
+            <span class="badge ${s.assigned ? 'badge-success' : 'badge-secondary'}" style="font-size:9px">
+                ${s.assigned ? 'ASSIGNED' : 'UNASSIGNED'}
+            </span>
+        </label>
+        `;
+    }).join('');
+    updateSelectedCount();
+}
+
+function filterManageAssets() {
+    const q = document.getElementById('manage-asset-search').value.toLowerCase().trim();
+    const filtered = allAvailableServers.filter(s => 
+        (s.hostname || s.name || '').toLowerCase().includes(q) ||
+        (s.ip_address || s.ip || '').toLowerCase().includes(q)
+    );
+    renderManageAssetList(filtered);
+}
+
+function updateSelectedCount() {
+    const count = document.querySelectorAll('.manage-asset-chk:checked').length;
+    document.getElementById('manage-selected-count').textContent = `${count} asset${count !== 1 ? 's' : ''} selected`;
+}
+
+function selectAllManageAssets(check) {
+    document.querySelectorAll('.manage-asset-chk').forEach(c => c.checked = check);
+    updateSelectedCount();
+}
+
+function closeManageAssetsModal() {
+    document.getElementById('manage-assets-modal').style.display = 'none';
+    activeManagingProjectId = null;
+}
+
+async function saveProjectAssets() {
+    if (!activeManagingProjectId) return;
+    const btn = document.getElementById('btn-save-assets');
+    btn.disabled = true;
+    btn.innerText = 'Saving...';
+
+    const selectedIds = Array.from(document.querySelectorAll('.manage-asset-chk:checked')).map(c => parseInt(c.value));
+
+    try {
+        await apiFetch(`/api/projects/${activeManagingProjectId}/assets`, {
+            method: 'POST',
+            body: JSON.stringify({ server_ids: selectedIds })
+        });
+        showToast('Project assets updated successfully', 'success');
+        closeManageAssetsModal();
+        loadData();
+    } catch(e) {
+        showToast('Failed to update project assets', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Save Asset Assignments';
+    }
+}
+
+async function deleteProject(id, name, btn) {
+    if (!confirm(`Are you sure you want to delete project '${name}'?`)) return;
     btn.disabled = true;
     btn.innerText = '...';
     try {
