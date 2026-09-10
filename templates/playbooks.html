@@ -60,15 +60,15 @@
         <button type="button" onclick="closeRunModal()" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:18px; padding:4px 8px">✕</button>
     </div>
 
-    <!-- Direct Target Alert ID & Summary -->
+    <!-- Direct Target Incident / Alert ID & Summary -->
     <div style="margin-bottom:14px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:12px">
         <label class="text-meta" style="font-weight:600; color:var(--accent-cyan); display:flex; justify-content:space-between; margin-bottom:6px">
-            <span>Target Alert ID</span>
-            <span id="selected-alert-summary" style="font-weight:normal; color:var(--text-muted); font-size:11px">Type #101 or pick from list</span>
+            <span>Target Incident / Alert ID</span>
+            <span id="selected-alert-summary" style="font-weight:normal; color:var(--text-muted); font-size:11px">Type #INC-650 or select from list</span>
         </label>
         <div style="display:flex; align-items:center; gap:8px">
             <span style="font-family:monospace; color:var(--accent-cyan); font-weight:700; font-size:15px">#</span>
-            <input id="target-alert-id" type="text" class="glass" placeholder="e.g. 101, #alert101..." value="101" 
+            <input id="target-alert-id" type="text" class="glass" placeholder="e.g. #INC-650, INC-650, 650..." value="INC-650" 
                    style="flex:1; padding:8px 12px; font-family:monospace; font-size:14px; font-weight:700; color:#00e5ff; background:rgba(0,0,0,0.4); border:1px solid rgba(0,229,255,0.4); border-radius:6px"
                    oninput="onAlertIdManualChange(this.value)">
         </div>
@@ -76,9 +76,9 @@
 
     <!-- Alert Search / Filter Bar -->
     <div style="margin-bottom:12px">
-        <label class="text-meta" style="margin-bottom:6px; display:block">Search / Filter Alerts</label>
+        <label class="text-meta" style="margin-bottom:6px; display:block">Search / Filter Incidents & Alerts</label>
         <div style="position:relative">
-            <input id="alert-search-input" type="text" class="glass" placeholder="Search by #ID (e.g. #alert101, 101), title, host, keyword..." 
+            <input id="alert-search-input" type="text" class="glass" placeholder="Search by #INC ID (e.g. #INC-650, INC-650, 650), title, host, keyword..." 
                    style="width:100%; padding:8px 12px 8px 34px; border-radius:6px"
                    oninput="filterAlertsList(this.value)">
             <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted)">
@@ -90,7 +90,7 @@
     <!-- Alerts Picker Scrollable List -->
     <div style="margin-bottom:20px">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
-            <span class="text-meta" style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px">Select Alert to Execute Against</span>
+            <span class="text-meta" style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px">Select Incident / Alert to Execute Against</span>
             <span id="alerts-count-badge" style="font-size:11px; color:var(--text-muted)">Loading...</span>
         </div>
         <div id="alerts-list-container" style="max-height:200px; overflow-y:auto; border:1px solid rgba(255,255,255,0.08); border-radius:8px; background:rgba(0,0,0,0.25); padding:4px">
@@ -230,22 +230,42 @@ async function openRunModal(id, name) {
     if (sub) sub.innerText = `Executing: ${name}`;
     
     document.getElementById('alert-search-input').value = '';
-    document.getElementById('alerts-list-container').innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-muted)">Loading active alerts...</div>';
+    document.getElementById('alerts-list-container').innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-muted)">Loading active incidents...</div>';
     document.getElementById('alerts-count-badge').innerText = 'Loading...';
     document.getElementById('run-modal').style.display = 'block';
 
     try {
         const res = await apiFetch('/api/alerts?limit=200');
         let fetched = Array.isArray(res) ? res : (res && res.items ? res.items : []);
+
+        // Also fetch /api/incidents so incidents created in incidents page are present
+        try {
+            const incRes = await apiFetch('/api/incidents?limit=200');
+            const incItems = Array.isArray(incRes) ? incRes : (incRes && incRes.items ? incRes.items : []);
+            if (incItems.length > 0) {
+                const existingIds = new Set(fetched.map(a => String(a.id)));
+                for (const inc of incItems) {
+                    if (!existingIds.has(String(inc.id))) {
+                        fetched.unshift({
+                            id: inc.id,
+                            title: inc.title,
+                            severity: inc.severity || 'warning',
+                            hostname: inc.hostname || 'ec2-server',
+                            created_at_ago: 'Recent'
+                        });
+                    }
+                }
+            }
+        } catch(e) {}
         
-        // Seed default alerts if DB has none or very few
+        // Seed default alerts/incidents if DB has none or very few
         if (!fetched || fetched.length === 0) {
             fetched = [
-                { id: 101, title: 'Threat Intel C2 Beacon Detected (malware-cnc-c2.top)', severity: 'critical', hostname: 'ip-172-31-4-83', created_at_ago: 'Just now' },
-                { id: 102, title: 'SSH Brute Force Attack - Repeated Failed Logins', severity: 'warning', hostname: 'ip-172-31-4-83', created_at_ago: '5m ago' },
-                { id: 103, title: 'Privilege Escalation - Sudoers File Modified', severity: 'critical', hostname: 'ip-172-31-4-83', created_at_ago: '12m ago' },
-                { id: 104, title: 'Netcat Reverse Shell Payload Injected', severity: 'critical', hostname: 'ip-172-31-4-83', created_at_ago: '25m ago' },
-                { id: 1, title: 'General Security Anomaly Simulation', severity: 'info', hostname: 'ip-172-31-4-83', created_at_ago: '1h ago' }
+                { id: 650, title: 'AUTH FAIL ALERT - SSH Brute Force Attempt', severity: 'critical', hostname: 'ip-172-31-4-83', created_at_ago: 'Just now' },
+                { id: 101, title: 'Threat Intel C2 Beacon Detected (malware-cnc-c2.top)', severity: 'critical', hostname: 'ip-172-31-4-83', created_at_ago: '5m ago' },
+                { id: 102, title: 'SSH Brute Force Attack - Repeated Failed Logins', severity: 'warning', hostname: 'ip-172-31-4-83', created_at_ago: '12m ago' },
+                { id: 103, title: 'Privilege Escalation - Sudoers File Modified', severity: 'critical', hostname: 'ip-172-31-4-83', created_at_ago: '25m ago' },
+                { id: 104, title: 'Netcat Reverse Shell Payload Injected', severity: 'critical', hostname: 'ip-172-31-4-83', created_at_ago: '40m ago' }
             ];
         }
         allAlertsList = fetched;
@@ -253,36 +273,37 @@ async function openRunModal(id, name) {
         // Render alerts list
         renderAlertsList(allAlertsList);
         
-        // Default select alert #101 if present, otherwise the first alert
-        const target = allAlertsList.find(a => String(a.id) === '101') || allAlertsList[0];
+        // Default select incident #650 or #101 if present, otherwise the first alert
+        const target = allAlertsList.find(a => String(a.id) === '650' || String(a.id) === '101') || allAlertsList[0];
         if (target) {
             selectTargetAlert(target.id);
         }
     } catch (err) {
         console.error("Failed to load alerts:", err);
         allAlertsList = [
-            { id: 101, title: 'Threat Intel C2 Beacon Detected (malware-cnc-c2.top)', severity: 'critical', hostname: 'ip-172-31-4-83', created_at_ago: 'Just now' },
-            { id: 102, title: 'SSH Brute Force Attack - Repeated Failed Logins', severity: 'warning', hostname: 'ip-172-31-4-83', created_at_ago: '5m ago' },
-            { id: 1, title: 'General Security Anomaly Simulation', severity: 'info', hostname: 'ip-172-31-4-83', created_at_ago: '1h ago' }
+            { id: 650, title: 'AUTH FAIL ALERT - SSH Brute Force Attempt', severity: 'critical', hostname: 'ip-172-31-4-83', created_at_ago: 'Just now' },
+            { id: 101, title: 'Threat Intel C2 Beacon Detected (malware-cnc-c2.top)', severity: 'critical', hostname: 'ip-172-31-4-83', created_at_ago: '5m ago' },
+            { id: 102, title: 'SSH Brute Force Attack - Repeated Failed Logins', severity: 'warning', hostname: 'ip-172-31-4-83', created_at_ago: '12m ago' }
         ];
         renderAlertsList(allAlertsList);
-        selectTargetAlert(101);
+        selectTargetAlert(650);
     }
 }
 
 function renderAlertsList(alerts) {
     const container = document.getElementById('alerts-list-container');
     const badge = document.getElementById('alerts-count-badge');
-    const currentId = document.getElementById('target-alert-id').value.replace(/[^0-9]/g, '');
+    const rawVal = document.getElementById('target-alert-id').value;
+    const currentId = rawVal.replace(/[^0-9]/g, '');
 
-    badge.innerText = `${alerts.length} alert${alerts.length === 1 ? '' : 's'}`;
+    badge.innerText = `${alerts.length} incident${alerts.length === 1 ? '' : 's'}`;
 
     if (alerts.length === 0) {
         container.innerHTML = `
             <div style="padding:24px 16px; text-align:center; color:var(--text-muted)">
-                No alerts match your filter.
+                No incidents match your filter.
                 <div style="margin-top:6px; font-size:11px; color:var(--accent-cyan)">
-                    You can still enter any alert ID (e.g. 101) directly in the Target Alert ID box.
+                    You can still enter any incident ID (e.g. #INC-650) directly in the box above.
                 </div>
             </div>`;
         return;
@@ -298,18 +319,20 @@ function renderAlertsList(alerts) {
             sevClass = 'badge-info';
         }
 
+        const incTag = `#INC-${a.id}`;
+
         return `
             <div class="alert-select-item" 
-                 onclick="selectTargetAlert(${a.id})"
+                 onclick="selectTargetAlert('${a.id}')"
                  style="display:flex; justify-content:space-between; align-items:center; padding:9px 12px; margin-bottom:4px; border-radius:6px; cursor:pointer; transition:all 0.15s ease; border: 1px solid ${isSelected ? 'var(--accent-cyan)' : 'transparent'}; background: ${isSelected ? 'rgba(0,229,255,0.12)' : 'rgba(255,255,255,0.02)'};">
                 <div style="display:flex; align-items:center; gap:10px; overflow:hidden">
                     <span style="font-family:monospace; font-weight:bold; font-size:12px; color:var(--accent-cyan); background:rgba(0,229,255,0.1); padding:2px 6px; border-radius:4px; border:1px solid rgba(0,229,255,0.2)">
-                        #${a.id}
+                        ${incTag}
                     </span>
                     <span class="badge ${sevClass}" style="font-size:9px; padding:2px 6px; text-transform:uppercase">
                         ${sev}
                     </span>
-                    <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:270px">
+                    <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:250px">
                         <span style="font-size:12px; font-weight:500; color:var(--text-primary)">
                             ${a.title || a.message || 'Security Anomaly'}
                         </span>
@@ -330,16 +353,16 @@ function renderAlertsList(alerts) {
 function selectTargetAlert(id) {
     const cleanId = String(id).replace(/[^0-9]/g, '');
     const input = document.getElementById('target-alert-id');
-    input.value = cleanId;
+    input.value = `INC-${cleanId}`;
 
     const matched = allAlertsList.find(a => String(a.id) === String(cleanId));
     const summary = document.getElementById('selected-alert-summary');
     if (summary) {
         if (matched) {
-            summary.innerText = `Selected: Alert #${cleanId} (${(matched.severity || 'warning').toUpperCase()})`;
+            summary.innerText = `Selected: Incident #INC-${cleanId} (${(matched.severity || 'warning').toUpperCase()})`;
             summary.style.color = '#00e5ff';
         } else {
-            summary.innerText = `Custom Alert #${cleanId}`;
+            summary.innerText = `Custom Incident #INC-${cleanId}`;
             summary.style.color = 'var(--text-muted)';
         }
     }
@@ -354,10 +377,10 @@ function onAlertIdManualChange(val) {
     const summary = document.getElementById('selected-alert-summary');
     if (summary) {
         if (matched) {
-            summary.innerText = `Selected: Alert #${cleanId} (${(matched.severity || 'warning').toUpperCase()})`;
+            summary.innerText = `Selected: Incident #INC-${cleanId} (${(matched.severity || 'warning').toUpperCase()})`;
             summary.style.color = '#00e5ff';
         } else {
-            summary.innerText = cleanId ? `Manual Alert #${cleanId}` : 'Enter Alert ID';
+            summary.innerText = cleanId ? `Manual Incident #INC-${cleanId}` : 'Enter Incident ID';
             summary.style.color = 'var(--text-muted)';
         }
     }
@@ -371,8 +394,16 @@ function filterList(query) {
     const digitsOnly = q.replace(/[^0-9]/g, '');
 
     return allAlertsList.filter(a => {
-        if (digitsOnly && String(a.id) === digitsOnly) return true;
-        if (digitsOnly && String(a.id).includes(digitsOnly)) return true;
+        const idStr = String(a.id);
+        const incTag = `inc-${idStr}`;
+        const incTagClean = `inc${idStr}`;
+        const hashInc = `#inc-${idStr}`;
+        const hashIncClean = `#inc${idStr}`;
+
+        if (digitsOnly && idStr === digitsOnly) return true;
+        if (digitsOnly && idStr.includes(digitsOnly)) return true;
+        if (incTag.includes(q) || incTagClean.includes(q) || hashInc.includes(q) || hashIncClean.includes(q)) return true;
+
         const title = (a.title || '').toLowerCase();
         const msg = (a.message || '').toLowerCase();
         const host = (a.hostname || '').toLowerCase();
@@ -388,14 +419,14 @@ function filterAlertsList(query) {
     if (digitsOnly) {
         const exact = allAlertsList.find(a => String(a.id) === digitsOnly);
         if (exact) {
-            document.getElementById('target-alert-id').value = digitsOnly;
+            document.getElementById('target-alert-id').value = `INC-${digitsOnly}`;
             const summary = document.getElementById('selected-alert-summary');
             if (summary) {
-                summary.innerText = `Selected: Alert #${digitsOnly} (${(exact.severity || 'warning').toUpperCase()})`;
+                summary.innerText = `Selected: Incident #INC-${digitsOnly} (${(exact.severity || 'warning').toUpperCase()})`;
                 summary.style.color = '#00e5ff';
             }
         } else {
-            document.getElementById('target-alert-id').value = digitsOnly;
+            document.getElementById('target-alert-id').value = `INC-${digitsOnly}`;
         }
     }
     renderAlertsList(filtered);
@@ -417,7 +448,7 @@ async function executePlaybook() {
             method: 'POST',
             body: JSON.stringify({ alert_id: cleanId })
         });
-        showToast(res.message || `Playbook executed successfully on Alert #${cleanId}!`, 'success');
+        showToast(res.message || `Playbook executed successfully on Incident #INC-${cleanId}!`, 'success');
         closeRunModal();
     } catch (err) {
         showToast(err.message || 'Execution failed', 'error');
