@@ -1440,20 +1440,36 @@ def get_playbooks():
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM playbooks ORDER BY id ASC;")
             pbs = cur.fetchall()
-            if not pbs:
+            if not pbs or len(pbs) < 8:
                 default_pbs = [
-                    ('Auto Host Isolation on Ransomware', 'command contains rm -rf or alert contains DESTRUCTIVE', '1. Isolate host network; 2. Terminate malicious PID; 3. Notify SOC on Slack', '[{"type":"isolate_host"},{"type":"block_ip"},{"type":"notify_slack"}]'),
-                    ('SSH Brute Force Auto-Mitigation', 'failed_count >= 5 or alert contains AUTH_FAIL', '1. Block IP on iptables; 2. Alert oncall engineer', '[{"type":"block_ip"},{"type":"notify_slack"}]'),
-                    ('Service Recovery on Crash', 'status == offline or alert contains SERVICE_STOP', '1. Ping health check; 2. Restart service unit', '[{"type":"run_health_check"},{"type":"restart_service"}]')
+                    ('Auto-Isolate + Notify', 'Auto-trigger on matched threat events', '1. Isolate target host network; 2. Send email alert; 3. Post to Slack; 4. Promote to case', '[{"type":"isolate_host"},{"type":"notify_email"},{"type":"notify_slack"},{"type":"promote_to_case"}]'),
+                    ('Brute Force Response', 'Auto-trigger on matched threat events', '1. Block attacker IP via iptables; 2. Post alert to Slack; 3. Resolve alert in DB', '[{"type":"block_ip"},{"type":"notify_slack"},{"type":"resolve_alert"}]'),
+                    ('Malware Detection Response', 'Auto-trigger on matched threat events', '1. Isolate target host; 2. Block malicious C2 IP; 3. Lock user account; 4. Send email; 5. Promote to case', '[{"type":"isolate_host"},{"type":"block_ip"},{"type":"disable_account"},{"type":"notify_email"},{"type":"promote_to_case"}]'),
+                    ('File Integrity Alert', 'Auto-trigger on matched threat events', '1. Run host health check & FIM scan; 2. Post Slack alert; 3. Promote to case', '[{"type":"run_health_check"},{"type":"notify_slack"},{"type":"promote_to_case"}]'),
+                    ('Service Down Auto-Restart', 'Auto-trigger on matched threat events', '1. Restart managed service (Tomcat/Nginx); 2. Run system health check; 3. Send email', '[{"type":"restart_service"},{"type":"run_health_check"},{"type":"notify_email"}]'),
+                    ('SSH Root Login Response', 'Auto-trigger on matched threat events', '1. Disable/lock user account; 2. Post alert to Slack; 3. Promote to case', '[{"type":"disable_account"},{"type":"notify_slack"},{"type":"promote_to_case"}]'),
+                    ('Critical Alert Escalation', 'Auto-trigger on matched threat events', '1. Send urgent email notification; 2. Post escalation alert to Slack', '[{"type":"notify_email"},{"type":"notify_slack"}]'),
+                    ('Suspicious Process Response', 'Auto-trigger on matched threat events', '1. Run system health check; 2. Post alert to Slack; 3. Promote to case', '[{"type":"run_health_check"},{"type":"notify_slack"},{"type":"promote_to_case"}]')
                 ]
-                for p_name, p_trig, p_steps, p_act in default_pbs:
+                for idx, (p_name, p_trig, p_steps, p_act) in enumerate(default_pbs, 1):
                     try:
                         cur.execute("""
-                            INSERT INTO playbooks (name, trigger_condition, steps, actions)
-                            VALUES (%s, %s, %s, %s);
-                        """, (p_name, p_trig, p_steps, p_act))
+                            INSERT INTO playbooks (id, name, trigger_condition, steps, actions)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (id) DO UPDATE SET
+                                name = EXCLUDED.name,
+                                trigger_condition = EXCLUDED.trigger_condition,
+                                steps = EXCLUDED.steps,
+                                actions = EXCLUDED.actions;
+                        """, (idx, p_name, p_trig, p_steps, p_act))
                     except Exception:
-                        pass
+                        try:
+                            cur.execute("""
+                                INSERT INTO playbooks (name, trigger_condition, steps, actions)
+                                VALUES (%s, %s, %s, %s);
+                            """, (p_name, p_trig, p_steps, p_act))
+                        except Exception:
+                            pass
                 cur.execute("SELECT * FROM playbooks ORDER BY id ASC;")
                 pbs = cur.fetchall()
             return pbs
@@ -1593,10 +1609,28 @@ def log_audit(username, action, target_type, target_id, detail):
     if not conn: return
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO audit_logs (username, action, target_type, target_id, detail, timestamp)
-                VALUES (%s, %s, %s, %s, %s, NOW());
-            """, (username, action, target_type, target_id, detail))
+            user_id = 1
+            try:
+                cur.execute("SELECT id FROM users WHERE username = %s LIMIT 1;", (username,))
+                row = cur.fetchone()
+                if row and row.get("id"):
+                    user_id = row.get("id")
+            except Exception:
+                pass
+            
+            try:
+                cur.execute("""
+                    INSERT INTO audit_logs (user_id, username, action, target_type, target_id, detail, timestamp)
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW());
+                """, (user_id, username, action, target_type, target_id, detail))
+            except Exception:
+                try:
+                    cur.execute("""
+                        INSERT INTO audit_logs (username, action, target_type, target_id, detail, timestamp)
+                        VALUES (%s, %s, %s, %s, %s, NOW());
+                    """, (username, action, target_type, target_id, detail))
+                except Exception:
+                    pass
     except Exception as e:
         logger.error(f"Error in log_audit: {e}")
     finally:

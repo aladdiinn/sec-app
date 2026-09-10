@@ -438,18 +438,30 @@ function closeRunModal() {
 
 async function executePlaybook() {
     const rawVal = document.getElementById('target-alert-id').value;
-    const cleanId = rawVal.replace(/[^0-9]/g, '') || '1';
+    const cleanId = rawVal.replace(/[^0-9]/g, '') || '650';
     
     const btn = document.getElementById('btn-run');
     btn.disabled = true;
-    btn.innerHTML = '<span class="loading-spinner"></span> Executing...';
+    btn.innerHTML = '<span class="loading-spinner"></span> Executing SOAR Actions...';
     try {
         const res = await apiFetch(`/api/playbooks/${currentPlaybookId}/execute/${cleanId}`, { 
             method: 'POST',
             body: JSON.stringify({ alert_id: cleanId })
         });
+        
+        let stepsSummary = '';
+        if (res.steps_executed && Array.isArray(res.steps_executed) && res.steps_executed.length > 0) {
+            stepsSummary = '\n\nProduction Action Steps Executed on Target Host:\n' + res.steps_executed.map(s => `• [${s.status}] ${s.action.replace(/_/g, ' ').toUpperCase()}: ${s.detail}`).join('\n');
+        }
+
         showToast(res.message || `Playbook executed successfully on Incident #INC-${cleanId}!`, 'success');
+        
+        if (stepsSummary) {
+            alert(`✅ ${res.message || 'Playbook Execution Complete'}${stepsSummary}`);
+        }
+        
         closeRunModal();
+        loadData();
     } catch (err) {
         showToast(err.message || 'Execution failed', 'error');
     } finally {
