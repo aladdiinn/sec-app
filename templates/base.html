@@ -32,6 +32,12 @@
                 </div>
                 <div class="sb-title">SECURE<br>PULSE</div>
             </div>
+            {% if current_project or session.get('project_id') %}
+            <div class="project-badge" style="margin:8px 12px; background:rgba(0,212,255,0.08); border:1px solid rgba(0,212,255,0.2); border-radius:4px; padding:8px 10px; font-size:9px; letter-spacing:1px; color:#00d4ff; text-transform:uppercase;">
+                <div style="color:#4a6080; margin-bottom:2px; font-size:8px">PROJECT</div>
+                <div>🏢 {{ current_project.name if current_project else ('PROJECT #' ~ session.get('project_id')) }}</div>
+            </div>
+            {% endif %}
 
             <!-- Nav -->
             <nav class="sb-nav">
@@ -124,6 +130,9 @@
                     </p>
                 </div>
                 <div style="display:flex; align-items:center; gap:14px">
+                    <a href="/projects/select" class="btn-project-view" style="font-family:'Orbitron',sans-serif; font-size:10px; font-weight:700; letter-spacing:2px; color:#00ff88; background:rgba(0,255,136,0.08); border:1px solid #00ff88; padding:6px 14px; border-radius:4px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s ease">
+                        <span style="font-size:12px">⊞</span> PROJECT VIEW
+                    </a>
                     {% block topbar_actions %}{% endblock %}
                     
                     <!-- Notification Bell -->
@@ -143,6 +152,17 @@
                     <div class="sb-logo" style="width:26px; height:26px; border-radius:50%; font-family:var(--orb); font-size:10px; color:var(--cyan); display:flex; align-items:center; justify-content:center; background:rgba(0,200,255,0.1); border:1px solid var(--cyan)">{{ session.get('user_role', 'N')[0]|upper }}</div>
                 </div>
             </header>
+            {% if current_project or session.get('project_id') %}
+            <div class="project-mode-banner" style="background:#001a2e; border-bottom:2px solid #00aaff; padding:8px 24px; display:flex; justify-content:space-between; align-items:center; font-family:'Orbitron',sans-serif; font-size:11px; letter-spacing:2px; color:#00d4ff; box-shadow:0 4px 12px rgba(0,170,255,0.15)">
+                <div style="display:flex; align-items:center; gap:8px">
+                    <span style="font-size:14px">🏢</span>
+                    <span>PROJECT MODE: <strong style="color:#ffffff">{{ current_project.name.upper() if current_project else ('PROJECT #' ~ session.get('project_id')) }}</strong></span>
+                </div>
+                <button onclick="exitProjectMode()" style="background:rgba(255,68,102,0.15); border:1px solid #ff4466; color:#ff4466; padding:5px 14px; border-radius:4px; font-family:'Orbitron',sans-serif; font-size:10px; cursor:pointer; letter-spacing:1px; display:flex; align-items:center; gap:6px; transition:all 0.2s">
+                    ← EXIT PROJECT MODE
+                </button>
+            </div>
+            {% endif %}
     {% endif %}
 
             <div class="page-container">
@@ -245,6 +265,40 @@
         };
     </script>
     {% endif %}
+    <script>
+        const PROJECT_ID = {{ session.get('project_id') or 'null' }};
+        
+        async function exitProjectMode() {
+            try {
+                const res = await apiFetch('/api/projects/exit', { method: 'POST' });
+                if (res.ok) window.location.href = res.redirect || '/dashboard';
+                else window.location.href = '/dashboard';
+            } catch(e) {
+                window.location.href = '/dashboard';
+            }
+        }
+
+        async function enterProject(projectId, projectName, event) {
+            if (event) {
+                event.stopPropagation();
+                if (event.currentTarget) {
+                    event.currentTarget.textContent = 'ENTERING...';
+                    event.currentTarget.disabled = true;
+                }
+            }
+            try {
+                const res = await apiFetch(`/api/projects/select/${projectId}`, { method: 'POST' });
+                if (res.ok) {
+                    if (typeof showToast === 'function') showToast(`Entering ${projectName || 'Project'}...`, 'success');
+                    setTimeout(() => window.location.href = res.redirect || '/dashboard', 400);
+                } else {
+                    if (typeof showToast === 'function') showToast('Failed to select project', 'error');
+                }
+            } catch(e) {
+                window.location.href = `/dashboard?project_id=${projectId}`;
+            }
+        }
+    </script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>

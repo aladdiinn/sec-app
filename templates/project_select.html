@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% set active = 'projects' %}
+{% block title %}Select Project — SOC Command Center{% endblock %}
+{% block page_title %}SELECT PROJECT{% endblock %}
+{% block page_sub %}Click a project to enter project view mode — all data will filter to that project only{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ── EXACT MATCH TO USER DESIGN SPEC & SCREENSHOT ── */
+.controls-row{display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap}
+.search-wrap{position:relative;flex:1;max-width:360px}
+.search-wrap svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:#4a6080}
+.search-input{width:100%;background:#0d1525;border:1px solid #1a2535;color:#c8d8e8;font-family:'Inter',sans-serif;font-size:12px;padding:9px 12px 9px 36px;border-radius:4px;outline:none;transition:border-color .2s;letter-spacing:.5px}
+.search-input:focus{border-color:#2a5080}
+.search-input::placeholder{color:#2a4060}
+.sort-select{background:#0d1525;border:1px solid #1a2535;color:#8899aa;font-family:'Inter',sans-serif;font-size:11px;padding:9px 14px;border-radius:4px;outline:none;cursor:pointer;letter-spacing:.5px}
+
+.project-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.project-card{background:#0d1525;border:1px solid #1a2535;border-radius:6px;overflow:hidden;transition:all .2s;cursor:pointer;position:relative}
+.project-card:hover{border-color:#2a5080;transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+.project-card.has-critical{border-color:#ff446640}
+.project-card.has-critical:hover{border-color:#ff4466}
+.project-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,#00d4ff,transparent)}
+.project-card.has-critical::before{background:linear-gradient(90deg,#ff4466,transparent)}
+
+.card-header{padding:16px 18px 12px;display:flex;align-items:flex-start;justify-content:space-between}
+.card-icon-wrap{width:40px;height:40px;border-radius:8px;background:linear-gradient(135deg,#0a2540,#061828);border:1px solid #1a3550;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;margin-right:12px}
+.card-title-wrap{flex:1}
+.card-title{font-family:'Orbitron',sans-serif;font-size:12px;font-weight:600;letter-spacing:2px;color:#c8d8e8;margin-bottom:4px}
+.card-desc{font-size:10px;color:#4a6080;letter-spacing:.5px;line-height:1.5}
+.card-status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
+.dot-ok{background:#00ff88;box-shadow:0 0 6px #00ff8866}
+.dot-warn{background:#ffaa00;box-shadow:0 0 6px #ffaa0066}
+.dot-crit{background:#ff4466;box-shadow:0 0 6px #ff446666}
+
+.card-metrics{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid #1a2535;border-bottom:1px solid #1a2535}
+.card-metric{padding:12px 14px;border-right:1px solid #1a2535;text-align:center}
+.card-metric:last-child{border-right:none}
+.metric-val{font-family:'Orbitron',sans-serif;font-size:20px;font-weight:700;color:#c8d8e8;line-height:1;margin-bottom:4px}
+.metric-val.crit{color:#ff4466}
+.metric-val.warn{color:#ffaa00}
+.metric-val.ok{color:#00ff88}
+.metric-label{font-size:8px;color:#4a6080;letter-spacing:1.5px;text-transform:uppercase}
+
+.card-alert-bar{padding:8px 18px;background:rgba(255,68,102,0.06);border-bottom:1px solid rgba(255,68,102,0.15);display:flex;align-items:center;gap:8px;font-size:10px;color:#ff6680}
+.alert-dot{width:6px;height:6px;border-radius:50%;background:#ff4466;flex-shrink:0;animation:blink 1.5s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+.card-footer{padding:14px 18px;display:flex;align-items:center;justify-content:space-between}
+.card-meta{font-size:10px;color:#2a4060;letter-spacing:.5px}
+.enter-btn{display:flex;align-items:center;gap:6px;background:transparent;border:1px solid #2a5080;color:#00d4ff;font-family:'Orbitron',sans-serif;font-size:9px;letter-spacing:2px;padding:7px 16px;border-radius:3px;cursor:pointer;transition:all .2s;text-transform:uppercase}
+.enter-btn:hover{background:rgba(0,212,255,0.1);border-color:#00d4ff;box-shadow:0 0 12px rgba(0,212,255,0.15)}
+.enter-btn svg{width:12px;height:12px;transition:transform .2s}
+.enter-btn:hover svg{transform:translateX(3px)}
+.project-card.has-critical .enter-btn{border-color:#ff446660;color:#ff6680}
+.project-card.has-critical .enter-btn:hover{background:rgba(255,68,102,0.1);border-color:#ff4466;box-shadow:0 0 12px rgba(255,68,102,0.15)}
+
+.create-card{background:#0d1525;border:1px dashed #1a2535;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;cursor:pointer;transition:all .2s;min-height:180px}
+.create-card:hover{border-color:#2a5080;background:#0f1a2a}
+.create-icon{font-size:28px;color:#2a4060;margin-bottom:12px;transition:color .2s}
+.create-card:hover .create-icon{color:#00d4ff}
+.create-label{font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#2a4060;text-transform:uppercase;transition:color .2s}
+.create-card:hover .create-label{color:#00d4ff}
+
+.empty-state{grid-column:1/-1;text-align:center;padding:60px;color:#2a4060;font-size:12px;letter-spacing:2px;text-transform:uppercase}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <!-- Controls -->
+    <div class="controls-row">
+        <div class="search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input class="search-input" id="searchInput" placeholder="Search projects..." oninput="filterProjects()"/>
+        </div>
+        <select class="sort-select" id="sortSelect" onchange="sortProjects()">
+            <option value="name">Sort by Name</option>
+            <option value="servers">Sort by Servers</option>
+            <option value="alerts">Sort by Alerts</option>
+        </select>
+    </div>
+
+    <!-- Project Grid -->
+    <div class="project-grid" id="projectGrid">
+        <!-- Injected dynamically -->
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const PROJECTS = {{ projects | tojson }};
+let filteredProjects = [...PROJECTS];
+
+function renderProjects(){
+  const grid = document.getElementById('projectGrid');
+  grid.innerHTML = '';
+
+  if(filteredProjects.length === 0){
+    grid.innerHTML = '<div class="empty-state">No projects found</div>';
+    return;
+  }
+
+  filteredProjects.forEach(p => {
+    const hasCrit = (p.critical_count || 0) > 0;
+    const statusCls = hasCrit ? 'dot-crit' : (p.warning_count || 0) > 0 ? 'dot-warn' : 'dot-ok';
+    const statusText = hasCrit ? 'CRITICAL' : (p.warning_count || 0) > 0 ? 'WARNING' : 'SECURE';
+
+    const card = document.createElement('div');
+    card.className = 'project-card' + (hasCrit ? ' has-critical' : '');
+    card.dataset.id = p.id;
+    card.dataset.name = (p.name || '').toLowerCase();
+
+    card.innerHTML = `
+      <div class="card-header">
+        <div class="card-icon-wrap">${p.icon || '🏢'}</div>
+        <div class="card-title-wrap">
+          <div class="card-title">${p.name}</div>
+          <div class="card-desc">${p.description || 'Enterprise Infrastructure Project'}</div>
+        </div>
+        <div class="card-status-dot ${statusCls}" title="${statusText}"></div>
+      </div>
+
+      <div class="card-metrics">
+        <div class="card-metric">
+          <div class="metric-val">${p.server_count || 0}</div>
+          <div class="metric-label">Servers</div>
+        </div>
+        <div class="card-metric">
+          <div class="metric-val ${(p.critical_count || 0) > 0 ? 'crit' : 'ok'}">${p.critical_count || 0}</div>
+          <div class="metric-label">Critical</div>
+        </div>
+        <div class="card-metric">
+          <div class="metric-val ${(p.total_alerts || 0) > 0 ? 'warn' : 'ok'}">${p.total_alerts || 0}</div>
+          <div class="metric-label">Alerts</div>
+        </div>
+      </div>
+
+      ${hasCrit ? `
+      <div class="card-alert-bar">
+        <div class="alert-dot"></div>
+        ${p.critical_count} critical server${p.critical_count>1?'s':''} need attention
+      </div>` : ''}
+
+      <div class="card-footer">
+        <div class="card-meta">Last activity: ${p.last_activity || 'Active'}</div>
+        <button class="enter-btn" onclick="enterProject(${p.id}, '${(p.name || '').replace(/'/g, "\\'")}', event)">
+          ENTER PROJECT
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+
+  const createCard = document.createElement('div');
+  createCard.className = 'create-card';
+  createCard.onclick = () => window.location.href = '/projects';
+  createCard.innerHTML = `
+    <div class="create-icon">+</div>
+    <div class="create-label">Create New Project</div>
+  `;
+  grid.appendChild(createCard);
+}
+
+function filterProjects(){
+  const q = document.getElementById('searchInput').value.toLowerCase().trim();
+  filteredProjects = PROJECTS.filter(p =>
+    (p.name || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)
+  );
+  sortProjects(false);
+}
+
+function sortProjects(doFilter=true){
+  if(doFilter) filteredProjects = [...PROJECTS];
+  const by = document.getElementById('sortSelect').value;
+  filteredProjects.sort((a,b) => {
+    if(by==='name') return (a.name||'').localeCompare(b.name||'');
+    if(by==='servers') return (b.server_count||0) - (a.server_count||0);
+    if(by==='alerts') return (b.total_alerts||0) - (a.total_alerts||0);
+    return 0;
+  });
+  renderProjects();
+}
+
+renderProjects();
+</script>
+{% endblock %}

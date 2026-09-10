@@ -491,20 +491,38 @@ def get_session_user(request: Request):
         conn.close()
 
 def render_template(request: Request, name: str, context: dict = None):
-    """Safe template renderer providing request, session, and user context."""
+    """Safe template renderer providing request, session, project_id, and user context."""
     if context is None:
         context = {}
+    
+    # Check if project_id query parameter is present in URL (e.g. /dashboard?project_id=2)
+    pid_param = request.query_params.get("project_id")
+    if pid_param:
+        try:
+            request.session["project_id"] = int(pid_param)
+        except Exception:
+            pass
+
+    proj_id = request.session.get("project_id")
+    current_project = None
+    if proj_id:
+        try:
+            current_project = db.get_project_by_id(proj_id)
+        except Exception:
+            pass
+
     ctx = {
         "request": request,
         "session": request.session,
         "user": get_session_user(request),
         "hide_nav": False,
-        "error": None
+        "error": None,
+        "project_id": proj_id,
+        "current_project": current_project
     }
     ctx.update(context)
     return templates.TemplateResponse(request, name, ctx)
 
-# AsyncSSH Helper Function
 async def run_ssh_command(host: str, port: int, user: str, password: Optional[str], key_path: Optional[str], command: str) -> Optional[str]:
     """Execute SSH command using asyncssh with timeout and fallback."""
     if not host or host in ["127.0.0.1", "localhost"]:
@@ -606,7 +624,7 @@ async def dashboard_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     
-    servers = db.get_servers()
+    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
     alerts = db.get_alerts()
     return render_template(request, "dashboard.html", {
         "servers": servers,
@@ -626,7 +644,7 @@ async def servers_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    servers = db.get_servers()
+    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
     return render_template(request, "servers.html", {"servers": servers})
 
 @app.get("/server/{server_id}", response_class=HTMLResponse)
@@ -903,8 +921,8 @@ async def scanner_page(request: Request):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/servers")
-async def api_get_servers():
-    servers = db.get_servers()
+async def api_get_servers(request: Request):
+    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
     counts = db.get_server_counts()
     return {"servers": servers, "counts": counts}
 
@@ -925,7 +943,7 @@ async def api_get_counts():
 
 @app.get("/api/dashboard/geoip")
 async def api_get_geoip():
-    servers = db.get_servers()
+    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
     points = []
     for s in servers:
         points.append({
@@ -964,7 +982,7 @@ async def api_get_brute_force():
 
 @app.get("/api/servers/maintenance")
 async def api_get_servers_maintenance():
-    servers = db.get_servers()
+    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
     now = datetime.now(timezone.utc)
     res = []
     for s in servers:
@@ -987,7 +1005,7 @@ async def api_get_servers_maintenance():
 
 @app.get("/api/system/health")
 async def api_get_system_health():
-    servers = db.get_servers()
+    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
     nodes = []
     for s in servers:
         nodes.append({
@@ -1258,6 +1276,28 @@ async def api_patch_alert(id: int, request: Request):
 async def api_get_notifications():
     alerts = db.get_alerts()
     return {"notifications": alerts, "unseen_count": len(alerts)}
+
+@app.get("/projects/select")
+async def view_projects_select(request: Request):
+    projects = db.get_projects()
+    return render_template(request, "project_select.html", {"projects": projects})
+
+@app.post("/api/projects/select/{project_id}")
+async def api_select_project(project_id: int, request: Request):
+    request.session["project_id"] = project_id
+    project = db.get_project_by_id(project_id)
+    pname = project.get("name") if project else f"Project #{project_id}"
+    uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+    db.log_audit(uname, 'SELECT_PROJECT', 'project', project_id, f"Switched session to project '{pname}'")
+    return {"ok": True, "redirect": "/dashboard", "project_id": project_id, "project_name": pname}
+
+@app.post("/api/projects/exit")
+async def api_exit_project(request: Request):
+    old_pid = request.session.pop("project_id", None)
+    uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+    if old_pid:
+        db.log_audit(uname, 'EXIT_PROJECT', 'project', old_pid, "Exited project view mode to main dashboard")
+    return {"ok": True, "redirect": "/dashboard"}
 
 @app.get("/api/projects")
 async def api_get_projects():

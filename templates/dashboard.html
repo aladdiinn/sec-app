@@ -285,9 +285,11 @@ async function loadThreatMap() {
     }
 }
 
+const projQuery = (typeof PROJECT_ID !== 'undefined' && PROJECT_ID && PROJECT_ID !== 'null') ? `?project_id=${PROJECT_ID}` : '';
+
 async function loadCounts() {
     try {
-        const counts = await apiFetch('/api/dashboard/counts');
+        const counts = await apiFetch('/api/dashboard/counts' + projQuery);
         const total = counts.total ?? counts.total_servers ?? 0;
         const online = counts.online ?? counts.online_servers ?? 0;
         const alerts = counts.alerts ?? counts.critical_alerts ?? 0;
@@ -307,7 +309,7 @@ async function loadCounts() {
 
 async function loadActivity() {
     try {
-        const raw = await apiFetch('/api/dashboard/live-activity');
+        const raw = await apiFetch('/api/dashboard/live-activity' + projQuery);
         const activity = Array.isArray(raw) ? raw : (raw.items || []);
         const feedEl = document.getElementById('live-feed');
         if (!activity || activity.length === 0) {
@@ -334,7 +336,7 @@ async function loadActivity() {
 
 async function loadSeverity() {
     try {
-        const data = await apiFetch('/api/dashboard/severity');
+        const data = await apiFetch('/api/dashboard/severity' + projQuery);
         let info = 0, warn = 0, crit = 0;
 
         if (Array.isArray(data)) {
@@ -363,7 +365,8 @@ async function loadSeverity() {
 
 async function loadAlerts() {
     try {
-        const raw = await apiFetch('/api/alerts?is_resolved=false&limit=6');
+        const sep = projQuery ? projQuery + '&' : '?';
+        const raw = await apiFetch('/api/alerts' + sep + 'is_resolved=false&limit=6');
         const alertList = document.getElementById('open-alerts-list');
         const items = Array.isArray(raw) ? raw : (raw.items || []);
 
@@ -381,6 +384,60 @@ async function loadAlerts() {
         }
     } catch(e) {
         console.error('loadAlerts error:', e);
+    }
+}
+
+async function loadThreatMap() {
+    if (!map) return;
+    try {
+        const points = await apiFetch('/api/dashboard/threat-map' + projQuery);
+        if (mapMarkersLayer) mapMarkersLayer.clearLayers();
+
+        const pts = Array.isArray(points) ? points : [];
+        const countBadge = document.getElementById('map-threat-count');
+        if (countBadge) countBadge.textContent = `${pts.length} Threats Tracked`;
+
+        pts.forEach(pt => {
+            if (!pt.lat || !pt.lon) return;
+            const isCrit = pt.severity === 'critical';
+            const isWarn = pt.severity === 'warning';
+            const color = isCrit ? '#ef4444' : (isWarn ? '#f59e0b' : '#00e5ff');
+            const radius = isCrit ? 9 : (isWarn ? 7 : 5);
+
+            const circle = L.circleMarker([pt.lat, pt.lon], {
+                radius: radius,
+                fillColor: color,
+                color: color,
+                weight: 2,
+                opacity: 0.9,
+                fillOpacity: 0.6
+            });
+
+            const tipHtml = `
+                <div style="font-family:var(--font-mono, monospace); font-size:11px; min-width:200px; color:#e2e8f0">
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.12); padding-bottom:6px; margin-bottom:8px">
+                        <span style="font-weight:700; color:${color}; font-size:12px; letter-spacing:0.5px">${(pt.severity || 'INFO').toUpperCase()} THREAT</span>
+                        <span style="background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:3px; font-size:10px; color:#94a3b8">${pt.count || 1} Event${(pt.count||1)>1?'s':''}</span>
+                    </div>
+                    <div style="margin-bottom:5px"><span style="color:#94a3b8">IP Address:</span> <strong style="color:#38bdf8">${pt.ip || 'Unknown'}</strong></div>
+                    <div style="margin-bottom:5px"><span style="color:#94a3b8">Location:</span> <strong style="color:#f8fafc">${pt.city || 'Unknown'}, ${pt.country || 'Global'}</strong></div>
+                    ${pt.hostname ? `<div style="margin-bottom:5px"><span style="color:#94a3b8">Target Host:</span> <strong style="color:#a78bfa">${pt.hostname}</strong></div>` : ''}
+                    ${pt.description ? `<div style="margin-bottom:5px"><span style="color:#94a3b8">Intel:</span> <span style="color:#cbd5e1">${pt.description}</span></div>` : ''}
+                    <div style="margin-top:12px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.12)">
+                        <button type="button" class="btn" onclick="clearMapThreat('${pt.ip}', this)" style="width:100%; padding:6px 10px; font-size:11px; background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; cursor:pointer; border-radius:4px; font-weight:600; text-align:center">
+                            ✕ Dismiss / Clear Alert
+                        </button>
+                    </div>
+                </div>
+            `;
+            circle.bindPopup(tipHtml);
+            circle.bindTooltip(`${pt.city || pt.ip} (${(pt.severity || 'info').toUpperCase()})`, { direction: 'top', offset: [0, -5] });
+            mapMarkersLayer.addLayer(circle);
+        });
+
+        map.invalidateSize();
+    } catch (e) {
+        console.error('Threat map load error:', e);
     }
 }
 

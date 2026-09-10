@@ -872,96 +872,19 @@ def get_server_counts():
     finally:
         conn.close()
 
-def get_servers():
-    """Fetch all servers including name, ip, last_sudo, and last_sudo_ago."""
+def get_servers(project_id=None):
     conn = get_db_connection()
-    fallback_server = {
-        "id": 1,
-        "name": "ip-172-31-4-83",
-        "hostname": "ip-172-31-4-83",
-        "ip": "172.31.4.83",
-        "ip_address": "172.31.4.83",
-        "status": "online",
-        "severity": "info",
-        "active_users": 1,
-        "failed_logins": 0,
-        "last_sudo": "None",
-        "last_sudo_ago": "just now",
-        "last_seen": datetime.now().isoformat(),
-        "registered_at": datetime.now().isoformat()
-    }
-    servers = []
-    if not conn:
-        return [fallback_server]
+    if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM servers ORDER BY id ASC;")
-            rows = cur.fetchall()
-            for row in rows:
-                try:
-                    s = dict(row)
-                    s["id"] = s.get("id", 1)
-                    s["name"] = s.get("name") or s.get("hostname") or "ec2-server"
-                    s["hostname"] = s.get("hostname") or s.get("name") or "ec2-server"
-                    s["ip"] = s.get("ip") or s.get("ip_address") or "127.0.0.1"
-                    s["ip_address"] = s.get("ip_address") or s.get("ip") or "127.0.0.1"
-                    s["status"] = (s.get("status") or "online").lower()
-                    s["severity"] = (s.get("severity") or "info").lower()
-                    s["is_maintenance"] = bool(s.get("is_maintenance", False))
-                    s["active_users"] = s.get("active_users", 1)
-                    s["failed_logins"] = s.get("failed_logins", 0)
-                    s["api_token"] = s.get("api_token") or s.get("agent_token") or "sp-token-12345"
-
-                    try:
-                        if not s.get("last_sudo") or s.get("last_sudo") == "None":
-                            cur.execute("""
-                                SELECT username, command, executed_at
-                                FROM commands
-                                WHERE server_id = %s AND is_sudo = TRUE
-                                ORDER BY executed_at DESC LIMIT 1;
-                            """, (s["id"],))
-                            rec = cur.fetchone()
-                            if rec:
-                                rec_dict = dict(rec)
-                                s["last_sudo"] = f"{rec_dict.get('username')}: {rec_dict.get('command')}"
-                                s["last_sudo_ago"] = format_time_ago(rec_dict.get("executed_at"))
-                            else:
-                                s["last_sudo"] = "None"
-                                s["last_sudo_ago"] = "never"
-                    except Exception:
-                        s["last_sudo"] = "None"
-                        s["last_sudo_ago"] = "never"
-
-                    servers.append(s)
-                except Exception as e:
-                    logger.error(f"Error parsing server row: {e}")
-
-            if not servers:
-                try:
-                    cur.execute("""
-                        INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
-                        VALUES ('ip-172-31-4-83', 'ip-172-31-4-83', '172.31.4.83', '172.31.4.83', 'Linux (Ubuntu)', 'sp-token-default', 'sp-token-default', 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW());
-                    """)
-                    cur.execute("SELECT * FROM servers ORDER BY id ASC;")
-                    rows = cur.fetchall()
-                    for row in rows:
-                        s = dict(row)
-                        s["id"] = s.get("id", 1)
-                        s["name"] = s.get("name") or s.get("hostname") or "ip-172-31-4-83"
-                        s["hostname"] = s.get("hostname") or s.get("name") or "ip-172-31-4-83"
-                        s["ip"] = s.get("ip") or s.get("ip_address") or "172.31.4.83"
-                        s["ip_address"] = s.get("ip_address") or s.get("ip") or "172.31.4.83"
-                        s["status"] = (s.get("status") or "online").lower()
-                        s["severity"] = (s.get("severity") or "info").lower()
-                        servers.append(s)
-                except Exception as ex:
-                    logger.error(f"Error seeding fallback server: {ex}")
-                    servers.append(fallback_server)
-
-        return servers
+            if project_id:
+                cur.execute("SELECT * FROM servers WHERE project_id = %s ORDER BY id ASC;", (project_id,))
+            else:
+                cur.execute("SELECT * FROM servers ORDER BY id ASC;")
+            return cur.fetchall()
     except Exception as e:
         logger.error(f"Error in get_servers: {e}")
-        return [fallback_server]
+        return []
     finally:
         conn.close()
 
@@ -1098,22 +1021,30 @@ def get_server_commands(server_id: int):
     finally:
         conn.close()
 
-def get_alerts():
+def get_alerts(limit=100, project_id=None):
     conn = get_db_connection()
-    alerts = []
-    if not conn:
-        return alerts
+    if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT a.*, s.hostname FROM alerts a LEFT JOIN servers s ON a.server_id = s.id ORDER BY a.created_at DESC LIMIT 100;")
-            for r in cur.fetchall():
-                item = dict(r)
-                item["created_at_ago"] = format_time_ago(item["created_at"])
-                alerts.append(item)
-        return alerts
+            if project_id:
+                cur.execute("""
+                    SELECT a.*, s.hostname, s.ip, s.project_id
+                    FROM alerts a
+                    JOIN servers s ON a.server_id = s.id
+                    WHERE s.project_id = %s
+                    ORDER BY a.created_at DESC LIMIT %s;
+                """, (project_id, limit))
+            else:
+                cur.execute("""
+                    SELECT a.*, s.hostname, s.ip, s.project_id
+                    FROM alerts a
+                    LEFT JOIN servers s ON a.server_id = s.id
+                    ORDER BY a.created_at DESC LIMIT %s;
+                """, (limit,))
+            return cur.fetchall()
     except Exception as e:
         logger.error(f"Error in get_alerts: {e}")
-        return alerts
+        return []
     finally:
         conn.close()
 
@@ -1476,6 +1407,84 @@ def get_playbooks():
     except Exception as e:
         logger.error(f"Error in get_playbooks: {e}")
         return []
+def get_projects():
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT p.id, p.name, p.description, p.created_at,
+                       COUNT(DISTINCT s.id) as server_count,
+                       COUNT(DISTINCT CASE WHEN s.severity = 'critical' OR a.severity = 'critical' THEN s.id END) as critical_count,
+                       COUNT(DISTINCT CASE WHEN a.severity = 'warning' AND (a.is_resolved IS NOT TRUE) THEN a.id END) as warning_count,
+                       COUNT(DISTINCT a.id) as total_alerts
+                FROM projects p
+                LEFT JOIN servers s ON s.project_id = p.id
+                LEFT JOIN alerts a ON a.server_id = s.id
+                GROUP BY p.id, p.name, p.description, p.created_at
+                ORDER BY p.id ASC;
+            """)
+            projects = cur.fetchall()
+            if not projects:
+                default_projects = [
+                    ("APDCL MDM", "Assam Power Distribution MDM servers", "🏭"),
+                    ("PGVCL MDM", "Paschim Gujarat MDM infrastructure", "⚡"),
+                    ("Nagaland MDM", "Nagaland power utility servers", "🗄"),
+                    ("ARUNACHAL AWS", "Arunachal Pradesh cloud instances", "☁")
+                ]
+                for name, desc, icon in default_projects:
+                    try:
+                        cur.execute("INSERT INTO projects (name, description) VALUES (%s, %s);", (name, desc))
+                    except Exception:
+                        pass
+                cur.execute("""
+                    SELECT p.id, p.name, p.description, p.created_at,
+                           COUNT(DISTINCT s.id) as server_count,
+                           COUNT(DISTINCT CASE WHEN s.severity = 'critical' OR a.severity = 'critical' THEN s.id END) as critical_count,
+                           COUNT(DISTINCT CASE WHEN a.severity = 'warning' AND (a.is_resolved IS NOT TRUE) THEN a.id END) as warning_count,
+                           COUNT(DISTINCT a.id) as total_alerts
+                    FROM projects p
+                    LEFT JOIN servers s ON s.project_id = p.id
+                    LEFT JOIN alerts a ON a.server_id = s.id
+                    GROUP BY p.id, p.name, p.description, p.created_at
+                    ORDER BY p.id ASC;
+                """)
+                projects = cur.fetchall()
+                try:
+                    cur.execute("UPDATE servers SET project_id = 1 WHERE project_id IS NULL;")
+                    conn.commit()
+                except Exception:
+                    pass
+
+            for p in projects:
+                name_lower = (p.get("name") or "").lower()
+                if "apdcl" in name_lower or "power" in name_lower: p["icon"] = "🏭"
+                elif "pgvcl" in name_lower or "grid" in name_lower: p["icon"] = "⚡"
+                elif "aws" in name_lower or "cloud" in name_lower: p["icon"] = "☁"
+                elif "nagaland" in name_lower: p["icon"] = "🗄"
+                else: p["icon"] = "🏢"
+                p["server_count"] = p.get("server_count", 0)
+                p["critical_count"] = p.get("critical_count", 0)
+                p["warning_count"] = p.get("warning_count", 0)
+                p["total_alerts"] = p.get("total_alerts", 0)
+                p["last_activity"] = "Active"
+            return projects
+    except Exception as e:
+        logger.error(f"Error in get_projects: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_project_by_id(project_id):
+    if not project_id: return None
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM projects WHERE id = %s;", (project_id,))
+            return cur.fetchone()
+    except Exception:
+        return None
     finally:
         conn.close()
 
@@ -1659,87 +1668,129 @@ def get_audit_logs(username=None, action=None, limit=100):
     finally:
         conn.close()
 
-def get_activity_feed(limit=20):
+def get_activity_feed(limit=20, project_id=None):
     conn = get_db_connection()
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT 'Alert' as type, a.title as description, a.message as detail, a.severity as severity, s.hostname as hostname, a.created_at as timestamp
-                FROM alerts a LEFT JOIN servers s ON a.server_id = s.id
-                UNION ALL
-                SELECT 'Command' as type, command as description, 'Command: ' || command as detail, risk_level as severity, s.hostname as hostname, c.executed_at as timestamp
-                FROM commands c LEFT JOIN servers s ON c.server_id = s.id
-                UNION ALL
-                SELECT 'Login' as type, username || (CASE WHEN success THEN ' logged in' ELSE ' failed to log in' END) as description, 
-                       'SSH from ' || ip_address as detail,
-                       (CASE WHEN success THEN 'info' ELSE 'warning' END) as severity, s.hostname as hostname, lh.timestamp as timestamp
-                FROM login_history lh LEFT JOIN servers s ON lh.server_id = s.id
-                ORDER BY timestamp DESC
-                LIMIT %s
-            """, (limit,))
-            return cur.fetchall()
+            if project_id:
+                cur.execute("""
+                    SELECT id, 'COMMAND' as event_type, command as description, risk_level as severity, executed_at as created_at, server_id
+                    FROM commands WHERE server_id IN (SELECT id FROM servers WHERE project_id = %s)
+                    UNION ALL
+                    SELECT id, 'SSH_LOGIN' as event_type, username || ' from ' || ip_address as description, (CASE WHEN success THEN 'info' ELSE 'warning' END) as severity, timestamp as created_at, server_id
+                    FROM login_history WHERE server_id IN (SELECT id FROM servers WHERE project_id = %s)
+                    UNION ALL
+                    SELECT id, alert_type as event_type, message as description, severity, created_at, server_id
+                    FROM alerts WHERE server_id IN (SELECT id FROM servers WHERE project_id = %s)
+                    ORDER BY created_at DESC LIMIT %s;
+                """, (project_id, project_id, project_id, limit))
+            else:
+                cur.execute("""
+                    SELECT id, 'COMMAND' as event_type, command as description, risk_level as severity, executed_at as created_at, server_id
+                    FROM commands
+                    UNION ALL
+                    SELECT id, 'SSH_LOGIN' as event_type, username || ' from ' || ip_address as description, (CASE WHEN success THEN 'info' ELSE 'warning' END) as severity, timestamp as created_at, server_id
+                    FROM login_history
+                    UNION ALL
+                    SELECT id, alert_type as event_type, message as description, severity, created_at, server_id
+                    FROM alerts
+                    ORDER BY created_at DESC LIMIT %s;
+                """, (limit,))
+            items = cur.fetchall()
+            for it in items:
+                if it.get("created_at"): it["created_at"] = str(it["created_at"])
+            return items
     except Exception as e:
         logger.error(f"Error in get_activity_feed: {e}")
         return []
     finally:
         conn.close()
 
-def get_dashboard_counts():
+def get_dashboard_counts(project_id=None):
     conn = get_db_connection()
-    counts = {'total_servers': 0, 'online_servers': 0, 'critical_alerts': 0, 'maintenance_servers': 0, 'total_alerts': 0, 'unresolved_alerts': 0}
-    if not conn: return counts
+    if not conn: return {"total_servers": 0, "online_servers": 0, "critical_alerts": 0, "maintenance_servers": 0, "total_alerts": 0, "unresolved_alerts": 0}
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) as c FROM servers;")
-            res = cur.fetchone()
-            counts['total_servers'] = res['c'] if res else 0
-            cur.execute("SELECT COUNT(*) as c FROM servers WHERE status = 'online';")
-            res = cur.fetchone()
-            counts['online_servers'] = res['c'] if res else 0
-            cur.execute("SELECT COUNT(*) as c FROM alerts WHERE severity = 'critical' AND is_resolved = FALSE;")
-            res = cur.fetchone()
-            counts['critical_alerts'] = res['c'] if res else 0
-            cur.execute("SELECT COUNT(*) as c FROM servers WHERE is_maintenance = TRUE;")
-            res = cur.fetchone()
-            counts['maintenance_servers'] = res['c'] if res else 0
-            cur.execute("SELECT COUNT(*) as c FROM alerts;")
-            res = cur.fetchone()
-            counts['total_alerts'] = res['c'] if res else 0
-            cur.execute("SELECT COUNT(*) as c FROM alerts WHERE is_resolved = FALSE;")
-            res = cur.fetchone()
-            counts['unresolved_alerts'] = res['c'] if res else 0
+            if project_id:
+                cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE project_id = %s;", (project_id,))
+                total_servers = (cur.fetchone() or {}).get("cnt", 0)
 
-            # Also populate short keys expected by dashboard.html
-            counts['total'] = counts['total_servers']
-            counts['online'] = counts['online_servers']
-            counts['alerts'] = counts['critical_alerts']
-            counts['critical'] = counts['critical_alerts']
-            counts['maintenance'] = counts['maintenance_servers']
-            return counts
+                cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE project_id = %s AND status = 'online';", (project_id,))
+                online_servers = (cur.fetchone() or {}).get("cnt", 0)
+
+                cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE project_id = %s AND (is_maintenance = TRUE OR status = 'maintenance' OR status = 'isolated');", (project_id,))
+                maint_servers = (cur.fetchone() or {}).get("cnt", 0)
+
+                cur.execute("""
+                    SELECT COUNT(*) as cnt FROM alerts a 
+                    JOIN servers s ON a.server_id = s.id 
+                    WHERE s.project_id = %s AND a.severity = 'critical' AND (a.is_resolved IS NOT TRUE);
+                """, (project_id,))
+                crit_alerts = (cur.fetchone() or {}).get("cnt", 0)
+
+                cur.execute("SELECT COUNT(*) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id WHERE s.project_id = %s;", (project_id,))
+                total_alerts = (cur.fetchone() or {}).get("cnt", 0)
+
+                cur.execute("SELECT COUNT(*) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id WHERE s.project_id = %s AND (a.is_resolved IS NOT TRUE);", (project_id,))
+                unresolved_alerts = (cur.fetchone() or {}).get("cnt", 0)
+            else:
+                cur.execute("SELECT COUNT(*) as cnt FROM servers;")
+                total_servers = (cur.fetchone() or {}).get("cnt", 0)
+
+                cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE status = 'online';")
+                online_servers = (cur.fetchone() or {}).get("cnt", 0)
+
+                cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE is_maintenance = TRUE OR status = 'maintenance' OR status = 'isolated';")
+                maint_servers = (cur.fetchone() or {}).get("cnt", 0)
+
+                cur.execute("SELECT COUNT(*) as cnt FROM alerts WHERE severity = 'critical' AND (is_resolved IS FALSE OR is_resolved = 0);")
+                crit_alerts = (cur.fetchone() or {}).get("cnt", 0)
+
+                cur.execute("SELECT COUNT(*) as cnt FROM alerts;")
+                total_alerts = (cur.fetchone() or {}).get("cnt", 0)
+
+                cur.execute("SELECT COUNT(*) as cnt FROM alerts WHERE is_resolved IS FALSE OR is_resolved = 0;")
+                unresolved_alerts = (cur.fetchone() or {}).get("cnt", 0)
+
+            return {
+                "total_servers": total_servers,
+                "online_servers": online_servers,
+                "critical_alerts": crit_alerts,
+                "maintenance_servers": maint_servers,
+                "total_alerts": total_alerts,
+                "unresolved_alerts": unresolved_alerts
+            }
     except Exception as e:
         logger.error(f"Error in get_dashboard_counts: {e}")
-        return counts
+        return {"total_servers": 0, "online_servers": 0, "critical_alerts": 0, "maintenance_servers": 0, "total_alerts": 0, "unresolved_alerts": 0}
     finally:
         conn.close()
 
-def get_severity_distribution():
+def get_severity_distribution(project_id=None):
     conn = get_db_connection()
-    dist = {"info": 0, "warning": 0, "critical": 0, "total": 0}
-    if not conn: return dist
+    if not conn: return {"critical": 0, "warning": 0, "info": 0}
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT severity, COUNT(*) as count FROM alerts WHERE is_resolved = FALSE GROUP BY severity;")
+            if project_id:
+                cur.execute("""
+                    SELECT a.severity, COUNT(*) as cnt
+                    FROM alerts a
+                    JOIN servers s ON a.server_id = s.id
+                    WHERE s.project_id = %s
+                    GROUP BY a.severity;
+                """, (project_id,))
+            else:
+                cur.execute("SELECT severity, COUNT(*) as cnt FROM alerts GROUP BY severity;")
             rows = cur.fetchall()
+            dist = {"critical": 0, "warning": 0, "info": 0}
             for r in rows:
-                sev = (r.get("severity") or "info").lower()
-                cnt = int(r.get("count", 0))
-                dist[sev] = dist.get(sev, 0) + cnt
-                dist["total"] += cnt
+                s = (r.get("severity") or "info").lower()
+                if s in dist: dist[s] = r.get("cnt", 0)
             return dist
     except Exception as e:
         logger.error(f"Error in get_severity_distribution: {e}")
-        return dist
+        return {"critical": 0, "warning": 0, "info": 0}
     finally:
         conn.close()
 
