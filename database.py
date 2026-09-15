@@ -946,7 +946,7 @@ def get_server_by_ip(ip: str):
     finally:
         conn.close()
 
-def add_server(name: str, ip: str, region: str = "", region_code: str = ""):
+def add_server(name: str, ip: str, region: str = "", region_code: str = "", ssh_user: str = "bescom"):
     conn = get_db_connection()
     if not conn:
         return 1
@@ -959,7 +959,7 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = ""):
                 row = cur.fetchone()
                 if row:
                     sid = row["id"] if isinstance(row, dict) else row[0]
-                    cur.execute("UPDATE servers SET status = 'online', severity = 'info', last_seen = NOW() WHERE id = %s;", (sid,))
+                    cur.execute("UPDATE servers SET status = 'online', severity = 'info', ssh_user = COALESCE(%s, ssh_user, 'bescom'), last_seen = NOW() WHERE id = %s;", (ssh_user, sid))
                     return sid
             except Exception as e:
                 logger.warning(f"Error checking existing server: {e}")
@@ -976,9 +976,9 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = ""):
             # Insert into servers with full fields populated
             try:
                 cur.execute("""
-                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW());
-                """, (name, name, ip, ip, "Linux (Ubuntu)", token, token))
+                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, ssh_user, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW());
+                """, (name, name, ip, ip, "Linux (Ubuntu)", ssh_user or 'bescom', token, token))
             except Exception as e:
                 logger.error(f"Error inserting server: {e}")
             

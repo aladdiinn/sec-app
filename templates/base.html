@@ -178,10 +178,79 @@
     </div>
     {% endif %}
 
+    <!-- Global Setup Script Modal -->
+    <div id="global-setup-modal-overlay" onclick="closeSetupScriptModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9998; backdrop-filter:blur(6px)"></div>
+    <div id="global-setup-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:30px; border-radius:12px; z-index:9999; width:640px; max-width:92vw; border:1px solid var(--cyan); box-shadow:0 0 50px rgba(0,212,255,0.25)">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:12px">
+            <div style="display:flex; align-items:center; gap:12px">
+                <span style="font-size:24px">🚀</span>
+                <div>
+                    <h3 id="gsm-title" style="margin:0; font-family:var(--orbitron,monospace); font-size:14px; color:var(--cyan); letter-spacing:1px">TARGET SERVER SETUP SCRIPT</h3>
+                    <p id="gsm-sub" style="margin:3px 0 0 0; font-size:11px; color:var(--text3)">Run this 1-line command on your targeted server to authorize SSH key & log streaming</p>
+                </div>
+            </div>
+            <button class="btn btn-glass" onclick="closeSetupScriptModal()" style="padding:4px 8px; font-size:12px">✕</button>
+        </div>
+
+        <div style="background:#060a12; border:1px solid var(--cyan); border-radius:6px; padding:16px; margin-bottom:20px">
+            <div style="font-family:var(--mono); font-size:10px; color:var(--text3); margin-bottom:8px; text-transform:uppercase; letter-spacing:1px">Copy-Paste One-Liner Bash Command:</div>
+            <code id="gsm-command" style="font-family:var(--mono); color:var(--green); font-size:12px; word-break:break-all; display:block; line-height:1.5; background:rgba(0,255,136,0.05); padding:12px; border-radius:4px; border:1px dashed rgba(0,255,136,0.4)">
+                curl -sSL "http://..." | sudo bash
+            </code>
+            <div style="margin-top:12px; display:flex; justify-content:flex-end">
+                <button class="btn btn-primary" onclick="copyGsmCommand()" id="btn-copy-gsm-cmd" style="font-size:11px; padding:8px 18px; display:flex; align-items:center; gap:6px">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    Copy Command
+                </button>
+            </div>
+        </div>
+
+        <div style="background:var(--bg3); padding:12px 14px; border-radius:6px; font-size:11px; color:var(--text2); line-height:1.6; border-left:3px solid var(--amber)">
+            <strong>📌 What this command automatically does on your targeted server:</strong>
+            <ol style="margin:6px 0 0 18px; padding:0">
+                <li>Authorizes SOC SSH Public Key into <code style="color:var(--cyan)">~/.ssh/authorized_keys</code> for user <span id="gsm-user" style="color:var(--cyan)">bescom</span> & root.</li>
+                <li>Enables <code style="color:var(--cyan)">PubkeyAuthentication yes</code> in SSH configuration automatically.</li>
+                <li>Connects target node / app log stream to SOC Center instantly!</li>
+            </ol>
+        </div>
+
+        <div style="margin-top:20px; text-align:right">
+            <button class="btn btn-glass" onclick="closeSetupScriptModal(); setTimeout(() => location.reload(), 300);" style="padding:8px 20px; font-size:11px">Close & Refresh</button>
+        </div>
+    </div>
+
     <div id="toast-container"></div>
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="/static/js/auth.js"></script>
+    <script>
+    function showSetupScriptModal(opts) {
+        document.getElementById('gsm-title').innerText = opts.title || "TARGET SERVER SETUP SCRIPT";
+        document.getElementById('gsm-sub').innerText = opts.subtitle || "Run this command on your target server:";
+        document.getElementById('gsm-command').innerText = opts.command || "";
+        if (document.getElementById('gsm-user')) document.getElementById('gsm-user').innerText = opts.user || "bescom";
+        
+        document.getElementById('global-setup-modal-overlay').style.display = 'block';
+        document.getElementById('global-setup-modal').style.display = 'block';
+    }
+
+    function closeSetupScriptModal() {
+        document.getElementById('global-setup-modal-overlay').style.display = 'none';
+        document.getElementById('global-setup-modal').style.display = 'none';
+    }
+
+    function copyGsmCommand() {
+        const text = document.getElementById('gsm-command').innerText;
+        navigator.clipboard.writeText(text).then(() => {
+            const btn = document.getElementById('btn-copy-gsm-cmd');
+            btn.innerText = "✓ Copied!";
+            showToast("Setup command copied to clipboard!", "success");
+            setTimeout(() => {
+                btn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy Command`;
+            }, 2000);
+        });
+    }
+    </script>
     {% if not hide_nav %}
     <script src="/static/js/realtime.js"></script>
     <script>

@@ -455,7 +455,11 @@
         <!-- 3. Standalone / Just Log Monitor Container (Hidden by default) -->
         <div id="wrap-standalone-node" style="display:none; background:rgba(0,255,136,0.03); border:1px dashed var(--green); padding:12px; border-radius:6px">
             <div style="font-size:11px; color:var(--green); font-weight:600; margin-bottom:4px">⚡ STANDALONE LOG MONITORING (NO ASSET CREATED)</div>
-            <div style="font-size:10px; color:var(--text3)">This log file will be monitored directly in Log Analyzer without creating a new server asset in the Assets Inventory.</div>
+            <div style="font-size:10px; color:var(--text3); margin-bottom:8px">This log file will be monitored directly in Log Analyzer without creating a new server asset in the Assets Inventory.</div>
+            <div>
+                <label class="stat-label" style="display:block; margin-bottom:4px; color:var(--green)">TARGET SERVER IP / HOSTNAME (FOR REMOTE APP)</label>
+                <input type="text" id="modal-standalone-ip" placeholder="e.g. 13.233.25.127 (or 127.0.0.1 for local)" class="mono glass" style="width:100%; padding:6px 10px; font-size:11px; border-radius:4px">
+            </div>
         </div>
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
@@ -656,8 +660,10 @@ async function saveLogApplicationConfig() {
     if (sshKeyPath) payload.ssh_key_path = sshKeyPath;
 
     if (currentNodeMode === 'standalone') {
+        const standaloneIp = document.getElementById('modal-standalone-ip') ? document.getElementById('modal-standalone-ip').value.trim() : '';
         payload.is_standalone = true;
         payload.just_log_monitor = true;
+        if (standaloneIp) payload.new_server_ip = standaloneIp;
     } else if (currentNodeMode === 'new') {
         const newName = document.getElementById('modal-new-server-name').value.trim();
         const newIp = document.getElementById('modal-new-server-ip').value.trim();
@@ -692,9 +698,29 @@ async function saveLogApplicationConfig() {
             showToast('Application log source added successfully!', 'success');
             closeAddAppModal();
             document.getElementById('modal-app-name').value = '';
-            document.getElementById('modal-new-server-name').value = '';
-            document.getElementById('modal-new-server-ip').value = '';
-            setTimeout(() => window.location.reload(), 1000);
+            if (document.getElementById('modal-new-server-name')) document.getElementById('modal-new-server-name').value = '';
+            if (document.getElementById('modal-new-server-ip')) document.getElementById('modal-new-server-ip').value = '';
+            if (document.getElementById('modal-standalone-ip')) document.getElementById('modal-standalone-ip').value = '';
+            
+            loadLogConfigs();
+
+            const targetUser = res.ssh_user || sshUser || 'bescom';
+            const targetIp = res.server_ip || 'targeted node';
+            const isStandalone = currentNodeMode === 'standalone';
+
+            let cmd = '';
+            if (isStandalone) {
+                cmd = `curl -sSL "${window.location.origin}/setup_app_log.sh?config_id=${res.id}&user=${targetUser}&log_path=${encodeURIComponent(logPath)}" | sudo bash`;
+            } else {
+                cmd = `curl -sSL "${window.location.origin}/setup.sh?server_id=${res.server_id || ''}&user=${targetUser}" | sudo bash`;
+            }
+
+            showSetupScriptModal({
+                title: isStandalone ? "⚡ APPLICATION LOG AUTHORIZATION SCRIPT" : "🚀 TARGET NODE AUTHORIZATION SCRIPT",
+                subtitle: `Run this 1-line command on your targeted server (${targetIp}) to authorize SSH & log streaming:`,
+                command: cmd,
+                user: targetUser
+            });
         } else {
             showToast(res.message || 'Failed to save application log source', 'error');
         }
@@ -704,6 +730,16 @@ async function saveLogApplicationConfig() {
         btn.disabled = false;
         btn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg> Save Application`;
     }
+}
+
+function openConfigScriptModal(configId, sshUser, logPath, ip) {
+    const cmd = `curl -sSL "${window.location.origin}/setup_app_log.sh?config_id=${configId}&user=${sshUser}&log_path=${encodeURIComponent(logPath)}" | sudo bash`;
+    showSetupScriptModal({
+        title: "⚡ TARGET APPLICATION AUTHORIZATION SCRIPT",
+        subtitle: `Run this command on your targeted server (${ip || 'remote node'}) to authorize SSH log monitoring:`,
+        command: cmd,
+        user: sshUser
+    });
 }
 
 async function loadLogConfigs() {
@@ -734,6 +770,7 @@ async function loadLogConfigs() {
                         </div>
                         ${c.project_name ? `<div style="font-size:8px; color:var(--text3); font-family:var(--mono)">Project: ${escapeHtml(c.project_name)}</div>` : ''}
                     </div>
+                    <button class="btn btn-glass" onclick="event.stopPropagation(); openConfigScriptModal(${c.id}, '${escapeJs(c.ssh_user || 'bescom')}', '${escapeJs(c.log_file_path || '')}', '${escapeJs(c.ip || '')}')" style="padding:2px 6px; font-size:9px; color:var(--cyan); border-color:rgba(0,212,255,0.3); margin-left:6px" title="View Setup Script">⚡ Script</button>
                     <button class="btn btn-glass" onclick="event.stopPropagation(); deleteLogConfig(${c.id})" style="padding:2px 6px; font-size:9px; color:var(--red); border-color:rgba(255,59,92,0.3); margin-left:6px">✕</button>
                 </div>
             `;

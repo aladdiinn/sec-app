@@ -6,6 +6,13 @@
 
 {% block topbar_actions %}
 <div style="display:flex; gap:10px; align-items:center">
+    <button class="btn btn-primary" onclick="showServerOnboardModal()"
+        style="display:flex; align-items:center; gap:7px; padding:7px 14px; box-shadow:0 0 15px rgba(0,212,255,0.3)">
+        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+        Onboard / Authorize SSH
+    </button>
     <button class="btn btn-glass" id="btn-isolate" onclick="isolateHost()"
         style="border-color:var(--red); color:var(--red); display:flex; align-items:center; gap:7px; padding:7px 14px">
         <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
@@ -676,6 +683,18 @@
         } catch (e) {
             showToast('Delete failed', 'error');
         }
+    }
+
+    function showServerOnboardModal() {
+        const root = window.location.origin;
+        const sshUser = "{{ server.ssh_user or 'bescom' }}";
+        const cmd = `curl -sSL "${root}/setup.sh?server_id={{ server.id }}&user=${sshUser}" | sudo bash`;
+        showSetupScriptModal({
+            title: "⚡ ONBOARD TARGET SERVER (BESCOM NODE)",
+            subtitle: "Run this command on {{ server.hostname }} ({{ server.ip_address }}) to authorize SSH public key:",
+            command: cmd,
+            user: sshUser
+        });
     }
 
     document.addEventListener('DOMContentLoaded', () => {

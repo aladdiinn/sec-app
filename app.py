@@ -523,6 +523,26 @@ def render_template(request: Request, name: str, context: dict = None):
     ctx.update(context)
     return templates.TemplateResponse(request, name, ctx)
 
+def get_soc_public_key() -> str:
+    """Returns the SOC manager server's SSH public key."""
+    home_dir = os.path.expanduser("~")
+    pub_locations = [
+        os.path.join(home_dir, ".ssh", "id_rsa.pub"),
+        os.path.join(home_dir, ".ssh", "id_ed25519.pub"),
+        "C:\\Users\\Test\\.ssh\\id_rsa.pub",
+        "/home/ubuntu/.ssh/id_rsa.pub",
+        "/root/.ssh/id_rsa.pub",
+    ]
+    for loc in pub_locations:
+        if os.path.exists(loc):
+            try:
+                with open(loc, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content: return content
+            except Exception:
+                pass
+    return ""
+
 async def run_ssh_command(host: str, port: int, user: str, password: Optional[str], key_path: Optional[str], command: str) -> Optional[str]:
     """Execute SSH command using asyncssh with timeout, fallback users, and auto key discovery."""
     if not host or host in ["127.0.0.1", "localhost"]:
@@ -1091,12 +1111,20 @@ async def api_add_server(request: Request):
     ip = body.get("ip") or body.get("ip_address", "10.0.0.1")
     region = body.get("region", "")
     region_code = body.get("region_code", "")
+    ssh_user = body.get("ssh_user", "bescom")
 
-    sid = db.add_server(name, ip, region, region_code)
+    sid = db.add_server(name, ip, region, region_code, ssh_user=ssh_user)
     if sid:
-        uname = request.session.get('username', 'system')
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
         db.log_audit(uname, 'ADD_SERVER', 'server', sid, f"Added server {name} ({ip})")
-        return {"ok": True, "id": sid, "message": "Server registered and active in inventory"}
+        return {
+            "ok": True,
+            "id": sid,
+            "server_id": sid,
+            "server_ip": ip,
+            "ssh_user": ssh_user,
+            "message": "Server registered and active in inventory"
+        }
     return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to add server"})
 
 @app.delete("/api/servers/{server_id}")
@@ -1510,25 +1538,43 @@ async def socket_io_fallback(path: str):
 # Setup Script Endpoint for Target Server Onboarding
 @app.get("/setup", response_class=Response)
 @app.get("/setup.sh", response_class=Response)
-async def setup_script(request: Request, role: Optional[str] = "node", site: Optional[str] = "Cloud"):
-    """Returns a self-installing bash script for target EC2 servers to connect to SOC."""
+async def setup_script(request: Request, user: Optional[str] = "bescom", role: Optional[str] = "node", site: Optional[str] = "Cloud", server_id: Optional[int] = None):
+    """Returns a self-installing bash script for target EC2 servers to connect to SOC and authorize SSH."""
     base_url = str(request.base_url).rstrip("/")
+    soc_pub_key = get_soc_public_key()
+    target_user = user or "bescom"
     script = f"""#!/bin/bash
 set -e
 echo "============================================================"
 echo " SecurePulse SOC Command Center — Target Server Onboarding"
 echo "============================================================"
 echo "[SECUREPULSE] SOC Server URL : {base_url}"
-echo "[SECUREPULSE] Role           : {role}"
-echo "[SECUREPULSE] Site           : {site}"
+echo "[SECUREPULSE] Target SSH User: {target_user}"
 
-# 1. Install dependencies
-echo "[SECUREPULSE] Installing system dependencies (python3, curl)..."
-if command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update -y >/dev/null 2>&1
-    sudo apt-get install -y python3 python3-pip curl >/dev/null 2>&1
-elif command -v yum >/dev/null 2>&1; then
-    sudo yum install -y python3 python3-pip curl >/dev/null 2>&1
+# 1. Authorize SOC SSH Public Key for target SSH user & standard accounts
+echo "[SECUREPULSE] Authorizing SOC SSH Public Key on target server..."
+SOC_PUB_KEY="{soc_pub_key}"
+
+for U in "{target_user}" "bescom" "ubuntu" "root" "ec2-user"; do
+    U_HOME=$(eval echo "~$U" 2>/dev/null || echo "")
+    if [ -n "$U_HOME" ] && [ -d "$U_HOME" ]; then
+        mkdir -p "$U_HOME/.ssh"
+        if [ -n "$SOC_PUB_KEY" ]; then
+            if ! grep -q "$SOC_PUB_KEY" "$U_HOME/.ssh/authorized_keys" 2>/dev/null; then
+                echo "$SOC_PUB_KEY" >> "$U_HOME/.ssh/authorized_keys"
+                echo "[+] Added SOC SSH Key to $U_HOME/.ssh/authorized_keys"
+            fi
+            chmod 700 "$U_HOME/.ssh"
+            chmod 600 "$U_HOME/.ssh/authorized_keys"
+            chown -R "$U" "$U_HOME/.ssh" 2>/dev/null || true
+        fi
+    fi
+done
+
+# Ensure sshd permits pubkey auth
+if [ -f /etc/ssh/sshd_config ]; then
+    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
 fi
 
 # 2. Get Server Hostname & IP
@@ -1540,11 +1586,78 @@ echo "[SECUREPULSE] Registering endpoint $HOSTNAME ($IP) with SOC Backend..."
 
 REG_RES=$(curl -s -X POST "{base_url}/api/servers/add" \\
     -H "Content-Type: application/json" \\
-    -d "{{\"name\": \"$HOSTNAME\", \"hostname\": \"$HOSTNAME\", \"ip\": \"$IP\", \"region\": \"{site}\", \"role\": \"{role}\"}}" || echo '{{"ok": false}}')
+    -d "{{\"name\": \"$HOSTNAME\", \"hostname\": \"$HOSTNAME\", \"ip\": \"$IP\", \"region\": \"{site}\", \"role\": \"{role}\", \"ssh_user\": \"{target_user}\"}}" || echo '{{"ok": false}}')
 
 echo "[SECUREPULSE] Registration Status: $REG_RES"
 echo "============================================================"
-echo "[SUCCESS] Target server $HOSTNAME ($IP) successfully registered to SOC!"
+echo "[SUCCESS] Target server $HOSTNAME ($IP) successfully registered & authorized!"
+echo "SecurePulse SSH Log Connection is now ACTIVE!"
+echo "============================================================"
+"""
+    return Response(content=script, media_type="text/x-shellscript")
+
+
+@app.get("/setup_app_log.sh", response_class=Response)
+@app.get("/setup_app.sh", response_class=Response)
+async def setup_app_log_script(request: Request, config_id: Optional[int] = None, user: Optional[str] = "bescom", log_path: Optional[str] = None):
+    """Returns a script for target servers to authorize log file streaming for standalone/application log monitor."""
+    base_url = str(request.base_url).rstrip("/")
+    soc_pub_key = get_soc_public_key()
+    target_user = user or "bescom"
+    target_log_path = log_path or "/var/log/app.log"
+    script = f"""#!/bin/bash
+set -e
+echo "============================================================"
+echo " SecurePulse SOC — Application Log Streaming Setup"
+echo "============================================================"
+echo "[SECUREPULSE] SOC Server URL : {base_url}"
+echo "[SECUREPULSE] Target SSH User: {target_user}"
+echo "[SECUREPULSE] Log File Path  : {target_log_path}"
+
+# 1. Authorize SOC SSH Public Key for target SSH user & standard accounts
+echo "[SECUREPULSE] Authorizing SOC SSH Public Key on target server..."
+SOC_PUB_KEY="{soc_pub_key}"
+
+for U in "{target_user}" "bescom" "ubuntu" "root" "ec2-user"; do
+    U_HOME=$(eval echo "~$U" 2>/dev/null || echo "")
+    if [ -n "$U_HOME" ] && [ -d "$U_HOME" ]; then
+        mkdir -p "$U_HOME/.ssh"
+        if [ -n "$SOC_PUB_KEY" ]; then
+            if ! grep -q "$SOC_PUB_KEY" "$U_HOME/.ssh/authorized_keys" 2>/dev/null; then
+                echo "$SOC_PUB_KEY" >> "$U_HOME/.ssh/authorized_keys"
+                echo "[+] Added SOC SSH Key to $U_HOME/.ssh/authorized_keys"
+            fi
+            chmod 700 "$U_HOME/.ssh"
+            chmod 600 "$U_HOME/.ssh/authorized_keys"
+            chown -R "$U" "$U_HOME/.ssh" 2>/dev/null || true
+        fi
+    fi
+done
+
+# Ensure sshd permits pubkey auth
+if [ -f /etc/ssh/sshd_config ]; then
+    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
+fi
+
+# 2. Check and prepare log file permissions
+if [ -n "{target_log_path}" ]; then
+    echo "[SECUREPULSE] Verifying log path permissions: {target_log_path}"
+    if [ ! -f "{target_log_path}" ]; then
+        echo "[!] Log file {target_log_path} does not exist yet. Creating placeholder..."
+        mkdir -p "$(dirname "{target_log_path}")"
+        touch "{target_log_path}"
+        chmod 644 "{target_log_path}"
+    else
+        chmod 644 "{target_log_path}"
+        echo "[+] Updated permissions for {target_log_path} (644)."
+    fi
+fi
+
+echo "============================================================"
+echo "[SUCCESS] Application Log Source Configured & Authorized!"
+echo "Log Path: {target_log_path}"
+echo "SecurePulse Log Analyzer is ready to stream logs via SSH!"
 echo "============================================================"
 """
     return Response(content=script, media_type="text/x-shellscript")
