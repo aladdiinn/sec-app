@@ -171,6 +171,42 @@
     border-color: var(--cyan);
     box-shadow: 0 0 10px rgba(0,212,255,0.15);
 }
+.preset-pill {
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 9px;
+    font-family: var(--mono);
+    cursor: pointer;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--text3);
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.preset-pill:hover { border-color: var(--cyan); color: var(--text); }
+.preset-pill.active { background: rgba(0,212,255,0.15); border-color: var(--cyan); color: var(--cyan); }
+.preset-pill.pill-err:hover, .preset-pill.pill-err.active { background: rgba(255,59,92,0.15); border-color: var(--red); color: var(--red); }
+.preset-pill.pill-warn:hover, .preset-pill.pill-warn.active { background: rgba(255,184,0,0.15); border-color: var(--amber); color: var(--amber); }
+.preset-pill.pill-sec:hover, .preset-pill.pill-sec.active { background: rgba(0,255,136,0.15); border-color: var(--green); color: var(--green); }
+
+.kv-pill {
+    display: inline-block;
+    background: rgba(0,212,255,0.06);
+    border: 1px solid rgba(0,212,255,0.25);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-family: var(--mono);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.kv-pill:hover {
+    background: rgba(0,212,255,0.15);
+    border-color: var(--cyan);
+}
 </style>
 {% endblock %}
 
@@ -263,6 +299,32 @@
             </button>
         </div>
 
+        <!-- Log Telemetry & File Health Bar -->
+        <div style="background:var(--bg3); border-bottom:1px solid var(--border); padding:6px 14px; display:flex; justify-content:space-between; align-items:center; font-size:10px; font-family:var(--mono)">
+            <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap">
+                <span style="color:var(--text3)">📁 SOURCE: <strong id="telemetry-file-path" style="color:var(--cyan)">Global Telemetry Stream</strong></span>
+                <span style="color:var(--text3)">💾 SIZE: <strong id="telemetry-file-size" style="color:var(--text)">System Feed</strong></span>
+                <span style="color:var(--text3)">⚡ THROUGHPUT: <strong id="telemetry-rps" style="color:var(--green)">0.0 lines/sec</strong></span>
+                <span style="color:var(--text3)">STATUS: <span id="telemetry-health-badge" class="lvl-tag INFO">ONLINE</span></span>
+            </div>
+            <div style="display:flex; gap:8px">
+                <button class="btn btn-glass" onclick="toggleHistogramPanel()" style="font-size:9px; padding:3px 8px; color:var(--cyan); border-color:rgba(0,212,255,0.3)">
+                    📊 TIME HISTOGRAM
+                </button>
+            </div>
+        </div>
+
+        <!-- Log Histogram Chart Drawer -->
+        <div id="log-histogram-container" style="background:#04070d; border-bottom:1px solid var(--border); padding:10px 14px; display:none">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
+                <span style="font-family:var(--orbitron); font-size:9px; color:var(--text3); letter-spacing:1px">LOG VOLUME & ERROR SPIKE HISTOGRAM (CLICK BAR TO ZOOM TIME)</span>
+                <span id="histogram-time-range" style="font-family:var(--mono); font-size:9px; color:var(--cyan)">Real-Time Ingestion</span>
+            </div>
+            <div id="log-histogram-bars" style="display:flex; gap:4px; height:45px; align-items:flex-end; padding-top:4px; overflow-x:auto">
+                <!-- Dynamic Bar elements -->
+            </div>
+        </div>
+
         <!-- Filter Toolbar -->
         <div class="log-toolbar-bar">
             <div style="position:relative; flex:1">
@@ -291,6 +353,33 @@
                 </button>
                 <button class="btn btn-glass" onclick="fetchLogsNow()" style="font-size:10px; padding:5px 10px">REFRESH</button>
                 <button class="btn btn-glass" onclick="clearTerminal()" style="font-size:10px; padding:5px 10px; color:var(--amber)">CLEAR</button>
+            </div>
+        </div>
+
+        <!-- Quick Filter Preset Pills & Export Bar -->
+        <div style="background:var(--bg3); border-bottom:1px solid var(--border); padding:6px 14px; display:flex; justify-content:space-between; align-items:center">
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+                <span style="font-size:9px; color:var(--text3); font-family:var(--orbitron); margin-right:4px">PRESETS:</span>
+                <button class="preset-pill active" onclick="applyPresetFilter('', this)">ALL</button>
+                <button class="preset-pill pill-err" onclick="applyPresetFilter('error', this)">🔥 ERRORS</button>
+                <button class="preset-pill pill-warn" onclick="applyPresetFilter('warn', this)">⚠️ WARNS</button>
+                <button class="preset-pill pill-sec" onclick="applyPresetFilter('auth', this)">🔒 AUTH & SEC</button>
+                <button class="preset-pill pill-sec" onclick="applyPresetFilter('500', this)">🌐 5xx HTTP</button>
+                <button class="preset-pill pill-sec" onclick="applyPresetFilter('psql', this)">💾 DB QUERIES</button>
+            </div>
+
+            <!-- Export Buttons -->
+            <div style="display:flex; gap:6px; align-items:center">
+                <span style="font-size:9px; color:var(--text3); font-family:var(--orbitron); margin-right:4px">EXPORT:</span>
+                <button class="btn btn-glass" onclick="exportLogs('csv')" style="font-size:9px; padding:3px 8px; color:var(--green); border-color:rgba(0,255,136,0.3)">
+                    📄 CSV
+                </button>
+                <button class="btn btn-glass" onclick="exportLogs('json')" style="font-size:9px; padding:3px 8px; color:var(--cyan); border-color:rgba(0,212,255,0.3)">
+                    { } JSON
+                </button>
+                <button class="btn btn-glass" onclick="exportLogs('log')" style="font-size:9px; padding:3px 8px; color:var(--text2)">
+                    📜 RAW .LOG
+                </button>
             </div>
         </div>
 
@@ -656,6 +745,100 @@ function switchServiceTab(type, el) {
     fetchLogsNow();
 }
 
+let expandedLogIndices = new Set();
+let isHistogramVisible = false;
+
+function toggleHistogramPanel() {
+    isHistogramVisible = !isHistogramVisible;
+    const container = document.getElementById('log-histogram-container');
+    if (container) {
+        container.style.display = isHistogramVisible ? 'block' : 'none';
+    }
+}
+
+function renderHistogram(buckets) {
+    const container = document.getElementById('log-histogram-bars');
+    if (!container) return;
+    if (!buckets || !buckets.length) {
+        container.innerHTML = '<div style="color:var(--text3); font-size:10px; padding:10px">No timeline data available</div>';
+        return;
+    }
+
+    const maxVal = Math.max(...buckets.map(b => b.total || 1), 1);
+    
+    container.innerHTML = buckets.map(b => {
+        const heightPct = Math.max(12, Math.round((b.total / maxVal) * 100));
+        const errPct = Math.round(((b.errors || 0) / b.total) * 100);
+        const warnPct = Math.round(((b.warns || 0) / b.total) * 100);
+        const infoPct = 100 - errPct - warnPct;
+
+        return `
+        <div style="flex:1; min-width:16px; max-width:32px; display:flex; flex-direction:column; align-items:center; cursor:pointer" 
+             onclick="zoomHistogramTime('${b.time}')" 
+             title="Time: ${b.time} | Total: ${b.total} | Errors: ${b.errors} | Warns: ${b.warns}">
+            <div style="width:100%; height:${heightPct}%; display:flex; flex-direction:column; border-radius:2px; overflow:hidden; background:var(--bg4)">
+                ${b.errors ? `<div style="height:${errPct}%; background:var(--red)"></div>` : ''}
+                ${b.warns ? `<div style="height:${warnPct}%; background:var(--amber)"></div>` : ''}
+                <div style="height:${infoPct}%; background:var(--cyan); opacity:0.7"></div>
+            </div>
+            <div style="font-size:8px; color:var(--text3); font-family:var(--mono); margin-top:2px; transform:scale(0.85)">${b.time}</div>
+        </div>
+        `;
+    }).join('');
+}
+
+function zoomHistogramTime(timeStr) {
+    const searchInput = document.getElementById('log-search-input');
+    searchInput.value = timeStr;
+    filterLogLines();
+    showToast(`Zoomed log stream to window ${timeStr}`, "info");
+}
+
+function applyPresetFilter(term, btn) {
+    document.querySelectorAll('.preset-pill').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    
+    const searchInput = document.getElementById('log-search-input');
+    searchInput.value = term;
+    filterLogLines();
+}
+
+function exportLogs(format) {
+    if (!allLogLines || !allLogLines.length) {
+        showToast("No log entries to export", "warning");
+        return;
+    }
+    let content = "";
+    let filename = `log_export_${new Date().toISOString().slice(0,10)}`;
+    let mimeType = "text/plain";
+
+    if (format === 'csv') {
+        filename += ".csv";
+        mimeType = "text/csv";
+        content = "Timestamp,Level,Source,Message\n" + allLogLines.map(l => 
+            `"${l.time}","${l.level}","${l.source}","${(l.msg||'').replace(/"/g, '""')}"`
+        ).join("\n");
+    } else if (format === 'json') {
+        filename += ".json";
+        mimeType = "application/json";
+        content = JSON.stringify(allLogLines, null, 2);
+    } else {
+        filename += ".log";
+        content = allLogLines.map(l => `[${l.time}] [${l.level}] [${l.source}] ${l.msg}`).join("\n");
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${allLogLines.length} logs to ${filename}`, "success");
+}
+
 async function fetchLogsNow() {
     const tailLimit = parseInt(document.getElementById('log-tail-limit') ? document.getElementById('log-tail-limit').value : 100);
     try {
@@ -675,10 +858,27 @@ async function fetchLogsNow() {
         if (res && res.lines) {
             allLogLines = res.lines;
             renderLogLines(allLogLines);
+
+            if (res.histogram) {
+                renderHistogram(res.histogram);
+            }
+
+            if (res.file_stats) {
+                document.getElementById('telemetry-file-path').innerText = res.file_stats.file_path || 'System Telemetry Stream';
+                document.getElementById('telemetry-file-size').innerText = res.file_stats.size_str || 'System Feed';
+                const healthEl = document.getElementById('telemetry-health-badge');
+                if (healthEl) {
+                    healthEl.innerText = res.file_stats.health || 'ONLINE';
+                    healthEl.className = res.file_stats.health.includes('LARGE') ? 'lvl-tag WARN' : 'lvl-tag INFO';
+                }
+            }
+
             if (res.stats) {
                 document.getElementById('stat-log-count').innerText = res.stats.total || allLogLines.length;
                 document.getElementById('stat-err-count').innerText = res.stats.errors || 0;
+                document.getElementById('telemetry-rps').innerText = `${res.stats.rps || 0.0} lines/sec`;
             }
+
             if (res.counts) {
                 Object.keys(res.counts).forEach(k => {
                     const badge = document.getElementById(`badge-tab-${k}`);
@@ -701,24 +901,103 @@ function renderLogLines(lines) {
         return;
     }
 
-    const htmlContent = lines.map(l => {
+    const htmlContent = lines.map((l, idx) => {
         const lvl = (l.level || 'INFO').toUpperCase();
         const lvlClass = lvl === 'ERROR' ? 'lvl-error' : (lvl === 'WARN' ? 'lvl-warn' : (lvl === 'INFO' ? 'lvl-info' : ''));
+        const isExpanded = expandedLogIndices.has(idx);
+
+        const parsedKv = parseLogFields(l.msg);
+        let kvHtml = '';
+        if (parsedKv && Object.keys(parsedKv).length) {
+            kvHtml = Object.entries(parsedKv).map(([k, v]) => `
+                <span class="kv-pill" onclick="event.stopPropagation(); filterByKv('${escapeJs(k)}', '${escapeJs(v)}')">
+                    <strong style="color:var(--cyan)">${escapeHtml(k)}:</strong> ${escapeHtml(v)}
+                </span>
+            `).join(' ');
+        }
+
         return `
-        <div class="log-row-grid ${lvlClass}">
-            <div style="color:var(--text3)">${l.time}</div>
-            <div><span class="lvl-tag ${lvl}">${lvl}</span></div>
-            <div style="color:var(--cyan); text-overflow:ellipsis; overflow:hidden">${l.source}</div>
-            <div style="color:var(--text); word-break:break-all">${escapeHtml(l.msg)}</div>
+        <div class="log-row-wrapper" style="border-bottom: 1px solid rgba(255,255,255,0.03)">
+            <div class="log-row-grid ${lvlClass}" onclick="toggleLogDetail(${idx})" style="cursor:pointer; border-bottom:none">
+                <div style="color:var(--text3); display:flex; align-items:center; gap:6px">
+                    <span style="font-size:8px; color:var(--cyan); transition:transform 0.2s; transform:${isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'}">▶</span>
+                    ${l.time}
+                </div>
+                <div><span class="lvl-tag ${lvl}">${lvl}</span></div>
+                <div style="color:var(--cyan); text-overflow:ellipsis; overflow:hidden">${l.source}</div>
+                <div style="color:var(--text); word-break:break-all">${escapeHtml(l.msg)}</div>
+            </div>
+            ${isExpanded ? `
+            <div class="log-detail-drawer" style="background:#090e1a; border-left:3px solid var(--cyan); padding:10px 14px; margin:4px 14px 10px 14px; font-size:10px; border-radius:4px">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                    <span style="font-family:var(--orbitron); font-size:9px; color:var(--cyan); letter-spacing:1px">🔍 STRUCTURED LOG INSPECTOR</span>
+                    <span style="color:var(--text3); font-size:9px">Click key-value pill to filter terminal</span>
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px">
+                    <span class="kv-pill" onclick="event.stopPropagation(); filterByKv('level', '${lvl}')"><strong style="color:var(--cyan)">level:</strong> ${lvl}</span>
+                    <span class="kv-pill" onclick="event.stopPropagation(); filterByKv('source', '${escapeJs(l.source)}')"><strong style="color:var(--cyan)">source:</strong> ${escapeHtml(l.source)}</span>
+                    ${kvHtml}
+                </div>
+                <div style="background:rgba(0,0,0,0.5); padding:8px 10px; border-radius:4px; font-family:var(--mono); color:var(--text2); word-break:break-all; border:1px solid var(--border)">
+                    ${escapeHtml(l.msg)}
+                </div>
+            </div>
+            ` : ''}
         </div>
         `;
     }).join('');
 
-    if (htmlContent !== lastRenderedHash) {
+    if (htmlContent !== lastRenderedHash || expandedLogIndices.size > 0) {
         term.innerHTML = htmlContent;
         lastRenderedHash = htmlContent;
-        term.scrollTop = term.scrollHeight;
     }
+}
+
+function toggleLogDetail(idx) {
+    if (expandedLogIndices.has(idx)) {
+        expandedLogIndices.delete(idx);
+    } else {
+        expandedLogIndices.add(idx);
+    }
+    renderLogLines(allLogLines);
+}
+
+function parseLogFields(msg) {
+    if (!msg) return {};
+    const kv = {};
+    const str = String(msg).trim();
+
+    if (str.startsWith('{') && str.endsWith('}')) {
+        try {
+            const obj = JSON.parse(str);
+            Object.keys(obj).forEach(k => {
+                if (typeof obj[k] !== 'object') kv[k] = String(obj[k]);
+            });
+            return kv;
+        } catch(e){}
+    }
+
+    const matches = str.matchAll(/([a-zA-Z0-9_\-\.]+)=["']?([^"'\s]+)["']?/g);
+    for (const m of matches) {
+        if (m[1] && m[2] && m[1].length < 25) {
+            kv[m[1]] = m[2];
+        }
+    }
+
+    const ipMatch = str.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+    if (ipMatch) kv["ip"] = ipMatch[0];
+    
+    const httpMatch = str.match(/HTTP\/\d\.\d"\s+(\d{3})/);
+    if (httpMatch) kv["status"] = httpMatch[1];
+
+    return kv;
+}
+
+function filterByKv(key, val) {
+    const searchInput = document.getElementById('log-search-input');
+    searchInput.value = val;
+    filterLogLines();
+    showToast(`Filtered by ${key}: ${val}`, "info");
 }
 
 function filterLogLines() {
@@ -727,7 +1006,7 @@ function filterLogLines() {
         renderLogLines(allLogLines);
         return;
     }
-    const filtered = allLogLines.filter(l => (l.msg && l.msg.toLowerCase().includes(q)) || (l.source && l.source.toLowerCase().includes(q)));
+    const filtered = allLogLines.filter(l => (l.msg && l.msg.toLowerCase().includes(q)) || (l.source && l.source.toLowerCase().includes(q)) || (l.time && l.time.toLowerCase().includes(q)));
     renderLogLines(filtered);
 }
 
@@ -755,6 +1034,7 @@ function toggleAutoRefresh() {
 
 function clearTerminal() {
     allLogLines = [];
+    expandedLogIndices.clear();
     renderLogLines([]);
 }
 

@@ -2618,6 +2618,46 @@ async def api_fetch_log_lines(request: Request):
                 "msg": desc
             })
 
+    # Calculate timeline histogram buckets (grouped by HH:MM timestamp)
+    hist_buckets = {}
+    for l in lines:
+        t_str = str(l.get("time", ""))
+        time_key = t_str[11:16] if len(t_str) >= 16 and ":" in t_str[11:16] else datetime.now(timezone.utc).strftime("%H:%M")
+        if time_key not in hist_buckets:
+            hist_buckets[time_key] = {"time": time_key, "total": 0, "errors": 0, "warns": 0, "info": 0}
+        hist_buckets[time_key]["total"] += 1
+        lvl = str(l.get("level", "")).upper()
+        if lvl in ["ERROR", "CRIT", "FATAL"]:
+            hist_buckets[time_key]["errors"] += 1
+        elif lvl in ["WARN", "WARNING"]:
+            hist_buckets[time_key]["warns"] += 1
+        else:
+            hist_buckets[time_key]["info"] += 1
+
+    histogram_data = list(hist_buckets.values())
+    histogram_data.sort(key=lambda x: x["time"])
+
+    # Calculate log file health & size telemetry
+    file_stats = {
+        "file_path": log_path or "System Feed",
+        "exists": os.path.exists(log_path) if log_path else True,
+        "size_str": "System Feed",
+        "size_bytes": 0,
+        "health": "ONLINE"
+    }
+    if log_path and os.path.exists(log_path):
+        try:
+            sb = os.path.getsize(log_path)
+            file_stats["size_bytes"] = sb
+            if sb > 1024 * 1024:
+                file_stats["size_str"] = f"{sb / (1024 * 1024):.1f} MB"
+            else:
+                file_stats["size_str"] = f"{sb / 1024:.1f} KB"
+            if sb > 500 * 1024 * 1024:
+                file_stats["health"] = "LARGE (>500MB)"
+        except Exception:
+            pass
+
     # Calculate real dynamic counts from database configured application log sources
     all_cfgs = db.get_log_configs()
     tab_counts = {
@@ -2631,11 +2671,13 @@ async def api_fetch_log_lines(request: Request):
 
     return {
         "lines": lines,
+        "histogram": histogram_data,
+        "file_stats": file_stats,
         "stats": {
             "errors": len([l for l in lines if l.get("level") in ["ERROR", "CRIT", "FATAL"]]),
             "warns": len([l for l in lines if l.get("level") in ["WARN", "WARNING"]]),
             "total": len(lines),
-            "rps": 128
+            "rps": round(len(lines) / 60.0, 1) if len(lines) else 0.0
         },
         "counts": tab_counts
     }
