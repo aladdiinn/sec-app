@@ -390,6 +390,15 @@ def init_db():
                 try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass
 
+            # Server Log Configs Alter
+            for col, col_type in [
+                ('ssh_user', 'VARCHAR(64)'),
+                ('ssh_password', 'VARCHAR(255)'),
+                ('ssh_key_path', 'VARCHAR(255)')
+            ]:
+                try: cur.execute(f"ALTER TABLE server_log_configs ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+
             # Projects Alter
             for col, col_type in [
                 ('server_ids', "TEXT DEFAULT '[]'")
@@ -2383,22 +2392,6 @@ def delete_project(project_id: int):
 
             cur.execute("DELETE FROM projects WHERE id = %s;", (project_id,))
 
-            # server_log_configs Alter
-            for col, col_type in [
-                ('ssh_user', 'VARCHAR(64)'),
-                ('ssh_password', 'VARCHAR(255)'),
-                ('ssh_key_path', 'VARCHAR(255)')
-            ]:
-                try: cur.execute(f"ALTER TABLE server_log_configs ADD COLUMN IF NOT EXISTS {col} {col_type};")
-                except: pass
-
-            # Projects Alter
-            for col, col_type in [
-                ('server_ids', "TEXT DEFAULT '[]'")
-            ]:
-                try: cur.execute(f"ALTER TABLE projects ADD COLUMN IF NOT EXISTS {col} {col_type};")
-                except: pass
-
             if hasattr(conn, 'commit'):
                 try: conn.commit()
                 except Exception: pass
@@ -2415,6 +2408,20 @@ def get_log_configs(server_id=None):
     if not conn: return []
     try:
         with conn.cursor() as cur:
+            # Ensure columns exist on server_log_configs
+            for col, col_type in [
+                ('ssh_user', 'VARCHAR(64)'),
+                ('ssh_password', 'VARCHAR(255)'),
+                ('ssh_key_path', 'VARCHAR(255)')
+            ]:
+                try:
+                    cur.execute(f"SAVEPOINT sp_col_{col};")
+                    cur.execute(f"ALTER TABLE server_log_configs ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                    cur.execute(f"RELEASE SAVEPOINT sp_col_{col};")
+                except Exception:
+                    try: cur.execute(f"ALTER TABLE server_log_configs ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                    except Exception: pass
+
             if server_id:
                 cur.execute("""
                     SELECT c.*,
