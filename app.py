@@ -2534,6 +2534,13 @@ async def api_fetch_log_lines(request: Request):
     log_path = body.get("log_file_path")
     search = (body.get("search") or "").lower()
 
+    # Parse tail line limit (default 100, max 1000)
+    try:
+        limit = int(body.get("limit") or body.get("tail_lines") or 100)
+    except (ValueError, TypeError):
+        limit = 100
+    limit = max(10, min(1000, limit))
+
     lines = []
     configs = db.get_log_configs(server_id=sid) if sid else db.get_log_configs()
 
@@ -2547,7 +2554,7 @@ async def api_fetch_log_lines(request: Request):
     if log_path and os.path.exists(log_path):
         try:
             with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                raw_lines = f.readlines()[-150:]
+                raw_lines = f.readlines()[-limit:]
                 for rl in raw_lines:
                     rl = rl.strip()
                     if not rl: continue
@@ -2577,7 +2584,7 @@ async def api_fetch_log_lines(request: Request):
                     user=srv.get("ssh_user", "ubuntu"),
                     password=srv.get("ssh_password"),
                     key_path=srv.get("ssh_key_path"),
-                    command=f"tail -n 100 {log_path}"
+                    command=f"tail -n {limit} {log_path}"
                 )
                 if out:
                     raw_lines = out.strip().split("\n")
