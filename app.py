@@ -2530,22 +2530,42 @@ async def api_fetch_log_lines(request: Request):
     except Exception:
         body = {}
     sid = body.get("server_id")
-    log_type = body.get("log_type", "nginx")
+    log_type = body.get("log_type", "")
     log_path = body.get("log_file_path")
     search = (body.get("search") or "").lower()
 
     lines = []
-    # If server_id provided, look up configured log path if not explicitly passed
-    srv = db.get_server_by_id(sid) if sid else None
-    if srv and not log_path:
-        configs = db.get_log_configs(server_id=sid)
-        matching = [c for c in configs if c.get("service_type") == log_type]
+    configs = db.get_log_configs(server_id=sid) if sid else db.get_log_configs()
+
+    # Look up matching log config path if not explicitly provided
+    if not log_path and configs:
+        matching = [c for c in configs if not log_type or c.get("service_type") == log_type]
         if matching:
             log_path = matching[0].get("log_file_path")
 
-    if srv and log_path:
+    # 1. First priority: Try reading local file directly if it exists on server disk
+    if log_path and os.path.exists(log_path):
+        try:
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                raw_lines = f.readlines()[-100:]
+                for rl in raw_lines:
+                    rl = rl.strip()
+                    if not rl: continue
+                    if search and search not in rl.lower(): continue
+                    lines.append({
+                        "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                        "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
+                        "source": f"{log_type or 'app'}/local-node",
+                        "msg": rl
+                    })
+        except Exception as ex_read:
+            logger.warning(f"Error reading local log file {log_path}: {ex_read}")
+
+    # 2. Second priority: If remote host specified, attempt SSH
+    srv = db.get_server_by_id(sid) if sid else None
+    if not lines and srv and log_path:
         host = srv.get("ip_address") or srv.get("ip")
-        if host and host not in ["127.0.0.1", "localhost"]:
+        if host and host not in ["127.0.0.1", "localhost", "172.31.6.247"]:
             try:
                 out = await run_ssh_command(
                     host=host,
@@ -2562,14 +2582,14 @@ async def api_fetch_log_lines(request: Request):
                         lines.append({
                             "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
                             "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
-                            "source": f"{log_type}/{srv.get('hostname', 'node')}",
+                            "source": f"{log_type or 'app'}/{srv.get('hostname', 'node')}",
                             "msg": rl
                         })
             except Exception:
                 pass
 
     if not lines:
-        # Generate rich dynamic activity events for requested server & service type
+        # Generate rich activity feed events if log file empty or not yet generated
         events = db.get_activity_feed(limit=40, project_id=request.session.get("project_id"))
         for ev in events:
             desc = ev.get("description") or ev.get("message") or "System telemetry event"
@@ -2577,9 +2597,20 @@ async def api_fetch_log_lines(request: Request):
             lines.append({
                 "time": str(ev.get("created_at", "")).replace("T", " ")[:19],
                 "level": str(ev.get("severity", "INFO")).upper(),
-                "source": f"{log_type}/{ev.get('hostname') or 'server-node'}",
+                "source": f"{log_type or 'sys'}/{ev.get('hostname') or 'server-node'}",
                 "msg": desc
             })
+
+    # Calculate real dynamic counts from database configured application log sources
+    all_cfgs = db.get_log_configs()
+    tab_counts = {
+        "tomcat": len([c for c in all_cfgs if c.get("service_type") == "tomcat"]),
+        "nginx": len([c for c in all_cfgs if c.get("service_type") == "nginx"]),
+        "haproxy": len([c for c in all_cfgs if c.get("service_type") == "haproxy"]),
+        "syslog": len([c for c in all_cfgs if c.get("service_type") == "syslog"]),
+        "auth": len([c for c in all_cfgs if c.get("service_type") == "auth"]),
+        "custom": len([c for c in all_cfgs if c.get("service_type") == "custom"])
+    }
 
     return {
         "lines": lines,
@@ -2589,7 +2620,5 @@ async def api_fetch_log_lines(request: Request):
             "total": len(lines),
             "rps": 128
         },
-        "counts": {
-            "nginx": 14, "tomcat": 3, "haproxy": 22, "syslog": 5, "auth": 8
-        }
+        "counts": tab_counts
     }
