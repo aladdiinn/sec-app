@@ -297,6 +297,9 @@
             <button class="log-tab-btn" onclick="switchServiceTab('auth', this)">
                 🔑 AUTH <span class="log-tab-badge" id="badge-tab-auth">0</span>
             </button>
+            <button class="log-tab-btn" onclick="switchServiceTab('other', this)">
+                🧩 OTHER APPS <span class="log-tab-badge" id="badge-tab-other">0</span>
+            </button>
         </div>
 
         <!-- Log Telemetry & File Health Bar -->
@@ -468,14 +471,14 @@
                     <option value="haproxy">HAProxy (Load Balancer)</option>
                     <option value="syslog">Syslog (Kernel)</option>
                     <option value="auth">Auth (SSHD / Security)</option>
-                    <option value="custom">Custom Application</option>
+                    <option value="other">Other / Custom Apps (Python, Node, Go, Script, etc.)</option>
                 </select>
             </div>
         </div>
 
         <div>
             <label class="stat-label" style="display:block; margin-bottom:6px">LOG FILE PATH</label>
-            <input type="text" id="modal-app-log-path" placeholder="/opt/tomcat/logs/catalina.out" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px">
+            <input type="text" id="modal-app-log-path" placeholder="/var/log/app.log or /home/ubuntu/script.log" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px">
         </div>
     </div>
 
@@ -603,6 +606,7 @@ function autoFillDefaultPath() {
         else if (st === 'haproxy') pathInput.value = '/var/log/haproxy.log';
         else if (st === 'syslog') pathInput.value = '/var/log/syslog';
         else if (st === 'auth') pathInput.value = '/var/log/auth.log';
+        else if (st === 'other' || st === 'custom') pathInput.value = '/var/log/app.log';
     }
 }
 

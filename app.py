@@ -2556,7 +2556,8 @@ async def api_fetch_log_lines(request: Request):
         for c in configs:
             st = c.get("service_type", "")
             lp = c.get("log_file_path", "")
-            if (not log_type or st == log_type) and lp:
+            match_st = (not log_type) or (st == log_type) or (log_type in ["other", "custom"] and st in ["other", "custom"])
+            if match_st and lp:
                 target_sources.append((lp, st))
 
     # 1. First priority: Try reading local files directly for all matching log sources
@@ -2675,7 +2676,8 @@ async def api_fetch_log_lines(request: Request):
         "haproxy": len([c for c in all_cfgs if c.get("service_type") == "haproxy"]),
         "syslog": len([c for c in all_cfgs if c.get("service_type") == "syslog"]),
         "auth": len([c for c in all_cfgs if c.get("service_type") == "auth"]),
-        "custom": len([c for c in all_cfgs if c.get("service_type") == "custom"])
+        "other": len([c for c in all_cfgs if c.get("service_type") in ["other", "custom"]]),
+        "custom": len([c for c in all_cfgs if c.get("service_type") in ["other", "custom"]])
     }
 
     return {
