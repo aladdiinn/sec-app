@@ -263,8 +263,8 @@
                     </select>
                 </div>
 
-                <button class="btn btn-glass" id="btn-toggle-auto" onclick="toggleAutoRefresh()" style="font-size:10px; padding:5px 12px; color:var(--green); border-color:rgba(0,255,136,0.3)">
-                    🟢 LIVE STREAM
+                <button class="btn btn-glass" id="btn-toggle-auto" onclick="toggleAutoRefresh()" style="font-size:10px; padding:5px 12px; color:var(--amber); border-color:rgba(255,184,0,0.3)">
+                    ⏸️ STREAM PAUSED
                 </button>
                 <button class="btn btn-glass" onclick="fetchLogsNow()" style="font-size:10px; padding:5px 10px">REFRESH</button>
                 <button class="btn btn-glass" onclick="clearTerminal()" style="font-size:10px; padding:5px 10px; color:var(--amber)">CLEAR</button>
@@ -374,7 +374,7 @@ let selectedServerId = null;
 let currentServiceType = '';
 let allLogLines = [];
 let autoRefreshTimer = null;
-let isAutoRefresh = true;
+let isAutoRefresh = false;
 let currentNodeMode = 'existing';
 
 document.addEventListener('DOMContentLoaded', () => {
