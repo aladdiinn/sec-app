@@ -360,6 +360,17 @@ def init_db():
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pushed_logs (
+                    id SERIAL PRIMARY KEY,
+                    config_id INT,
+                    server_id INT,
+                    log_level VARCHAR(16) DEFAULT 'INFO',
+                    source VARCHAR(255),
+                    message TEXT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
 
             # Alerts Alter
             for col, col_type in [
@@ -2496,5 +2507,115 @@ def delete_log_config(config_id: int):
     except Exception as e:
         logger.error(f"Error in delete_log_config: {e}")
         return False
+    finally:
+        conn.close()
+
+def push_log_entries(config_id=None, server_id=None, lines=None):
+    if not lines: return 0
+    conn = get_db_connection()
+    if not conn: return 0
+    saved = 0
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS pushed_logs (
+                        id SERIAL PRIMARY KEY,
+                        config_id INT,
+                        server_id INT,
+                        log_level VARCHAR(16) DEFAULT 'INFO',
+                        source VARCHAR(255),
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                for line in lines:
+                    line_str = str(line).strip()
+                    if not line_str: continue
+                    level = "ERROR" if any(w in line_str.lower() for w in ["error", "fail", "exception", "fatal"]) else ("WARN" if "warn" in line_str.lower() else "INFO")
+                    source = f"app-agent/{config_id}" if config_id else f"node-agent/{server_id or 0}"
+                    
+                    cur.execute("""
+                        INSERT INTO pushed_logs (config_id, server_id, log_level, source, message, created_at)
+                        VALUES (%s, %s, %s, %s, %s, NOW());
+                    """, (config_id, server_id, level, source, line_str))
+                    saved += 1
+                
+                # Trim old logs to keep table lightweight (max 2000 per config)
+                if config_id:
+                    try:
+                        cur.execute("""
+                            DELETE FROM pushed_logs WHERE config_id = %s AND id NOT IN (
+                                SELECT id FROM pushed_logs WHERE config_id = %s ORDER BY id DESC LIMIT 2000
+                            );
+                        """, (config_id, config_id))
+                    except Exception: pass
+                elif server_id:
+                    try:
+                        cur.execute("""
+                            DELETE FROM pushed_logs WHERE server_id = %s AND id NOT IN (
+                                SELECT id FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT 2000
+                            );
+                        """, (server_id, server_id))
+                    except Exception: pass
+                
+                if hasattr(conn, 'commit'):
+                    conn.commit()
+    except Exception as e:
+        logger.error(f"Error in push_log_entries: {e}")
+    finally:
+        conn.close()
+    return saved
+
+
+def get_pushed_logs(config_id=None, server_id=None, limit=100):
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pushed_logs (
+                    id SERIAL PRIMARY KEY,
+                    config_id INT,
+                    server_id INT,
+                    log_level VARCHAR(16) DEFAULT 'INFO',
+                    source VARCHAR(255),
+                    message TEXT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            
+            if config_id:
+                cur.execute("""
+                    SELECT id, config_id, server_id, log_level as level, source, message as msg, created_at
+                    FROM pushed_logs WHERE config_id = %s ORDER BY id DESC LIMIT %s;
+                """, (config_id, limit))
+            elif server_id:
+                cur.execute("""
+                    SELECT id, config_id, server_id, log_level as level, source, message as msg, created_at
+                    FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT %s;
+                """, (server_id, limit))
+            else:
+                cur.execute("""
+                    SELECT id, config_id, server_id, log_level as level, source, message as msg, created_at
+                    FROM pushed_logs ORDER BY id DESC LIMIT %s;
+                """, (limit,))
+            
+            rows = cur.fetchall()
+            result = []
+            for r in reversed(rows):
+                created = r.get("created_at")
+                time_str = str(created)[:19].replace("T", " ") if created else ""
+                result.append({
+                    "id": r.get("id"),
+                    "time": time_str,
+                    "level": r.get("level") or "INFO",
+                    "source": r.get("source") or "app-agent",
+                    "msg": r.get("msg") or ""
+                })
+            return result
+    except Exception as e:
+        logger.error(f"Error in get_pushed_logs: {e}")
+        return []
     finally:
         conn.close()

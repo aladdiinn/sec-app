@@ -1535,63 +1535,60 @@ async def socket_io_ws_endpoint(websocket: WebSocket, path: str = ""):
 async def socket_io_fallback(path: str):
     return Response(content="ok", media_type="text/plain")
 
-# Setup Script Endpoint for Target Server Onboarding
+# Setup Script Endpoint for Target Server Node Onboarding (Push Agent Model - Zero SSH Credentials Needed)
 @app.get("/setup", response_class=Response)
 @app.get("/setup.sh", response_class=Response)
-async def setup_script(request: Request, user: Optional[str] = "bescom", role: Optional[str] = "node", site: Optional[str] = "Cloud", server_id: Optional[int] = None):
-    """Returns a self-installing bash script for target EC2 servers to connect to SOC and authorize SSH."""
+@app.get("/setup_node.sh", response_class=Response)
+async def setup_script(request: Request, node_name: Optional[str] = None, ip: Optional[str] = None, log_path: Optional[str] = None, server_id: Optional[int] = None, site: Optional[str] = "Cloud"):
+    """Returns a self-installing push agent script for target EC2 servers to stream logs/metrics back to SOC without SSH credentials."""
     base_url = str(request.base_url).rstrip("/")
-    soc_pub_key = get_soc_public_key()
-    target_user = user or "bescom"
+    target_node_name = node_name or "Target-Node"
+    target_ip = ip or "127.0.0.1"
+    target_log_path = log_path or "/var/log/syslog"
+
     script = f"""#!/bin/bash
 set -e
 echo "============================================================"
-echo " SecurePulse SOC Command Center — Target Server Onboarding"
+echo " SecurePulse SOC Command Center — Target Node Push Agent"
 echo "============================================================"
 echo "[SECUREPULSE] SOC Server URL : {base_url}"
-echo "[SECUREPULSE] Target SSH User: {target_user}"
+echo "[SECUREPULSE] Node Name      : {target_node_name}"
+echo "[SECUREPULSE] Node IP        : {target_ip}"
+echo "[SECUREPULSE] Log File Path  : {target_log_path}"
+echo "[SECUREPULSE] (Zero SSH Credentials Stored / Pure Outbound Push)"
 
-# 1. Authorize SOC SSH Public Key for target SSH user & standard accounts
-echo "[SECUREPULSE] Authorizing SOC SSH Public Key on target server..."
-SOC_PUB_KEY="{soc_pub_key}"
-
-for U in "{target_user}" "bescom" "ubuntu" "root" "ec2-user"; do
-    U_HOME=$(eval echo "~$U" 2>/dev/null || echo "")
-    if [ -n "$U_HOME" ] && [ -d "$U_HOME" ]; then
-        mkdir -p "$U_HOME/.ssh"
-        if [ -n "$SOC_PUB_KEY" ]; then
-            if ! grep -q "$SOC_PUB_KEY" "$U_HOME/.ssh/authorized_keys" 2>/dev/null; then
-                echo "$SOC_PUB_KEY" >> "$U_HOME/.ssh/authorized_keys"
-                echo "[+] Added SOC SSH Key to $U_HOME/.ssh/authorized_keys"
-            fi
-            chmod 700 "$U_HOME/.ssh"
-            chmod 600 "$U_HOME/.ssh/authorized_keys"
-            chown -R "$U" "$U_HOME/.ssh" 2>/dev/null || true
-        fi
-    fi
-done
-
-# Ensure sshd permits pubkey auth
-if [ -f /etc/ssh/sshd_config ]; then
-    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-    systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
-fi
-
-# 2. Get Server Hostname & IP
-HOSTNAME=$(hostname)
-IP=$(hostname -I | awk '{{print $1}}' || echo "127.0.0.1")
-
-# 3. Register Server in SOC Database
-echo "[SECUREPULSE] Registering endpoint $HOSTNAME ($IP) with SOC Backend..."
-
+# 1. Register Server in SOC Database
+echo "[SECUREPULSE] Registering asset node {target_node_name} ({target_ip}) with SOC Backend..."
 REG_RES=$(curl -s -X POST "{base_url}/api/servers/add" \\
     -H "Content-Type: application/json" \\
-    -d "{{\"name\": \"$HOSTNAME\", \"hostname\": \"$HOSTNAME\", \"ip\": \"$IP\", \"region\": \"{site}\", \"role\": \"{role}\", \"ssh_user\": \"{target_user}\"}}" || echo '{{"ok": false}}')
+    -d "{{\"name\": \"{target_node_name}\", \"hostname\": \"{target_node_name}\", \"ip\": \"{target_ip}\"}}" || echo '{{"ok": false}}')
 
 echo "[SECUREPULSE] Registration Status: $REG_RES"
+
+# 2. Setup background log push agent
+mkdir -p /opt/securepulse
+cat << 'EOF' > /opt/securepulse/node_push_agent.sh
+#!/bin/bash
+SOC_URL="{base_url}"
+LOG_PATH="{target_log_path}"
+NODE_IP="{target_ip}"
+
+if [ -n "$LOG_PATH" ] && [ -f "$LOG_PATH" ]; then
+    tail -F -n 100 "$LOG_PATH" | while read -r line; do
+        curl -s -X POST "$SOC_URL/api/agent/push-logs" \\
+            -H "Content-Type: application/json" \\
+            -d "{{\"server_ip\": \"$NODE_IP\", \"line\": \"$line\"}}" >/dev/null 2>&1 || true
+    done
+fi
+EOF
+
+chmod +x /opt/securepulse/node_push_agent.sh
+pkill -f node_push_agent.sh 2>/dev/null || true
+nohup /opt/securepulse/node_push_agent.sh >/dev/null 2>&1 &
+
 echo "============================================================"
-echo "[SUCCESS] Target server $HOSTNAME ($IP) successfully registered & authorized!"
-echo "SecurePulse SSH Log Connection is now ACTIVE!"
+echo " [SUCCESS] Target Asset Node {target_node_name} ({target_ip}) Onboarded!"
+echo " Log Streaming Push Agent is active (Zero SSH Credentials Used)!"
 echo "============================================================"
 """
     return Response(content=script, media_type="text/x-shellscript")
@@ -1599,65 +1596,50 @@ echo "============================================================"
 
 @app.get("/setup_app_log.sh", response_class=Response)
 @app.get("/setup_app.sh", response_class=Response)
-async def setup_app_log_script(request: Request, config_id: Optional[int] = None, user: Optional[str] = "bescom", log_path: Optional[str] = None):
-    """Returns a script for target servers to authorize log file streaming for standalone/application log monitor."""
+@app.get("/setup_log_agent.sh", response_class=Response)
+async def setup_app_log_script(request: Request, config_id: Optional[int] = None, log_path: Optional[str] = None):
+    """Returns a script for target application servers to stream log files directly without creating an asset node (Zero SSH Credentials)."""
     base_url = str(request.base_url).rstrip("/")
-    soc_pub_key = get_soc_public_key()
-    target_user = user or "bescom"
+    cfg_id = config_id or 1
     target_log_path = log_path or "/var/log/app.log"
+    
     script = f"""#!/bin/bash
 set -e
 echo "============================================================"
-echo " SecurePulse SOC — Application Log Streaming Setup"
+echo " SecurePulse SOC — Standalone Application Log Shipper"
 echo "============================================================"
 echo "[SECUREPULSE] SOC Server URL : {base_url}"
-echo "[SECUREPULSE] Target SSH User: {target_user}"
-echo "[SECUREPULSE] Log File Path  : {target_log_path}"
+echo "[SECUREPULSE] Standalone Log Config ID : {cfg_id}"
+echo "[SECUREPULSE] Log File Path            : {target_log_path}"
+echo "[SECUREPULSE] (No asset created in inventory / Zero SSH Credentials)"
 
-# 1. Authorize SOC SSH Public Key for target SSH user & standard accounts
-echo "[SECUREPULSE] Authorizing SOC SSH Public Key on target server..."
-SOC_PUB_KEY="{soc_pub_key}"
+mkdir -p /opt/securepulse
+if [ ! -f "{target_log_path}" ]; then
+    mkdir -p "$(dirname "{target_log_path}")"
+    touch "{target_log_path}"
+fi
 
-for U in "{target_user}" "bescom" "ubuntu" "root" "ec2-user"; do
-    U_HOME=$(eval echo "~$U" 2>/dev/null || echo "")
-    if [ -n "$U_HOME" ] && [ -d "$U_HOME" ]; then
-        mkdir -p "$U_HOME/.ssh"
-        if [ -n "$SOC_PUB_KEY" ]; then
-            if ! grep -q "$SOC_PUB_KEY" "$U_HOME/.ssh/authorized_keys" 2>/dev/null; then
-                echo "$SOC_PUB_KEY" >> "$U_HOME/.ssh/authorized_keys"
-                echo "[+] Added SOC SSH Key to $U_HOME/.ssh/authorized_keys"
-            fi
-            chmod 700 "$U_HOME/.ssh"
-            chmod 600 "$U_HOME/.ssh/authorized_keys"
-            chown -R "$U" "$U_HOME/.ssh" 2>/dev/null || true
-        fi
-    fi
+cat << 'EOF' > /opt/securepulse/log_forwarder_{cfg_id}.sh
+#!/bin/bash
+SOC_URL="{base_url}"
+LOG_PATH="{target_log_path}"
+CONFIG_ID="{cfg_id}"
+
+tail -F -n 100 "$LOG_PATH" | while read -r line; do
+    curl -s -X POST "$SOC_URL/api/agent/push-logs" \\
+        -H "Content-Type: application/json" \\
+        -d "{{\"config_id\": $CONFIG_ID, \"line\": \"$line\"}}" >/dev/null 2>&1 || true
 done
+EOF
 
-# Ensure sshd permits pubkey auth
-if [ -f /etc/ssh/sshd_config ]; then
-    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-    systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
-fi
-
-# 2. Check and prepare log file permissions
-if [ -n "{target_log_path}" ]; then
-    echo "[SECUREPULSE] Verifying log path permissions: {target_log_path}"
-    if [ ! -f "{target_log_path}" ]; then
-        echo "[!] Log file {target_log_path} does not exist yet. Creating placeholder..."
-        mkdir -p "$(dirname "{target_log_path}")"
-        touch "{target_log_path}"
-        chmod 644 "{target_log_path}"
-    else
-        chmod 644 "{target_log_path}"
-        echo "[+] Updated permissions for {target_log_path} (644)."
-    fi
-fi
+chmod +x /opt/securepulse/log_forwarder_{cfg_id}.sh
+pkill -f "log_forwarder_{cfg_id}.sh" 2>/dev/null || true
+nohup /opt/securepulse/log_forwarder_{cfg_id}.sh >/dev/null 2>&1 &
 
 echo "============================================================"
-echo "[SUCCESS] Application Log Source Configured & Authorized!"
-echo "Log Path: {target_log_path}"
-echo "SecurePulse Log Analyzer is ready to stream logs via SSH!"
+echo " [SUCCESS] Application Log Shipper Started!"
+echo " Log File : {target_log_path}"
+echo " Streaming directly to SecurePulse Log Analyzer (Zero SSH Credentials Used)!"
 echo "============================================================"
 """
     return Response(content=script, media_type="text/x-shellscript")
@@ -2682,6 +2664,36 @@ async def api_delete_log_config(config_id: int):
         return {"ok": True, "message": "Log config deleted"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
 
+@app.post("/api/agent/push-logs")
+@app.post("/api/logs/push")
+async def api_push_agent_logs(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    config_id = body.get("config_id")
+    server_id = body.get("server_id")
+    server_ip = body.get("server_ip")
+    
+    if not server_id and server_ip:
+        srv = db.get_server_by_ip(server_ip)
+        if srv:
+            server_id = srv.get("id")
+
+    raw_lines = body.get("lines") or body.get("logs") or []
+    if isinstance(raw_lines, str):
+        raw_lines = [raw_lines]
+    single_line = body.get("line") or body.get("message")
+    if single_line:
+        raw_lines.append(single_line)
+
+    if not raw_lines:
+        return {"ok": True, "count": 0}
+
+    saved_count = db.push_log_entries(config_id=config_id, server_id=server_id, lines=raw_lines)
+    return {"ok": True, "count": saved_count}
+
+
 @app.post("/api/logs/fetch")
 async def api_fetch_log_lines(request: Request):
     try:
@@ -2703,40 +2715,56 @@ async def api_fetch_log_lines(request: Request):
     lines = []
     configs = db.get_log_configs(server_id=sid) if sid else db.get_log_configs()
 
-    # Collect all matching log file paths for requested service type
-    target_sources = []
+    matching_cfg = None
     if log_path:
-        target_sources.append((log_path, log_type or "app"))
-    elif configs:
         for c in configs:
-            st = c.get("service_type", "")
-            lp = c.get("log_file_path", "")
-            match_st = (not log_type) or (st == log_type) or (log_type in ["other", "custom"] and st in ["other", "custom"])
-            if match_st and lp:
-                target_sources.append((lp, st))
+            if c.get("log_file_path") == log_path:
+                matching_cfg = c
+                break
 
-    # 1. First priority: Try reading local files directly for all matching log sources
-    for lp, st in target_sources:
-        if os.path.exists(lp):
-            try:
-                with open(lp, 'r', encoding='utf-8', errors='ignore') as f:
-                    raw_lines = f.readlines()[-limit:]
-                    for rl in raw_lines:
-                        rl = rl.strip()
-                        if not rl: continue
-                        if search and search not in rl.lower(): continue
+    # 1. First priority: Fetch logs pushed by push agents from pushed_logs table
+    cfg_id = matching_cfg.get("id") if matching_cfg else None
+    pushed = db.get_pushed_logs(config_id=cfg_id, server_id=sid, limit=limit)
+    if pushed:
+        for pl in pushed:
+            msg = pl.get("msg", "")
+            if search and search not in msg.lower(): continue
+            lines.append(pl)
 
-                        ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?)', rl)
-                        log_time = ts_match.group(1)[:19] if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    # 2. Second priority: Try reading local files directly for all matching log sources
+    if not lines:
+        target_sources = []
+        if log_path:
+            target_sources.append((log_path, log_type or "app"))
+        elif configs:
+            for c in configs:
+                st = c.get("service_type", "")
+                lp = c.get("log_file_path", "")
+                match_st = (not log_type) or (st == log_type) or (log_type in ["other", "custom"] and st in ["other", "custom"])
+                if match_st and lp:
+                    target_sources.append((lp, st))
 
-                        lines.append({
-                            "time": log_time,
-                            "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
-                            "source": f"{st}/local-node",
-                            "msg": rl
-                        })
-            except Exception as ex_read:
-                logger.warning(f"Error reading local log file {lp}: {ex_read}")
+        for lp, st in target_sources:
+            if os.path.exists(lp):
+                try:
+                    with open(lp, 'r', encoding='utf-8', errors='ignore') as f:
+                        raw_lines = f.readlines()[-limit:]
+                        for rl in raw_lines:
+                            rl = rl.strip()
+                            if not rl: continue
+                            if search and search not in rl.lower(): continue
+
+                            ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?)', rl)
+                            log_time = ts_match.group(1)[:19] if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+                            lines.append({
+                                "time": log_time,
+                                "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
+                                "source": f"{st}/local-node",
+                                "msg": rl
+                            })
+                except Exception as ex_read:
+                    logger.warning(f"Error reading local log file {lp}: {ex_read}")
 
     # 2. Second priority: If remote host specified or if log_path on remote server, attempt SSH
     srv = db.get_server_by_id(sid) if sid else None

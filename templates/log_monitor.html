@@ -485,25 +485,6 @@
             <input type="text" id="modal-app-log-path" placeholder="/var/log/app.log or /home/ubuntu/script.log" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px">
         </div>
 
-        <!-- Optional Remote SSH Credentials Collapsible Container -->
-        <div style="background:rgba(0,212,255,0.02); border:1px solid var(--border); padding:10px 12px; border-radius:6px; margin-top:4px">
-            <div style="font-size:10px; font-weight:600; color:var(--cyan); margin-bottom:8px; font-family:var(--orbitron)">
-                🔒 REMOTE SSH CREDENTIALS (OPTIONAL FOR REMOTE NODES)
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
-                <div>
-                    <label class="stat-label" style="display:block; margin-bottom:4px; font-size:9px">SSH USERNAME</label>
-                    <input type="text" id="modal-ssh-user" placeholder="e.g. bescom or ubuntu" class="mono glass" style="width:100%; padding:6px 10px; font-size:11px; border-radius:4px">
-                </div>
-                <div>
-                    <label class="stat-label" style="display:block; margin-bottom:4px; font-size:9px">SSH PASSWORD (IF APPLICABLE)</label>
-                    <input type="password" id="modal-ssh-password" placeholder="Remote SSH Password" class="mono glass" style="width:100%; padding:6px 10px; font-size:11px; border-radius:4px">
-                </div>
-            </div>
-            <div style="margin-top:8px">
-                <label class="stat-label" style="display:block; margin-bottom:4px; font-size:9px">SSH KEY / PEM FILE PATH (IF APPLICABLE)</label>
-                <input type="text" id="modal-ssh-key-path" placeholder="/home/ubuntu/.ssh/id_rsa or /path/to/key.pem" class="mono glass" style="width:100%; padding:6px 10px; font-size:11px; border-radius:4px">
-            </div>
         </div>
     </div>
 
@@ -645,19 +626,11 @@ async function saveLogApplicationConfig() {
         return;
     }
 
-    const sshUser = document.getElementById('modal-ssh-user') ? document.getElementById('modal-ssh-user').value.trim() : '';
-    const sshPassword = document.getElementById('modal-ssh-password') ? document.getElementById('modal-ssh-password').value : '';
-    const sshKeyPath = document.getElementById('modal-ssh-key-path') ? document.getElementById('modal-ssh-key-path').value.trim() : '';
-
     let payload = {
         app_name: appName,
         service_type: serviceType,
         log_file_path: logPath
     };
-
-    if (sshUser) payload.ssh_user = sshUser;
-    if (sshPassword) payload.ssh_password = sshPassword;
-    if (sshKeyPath) payload.ssh_key_path = sshKeyPath;
 
     if (currentNodeMode === 'standalone') {
         const standaloneIp = document.getElementById('modal-standalone-ip') ? document.getElementById('modal-standalone-ip').value.trim() : '';
@@ -704,22 +677,21 @@ async function saveLogApplicationConfig() {
             
             loadLogConfigs();
 
-            const targetUser = res.ssh_user || sshUser || 'bescom';
-            const targetIp = res.server_ip || 'targeted node';
             const isStandalone = currentNodeMode === 'standalone';
+            const nodeName = document.getElementById('modal-new-server-name') ? document.getElementById('modal-new-server-name').value.trim() : 'Node';
+            const nodeIp = res.server_ip || (document.getElementById('modal-standalone-ip') ? document.getElementById('modal-standalone-ip').value.trim() : '127.0.0.1');
 
             let cmd = '';
             if (isStandalone) {
-                cmd = `curl -sSL "${window.location.origin}/setup_app_log.sh?config_id=${res.id}&user=${targetUser}&log_path=${encodeURIComponent(logPath)}" | sudo bash`;
+                cmd = `curl -sSL "${window.location.origin}/setup_log_agent.sh?config_id=${res.id}&log_path=${encodeURIComponent(logPath)}" | sudo bash`;
             } else {
-                cmd = `curl -sSL "${window.location.origin}/setup.sh?server_id=${res.server_id || ''}&user=${targetUser}" | sudo bash`;
+                cmd = `curl -sSL "${window.location.origin}/setup_node.sh?node_name=${encodeURIComponent(nodeName)}&ip=${encodeURIComponent(nodeIp)}&log_path=${encodeURIComponent(logPath)}" | sudo bash`;
             }
 
             showSetupScriptModal({
-                title: isStandalone ? "⚡ APPLICATION LOG AUTHORIZATION SCRIPT" : "🚀 TARGET NODE AUTHORIZATION SCRIPT",
-                subtitle: `Run this 1-line command on your targeted server (${targetIp}) to authorize SSH & log streaming:`,
-                command: cmd,
-                user: targetUser
+                title: isStandalone ? "⚡ STANDALONE LOG SHIPPER AGENT SCRIPT" : "🚀 ASSET NODE PUSH AGENT SCRIPT",
+                subtitle: `Run this 1-line command on your target server (${nodeIp}) to start outbound log streaming (Zero SSH Credentials used):`,
+                command: cmd
             });
         } else {
             showToast(res.message || 'Failed to save application log source', 'error');
@@ -732,13 +704,12 @@ async function saveLogApplicationConfig() {
     }
 }
 
-function openConfigScriptModal(configId, sshUser, logPath, ip) {
-    const cmd = `curl -sSL "${window.location.origin}/setup_app_log.sh?config_id=${configId}&user=${sshUser}&log_path=${encodeURIComponent(logPath)}" | sudo bash`;
+function openConfigScriptModal(configId, logPath, ip) {
+    const cmd = `curl -sSL "${window.location.origin}/setup_log_agent.sh?config_id=${configId}&log_path=${encodeURIComponent(logPath)}" | sudo bash`;
     showSetupScriptModal({
-        title: "⚡ TARGET APPLICATION AUTHORIZATION SCRIPT",
-        subtitle: `Run this command on your targeted server (${ip || 'remote node'}) to authorize SSH log monitoring:`,
-        command: cmd,
-        user: sshUser
+        title: "⚡ STANDALONE LOG SHIPPER AGENT SCRIPT",
+        subtitle: `Run this 1-line command on your target server (${ip || 'remote node'}) to start outbound log streaming (Zero SSH Credentials used):`,
+        command: cmd
     });
 }
 
