@@ -339,6 +339,18 @@ def init_db():
                 );
             """)
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS server_log_configs (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT,
+                    server_ip VARCHAR(255),
+                    app_name VARCHAR(255) NOT NULL,
+                    service_type VARCHAR(64) DEFAULT 'nginx',
+                    log_file_path VARCHAR(512) NOT NULL,
+                    status VARCHAR(32) DEFAULT 'active',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS reports (
                     id SERIAL PRIMARY KEY,
                     title VARCHAR(255),
@@ -2355,6 +2367,109 @@ def delete_project(project_id: int):
         return True
     except Exception as e:
         logger.error(f"Error in delete_project: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def get_log_configs(server_id=None):
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            if server_id:
+                cur.execute("""
+                    SELECT c.*, COALESCE(s.hostname, s.name, 'server-node') as hostname, COALESCE(s.ip_address, s.ip, c.server_ip) as ip
+                    FROM server_log_configs c
+                    LEFT JOIN servers s ON c.server_id = s.id
+                    WHERE c.server_id = %s
+                    ORDER BY c.id DESC;
+                """, (server_id,))
+            else:
+                cur.execute("""
+                    SELECT c.*, COALESCE(s.hostname, s.name, 'server-node') as hostname, COALESCE(s.ip_address, s.ip, c.server_ip) as ip
+                    FROM server_log_configs c
+                    LEFT JOIN servers s ON c.server_id = s.id
+                    ORDER BY c.id DESC;
+                """)
+            rows = cur.fetchall()
+            if not rows and not server_id:
+                # Seed default demo log configs for existing servers
+                try:
+                    cur.execute("SELECT id, ip_address, ip FROM servers ORDER BY id ASC LIMIT 5;")
+                    srvs = cur.fetchall()
+                    if srvs:
+                        default_configs = [
+                            ('MDM Tomcat Core', 'tomcat', '/opt/tomcat/logs/catalina.out'),
+                            ('APDCL Nginx Ingress', 'nginx', '/var/log/nginx/access.log'),
+                            ('PGVCL HAProxy LB', 'haproxy', '/var/log/haproxy.log'),
+                            ('Nagaland Auth System', 'auth', '/var/log/auth.log'),
+                            ('Syslog Kernel Monitor', 'syslog', '/var/log/syslog')
+                        ]
+                        for idx, s in enumerate(srvs):
+                            sid = s["id"] if isinstance(s, dict) else s[0]
+                            sip = s.get("ip_address") or s.get("ip") or "10.0.1.10" if isinstance(s, dict) else "10.0.1.10"
+                            app_n, s_type, path = default_configs[idx % len(default_configs)]
+                            cur.execute("""
+                                INSERT INTO server_log_configs (server_id, server_ip, app_name, service_type, log_file_path)
+                                VALUES (%s, %s, %s, %s, %s);
+                            """, (sid, sip, app_n, s_type, path))
+                        if hasattr(conn, 'commit'):
+                            try: conn.commit()
+                            except Exception: pass
+                        cur.execute("""
+                            SELECT c.*, COALESCE(s.hostname, s.name, 'server-node') as hostname, COALESCE(s.ip_address, s.ip, c.server_ip) as ip
+                            FROM server_log_configs c
+                            LEFT JOIN servers s ON c.server_id = s.id
+                            ORDER BY c.id DESC;
+                        """)
+                        rows = cur.fetchall()
+                except Exception as ex_seed:
+                    logger.debug(f"Log config seed error: {ex_seed}")
+
+            for r in rows:
+                if r.get("created_at") is not None:
+                    r["created_at"] = str(r["created_at"])
+            return rows
+    except Exception as e:
+        logger.error(f"Error in get_log_configs: {e}")
+        return []
+    finally:
+        conn.close()
+
+def add_log_config(server_id, server_ip, app_name, service_type, log_file_path):
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO server_log_configs (server_id, server_ip, app_name, service_type, log_file_path, created_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW()) RETURNING id;
+                """, (server_id, server_ip, app_name, service_type, log_file_path))
+                row = cur.fetchone()
+                cid = row["id"] if isinstance(row, dict) else row[0]
+                if hasattr(conn, 'commit'):
+                    conn.commit()
+                return cid
+    except Exception as e:
+        logger.error(f"Error in add_log_config: {e}")
+        return None
+    finally:
+        conn.close()
+
+def delete_log_config(config_id: int):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM server_log_configs WHERE id = %s;", (config_id,))
+                if hasattr(conn, 'commit'):
+                    conn.commit()
+                return True
+    except Exception as e:
+        logger.error(f"Error in delete_log_config: {e}")
         return False
     finally:
         conn.close()

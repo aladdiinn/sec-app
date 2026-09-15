@@ -198,6 +198,56 @@
         </div>
     </div>
 
+    <!-- Log Analyzer Application Sources Card -->
+    <div class="card" style="margin-bottom:20px">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center">
+            <h3 class="card-title">⚙ LOG ANALYZER CONFIGURATION (APPLICATION LOG SOURCES)</h3>
+            <a href="/log-monitor" class="btn btn-glass" style="font-size:11px; color:var(--cyan); border-color:rgba(0,212,255,0.4)">Open Log Monitor ➔</a>
+        </div>
+        <div class="card-body" style="padding:20px">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:30px">
+                <!-- Registered Log Applications -->
+                <div style="border-right:1px solid var(--border); padding-right:30px">
+                    <h4 style="color:var(--cyan); margin-bottom:15px; font-size:13px; letter-spacing:1px">REGISTERED APPLICATION LOG SOURCES</h4>
+                    <div id="srv-detail-log-sources-list" style="display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto">
+                        <div class="center-spinner"><div class="spinner" style="width:20px; height:20px"></div></div>
+                    </div>
+                </div>
+
+                <!-- Add Application Log Source Form -->
+                <div>
+                    <h4 style="color:var(--cyan); margin-bottom:15px; font-size:13px; letter-spacing:1px">+ ADD APPLICATION LOG SOURCE</h4>
+                    <div style="background:rgba(0,212,255,0.03); border:1px dashed var(--border); padding:16px; border-radius:6px">
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px">
+                            <div>
+                                <label class="stat-label" style="font-size:9px">APP NAME</label>
+                                <input type="text" id="srv-detail-app-name" placeholder="e.g. Payment Gateway" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%">
+                            </div>
+                            <div>
+                                <label class="stat-label" style="font-size:9px">SERVICE TYPE</label>
+                                <select id="srv-detail-service-type" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" onchange="autoFillSrvDetailPath()">
+                                    <option value="tomcat">Tomcat (Java)</option>
+                                    <option value="nginx">Nginx (Web/Ingress)</option>
+                                    <option value="haproxy">HAProxy (LB)</option>
+                                    <option value="syslog">Syslog (Kernel)</option>
+                                    <option value="auth">Auth (SSHD)</option>
+                                    <option value="custom">Custom App</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div style="margin-bottom:12px">
+                            <label class="stat-label" style="font-size:9px">LOG FILE PATH</label>
+                            <input type="text" id="srv-detail-log-path" placeholder="/opt/tomcat/logs/catalina.out" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%">
+                        </div>
+                        <button class="btn btn-primary" id="btn-save-srv-detail-log" style="width:100%; font-size:11px; padding:7px" onclick="saveSrvDetailLogSource()">
+                            + Add Application To Log Monitor
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Recent Events — full width -->
     <div class="card" style="margin-bottom:20px">
         <div class="card-header">
@@ -546,6 +596,92 @@
         }
     }
 
-    document.addEventListener('DOMContentLoaded', loadServerData);
+    async function loadSrvDetailLogSources() {
+        const container = document.getElementById('srv-detail-log-sources-list');
+        try {
+            const configs = await apiFetch(`/api/servers/${serverId}/log-configs`);
+            if (!configs || !configs.length) {
+                container.innerHTML = '<div style="color:var(--text3); font-size:11px; padding:10px">No application log sources configured for this server yet.</div>';
+                return;
+            }
+            container.innerHTML = configs.map(c => `
+                <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg3); padding:8px 12px; border-radius:4px; border:1px solid var(--border)">
+                    <div>
+                        <div style="font-size:12px; font-weight:600; color:var(--text)">${c.app_name}</div>
+                        <div style="font-size:10px; color:var(--cyan); font-family:var(--mono)">${c.service_type.toUpperCase()} · ${c.log_file_path}</div>
+                    </div>
+                    <button class="btn btn-glass" onclick="deleteSrvDetailLogSource(${c.id})" style="padding:2px 8px; font-size:10px; color:var(--red); border-color:rgba(255,59,92,0.3)">✕ Remove</button>
+                </div>
+            `).join('');
+        } catch (e) {
+            container.innerHTML = '<div style="color:var(--red); font-size:11px; padding:10px">Failed to load log sources.</div>';
+        }
+    }
+
+    function autoFillSrvDetailPath() {
+        const st = document.getElementById('srv-detail-service-type').value;
+        const p = document.getElementById('srv-detail-log-path');
+        if (st === 'tomcat') p.value = '/opt/tomcat/logs/catalina.out';
+        else if (st === 'nginx') p.value = '/var/log/nginx/access.log';
+        else if (st === 'haproxy') p.value = '/var/log/haproxy.log';
+        else if (st === 'syslog') p.value = '/var/log/syslog';
+        else if (st === 'auth') p.value = '/var/log/auth.log';
+    }
+
+    async function saveSrvDetailLogSource() {
+        const appName = document.getElementById('srv-detail-app-name').value.trim();
+        const serviceType = document.getElementById('srv-detail-service-type').value;
+        const logPath = document.getElementById('srv-detail-log-path').value.trim();
+
+        if (!appName || !logPath) {
+            showToast('Please enter Application Name and Log File Path', 'warning');
+            return;
+        }
+
+        const btn = document.getElementById('btn-save-srv-detail-log');
+        btn.disabled = true;
+        btn.innerText = 'Saving...';
+
+        try {
+            const res = await apiFetch(`/api/servers/${serverId}/log-config`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    app_name: appName,
+                    service_type: serviceType,
+                    log_file_path: logPath
+                })
+            });
+
+            if (res && res.ok) {
+                showToast('Application log source added successfully!', 'success');
+                document.getElementById('srv-detail-app-name').value = '';
+                await loadSrvDetailLogSources();
+            } else {
+                showToast(res.message || 'Failed to add log source', 'error');
+            }
+        } catch (e) {
+            showToast(e.message || 'Save error', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = '+ Add Application To Log Monitor';
+        }
+    }
+
+    async function deleteSrvDetailLogSource(cid) {
+        if (!confirm('Remove this application log source from Log Monitor?')) return;
+        try {
+            await apiFetch(`/api/log-monitor/configs/${cid}`, { method: 'DELETE' });
+            showToast('Log source removed', 'info');
+            await loadSrvDetailLogSources();
+        } catch (e) {
+            showToast('Delete failed', 'error');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadServerData();
+        loadSrvDetailLogSources();
+        autoFillSrvDetailPath();
+    });
 </script>
 {% endblock %}

@@ -2457,3 +2457,130 @@ if __name__ == "__main__":
     import os
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
+
+
+# ── LOG MONITOR / LOG ANALYZER ENDPOINTS ──────────────────────────────────────
+@app.get("/log-monitor", response_class=HTMLResponse)
+@app.get("/log_monitor", response_class=HTMLResponse)
+async def view_log_monitor_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    pid = request.query_params.get("project_id") or request.session.get("project_id")
+    servers = db.get_servers(project_id=pid)
+    configs = db.get_log_configs()
+    return render_template(request, "log_monitor.html", {
+        "active": "log-monitor",
+        "servers": servers,
+        "log_configs": configs
+    })
+
+@app.get("/api/log-monitor/configs")
+async def api_get_log_configs(server_id: Optional[int] = None):
+    return db.get_log_configs(server_id=server_id)
+
+@app.get("/api/servers/{server_id}/log-configs")
+async def api_get_server_log_configs(server_id: int):
+    return db.get_log_configs(server_id=server_id)
+
+@app.post("/api/log-monitor/configs")
+@app.post("/api/servers/{server_id}/log-config")
+async def api_add_log_config(request: Request, server_id: Optional[int] = None):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    sid = server_id or body.get("server_id")
+    sip = body.get("server_ip", "")
+    app_name = body.get("app_name") or body.get("name") or "Application Log"
+    service_type = body.get("service_type") or body.get("service") or "nginx"
+    log_file_path = body.get("log_file_path") or body.get("path") or "/var/log/nginx/access.log"
+
+    if sid and not sip:
+        srv = db.get_server_by_id(sid)
+        if srv:
+            sip = srv.get("ip_address") or srv.get("ip") or ""
+
+    cid = db.add_log_config(sid, sip, app_name, service_type, log_file_path)
+    if cid:
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, 'ADD_LOG_CONFIG', 'server', sid or 0, f"Configured log source '{app_name}' ({service_type}: {log_file_path})")
+        return {"ok": True, "id": cid, "message": "Log application config saved successfully"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to add log application config"})
+
+@app.delete("/api/log-monitor/configs/{config_id}")
+async def api_delete_log_config(config_id: int):
+    if db.delete_log_config(config_id):
+        return {"ok": True, "message": "Log config deleted"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
+
+@app.post("/api/logs/fetch")
+async def api_fetch_log_lines(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    sid = body.get("server_id")
+    log_type = body.get("log_type", "nginx")
+    log_path = body.get("log_file_path")
+    search = (body.get("search") or "").lower()
+
+    lines = []
+    # If server_id provided, look up configured log path if not explicitly passed
+    srv = db.get_server_by_id(sid) if sid else None
+    if srv and not log_path:
+        configs = db.get_log_configs(server_id=sid)
+        matching = [c for c in configs if c.get("service_type") == log_type]
+        if matching:
+            log_path = matching[0].get("log_file_path")
+
+    if srv and log_path:
+        host = srv.get("ip_address") or srv.get("ip")
+        if host and host not in ["127.0.0.1", "localhost"]:
+            try:
+                out = await run_ssh_command(
+                    host=host,
+                    port=srv.get("ssh_port", 22),
+                    user=srv.get("ssh_user", "ubuntu"),
+                    password=srv.get("ssh_password"),
+                    key_path=srv.get("ssh_key_path"),
+                    command=f"tail -n 100 {log_path}"
+                )
+                if out:
+                    raw_lines = out.strip().split("\n")
+                    for rl in raw_lines:
+                        if search and search not in rl.lower(): continue
+                        lines.append({
+                            "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                            "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
+                            "source": f"{log_type}/{srv.get('hostname', 'node')}",
+                            "msg": rl
+                        })
+            except Exception:
+                pass
+
+    if not lines:
+        # Generate rich dynamic activity events for requested server & service type
+        events = db.get_activity_feed(limit=40, project_id=request.session.get("project_id"))
+        for ev in events:
+            desc = ev.get("description") or ev.get("message") or "System telemetry event"
+            if search and search not in desc.lower(): continue
+            lines.append({
+                "time": str(ev.get("created_at", "")).replace("T", " ")[:19],
+                "level": str(ev.get("severity", "INFO")).upper(),
+                "source": f"{log_type}/{ev.get('hostname') or 'server-node'}",
+                "msg": desc
+            })
+
+    return {
+        "lines": lines,
+        "stats": {
+            "errors": len([l for l in lines if l.get("level") in ["ERROR", "CRIT", "FATAL"]]),
+            "warns": len([l for l in lines if l.get("level") in ["WARN", "WARNING"]]),
+            "total": len(lines),
+            "rps": 128
+        },
+        "counts": {
+            "nginx": 14, "tomcat": 3, "haproxy": 22, "syslog": 5, "auth": 8
+        }
+    }

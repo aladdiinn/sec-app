@@ -61,6 +61,63 @@
         <button class="btn btn-glass" onclick="closeAddServerModal()">Close</button>
     </div>
 </div>
+
+<!-- Log Analyzer Config Modal for Existing Server -->
+<div id="srv-log-config-overlay" onclick="closeServerLogConfigModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:998; backdrop-filter:blur(4px)"></div>
+<div id="srv-log-config-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:32px; border-radius:var(--radius-lg); z-index:999; width:520px; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+        <h3 style="margin:0; color:var(--cyan); font-family:var(--orbitron); font-size:15px; letter-spacing:2px">⚙ LOG ANALYZER CONFIGURATION</h3>
+        <button class="btn btn-ghost" onclick="closeServerLogConfigModal()" style="padding:2px 8px; font-size:14px">✕</button>
+    </div>
+    <p class="text-sub" style="margin-bottom:16px; font-size:11px" id="srv-log-modal-subtitle">Configure application log paths for this server asset.</p>
+
+    <!-- Existing Configs List -->
+    <div style="margin-bottom:20px">
+        <label class="stat-label" style="display:block; margin-bottom:8px">CURRENT LOG SOURCES</label>
+        <div id="srv-log-configs-list" style="max-height:160px; overflow-y:auto; background:var(--bg3); border:1px solid var(--border); border-radius:4px; padding:10px">
+            <div style="text-align:center; color:var(--text3); font-size:11px">Loading configured applications...</div>
+        </div>
+    </div>
+
+    <!-- Add New Config Form for Server -->
+    <div style="background:rgba(0,212,255,0.03); border:1px dashed var(--border); padding:14px; border-radius:6px; margin-bottom:20px">
+        <h4 style="color:var(--text); font-size:12px; margin-bottom:10px; font-family:var(--orbitron)">+ Add Application Log Source</h4>
+        <input type="hidden" id="srv-log-modal-server-id">
+        <input type="hidden" id="srv-log-modal-server-ip">
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px">
+            <div>
+                <label class="stat-label" style="font-size:9px">APP NAME</label>
+                <input type="text" id="srv-log-app-name" placeholder="e.g. Tomcat Core App" class="mono glass" style="width:100%; padding:6px 10px; font-size:11px; border-radius:4px">
+            </div>
+            <div>
+                <label class="stat-label" style="font-size:9px">SERVICE TYPE</label>
+                <select id="srv-log-service-type" class="glass mono" style="width:100%; padding:6px 10px; font-size:11px; border-radius:4px" onchange="autoFillSrvPath()">
+                    <option value="tomcat">Tomcat (Java)</option>
+                    <option value="nginx">Nginx (Web/Ingress)</option>
+                    <option value="haproxy">HAProxy (LB)</option>
+                    <option value="syslog">Syslog (Kernel)</option>
+                    <option value="auth">Auth (SSHD)</option>
+                    <option value="custom">Custom App</option>
+                </select>
+            </div>
+        </div>
+
+        <div style="margin-bottom:10px">
+            <label class="stat-label" style="font-size:9px">LOG FILE PATH</label>
+            <input type="text" id="srv-log-file-path" placeholder="/opt/tomcat/logs/catalina.out" class="mono glass" style="width:100%; padding:6px 10px; font-size:11px; border-radius:4px">
+        </div>
+
+        <button class="btn btn-primary" id="btn-save-srv-log" onclick="saveServerLogConfig()" style="width:100%; font-size:11px; padding:6px">
+            + Save Log Source To Server
+        </button>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center">
+        <a href="/log-monitor" class="btn btn-ghost" style="font-size:10px; color:var(--cyan)">View In Log Monitor ➔</a>
+        <button class="btn btn-glass" onclick="closeServerLogConfigModal()">Done</button>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -95,6 +152,12 @@
                 <div class="card glass glass-hover fade-in" id="srv-card-${id}" style="position:relative; display:flex; flex-direction:column">
                     ${window.USER_ROLE !== 'normal' ? `
                     <div style="position:absolute; top:12px; right:12px; z-index:2; display:flex; gap:5px">
+                        <button onclick="event.stopPropagation(); openServerLogConfigModal(${id}, '${ip}', '${hostname}')"
+                            title="Configure Log Analyzer Applications"
+                            class="btn btn-glass"
+                            style="padding:4px 8px; font-size:10px; color:var(--cyan); border-color:rgba(0,212,255,0.4)">
+                            ⚙ LOG CONFIG
+                        </button>
                         <button onclick="event.stopPropagation(); toggleMaintenance(${id}, ${isMaint}, this)"
                             title="Toggle Maintenance"
                             class="btn btn-glass"
@@ -185,6 +248,105 @@
         navigator.clipboard.writeText(document.getElementById('setup-command').innerText).then(() => {
             showToast('Command copied to clipboard', 'success');
         });
+    }
+
+    async function openServerLogConfigModal(serverId, serverIp, hostname) {
+        document.getElementById('srv-log-modal-server-id').value = serverId;
+        document.getElementById('srv-log-modal-server-ip').value = serverIp;
+        document.getElementById('srv-log-modal-subtitle').innerText = `Configure log applications & file paths for asset: ${hostname} (${serverIp})`;
+        document.getElementById('srv-log-config-overlay').style.display = 'block';
+        document.getElementById('srv-log-config-modal').style.display = 'block';
+        autoFillSrvPath();
+        await loadServerLogConfigs(serverId);
+    }
+
+    function closeServerLogConfigModal() {
+        document.getElementById('srv-log-config-overlay').style.display = 'none';
+        document.getElementById('srv-log-config-modal').style.display = 'none';
+    }
+
+    function autoFillSrvPath() {
+        const st = document.getElementById('srv-log-service-type').value;
+        const p = document.getElementById('srv-log-file-path');
+        if (st === 'tomcat') p.value = '/opt/tomcat/logs/catalina.out';
+        else if (st === 'nginx') p.value = '/var/log/nginx/access.log';
+        else if (st === 'haproxy') p.value = '/var/log/haproxy.log';
+        else if (st === 'syslog') p.value = '/var/log/syslog';
+        else if (st === 'auth') p.value = '/var/log/auth.log';
+    }
+
+    async function loadServerLogConfigs(serverId) {
+        const container = document.getElementById('srv-log-configs-list');
+        try {
+            const configs = await apiFetch(`/api/servers/${serverId}/log-configs`);
+            if (!configs || !configs.length) {
+                container.innerHTML = '<div style="text-align:center; color:var(--text3); font-size:11px">No log sources configured for this server yet.</div>';
+                return;
+            }
+            container.innerHTML = configs.map(c => `
+                <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg2); padding:6px 10px; border-radius:4px; margin-bottom:4px; border:1px solid var(--border)">
+                    <div>
+                        <div style="font-size:11px; font-weight:600; color:var(--text)">${c.app_name}</div>
+                        <div style="font-size:9px; color:var(--cyan); font-family:var(--mono)">${c.service_type.toUpperCase()} · ${c.log_file_path}</div>
+                    </div>
+                    <button class="btn btn-glass" onclick="deleteServerLogConfig(${c.id}, ${serverId})" style="padding:2px 6px; font-size:9px; color:var(--red)">✕</button>
+                </div>
+            `).join('');
+        } catch (e) {
+            container.innerHTML = '<div style="text-align:center; color:var(--red); font-size:11px">Failed to load log configs.</div>';
+        }
+    }
+
+    async function saveServerLogConfig() {
+        const serverId = parseInt(document.getElementById('srv-log-modal-server-id').value);
+        const serverIp = document.getElementById('srv-log-modal-server-ip').value;
+        const appName = document.getElementById('srv-log-app-name').value.trim();
+        const serviceType = document.getElementById('srv-log-service-type').value;
+        const logFilePath = document.getElementById('srv-log-file-path').value.trim();
+
+        if (!appName || !logFilePath) {
+            showToast('Please enter Application Name and Log File Path', 'warning');
+            return;
+        }
+
+        const btn = document.getElementById('btn-save-srv-log');
+        btn.disabled = true;
+
+        try {
+            const res = await apiFetch('/api/log-monitor/configs', {
+                method: 'POST',
+                body: JSON.stringify({
+                    server_id: serverId,
+                    server_ip: serverIp,
+                    app_name: appName,
+                    service_type: serviceType,
+                    log_file_path: logFilePath
+                })
+            });
+
+            if (res && res.ok) {
+                showToast('Log source added to asset!', 'success');
+                document.getElementById('srv-log-app-name').value = '';
+                await loadServerLogConfigs(serverId);
+            } else {
+                showToast(res.message || 'Save failed', 'error');
+            }
+        } catch (e) {
+            showToast(e.message || 'Save error', 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    async function deleteServerLogConfig(cid, serverId) {
+        if (!confirm('Remove this log source from server?')) return;
+        try {
+            await apiFetch(`/api/log-monitor/configs/${cid}`, { method: 'DELETE' });
+            showToast('Log source removed', 'info');
+            await loadServerLogConfigs(serverId);
+        } catch (e) {
+            showToast('Delete failed', 'error');
+        }
     }
 
     window.addEventListener('load', loadServers);

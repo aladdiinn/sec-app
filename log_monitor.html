@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Log Monitor — SOC Command Center</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Inter:wght@300;400;500;600&display=swap');
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#0a0e1a;color:#8899aa;font-family:'Inter',sans-serif;font-size:13px}
+body{display:flex}
+
+/* ══════════════════════════════════════
+   SIDEBAR — exact match to your UI
+══════════════════════════════════════ */
+.sidebar{
+  width:190px;background:#080c18;
+  border-right:1px solid #1a2535;
+  display:flex;flex-direction:column;
+  flex-shrink:0;position:fixed;
+  top:0;left:0;bottom:0;z-index:100;
+}
+.sidebar-logo{padding:18px 16px 16px;border-bottom:1px solid #1a2535}
+.logo-wrap{display:flex;align-items:center;gap:10px}
+.logo-icon{width:32px;height:32px;background:linear-gradient(135deg,#1a3a5c,#0d2540);border:1px solid #2a5080;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.logo-text{font-family:'Orbitron',sans-serif;font-size:11px;font-weight:700;letter-spacing:2px;color:#c8d8e8;line-height:1.2}
+.logo-text span{display:block;font-size:9px;color:#4a6080;letter-spacing:1px}
+.sidebar-nav{flex:1;padding:12px 0;overflow-y:auto}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;font-size:11px;letter-spacing:1.5px;color:#4a6080;text-decoration:none;transition:all .15s;cursor:pointer;font-weight:500}
+.nav-item:hover{color:#8899aa;background:rgba(255,255,255,0.03)}
+.nav-item.active{color:#00d4ff;background:rgba(0,212,255,0.06)}
+.nav-item svg{width:14px;height:14px;opacity:.7;flex-shrink:0}
+.nav-item.active svg{opacity:1}
+.sidebar-bottom{padding:12px 16px;border-top:1px solid #1a2535}
+.logout-btn{display:flex;align-items:center;gap:8px;color:#ff4466;font-size:11px;letter-spacing:1px;cursor:pointer;text-decoration:none}
+
+/* ══════════════════════════════════════
+   MAIN LAYOUT
+══════════════════════════════════════ */
+.main{margin-left:190px;flex:1;display:flex;flex-direction:column;min-height:100vh;overflow:hidden}
+
+/* ══════════════════════════════════════
+   TOPBAR — exact match
+══════════════════════════════════════ */
+.topbar{background:#080c18;border-bottom:1px solid #1a2535;padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;flex-shrink:0}
+.topbar-left{display:flex;flex-direction:column}
+.topbar-title{font-family:'Orbitron',sans-serif;font-size:16px;font-weight:700;letter-spacing:3px;color:#c8d8e8}
+.topbar-sub{font-size:10px;color:#2a8060;letter-spacing:1px;margin-top:2px;display:flex;align-items:center;gap:6px}
+.live-dot{width:6px;height:6px;border-radius:50%;background:#00ff88;animation:blink 2s infinite;flex-shrink:0}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.topbar-right{display:flex;align-items:center;gap:12px}
+.topbar-time{font-family:'Share Tech Mono',monospace;font-size:14px;color:#c8d8e8;letter-spacing:1px}
+.topbar-avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#1a3a5c,#0d2540);border:1px solid #2a5080;display:flex;align-items:center;justify-content:center;font-family:'Orbitron',sans-serif;font-size:12px;color:#00d4ff}
+.notif-btn{position:relative;cursor:pointer;color:#4a6080;font-size:18px;transition:color .2s;line-height:1}
+.notif-btn:hover{color:#c8d8e8}
+
+/* ══════════════════════════════════════
+   LOG MONITOR TABS
+══════════════════════════════════════ */
+.log-tabs{display:flex;gap:0;background:#080c18;border-bottom:1px solid #1a2535;padding:0 24px;flex-shrink:0;overflow-x:auto}
+.log-tab{padding:12px 18px;font-family:'Orbitron',sans-serif;font-size:9px;letter-spacing:2px;color:#4a6080;cursor:pointer;border:none;background:transparent;border-bottom:2px solid transparent;transition:all .2s;text-transform:uppercase;white-space:nowrap;display:flex;align-items:center;gap:7px}
+.log-tab:hover{color:#8899aa}
+.log-tab.active{color:#00d4ff;border-bottom-color:#00d4ff}
+.log-tab .tab-count{background:#1a2535;color:#8899aa;font-size:9px;padding:1px 6px;border-radius:10px;font-family:'Inter',sans-serif}
+.log-tab.active .tab-count{background:rgba(0,212,255,0.15);color:#00d4ff}
+.log-tab .tab-err{background:rgba(255,68,102,0.15);color:#ff4466;font-size:9px;padding:1px 6px;border-radius:10px;font-family:'Inter',sans-serif}
+
+/* ══════════════════════════════════════
+   BODY — split view
+══════════════════════════════════════ */
+.log-body{display:flex;flex:1;overflow:hidden}
+
+/* ══════════════════════════════════════
+   LEFT PANEL — server selector + stats
+══════════════════════════════════════ */
+.left-panel{width:260px;background:#080c18;border-right:1px solid #1a2535;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+
+.left-section-title{font-family:'Orbitron',sans-serif;font-size:9px;letter-spacing:2px;color:#2a4060;padding:14px 16px 8px;text-transform:uppercase;border-bottom:1px solid #0d1525}
+
+/* Server list */
+.server-item{padding:10px 14px;border-bottom:1px solid #0d1525;cursor:pointer;transition:background .15s;display:flex;align-items:center;gap:10px}
+.server-item:hover{background:rgba(255,255,255,0.02)}
+.server-item.active{background:rgba(0,212,255,0.05);border-left:2px solid #00d4ff}
+.server-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.server-dot.online{background:#00ff88;box-shadow:0 0 5px #00ff8866}
+.server-dot.warn{background:#ffaa00}
+.server-dot.offline{background:#ff4466}
+.server-info{flex:1;min-width:0}
+.server-name{font-size:11px;color:#c8d8e8;font-weight:500;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.server-ip{font-family:'Share Tech Mono',monospace;font-size:10px;color:#4a6080}
+.server-err-count{font-size:9px;padding:1px 6px;border-radius:10px;background:rgba(255,68,102,0.15);color:#ff4466;flex-shrink:0}
+
+/* Quick stats */
+.stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#1a2535;border-top:1px solid #1a2535;flex-shrink:0}
+.stat-cell{background:#080c18;padding:12px 14px;text-align:center}
+.stat-val{font-family:'Orbitron',sans-serif;font-size:18px;color:#c8d8e8;line-height:1;margin-bottom:3px}
+.stat-val.red{color:#ff4466}
+.stat-val.yellow{color:#ffaa00}
+.stat-val.green{color:#00ff88}
+.stat-val.blue{color:#00d4ff}
+.stat-label{font-size:8px;color:#2a4060;letter-spacing:1.5px;text-transform:uppercase}
+
+/* Filter controls in left panel */
+.filter-wrap{padding:12px 14px;border-bottom:1px solid #0d1525}
+.filter-label{font-size:9px;color:#2a4060;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
+.filter-input{width:100%;background:#0d1525;border:1px solid #1a2535;color:#c8d8e8;font-family:'Share Tech Mono',monospace;font-size:11px;padding:7px 10px;border-radius:3px;outline:none;transition:border-color .2s}
+.filter-input:focus{border-color:#2a5080}
+.filter-input::placeholder{color:#2a4060}
+.level-filters{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px}
+.level-btn{padding:3px 8px;border-radius:2px;font-size:9px;letter-spacing:1px;cursor:pointer;border:1px solid;background:transparent;font-family:'Inter',sans-serif;transition:all .15s;text-transform:uppercase}
+.level-btn.active-err{border-color:#ff4466;color:#ff4466;background:rgba(255,68,102,0.1)}
+.level-btn.active-warn{border-color:#ffaa00;color:#ffaa00;background:rgba(255,170,0,0.1)}
+.level-btn.active-info{border-color:#00d4ff;color:#00d4ff;background:rgba(0,212,255,0.1)}
+.level-btn.active-debug{border-color:#4a6080;color:#8899aa;background:rgba(74,96,128,0.1)}
+.level-btn.inactive{border-color:#1a2535;color:#2a4060}
+
+/* ══════════════════════════════════════
+   RIGHT PANEL — log viewer
+══════════════════════════════════════ */
+.right-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+/* Toolbar */
+.log-toolbar{background:#0d1525;border-bottom:1px solid #1a2535;padding:8px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap}
+.toolbar-search{flex:1;min-width:180px;background:#080c18;border:1px solid #1a2535;color:#c8d8e8;font-family:'Share Tech Mono',monospace;font-size:11px;padding:6px 10px 6px 32px;border-radius:3px;outline:none;transition:border-color .2s;position:relative}
+.toolbar-search:focus{border-color:#2a5080}
+.toolbar-search::placeholder{color:#2a4060}
+.search-wrap-tb{position:relative;flex:1;min-width:180px}
+.search-wrap-tb svg{position:absolute;left:8px;top:50%;transform:translateY(-50%);width:13px;height:13px;color:#4a6080;pointer-events:none}
+.tb-btn{background:#0d1525;border:1px solid #1a2535;color:#8899aa;font-family:'Orbitron',sans-serif;font-size:8px;letter-spacing:1px;padding:6px 12px;border-radius:3px;cursor:pointer;transition:all .15s;white-space:nowrap;text-transform:uppercase}
+.tb-btn:hover{border-color:#2a5080;color:#c8d8e8}
+.tb-btn.active{border-color:#00d4ff;color:#00d4ff;background:rgba(0,212,255,0.06)}
+.tb-btn.danger{border-color:#ff446640;color:#ff4466}
+.tb-btn.danger:hover{background:rgba(255,68,102,0.08)}
+.auto-refresh-dot{width:6px;height:6px;border-radius:50%;background:#00ff88;animation:blink 2s infinite;display:inline-block;margin-right:4px}
+.log-count{font-family:'Share Tech Mono',monospace;font-size:10px;color:#4a6080;white-space:nowrap}
+
+/* ── LOG LINES AREA ── */
+.log-area{flex:1;overflow-y:auto;background:#060a14;font-family:'Share Tech Mono',monospace;font-size:11px;line-height:1.6}
+
+/* Sticky log header */
+.log-header-row{display:grid;grid-template-columns:160px 60px 80px 1fr;gap:0;padding:7px 16px;background:#080c18;border-bottom:1px solid #1a2535;position:sticky;top:0;z-index:10}
+.log-header-row span{font-size:8px;color:#2a4060;letter-spacing:2px;text-transform:uppercase}
+
+/* Log line */
+.log-line{display:grid;grid-template-columns:160px 60px 80px 1fr;gap:0;padding:4px 16px;border-bottom:1px solid rgba(26,37,53,0.4);cursor:pointer;transition:background .1s;align-items:start}
+.log-line:hover{background:rgba(255,255,255,0.02)}
+.log-line.selected{background:rgba(0,212,255,0.04);border-left:2px solid #00d4ff}
+.log-line.hl-error{border-left:2px solid #ff4466;background:rgba(255,68,102,0.03)}
+.log-line.hl-warn{border-left:2px solid #ffaa00;background:rgba(255,170,0,0.02)}
+
+.ll-time{color:#2a5070;font-size:10px;padding-right:8px;white-space:nowrap}
+.ll-level{font-size:9px;padding:1px 0;font-weight:700;letter-spacing:.5px}
+.ll-level.ERR,.ll-level.ERROR,.ll-level.CRIT,.ll-level.FATAL{color:#ff4466}
+.ll-level.WARN,.ll-level.WARNING{color:#ffaa00}
+.ll-level.INFO{color:#00d4ff}
+.ll-level.DEBUG{color:#4a6080}
+.ll-level.ACCESS{color:#00aa66}
+.ll-source{color:#4a7090;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:8px}
+.ll-msg{color:#8899aa;word-break:break-all;padding-right:8px}
+.ll-msg .hl-ip{color:#00d4ff}
+.ll-msg .hl-path{color:#aa88ff}
+.ll-msg .hl-code-2{color:#00aa66}
+.ll-msg .hl-code-4{color:#ffaa00}
+.ll-msg .hl-code-5{color:#ff4466}
+.ll-msg .hl-method{color:#00ff88}
+.ll-msg .hl-err-kw{color:#ff4466;font-weight:700}
+.ll-msg .hl-warn-kw{color:#ffaa00}
+.ll-msg .hl-num{color:#aa88ff}
+
+/* Empty state */
+.log-empty{display:flex;align-items:center;justify-content:center;height:200px;color:#2a4060;font-size:11px;letter-spacing:2px;text-transform:uppercase}
+
+/* ── DETAIL DRAWER (slide up when line clicked) ── */
+.detail-drawer{
+  background:#080c18;border-top:2px solid #1a2535;
+  flex-shrink:0;overflow:hidden;
+  transition:height .25s ease;
+  height:0;
+}
+.detail-drawer.open{height:220px}
+.drawer-header{padding:10px 16px;border-bottom:1px solid #1a2535;display:flex;align-items:center;justify-content:space-between}
+.drawer-title{font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#00d4ff}
+.drawer-close{color:#4a6080;cursor:pointer;font-size:16px;line-height:1;transition:color .2s}
+.drawer-close:hover{color:#c8d8e8}
+.drawer-content{padding:12px 16px;overflow-y:auto;height:calc(100% - 42px);display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.drawer-field{display:flex;flex-direction:column;gap:3px}
+.df-label{font-size:8px;color:#2a4060;letter-spacing:2px;text-transform:uppercase}
+.df-val{font-family:'Share Tech Mono',monospace;font-size:11px;color:#c8d8e8;word-break:break-all}
+.df-val.red{color:#ff4466}
+.df-val.yellow{color:#ffaa00}
+.df-val.green{color:#00aa66}
+.df-val.blue{color:#00d4ff}
+
+/* ══════════════════════════════════════
+   PANEL — ANALYTICS (second tab)
+══════════════════════════════════════ */
+.analytics-panel{display:none;flex:1;overflow-y:auto;padding:20px}
+.analytics-panel.active{display:block}
+.analytics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.ana-card{background:#0d1525;border:1px solid #1a2535;border-radius:5px;padding:16px}
+.ana-val{font-family:'Orbitron',sans-serif;font-size:28px;color:#c8d8e8;line-height:1;margin-bottom:4px}
+.ana-val.red{color:#ff4466}
+.ana-val.yellow{color:#ffaa00}
+.ana-val.green{color:#00ff88}
+.ana-label{font-size:9px;color:#4a6080;letter-spacing:1.5px;text-transform:uppercase}
+.ana-sub{font-size:10px;color:#2a4060;margin-top:4px}
+
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}
+.chart-card{background:#0d1525;border:1px solid #1a2535;border-radius:5px;padding:16px}
+.chart-title{font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#4a6080;margin-bottom:14px;text-transform:uppercase}
+
+/* Mini bar chart */
+.bar-chart{display:flex;align-items:flex-end;gap:3px;height:80px;margin-bottom:6px}
+.bar-chart-bar{flex:1;border-radius:2px 2px 0 0;min-height:3px;transition:opacity .2s;cursor:default;position:relative}
+.bar-chart-bar:hover{opacity:.7}
+.bar-chart-bar::after{content:attr(data-val);position:absolute;bottom:100%;left:50%;transform:translateX(-50%);font-size:9px;color:#8899aa;white-space:nowrap;display:none;padding-bottom:2px}
+.bar-chart-bar:hover::after{display:block}
+.bar-labels{display:flex;gap:3px}
+.bar-labels span{flex:1;font-size:8px;color:#2a4060;text-align:center;letter-spacing:.5px}
+
+/* Top IPs / Paths table */
+.top-table{width:100%;border-collapse:collapse}
+.top-table th{text-align:left;padding:7px 10px;font-size:8px;color:#2a4060;letter-spacing:2px;border-bottom:1px solid #1a2535;background:#080c18;text-transform:uppercase}
+.top-table td{padding:7px 10px;font-family:'Share Tech Mono',monospace;font-size:10px;border-bottom:1px solid #0d1525;color:#8899aa}
+.top-table tr:hover td{background:rgba(255,255,255,0.01)}
+.top-table .td-bar{padding:7px 10px}
+.mini-bar{height:4px;background:#00d4ff22;border-radius:2px;margin-top:3px}
+.mini-bar-fill{height:100%;border-radius:2px;background:#00d4ff}
+.td-num{color:#c8d8e8;font-weight:600}
+.td-badge-err{color:#ff4466}
+.td-badge-ok{color:#00aa66}
+
+/* ══════════════════════════════════════
+   TOAST
+══════════════════════════════════════ */
+.toast{position:fixed;bottom:20px;right:20px;background:#0d1525;border:1px solid #2a5080;color:#c8d8e8;font-size:11px;letter-spacing:1px;padding:10px 18px;border-radius:4px;opacity:0;transform:translateY(6px);transition:all .2s;pointer-events:none;z-index:999}
+.toast.show{opacity:1;transform:translateY(0)}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:#080c18}
+::-webkit-scrollbar-thumb{background:#1a2535;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#2a3545}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════ SIDEBAR ══ -->
+<div class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-wrap">
+      <div class="logo-icon">🛡</div>
+      <div class="logo-text">SECURE<span>PULSE</span></div>
+    </div>
+  </div>
+  <nav class="sidebar-nav">
+    <a href="/dashboard" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>DASHBOARD
+    </a>
+    <a href="/assets" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>ASSETS
+    </a>
+    <a href="/incidents" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>INCIDENTS
+    </a>
+    <a href="/detection" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>DETECTION
+    </a>
+    <a href="/threat-intel" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10z"/></svg>THREAT INTEL
+    </a>
+    <a href="/scanner" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>SECURITY SCANNER
+    </a>
+    <a href="/log-monitor" class="nav-item active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>LOG MONITOR
+    </a>
+    <a href="/activity" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>ACTIVITY
+    </a>
+    <a href="/playbooks" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>PLAYBOOKS
+    </a>
+    <a href="/projects" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>PROJECTS
+    </a>
+    <a href="/reports" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>REPORTS
+    </a>
+    <a href="/audit-log" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>AUDIT LOG
+    </a>
+    <a href="/settings" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>SETTINGS
+    </a>
+  </nav>
+  <div class="sidebar-bottom">
+    <a href="/logout" class="logout-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      LOGOUT
+    </a>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ MAIN ══ -->
+<div class="main">
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-title">SOC COMMAND CENTER</div>
+      <div class="topbar-sub"><div class="live-dot"></div>Real-time log monitoring &amp; analysis</div>
+    </div>
+    <div class="topbar-right">
+      <div class="notif-btn">🔔</div>
+      <div class="topbar-time" id="clock">00:00:00</div>
+      <div class="topbar-avatar">A</div>
+    </div>
+  </div>
+
+  <!-- LOG TYPE TABS -->
+  <div class="log-tabs">
+    <button class="log-tab active" onclick="switchLogType('nginx',this)">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+      NGINX
+      <span class="tab-err" id="nginx-errs">0</span>
+    </button>
+    <button class="log-tab" onclick="switchLogType('tomcat',this)">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/></svg>
+      TOMCAT
+      <span class="tab-err" id="tomcat-errs">0</span>
+    </button>
+    <button class="log-tab" onclick="switchLogType('haproxy',this)">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>
+      HAPROXY
+      <span class="tab-err" id="haproxy-errs">0</span>
+    </button>
+    <button class="log-tab" onclick="switchLogType('syslog',this)">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+      SYSLOG
+      <span class="tab-err" id="syslog-errs">0</span>
+    </button>
+    <button class="log-tab" onclick="switchLogType('auth',this)">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      AUTH
+      <span class="tab-err" id="auth-errs">0</span>
+    </button>
+    <button class="log-tab" onclick="switchView('analytics',this)" id="analytics-tab">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      ANALYTICS
+    </button>
+  </div>
+
+  <!-- ══════════════════════════════════════ LOG BODY ══ -->
+  <div class="log-body" id="logBody">
+
+    <!-- LEFT PANEL -->
+    <div class="left-panel">
+      <div class="left-section-title">SERVERS</div>
+
+      <!-- Server list — populated by JS -->
+      <div id="serverList"></div>
+
+      <!-- Quick stats -->
+      <div class="stats-grid" id="statsGrid">
+        <div class="stat-cell"><div class="stat-val red" id="s-errors">—</div><div class="stat-label">Errors</div></div>
+        <div class="stat-cell"><div class="stat-val yellow" id="s-warns">—</div><div class="stat-label">Warnings</div></div>
+        <div class="stat-cell"><div class="stat-val blue" id="s-total">—</div><div class="stat-label">Total Lines</div></div>
+        <div class="stat-cell"><div class="stat-val green" id="s-rps">—</div><div class="stat-label">Req/min</div></div>
+      </div>
+
+      <!-- Filters -->
+      <div class="left-section-title" style="margin-top:8px">FILTERS</div>
+      <div class="filter-wrap">
+        <div class="filter-label">Date Range</div>
+        <select class="filter-input" id="dateRange" onchange="refreshLogs()">
+          <option value="15m">Last 15 minutes</option>
+          <option value="1h" selected>Last 1 hour</option>
+          <option value="6h">Last 6 hours</option>
+          <option value="24h">Last 24 hours</option>
+          <option value="7d">Last 7 days</option>
+        </select>
+      </div>
+      <div class="filter-wrap">
+        <div class="filter-label">Level</div>
+        <div class="level-filters" id="levelFilters">
+          <button class="level-btn active-err" onclick="toggleLevel('ERROR',this)">ERROR</button>
+          <button class="level-btn active-warn" onclick="toggleLevel('WARN',this)">WARN</button>
+          <button class="level-btn active-info" onclick="toggleLevel('INFO',this)">INFO</button>
+          <button class="level-btn active-debug inactive" onclick="toggleLevel('DEBUG',this)">DEBUG</button>
+        </div>
+      </div>
+      <div class="filter-wrap">
+        <div class="filter-label">IP / Path / Keyword</div>
+        <input class="filter-input" id="kwFilter" placeholder="e.g. 404, /api, 192.168" oninput="applyFilters()"/>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL — log viewer -->
+    <div class="right-panel" id="logViewerPanel">
+
+      <!-- Toolbar -->
+      <div class="log-toolbar">
+        <div class="search-wrap-tb">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input class="toolbar-search" id="logSearch" placeholder="Search logs..." oninput="applyFilters()"/>
+        </div>
+        <button class="tb-btn active" id="autoRefreshBtn" onclick="toggleAutoRefresh()">
+          <span class="auto-refresh-dot"></span>LIVE
+        </button>
+        <button class="tb-btn" onclick="refreshLogs()">↺ REFRESH</button>
+        <button class="tb-btn" onclick="scrollToBottom()">↓ BOTTOM</button>
+        <button class="tb-btn" onclick="clearView()">CLEAR</button>
+        <button class="tb-btn danger" onclick="downloadLogs()">↓ EXPORT</button>
+        <span class="log-count" id="logCountLabel">0 lines</span>
+      </div>
+
+      <!-- Log lines header -->
+      <div class="log-header-row">
+        <span>TIMESTAMP</span>
+        <span>LEVEL</span>
+        <span>SOURCE</span>
+        <span>MESSAGE</span>
+      </div>
+
+      <!-- Log area -->
+      <div class="log-area" id="logArea">
+        <div class="log-empty" id="logEmpty">SELECT A SERVER TO VIEW LOGS</div>
+      </div>
+
+      <!-- Detail drawer -->
+      <div class="detail-drawer" id="detailDrawer">
+        <div class="drawer-header">
+          <div class="drawer-title">LINE DETAIL</div>
+          <div class="drawer-close" onclick="closeDrawer()">✕</div>
+        </div>
+        <div class="drawer-content" id="drawerContent"></div>
+      </div>
+    </div>
+
+    <!-- ANALYTICS PANEL -->
+    <div class="analytics-panel" id="analyticsPanel">
+      <div class="analytics-grid">
+        <div class="ana-card"><div class="ana-val red" id="a-errors">142</div><div class="ana-label">Total Errors</div><div class="ana-sub">↑ 12% from yesterday</div></div>
+        <div class="ana-card"><div class="ana-val yellow" id="a-warns">891</div><div class="ana-label">Warnings</div><div class="ana-sub">↓ 3% from yesterday</div></div>
+        <div class="ana-card"><div class="ana-val blue" id="a-rps">2.4k</div><div class="ana-label">Requests / hr</div><div class="ana-sub">Peak: 4.1k at 14:00</div></div>
+        <div class="ana-card"><div class="ana-val green" id="a-p95">142ms</div><div class="ana-label">P95 Response</div><div class="ana-sub">P99: 380ms</div></div>
+      </div>
+
+      <div class="charts-row">
+        <!-- Hourly error chart -->
+        <div class="chart-card">
+          <div class="chart-title">Errors per Hour (Last 12h)</div>
+          <div class="bar-chart" id="errorChart"></div>
+          <div class="bar-labels" id="errorChartLabels"></div>
+        </div>
+        <!-- Status code distribution -->
+        <div class="chart-card">
+          <div class="chart-title">HTTP Status Codes</div>
+          <div class="bar-chart" id="statusChart"></div>
+          <div class="bar-labels" id="statusChartLabels"></div>
+        </div>
+      </div>
+
+      <div class="charts-row">
+        <!-- Top IPs -->
+        <div class="chart-card">
+          <div class="chart-title">Top Source IPs</div>
+          <table class="top-table">
+            <thead><tr><th>#</th><th>IP ADDRESS</th><th>REQUESTS</th><th>ERRORS</th></tr></thead>
+            <tbody id="topIPs"></tbody>
+          </table>
+        </div>
+        <!-- Top Paths -->
+        <div class="chart-card">
+          <div class="chart-title">Top Requested Paths</div>
+          <table class="top-table">
+            <thead><tr><th>#</th><th>PATH</th><th>HITS</th><th>STATUS</th></tr></thead>
+            <tbody id="topPaths"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /log-body -->
+</div><!-- /main -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════
+let currentLogType = 'nginx';
+let currentServer  = null;
+let autoRefresh    = true;
+let autoRefreshTimer = null;
+let activeLevels   = new Set(['ERROR','WARN','INFO']);
+let allLines       = [];
+let selectedLine   = null;
+let view           = 'logs'; // 'logs' | 'analytics'
+
+// ════════════════════════════════════════════════════════
+// CLOCK
+// ════════════════════════════════════════════════════════
+setInterval(()=>{
+  document.getElementById('clock').textContent = new Date().toTimeString().slice(0,8);
+},1000);
+
+// ════════════════════════════════════════════════════════
+// SERVER LIST — replace with Jinja2: {{ servers | tojson }}
+// ════════════════════════════════════════════════════════
+const SERVERS = [
+  {id:'i-0a1b2c3d4e', name:'prod-web-01', ip:'172.31.3.104', status:'online', errors:14},
+  {id:'i-0f9e8d7c6b', name:'prod-db-02',  ip:'172.31.1.69',  status:'warn',   errors:3},
+  {id:'i-0c1d2e3f4a', name:'staging-01',  ip:'172.31.3.10',  status:'online', errors:0},
+  {id:'i-0b2c3d4e5f', name:'nagaland-mdm',ip:'172.31.3.165', status:'online', errors:1},
+  {id:'i-0e5f6a7b8c', name:'prod-api-gw', ip:'172.31.3.62',  status:'online', errors:8},
+  {id:'i-abc123',     name:'haproxy-lb',  ip:'172.31.3.202', status:'warn',   errors:22},
+];
+
+function renderServerList(){
+  const el = document.getElementById('serverList');
+  el.innerHTML = SERVERS.map(s=>`
+    <div class="server-item ${currentServer===s.id?'active':''}" onclick="selectServer('${s.id}')">
+      <div class="server-dot ${s.status==='online'?'online':s.status==='warn'?'warn':'offline'}"></div>
+      <div class="server-info">
+        <div class="server-name">${s.name}</div>
+        <div class="server-ip">${s.ip}</div>
+      </div>
+      ${s.errors>0?`<span class="server-err-count">${s.errors}</span>`:''}
+    </div>`).join('');
+}
+
+function selectServer(sid){
+  currentServer = sid;
+  renderServerList();
+  refreshLogs();
+}
+
+// ════════════════════════════════════════════════════════
+// TAB / VIEW SWITCHING
+// ════════════════════════════════════════════════════════
+function switchLogType(type, btn){
+  currentLogType = type;
+  document.querySelectorAll('.log-tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  view = 'logs';
+  document.getElementById('logBody').style.display = 'flex';
+  document.getElementById('analyticsPanel').classList.remove('active');
+  document.getElementById('logViewerPanel').style.display = 'flex';
+  document.getElementById('logViewerPanel').style.flexDirection = 'column';
+  if(currentServer) refreshLogs();
+}
+
+function switchView(v, btn){
+  document.querySelectorAll('.log-tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  view = v;
+  if(v==='analytics'){
+    document.getElementById('logViewerPanel').style.display = 'none';
+    document.getElementById('analyticsPanel').classList.add('active');
+    renderAnalytics();
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// FETCH LOGS — calls your backend
+// ════════════════════════════════════════════════════════
+async function refreshLogs(){
+  if(!currentServer){ return; }
+  const range  = document.getElementById('dateRange').value;
+  const search = document.getElementById('logSearch').value;
+
+  try{
+    // ── Real API call ──────────────────────────────────
+    // Backend reads the actual log file on the server via SSH
+    // and returns parsed log lines
+    const res = await fetch('/api/logs/fetch', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        server_id:   currentServer,
+        log_type:    currentLogType,  // nginx|tomcat|haproxy|syslog|auth
+        range:       range,           // 15m|1h|6h|24h|7d
+        search:      search,
+        levels:      [...activeLevels]
+      })
+    });
+    const data = await res.json();
+    allLines = data.lines || [];
+    updateStats(data.stats || {});
+    updateTabCounts(data.counts || {});
+  }catch(e){
+    // ── Demo mode ──────────────────────────────────────
+    allLines = generateDemoLogs(currentLogType, 80);
+    updateStats({errors:allLines.filter(l=>l.level==='ERROR'||l.level==='CRIT').length, warns:allLines.filter(l=>l.level==='WARN').length, total:allLines.length, rps:Math.floor(Math.random()*200)+50});
+  }
+  applyFilters();
+}
+
+// ════════════════════════════════════════════════════════
+// RENDER LOG LINES
+// ════════════════════════════════════════════════════════
+function renderLines(lines){
+  const area  = document.getElementById('logArea');
+  const empty = document.getElementById('logEmpty');
+
+  if(lines.length===0){
+    area.innerHTML='';
+    area.appendChild(empty);
+    empty.style.display='flex';
+    document.getElementById('logCountLabel').textContent='0 lines';
+    return;
+  }
+  empty.style.display='none';
+  document.getElementById('logCountLabel').textContent=`${lines.length.toLocaleString()} lines`;
+
+  const wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 60;
+  area.innerHTML = lines.map((l,i)=>`
+    <div class="log-line ${l.level==='ERROR'||l.level==='CRIT'||l.level==='FATAL'?'hl-error':l.level==='WARN'||l.level==='WARNING'?'hl-warn':''} ${selectedLine===i?'selected':''}"
+      onclick="selectLine(${i})" data-i="${i}">
+      <div class="ll-time">${l.time}</div>
+      <div class="ll-level ${l.level}">${l.level}</div>
+      <div class="ll-source">${l.source||''}</div>
+      <div class="ll-msg">${highlight(l.msg)}</div>
+    </div>`).join('');
+
+  if(wasAtBottom && autoRefresh) scrollToBottom();
+}
+
+function highlight(msg){
+  if(!msg) return '';
+  return msg
+    .replace(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g,'<span class="hl-ip">$1</span>')
+    .replace(/("(?:GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH))/g,'<span class="hl-method">$1</span>')
+    .replace(/\b(\/[a-zA-Z0-9._~:/?#\[\]@!$&'()*+,;=%.-]{2,60})/g,'<span class="hl-path">$1</span>')
+    .replace(/\b(5\d\d)\b/g,'<span class="hl-code-5">$1</span>')
+    .replace(/\b(4\d\d)\b/g,'<span class="hl-code-4">$1</span>')
+    .replace(/\b(2\d\d)\b/g,'<span class="hl-code-2">$1</span>')
+    .replace(/\b(ERROR|EXCEPTION|FATAL|FAIL|refused|denied|invalid|unauthorized)\b/gi,'<span class="hl-err-kw">$&</span>')
+    .replace(/\b(WARN|WARNING|deprecated|timeout|slow)\b/gi,'<span class="hl-warn-kw">$&</span>')
+    .replace(/\b(\d+ms|\d+\.\d+s|\d+kb|\d+mb)\b/gi,'<span class="hl-num">$&</span>');
+}
+
+// ════════════════════════════════════════════════════════
+// FILTERS
+// ════════════════════════════════════════════════════════
+function applyFilters(){
+  const search = (document.getElementById('logSearch').value||'').toLowerCase();
+  const kw     = (document.getElementById('kwFilter').value||'').toLowerCase();
+  let filtered = allLines.filter(l=>{
+    if(!activeLevels.has(l.level) && !activeLevels.has('ALL')) return false;
+    if(search && !l.msg.toLowerCase().includes(search) && !(l.source||'').toLowerCase().includes(search)) return false;
+    if(kw && !l.msg.toLowerCase().includes(kw) && !(l.source||'').toLowerCase().includes(kw) && !(l.time||'').includes(kw)) return false;
+    return true;
+  });
+  renderLines(filtered);
+}
+
+function toggleLevel(level, btn){
+  if(activeLevels.has(level)){
+    activeLevels.delete(level);
+    btn.classList.add('inactive');
+  } else {
+    activeLevels.add(level);
+    btn.classList.remove('inactive');
+  }
+  applyFilters();
+}
+
+// ════════════════════════════════════════════════════════
+// LINE DETAIL DRAWER
+// ════════════════════════════════════════════════════════
+function selectLine(i){
+  selectedLine = i;
+  const l = allLines[i];
+  if(!l) return;
+  const drawer = document.getElementById('detailDrawer');
+  drawer.classList.add('open');
+  document.getElementById('drawerContent').innerHTML = `
+    <div class="drawer-field"><div class="df-label">Timestamp</div><div class="df-val">${l.time}</div></div>
+    <div class="drawer-field"><div class="df-label">Level</div><div class="df-val ${l.level==='ERROR'||l.level==='CRIT'?'red':l.level==='WARN'?'yellow':'blue'}">${l.level}</div></div>
+    <div class="drawer-field"><div class="df-label">Source</div><div class="df-val">${l.source||'—'}</div></div>
+    <div class="drawer-field" style="grid-column:1/-1"><div class="df-label">Full Message</div><div class="df-val">${l.msg}</div></div>
+    ${l.ip?`<div class="drawer-field"><div class="df-label">Client IP</div><div class="df-val blue">${l.ip}</div></div>`:''}
+    ${l.status?`<div class="drawer-field"><div class="df-label">HTTP Status</div><div class="df-val ${l.status>=500?'red':l.status>=400?'yellow':'green'}">${l.status}</div></div>`:''}
+    ${l.ms?`<div class="drawer-field"><div class="df-label">Response Time</div><div class="df-val ${l.ms>1000?'red':l.ms>300?'yellow':'green'}">${l.ms}ms</div></div>`:''}
+    ${l.path?`<div class="drawer-field"><div class="df-label">Request Path</div><div class="df-val">${l.path}</div></div>`:''}
+    ${l.method?`<div class="drawer-field"><div class="df-label">Method</div><div class="df-val green">${l.method}</div></div>`:''}
+    <div class="drawer-field"><div class="df-label">Server</div><div class="df-val">${SERVERS.find(s=>s.id===currentServer)?.name||'—'}</div></div>
+    <div class="drawer-field"><div class="df-label">Log Type</div><div class="df-val">${currentLogType.toUpperCase()}</div></div>
+  `;
+}
+
+function closeDrawer(){
+  document.getElementById('detailDrawer').classList.remove('open');
+  selectedLine = null;
+}
+
+// ════════════════════════════════════════════════════════
+// AUTO REFRESH
+// ════════════════════════════════════════════════════════
+function toggleAutoRefresh(){
+  autoRefresh = !autoRefresh;
+  const btn = document.getElementById('autoRefreshBtn');
+  if(autoRefresh){
+    btn.classList.add('active');
+    btn.innerHTML = '<span class="auto-refresh-dot"></span>LIVE';
+    startAutoRefresh();
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = 'PAUSED';
+    clearInterval(autoRefreshTimer);
+  }
+}
+
+function startAutoRefresh(){
+  clearInterval(autoRefreshTimer);
+  autoRefreshTimer = setInterval(()=>{ if(currentServer&&autoRefresh) refreshLogs(); }, 15000);
+}
+
+// ════════════════════════════════════════════════════════
+// STATS + COUNTS
+// ════════════════════════════════════════════════════════
+function updateStats(s){
+  document.getElementById('s-errors').textContent = s.errors||0;
+  document.getElementById('s-warns').textContent  = s.warns||0;
+  document.getElementById('s-total').textContent  = s.total||0;
+  document.getElementById('s-rps').textContent    = s.rps||0;
+}
+function updateTabCounts(c){
+  ['nginx','tomcat','haproxy','syslog','auth'].forEach(t=>{
+    const el=document.getElementById(t+'-errs');
+    if(el) el.textContent = c[t]||0;
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// ANALYTICS
+// ════════════════════════════════════════════════════════
+function renderAnalytics(){
+  // Hourly error bar chart
+  const hours=['13h','14h','15h','16h','17h','18h','19h','20h','21h','22h','23h','00h'];
+  const errData=[4,12,8,22,31,14,9,7,18,42,15,6];
+  renderBarChart('errorChart','errorChartLabels',hours,errData,'#ff4466','#ff446644');
+
+  // Status codes
+  const codes=['200','201','301','400','401','403','404','500','502','503'];
+  const codeData=[820,45,33,87,12,8,156,14,6,3];
+  const codeColors=codes.map(c=>c.startsWith('5')?'#ff4466':c.startsWith('4')?'#ffaa00':c.startsWith('3')?'#aa88ff':'#00aa66');
+  renderBarChart('statusChart','statusChartLabels',codes,codeData,null,null,codeColors);
+
+  // Top IPs
+  const topIPs=[
+    {ip:'185.234.12.9',  reqs:847, errs:234},
+    {ip:'202.83.19.201', reqs:1203,errs:12},
+    {ip:'91.123.45.67',  reqs:334, errs:89},
+    {ip:'10.0.0.5',      reqs:5621,errs:2},
+    {ip:'103.21.44.11',  reqs:221, errs:44},
+  ];
+  const maxReqs=Math.max(...topIPs.map(r=>r.reqs));
+  document.getElementById('topIPs').innerHTML=topIPs.map((r,i)=>`
+    <tr>
+      <td>#${i+1}</td>
+      <td class="hl-ip">${r.ip}</td>
+      <td class="td-num">${r.reqs.toLocaleString()}</td>
+      <td class="${r.errs>50?'td-badge-err':'td-badge-ok'}">${r.errs}</td>
+    </tr>`).join('');
+
+  // Top paths
+  const topPaths=[
+    {path:'/api/metrics',    hits:3421, status:'200'},
+    {path:'/login',          hits:1832, status:'200'},
+    {path:'/api/agent/push', hits:1244, status:'200'},
+    {path:'/static/js/',     hits:987,  status:'304'},
+    {path:'/admin',          hits:234,  status:'403'},
+  ];
+  document.getElementById('topPaths').innerHTML=topPaths.map((r,i)=>`
+    <tr>
+      <td>#${i+1}</td>
+      <td style="color:#aa88ff">${r.path}</td>
+      <td class="td-num">${r.hits.toLocaleString()}</td>
+      <td class="${r.status.startsWith('4')||r.status.startsWith('5')?'td-badge-err':'td-badge-ok'}">${r.status}</td>
+    </tr>`).join('');
+}
+
+function renderBarChart(chartId, labelsId, labels, data, color, bgColor, colors){
+  const max=Math.max(...data,1);
+  const chart=document.getElementById(chartId);
+  const labelsEl=document.getElementById(labelsId);
+  chart.innerHTML=data.map((v,i)=>{
+    const pct=Math.round((v/max)*100);
+    const c=colors?colors[i]:(color||'#00d4ff');
+    const bg=bgColor||(c+'33');
+    return `<div class="bar-chart-bar" style="height:${Math.max(pct,3)}%;background:${c};opacity:.85" data-val="${v}" title="${labels[i]}: ${v}"></div>`;
+  }).join('');
+  labelsEl.innerHTML=labels.map(l=>`<span>${l}</span>`).join('');
+}
+
+// ════════════════════════════════════════════════════════
+// DEMO LOG GENERATOR
+// ════════════════════════════════════════════════════════
+const NGINX_MSGS=[
+  {level:'ACCESS',msg:'GET /api/servers HTTP/1.1 200 1234',method:'GET',path:'/api/servers',status:200,ms:45},
+  {level:'ACCESS',msg:'POST /api/agent/push HTTP/1.1 200 88',method:'POST',path:'/api/agent/push',status:200,ms:23},
+  {level:'ACCESS',msg:'GET /dashboard HTTP/1.1 200 12450',method:'GET',path:'/dashboard',status:200,ms:120},
+  {level:'WARN',  msg:'client 185.234.12.9 request: GET /admin HTTP/1.1 403 0',ip:'185.234.12.9',status:403},
+  {level:'ERROR', msg:'upstream timed out (110: Connection timed out) while reading upstream',ms:30001},
+  {level:'ACCESS',msg:'GET /static/js/dashboard.js HTTP/1.1 304 0',status:304,ms:5},
+  {level:'ERROR', msg:'connect() failed (111: Connection refused) while connecting to upstream'},
+  {level:'WARN',  msg:'rate limit exceeded for zone "api": 185.234.12.9',ip:'185.234.12.9'},
+  {level:'ACCESS',msg:'DELETE /api/servers/i-abc123 HTTP/1.1 200 44',method:'DELETE',status:200,ms:67},
+];
+const TOMCAT_MSGS=[
+  {level:'INFO',  msg:'Server startup in 2341 ms'},
+  {level:'WARN',  msg:'MaxKeepAliveRequests limit reached: closing connection'},
+  {level:'ERROR', msg:'java.lang.NullPointerException at com.apdcl.mdm.service.MeterService.getData(MeterService.java:142)'},
+  {level:'INFO',  msg:'GET /mdm/api/meters 200 34ms'},
+  {level:'CRIT',  msg:'SEVERE: Error filterStart - org.apache.catalina.core.StandardContext.startInternal'},
+  {level:'INFO',  msg:'Deploying web application archive /opt/tomcat/webapps/mdm.war'},
+  {level:'WARN',  msg:'Session timeout for user admin - 1800 seconds exceeded'},
+  {level:'ERROR', msg:'Error connecting to database: Connection refused - check PostgreSQL'},
+];
+const HAPROXY_MSGS=[
+  {level:'INFO',  msg:'backend web-backend has no server available!'},
+  {level:'WARN',  msg:'Server web-backend/web01 is DOWN. 0 active and 0 backup servers left.'},
+  {level:'INFO',  msg:'172.31.3.104:80 [10/Sep/2026:14:56:33] web-backend/web01 0/0/1/42/43 200 1234 - - ----'},
+  {level:'ERROR', msg:'Proxy web-backend reached system memory limit at 512 MB. Stopping.'},
+  {level:'WARN',  msg:'Server web-backend/web02 is DOWN, reason: Layer4 timeout'},
+  {level:'INFO',  msg:'health check for server web01 succeeded'},
+];
+const AUTH_MSGS=[
+  {level:'WARN',  msg:'Failed password for root from 185.234.12.9 port 54321 ssh2',ip:'185.234.12.9'},
+  {level:'INFO',  msg:'Accepted publickey for ubuntu from 202.83.19.201 port 45678 ssh2',ip:'202.83.19.201'},
+  {level:'ERROR', msg:'PAM 5 more authentication failures; logname= uid=0 euid=0 tty=ssh ruser= rhost=185.234.12.9'},
+  {level:'WARN',  msg:'Invalid user admin from 91.123.45.67 port 33001',ip:'91.123.45.67'},
+  {level:'INFO',  msg:'pam_unix(sshd:session): session opened for user ubuntu by (uid=0)'},
+  {level:'WARN',  msg:'Disconnecting invalid user ftp 185.234.12.9 port 22222',ip:'185.234.12.9'},
+];
+const SYSLOG_MSGS=[
+  {level:'INFO',  msg:'kernel: [UFW BLOCK] IN=ens5 OUT= SRC=185.234.12.9 DST=172.31.3.104 PROTO=TCP'},
+  {level:'WARN',  msg:'systemd[1]: ec2monitor.service: Start-pre failed with result exit-code'},
+  {level:'INFO',  msg:'CRON[12345]: (root) CMD (/usr/local/bin/backup.sh)'},
+  {level:'ERROR', msg:'systemd[1]: postgresql.service: Main process exited, code=killed, status=9/KILL'},
+  {level:'INFO',  msg:'systemd[1]: Started EC2 Security Monitor Agent.'},
+  {level:'WARN',  msg:'kernel: TCP: Possible SYN flooding on port 80. Sending cookies.'},
+];
+
+const LOG_POOLS={nginx:NGINX_MSGS,tomcat:TOMCAT_MSGS,haproxy:HAPROXY_MSGS,syslog:SYSLOG_MSGS,auth:AUTH_MSGS};
+
+function generateDemoLogs(type, count){
+  const pool=LOG_POOLS[type]||NGINX_MSGS;
+  const now=Date.now();
+  const lines=[];
+  for(let i=count;i>=0;i--){
+    const t=new Date(now-i*37000);
+    const base=pool[Math.floor(Math.random()*pool.length)];
+    lines.push({
+      ...base,
+      time:t.toISOString().replace('T',' ').slice(0,19),
+      source:type==='nginx'?'nginx/access':type==='tomcat'?'catalina.out':type==='haproxy'?'haproxy':type==='auth'?'sshd':'kernel',
+    });
+  }
+  return lines;
+}
+
+// ════════════════════════════════════════════════════════
+// UTILITIES
+// ════════════════════════════════════════════════════════
+function scrollToBottom(){
+  const a=document.getElementById('logArea');
+  a.scrollTop=a.scrollHeight;
+}
+function clearView(){
+  allLines=[];
+  renderLines([]);
+}
+function downloadLogs(){
+  if(!allLines.length){showToast('No logs to export');return;}
+  const txt=allLines.map(l=>`${l.time} [${l.level}] ${l.source} ${l.msg}`).join('\n');
+  const a=document.createElement('a');
+  a.href='data:text/plain;charset=utf-8,'+encodeURIComponent(txt);
+  a.download=`${currentLogType}_logs_${new Date().toISOString().slice(0,10)}.log`;
+  a.click();
+  showToast('Logs exported');
+}
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2500);
+}
+
+// ════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════
+renderServerList();
+startAutoRefresh();
+renderAnalytics();
+// Auto-select first server
+setTimeout(()=>{ selectServer(SERVERS[0].id); },100);
+</script>
+</body>
+</html>

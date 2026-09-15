@@ -1,0 +1,564 @@
+{% extends "base.html" %}
+{% set active = 'log-monitor' %}
+{% block title %}Log Monitor — SOC Command Center{% endblock %}
+{% block page_title %}LOG ANALYZER & MONITOR{% endblock %}
+{% block page_sub %}Real-time application log stream analysis, log parsing, and multi-server event telemetry{% endblock %}
+
+{% block topbar_actions %}
+<div style="display:flex; gap:10px; align-items:center">
+    <button class="btn btn-primary" onclick="openAddAppModal()" style="display:flex; align-items:center; gap:6px; font-size:11px; padding:8px 16px">
+        <svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2.5" fill="none">
+            <line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        + ADD APPLICATION
+    </button>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.log-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 16px;
+    height: calc(100vh - 145px);
+    overflow: hidden;
+}
+.log-panel-left {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.log-panel-right {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.panel-section-title {
+    font-family: var(--orbitron, monospace);
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--cyan);
+    padding: 12px 14px;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.server-item-row {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.server-item-row:hover { background: rgba(0,212,255,0.03); }
+.server-item-row.active {
+    background: rgba(0,212,255,0.08);
+    border-left: 3px solid var(--cyan);
+}
+.srv-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.srv-dot.online { background: var(--green); box-shadow: 0 0 6px rgba(0,255,136,0.4); }
+.srv-dot.offline { background: var(--red); }
+.srv-dot.maint { background: var(--amber); }
+
+.log-tab-bar {
+    display: flex;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    flex-shrink: 0;
+}
+.log-tab-btn {
+    padding: 10px 16px;
+    font-family: var(--orbitron, monospace);
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: var(--text3);
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.log-tab-btn:hover { color: var(--text); }
+.log-tab-btn.active { color: var(--cyan); border-bottom-color: var(--cyan); background: rgba(0,212,255,0.04); }
+.log-tab-badge {
+    background: var(--bg4);
+    color: var(--text2);
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-family: var(--mono);
+}
+
+.log-toolbar-bar {
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+.log-terminal {
+    flex: 1;
+    overflow-y: auto;
+    background: #060a14;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.6;
+    padding-bottom: 20px;
+}
+.log-row-grid {
+    display: grid;
+    grid-template-columns: 160px 65px 120px 1fr;
+    gap: 10px;
+    padding: 5px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    align-items: start;
+}
+.log-row-grid:hover { background: rgba(255,255,255,0.02); }
+.log-row-grid.lvl-error { border-left: 2px solid var(--red); background: rgba(255,59,92,0.04); }
+.log-row-grid.lvl-warn { border-left: 2px solid var(--amber); background: rgba(255,184,0,0.03); }
+.log-row-grid.lvl-info { border-left: 2px solid var(--cyan); }
+.lvl-tag {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 700;
+    text-align: center;
+    display: inline-block;
+}
+.lvl-tag.ERROR { background: rgba(255,59,92,0.2); color: var(--red); }
+.lvl-tag.WARN { background: rgba(255,184,0,0.2); color: var(--amber); }
+.lvl-tag.INFO { background: rgba(0,212,255,0.15); color: var(--cyan); }
+.lvl-tag.DEBUG { background: rgba(136,153,170,0.2); color: var(--text3); }
+
+.config-app-item {
+    padding: 8px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="log-layout fade-in">
+    <!-- LEFT PANEL: Servers & Registered Log Applications -->
+    <div class="log-panel-left">
+        <div class="panel-section-title">
+            <span>🖥 SERVERS & APPS</span>
+            <button class="btn btn-glass" style="font-size:9px; padding:2px 8px" onclick="openAddAppModal()">+ ADD</button>
+        </div>
+
+        <div style="flex:1; overflow-y:auto">
+            <!-- Server Selector List -->
+            <div id="log-server-list">
+                <div class="server-item-row active" onclick="selectServerFilter(null, this)">
+                    <div class="srv-dot online"></div>
+                    <div style="flex:1">
+                        <div style="font-size:12px; font-weight:600; color:var(--text)">ALL SERVERS</div>
+                        <div style="font-size:10px; color:var(--text3); font-family:var(--mono)">Global Telemetry Stream</div>
+                    </div>
+                </div>
+                {% for srv in servers %}
+                <div class="server-item-row" onclick="selectServerFilter('{{ srv.id }}', this)">
+                    <div class="srv-dot {{ 'maint' if srv.is_maintenance else ('online' if srv.status == 'online' else 'offline') }}"></div>
+                    <div style="flex:1; min-width:0">
+                        <div style="font-size:11px; font-weight:600; color:var(--text); text-overflow:ellipsis; overflow:hidden; white-space:nowrap">{{ srv.hostname }}</div>
+                        <div style="font-size:10px; color:var(--text3); font-family:var(--mono)">{{ srv.ip_address }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- Configured Applications Section -->
+            <div class="panel-section-title" style="margin-top:10px">
+                <span>📦 CONFIGURED LOG APPS</span>
+                <span id="config-count" class="log-tab-badge">0</span>
+            </div>
+            <div id="log-app-configs-list" style="padding:10px; max-height:220px; overflow-y:auto">
+                <div style="text-align:center; color:var(--text3); padding:15px; font-size:11px">Loading configured apps...</div>
+            </div>
+        </div>
+
+        <!-- Left Quick Stats -->
+        <div style="border-top:1px solid var(--border); padding:12px; background:var(--bg3); display:grid; grid-template-columns:1fr 1fr; gap:8px">
+            <div style="text-align:center; background:var(--bg2); padding:8px; border-radius:4px; border:1px solid var(--border)">
+                <div id="stat-log-count" style="font-family:var(--orbitron); font-size:16px; color:var(--cyan)">0</div>
+                <div style="font-size:8px; color:var(--text3); letter-spacing:1px">TOTAL LOGS</div>
+            </div>
+            <div style="text-align:center; background:var(--bg2); padding:8px; border-radius:4px; border:1px solid var(--border)">
+                <div id="stat-err-count" style="font-family:var(--orbitron); font-size:16px; color:var(--red)">0</div>
+                <div style="font-size:8px; color:var(--text3); letter-spacing:1px">ERRORS</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT PANEL: Service Tabs & Live Log Output -->
+    <div class="log-panel-right">
+        <!-- Service Tabs -->
+        <div class="log-tab-bar" id="service-tabs">
+            <button class="log-tab-btn active" onclick="switchServiceTab('', this)">
+                ⚡ ALL SERVICES <span class="log-tab-badge" id="badge-tab-all">0</span>
+            </button>
+            <button class="log-tab-btn" onclick="switchServiceTab('tomcat', this)">
+                ☕ TOMCAT <span class="log-tab-badge" id="badge-tab-tomcat">0</span>
+            </button>
+            <button class="log-tab-btn" onclick="switchServiceTab('nginx', this)">
+                🌐 NGINX <span class="log-tab-badge" id="badge-tab-nginx">0</span>
+            </button>
+            <button class="log-tab-btn" onclick="switchServiceTab('haproxy', this)">
+                🔀 HAPROXY <span class="log-tab-badge" id="badge-tab-haproxy">0</span>
+            </button>
+            <button class="log-tab-btn" onclick="switchServiceTab('syslog', this)">
+                💻 SYSLOG <span class="log-tab-badge" id="badge-tab-syslog">0</span>
+            </button>
+            <button class="log-tab-btn" onclick="switchServiceTab('auth', this)">
+                🔑 AUTH <span class="log-tab-badge" id="badge-tab-auth">0</span>
+            </button>
+        </div>
+
+        <!-- Filter Toolbar -->
+        <div class="log-toolbar-bar">
+            <div style="position:relative; flex:1">
+                <input type="text" id="log-search-input" placeholder="Search log lines (regex, keyword, IP, path...)" class="mono"
+                       style="width:100%; background:var(--bg2); color:var(--text); border:1px solid var(--border); padding:6px 12px 6px 30px; border-radius:4px; font-size:11px"
+                       oninput="filterLogLines()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" style="position:absolute; left:9px; top:50%; transform:translateY(-50%)">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+            </div>
+            
+            <div style="display:flex; gap:6px">
+                <button class="btn btn-glass" id="btn-toggle-auto" onclick="toggleAutoRefresh()" style="font-size:10px; padding:5px 10px; color:var(--green)">
+                    <span style="display:inline-block; width:6px; height:6px; background:var(--green); border-radius:50%; margin-right:4px"></span>
+                    LIVE STREAM
+                </button>
+                <button class="btn btn-glass" onclick="fetchLogsNow()" style="font-size:10px; padding:5px 10px">REFRESH</button>
+                <button class="btn btn-glass" onclick="clearTerminal()" style="font-size:10px; padding:5px 10px; color:var(--amber)">CLEAR</button>
+            </div>
+        </div>
+
+        <!-- Sticky Table Header -->
+        <div style="display:grid; grid-template-columns: 160px 65px 120px 1fr; gap:10px; padding:8px 14px; background:var(--bg3); border-bottom:1px solid var(--border); font-family:var(--orbitron); font-size:9px; color:var(--text3); letter-spacing:1px">
+            <div>TIMESTAMP</div>
+            <div>LEVEL</div>
+            <div>SERVICE / HOST</div>
+            <div>LOG MESSAGE ENTRY</div>
+        </div>
+
+        <!-- Terminal Logs Container -->
+        <div class="log-terminal" id="log-terminal-output">
+            <div style="text-align:center; padding:40px; color:var(--text3)">Initializing log analyzer connection...</div>
+        </div>
+    </div>
+</div>
+
+<!-- ================= ADD APPLICATION MODAL ================= -->
+<div id="add-app-overlay" onclick="closeAddAppModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:998; backdrop-filter:blur(4px)"></div>
+<div id="add-app-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:32px; border-radius:var(--radius-lg); z-index:999; width:520px; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <h3 style="margin:0; color:var(--cyan); font-family:var(--orbitron); font-size:15px; letter-spacing:2px">➕ ADD NEW APPLICATION LOG SOURCE</h3>
+        <button class="btn btn-ghost" onclick="closeAddAppModal()" style="padding:2px 8px; font-size:14px">✕</button>
+    </div>
+    <p class="text-sub" style="margin-bottom:20px; font-size:11px">Configure an application log file for real-time monitoring and parsing.</p>
+
+    <div style="display:flex; flex-direction:column; gap:14px; margin-bottom:24px">
+        <div>
+            <label class="stat-label" style="display:block; margin-bottom:6px">SELECT TARGET SERVER / IP</label>
+            <select id="modal-app-server-id" class="glass mono" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px" onchange="autoFillServerIp()">
+                <option value="">-- Select Server Node --</option>
+                {% for srv in servers %}
+                <option value="{{ srv.id }}" data-ip="{{ srv.ip_address }}">{{ srv.hostname }} ({{ srv.ip_address }})</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
+            <div>
+                <label class="stat-label" style="display:block; margin-bottom:6px">APPLICATION NAME</label>
+                <input type="text" id="modal-app-name" placeholder="e.g. Payment Gateway Core" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px">
+            </div>
+            <div>
+                <label class="stat-label" style="display:block; margin-bottom:6px">SERVICE TYPE</label>
+                <select id="modal-app-service-type" class="glass mono" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px" onchange="autoFillDefaultPath()">
+                    <option value="tomcat">Tomcat (Java)</option>
+                    <option value="nginx">Nginx (Web/Ingress)</option>
+                    <option value="haproxy">HAProxy (Load Balancer)</option>
+                    <option value="syslog">Syslog (Kernel)</option>
+                    <option value="auth">Auth (SSHD / Security)</option>
+                    <option value="custom">Custom Application</option>
+                </select>
+            </div>
+        </div>
+
+        <div>
+            <label class="stat-label" style="display:block; margin-bottom:6px">LOG FILE PATH</label>
+            <input type="text" id="modal-app-log-path" placeholder="/opt/tomcat/logs/catalina.out" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px">
+        </div>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:10px">
+        <button class="btn btn-glass" onclick="closeAddAppModal()">Cancel</button>
+        <button class="btn btn-primary" id="btn-save-log-app" onclick="saveLogApplicationConfig()">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg>
+            Save Application
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let selectedServerId = null;
+let currentServiceType = '';
+let allLogLines = [];
+let autoRefreshTimer = null;
+let isAutoRefresh = true;
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadLogConfigs();
+    fetchLogsNow();
+    startAutoRefresh();
+});
+
+function openAddAppModal(serverId = null) {
+    document.getElementById('add-app-overlay').style.display = 'block';
+    document.getElementById('add-app-modal').style.display = 'block';
+    if (serverId) {
+        document.getElementById('modal-app-server-id').value = serverId;
+    }
+}
+
+function closeAddAppModal() {
+    document.getElementById('add-app-overlay').style.display = 'none';
+    document.getElementById('add-app-modal').style.display = 'none';
+}
+
+function autoFillServerIp() {
+    // optional helper
+}
+
+function autoFillDefaultPath() {
+    const st = document.getElementById('modal-app-service-type').value;
+    const pathInput = document.getElementById('modal-app-log-path');
+    if (!pathInput.value || pathInput.value.startsWith('/var/log/') || pathInput.value.startsWith('/opt/')) {
+        if (st === 'tomcat') pathInput.value = '/opt/tomcat/logs/catalina.out';
+        else if (st === 'nginx') pathInput.value = '/var/log/nginx/access.log';
+        else if (st === 'haproxy') pathInput.value = '/var/log/haproxy.log';
+        else if (st === 'syslog') pathInput.value = '/var/log/syslog';
+        else if (st === 'auth') pathInput.value = '/var/log/auth.log';
+    }
+}
+
+async function saveLogApplicationConfig() {
+    const serverId = document.getElementById('modal-app-server-id').value;
+    const appName = document.getElementById('modal-app-name').value.trim();
+    const serviceType = document.getElementById('modal-app-service-type').value;
+    const logPath = document.getElementById('modal-app-log-path').value.trim();
+
+    if (!appName || !logPath) {
+        showToast('Please enter Application Name and Log File Path', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('btn-save-log-app');
+    btn.disabled = true;
+    btn.innerText = 'Saving...';
+
+    try {
+        const payload = {
+            server_id: serverId ? parseInt(serverId) : null,
+            app_name: appName,
+            service_type: serviceType,
+            log_file_path: logPath
+        };
+
+        const res = await apiFetch('/api/log-monitor/configs', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+
+        if (res && res.ok) {
+            showToast('Application log source added successfully!', 'success');
+            closeAddAppModal();
+            document.getElementById('modal-app-name').value = '';
+            loadLogConfigs();
+            fetchLogsNow();
+        } else {
+            showToast(res.message || 'Failed to save application log source', 'error');
+        }
+    } catch (err) {
+        showToast(err.message || 'Save error', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg> Save Application`;
+    }
+}
+
+async function loadLogConfigs() {
+    try {
+        const configs = await apiFetch('/api/log-monitor/configs');
+        const container = document.getElementById('log-app-configs-list');
+        document.getElementById('config-count').innerText = configs ? configs.length : 0;
+
+        if (!configs || !configs.length) {
+            container.innerHTML = '<div style="text-align:center; color:var(--text3); padding:15px; font-size:11px">No applications configured yet.</div>';
+            return;
+        }
+
+        container.innerHTML = configs.map(c => `
+            <div class="config-app-item">
+                <div style="flex:1; min-width:0">
+                    <div style="font-size:11px; font-weight:600; color:var(--text)">${c.app_name}</div>
+                    <div style="font-size:9px; color:var(--text3); font-family:var(--mono); text-overflow:ellipsis; overflow:hidden">${c.service_type.toUpperCase()} · ${c.log_file_path}</div>
+                </div>
+                <button class="btn btn-glass" onclick="deleteLogConfig(${c.id})" style="padding:2px 6px; font-size:9px; color:var(--red); border-color:rgba(255,59,92,0.3)">✕</button>
+            </div>
+        `).join('');
+    } catch (e) {
+        console.error("Config load error", e);
+    }
+}
+
+async function deleteLogConfig(cid) {
+    if (!confirm("Are you sure you want to remove this application log source?")) return;
+    try {
+        await apiFetch(`/api/log-monitor/configs/${cid}`, { method: 'DELETE' });
+        showToast("Log application removed", "info");
+        loadLogConfigs();
+    } catch (e) {
+        showToast("Delete failed", "error");
+    }
+}
+
+function selectServerFilter(srvId, el) {
+    document.querySelectorAll('.server-item-row').forEach(r => r.classList.remove('active'));
+    if (el) el.classList.add('active');
+    selectedServerId = srvId;
+    fetchLogsNow();
+}
+
+function switchServiceTab(type, el) {
+    document.querySelectorAll('.log-tab-btn').forEach(b => b.classList.remove('active'));
+    if (el) el.classList.add('active');
+    currentServiceType = type;
+    fetchLogsNow();
+}
+
+async function fetchLogsNow() {
+    const term = document.getElementById('log-terminal-output');
+    try {
+        const payload = {
+            server_id: selectedServerId ? parseInt(selectedServerId) : null,
+            log_type: currentServiceType || 'nginx',
+            search: document.getElementById('log-search-input').value
+        };
+
+        const res = await apiFetch('/api/logs/fetch', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+
+        if (res && res.lines) {
+            allLogLines = res.lines;
+            renderLogLines(allLogLines);
+            if (res.stats) {
+                document.getElementById('stat-log-count').innerText = res.stats.total || allLogLines.length;
+                document.getElementById('stat-err-count').innerText = res.stats.errors || 0;
+            }
+            if (res.counts) {
+                Object.keys(res.counts).forEach(k => {
+                    const badge = document.getElementById(`badge-tab-${k}`);
+                    if (badge) badge.innerText = res.counts[k];
+                });
+                document.getElementById('badge-tab-all').innerText = allLogLines.length;
+            }
+        }
+    } catch (e) {
+        term.innerHTML = '<div style="text-align:center; padding:30px; color:var(--red)">Failed to fetch application log stream.</div>';
+    }
+}
+
+function renderLogLines(lines) {
+    const term = document.getElementById('log-terminal-output');
+    if (!lines || !lines.length) {
+        term.innerHTML = '<div style="text-align:center; padding:30px; color:var(--text3)">No matching log entries found.</div>';
+        return;
+    }
+
+    term.innerHTML = lines.map(l => {
+        const lvl = (l.level || 'INFO').toUpperCase();
+        const lvlClass = lvl === 'ERROR' ? 'lvl-error' : (lvl === 'WARN' ? 'lvl-warn' : (lvl === 'INFO' ? 'lvl-info' : ''));
+        return `
+        <div class="log-row-grid ${lvlClass}">
+            <div style="color:var(--text3)">${l.time}</div>
+            <div><span class="lvl-tag ${lvl}">${lvl}</span></div>
+            <div style="color:var(--cyan); text-overflow:ellipsis; overflow:hidden">${l.source}</div>
+            <div style="color:var(--text); word-break:break-all">${escapeHtml(l.msg)}</div>
+        </div>
+        `;
+    }).join('');
+}
+
+function filterLogLines() {
+    const q = document.getElementById('log-search-input').value.toLowerCase();
+    if (!q) {
+        renderLogLines(allLogLines);
+        return;
+    }
+    const filtered = allLogLines.filter(l => (l.msg && l.msg.toLowerCase().includes(q)) || (l.source && l.source.toLowerCase().includes(q)));
+    renderLogLines(filtered);
+}
+
+function startAutoRefresh() {
+    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+    autoRefreshTimer = setInterval(() => {
+        if (isAutoRefresh) fetchLogsNow();
+    }, 5000);
+}
+
+function toggleAutoRefresh() {
+    isAutoRefresh = !isAutoRefresh;
+    const btn = document.getElementById('btn-toggle-auto');
+    if (isAutoRefresh) {
+        btn.style.color = 'var(--green)';
+        btn.innerHTML = `<span style="display:inline-block; width:6px; height:6px; background:var(--green); border-radius:50%; margin-right:4px"></span> LIVE STREAM`;
+    } else {
+        btn.style.color = 'var(--text3)';
+        btn.innerHTML = `PAUSED STREAM`;
+    }
+}
+
+function clearTerminal() {
+    allLogLines = [];
+    renderLogLines([]);
+}
+
+function escapeHtml(str) {
+    return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+</script>
+{% endblock %}
