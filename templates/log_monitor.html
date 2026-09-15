@@ -410,13 +410,16 @@
     <div style="display:flex; flex-direction:column; gap:14px; margin-bottom:24px">
         <!-- Node Type Selector Buttons -->
         <div>
-            <label class="stat-label" style="display:block; margin-bottom:6px">NODE SELECTION METHOD</label>
-            <div style="display:flex; gap:8px">
-                <button type="button" id="btn-node-mode-existing" class="btn btn-glass active" style="flex:1; font-size:11px; padding:8px; border-color:var(--cyan); color:var(--cyan); background:rgba(0,212,255,0.08)" onclick="switchNodeMode('existing')">
+            <label class="stat-label" style="display:block; margin-bottom:6px">MONITORING MODE</label>
+            <div style="display:flex; gap:6px">
+                <button type="button" id="btn-node-mode-existing" class="btn btn-glass active" style="flex:1; font-size:10px; padding:7px 4px; border-color:var(--cyan); color:var(--cyan); background:rgba(0,212,255,0.08)" onclick="switchNodeMode('existing')">
                     💻 Existing Node
                 </button>
-                <button type="button" id="btn-node-mode-new" class="btn btn-glass" style="flex:1; font-size:11px; padding:8px; color:var(--text3)" onclick="switchNodeMode('new')">
-                    ➕ New Node
+                <button type="button" id="btn-node-mode-new" class="btn btn-glass" style="flex:1; font-size:10px; padding:7px 4px; color:var(--text3)" onclick="switchNodeMode('new')">
+                    ➕ New Node (Add Asset)
+                </button>
+                <button type="button" id="btn-node-mode-standalone" class="btn btn-glass" style="flex:1; font-size:10px; padding:7px 4px; color:var(--text3)" onclick="switchNodeMode('standalone')">
+                    ⚡ Just Log Monitor (No Asset)
                 </button>
             </div>
         </div>
@@ -444,6 +447,12 @@
                     <input type="text" id="modal-new-server-ip" placeholder="e.g. 10.0.5.50" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px">
                 </div>
             </div>
+        </div>
+
+        <!-- 3. Standalone / Just Log Monitor Container (Hidden by default) -->
+        <div id="wrap-standalone-node" style="display:none; background:rgba(0,255,136,0.03); border:1px dashed var(--green); padding:12px; border-radius:6px">
+            <div style="font-size:11px; color:var(--green); font-weight:600; margin-bottom:4px">⚡ STANDALONE LOG MONITORING (NO ASSET CREATED)</div>
+            <div style="font-size:10px; color:var(--text3)">This log file will be monitored directly in Log Analyzer without creating a new server asset in the Assets Inventory.</div>
         </div>
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
@@ -527,34 +536,46 @@ function switchNodeMode(mode) {
     currentNodeMode = mode;
     const btnExist = document.getElementById('btn-node-mode-existing');
     const btnNew = document.getElementById('btn-node-mode-new');
+    const btnStandalone = document.getElementById('btn-node-mode-standalone');
     const wrapExist = document.getElementById('wrap-existing-node');
     const wrapNew = document.getElementById('wrap-new-node');
+    const wrapStandalone = document.getElementById('wrap-standalone-node');
+
+    [btnExist, btnNew, btnStandalone].forEach(b => {
+        if (b) {
+            b.classList.remove('active');
+            b.style.color = 'var(--text3)';
+            b.style.borderColor = 'var(--border)';
+            b.style.background = 'transparent';
+        }
+    });
 
     if (mode === 'new') {
-        btnExist.classList.remove('active');
-        btnExist.style.color = 'var(--text3)';
-        btnExist.style.borderColor = 'var(--border)';
-        btnExist.style.background = 'transparent';
-
         btnNew.classList.add('active');
         btnNew.style.color = 'var(--cyan)';
         btnNew.style.borderColor = 'var(--cyan)';
         btnNew.style.background = 'rgba(0,212,255,0.08)';
 
         wrapExist.style.display = 'none';
+        wrapStandalone.style.display = 'none';
         wrapNew.style.display = 'block';
-    } else {
-        btnNew.classList.remove('active');
-        btnNew.style.color = 'var(--text3)';
-        btnNew.style.borderColor = 'var(--border)';
-        btnNew.style.background = 'transparent';
+    } else if (mode === 'standalone') {
+        btnStandalone.classList.add('active');
+        btnStandalone.style.color = 'var(--green)';
+        btnStandalone.style.borderColor = 'var(--green)';
+        btnStandalone.style.background = 'rgba(0,255,136,0.08)';
 
+        wrapExist.style.display = 'none';
+        wrapNew.style.display = 'none';
+        wrapStandalone.style.display = 'block';
+    } else {
         btnExist.classList.add('active');
         btnExist.style.color = 'var(--cyan)';
         btnExist.style.borderColor = 'var(--cyan)';
         btnExist.style.background = 'rgba(0,212,255,0.08)';
 
         wrapNew.style.display = 'none';
+        wrapStandalone.style.display = 'none';
         wrapExist.style.display = 'block';
     }
 }
@@ -601,7 +622,10 @@ async function saveLogApplicationConfig() {
         log_file_path: logPath
     };
 
-    if (currentNodeMode === 'new') {
+    if (currentNodeMode === 'standalone') {
+        payload.is_standalone = true;
+        payload.just_log_monitor = true;
+    } else if (currentNodeMode === 'new') {
         const newName = document.getElementById('modal-new-server-name').value.trim();
         const newIp = document.getElementById('modal-new-server-ip').value.trim();
 
