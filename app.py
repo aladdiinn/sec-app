@@ -2547,13 +2547,17 @@ async def api_fetch_log_lines(request: Request):
     if log_path and os.path.exists(log_path):
         try:
             with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                raw_lines = f.readlines()[-100:]
+                raw_lines = f.readlines()[-150:]
                 for rl in raw_lines:
                     rl = rl.strip()
                     if not rl: continue
                     if search and search not in rl.lower(): continue
+
+                    ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?)', rl)
+                    log_time = ts_match.group(1)[:19] if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
                     lines.append({
-                        "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                        "time": log_time,
                         "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
                         "source": f"{log_type or 'app'}/local-node",
                         "msg": rl
