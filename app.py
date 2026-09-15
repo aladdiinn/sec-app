@@ -524,9 +524,28 @@ def render_template(request: Request, name: str, context: dict = None):
     return templates.TemplateResponse(request, name, ctx)
 
 async def run_ssh_command(host: str, port: int, user: str, password: Optional[str], key_path: Optional[str], command: str) -> Optional[str]:
-    """Execute SSH command using asyncssh with timeout and fallback user detection."""
+    """Execute SSH command using asyncssh with timeout, fallback users, and auto key discovery."""
     if not host or host in ["127.0.0.1", "localhost"]:
         return None
+
+    # Collect candidate client SSH key paths
+    candidate_keys = []
+    if key_path and os.path.exists(key_path):
+        candidate_keys.append(key_path)
+
+    home_dir = os.path.expanduser("~")
+    standard_key_locations = [
+        os.path.join(home_dir, ".ssh", "id_rsa"),
+        os.path.join(home_dir, ".ssh", "id_ed25519"),
+        os.path.join(home_dir, ".ssh", "id_ecdsa"),
+        "/home/ubuntu/.ssh/id_rsa",
+        "/home/ubuntu/.ssh/id_ed25519",
+        "/root/.ssh/id_rsa",
+        "/root/.ssh/id_ed25519",
+    ]
+    for k in standard_key_locations:
+        if os.path.exists(k) and k not in candidate_keys:
+            candidate_keys.append(k)
 
     users_to_try = []
     if user:
@@ -551,9 +570,9 @@ async def run_ssh_command(host: str, port: int, user: str, password: Optional[st
                 port=port or 22,
                 username=attempt_user,
                 password=password or None,
-                client_keys=[key_path] if key_path and os.path.exists(key_path) else None,
+                client_keys=candidate_keys if candidate_keys else None,
                 known_hosts=None,
-                connect_timeout=3
+                connect_timeout=4
             ) as conn:
                 result = await conn.run(command, check=False)
                 if result.exit_status == 0 or result.stdout:
