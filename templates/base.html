@@ -208,9 +208,9 @@
         <div style="background:var(--bg3); padding:12px 14px; border-radius:6px; font-size:11px; color:var(--text2); line-height:1.6; border-left:3px solid var(--amber)">
             <strong>📌 What this command automatically does on your targeted server:</strong>
             <ol style="margin:6px 0 0 18px; padding:0">
-                <li>Authorizes SOC SSH Public Key into <code style="color:var(--cyan)">~/.ssh/authorized_keys</code> for user <span id="gsm-user" style="color:var(--cyan)">bescom</span> & root.</li>
-                <li>Enables <code style="color:var(--cyan)">PubkeyAuthentication yes</code> in SSH configuration automatically.</li>
-                <li>Connects target node / app log stream to SOC Center instantly!</li>
+                <li>Installs lightweight background log shipper daemon at <code style="color:var(--cyan)">/opt/securepulse/</code>.</li>
+                <li>Streams application log lines via outbound HTTP POST directly to SOC Center.</li>
+                <li><strong>Zero SSH credentials or SSH keys required</strong> — 100% secure push architecture.</li>
             </ol>
         </div>
 

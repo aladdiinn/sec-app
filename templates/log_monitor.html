@@ -672,17 +672,18 @@ async function saveLogApplicationConfig() {
 
         if (res && res.ok) {
             showToast('Application log source added successfully!', 'success');
-            closeAddAppModal();
-            document.getElementById('modal-app-name').value = '';
-            if (document.getElementById('modal-new-server-name')) document.getElementById('modal-new-server-name').value = '';
-            if (document.getElementById('modal-new-server-ip')) document.getElementById('modal-new-server-ip').value = '';
-            if (document.getElementById('modal-standalone-ip')) document.getElementById('modal-standalone-ip').value = '';
-            
             loadLogConfigs();
 
             const isStandalone = currentNodeMode === 'standalone';
-            const nodeName = document.getElementById('modal-new-server-name') ? document.getElementById('modal-new-server-name').value.trim() : 'Node';
-            const nodeIp = res.server_ip || (document.getElementById('modal-standalone-ip') ? document.getElementById('modal-standalone-ip').value.trim() : '127.0.0.1');
+            const nodeName = (document.getElementById('modal-new-server-name') ? document.getElementById('modal-new-server-name').value.trim() : '') || appName || 'Tomcat-Server';
+            const standaloneIp = document.getElementById('modal-standalone-ip') ? document.getElementById('modal-standalone-ip').value.trim() : '';
+            const newIp = document.getElementById('modal-new-server-ip') ? document.getElementById('modal-new-server-ip').value.trim() : '';
+            const nodeIp = res.server_ip || standaloneIp || newIp || '13.233.25.127';
+
+            if (document.getElementById('modal-app-name')) document.getElementById('modal-app-name').value = '';
+            if (document.getElementById('modal-new-server-name')) document.getElementById('modal-new-server-name').value = '';
+            if (document.getElementById('modal-new-server-ip')) document.getElementById('modal-new-server-ip').value = '';
+            if (document.getElementById('modal-standalone-ip')) document.getElementById('modal-standalone-ip').value = '';
 
             let cmd = '';
             if (isStandalone) {
