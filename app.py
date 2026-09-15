@@ -2544,33 +2544,39 @@ async def api_fetch_log_lines(request: Request):
     lines = []
     configs = db.get_log_configs(server_id=sid) if sid else db.get_log_configs()
 
-    # Look up matching log config path if not explicitly provided
-    if not log_path and configs:
-        matching = [c for c in configs if not log_type or c.get("service_type") == log_type]
-        if matching:
-            log_path = matching[0].get("log_file_path")
+    # Collect all matching log file paths for requested service type
+    target_sources = []
+    if log_path:
+        target_sources.append((log_path, log_type or "app"))
+    elif configs:
+        for c in configs:
+            st = c.get("service_type", "")
+            lp = c.get("log_file_path", "")
+            if (not log_type or st == log_type) and lp:
+                target_sources.append((lp, st))
 
-    # 1. First priority: Try reading local file directly if it exists on server disk
-    if log_path and os.path.exists(log_path):
-        try:
-            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                raw_lines = f.readlines()[-limit:]
-                for rl in raw_lines:
-                    rl = rl.strip()
-                    if not rl: continue
-                    if search and search not in rl.lower(): continue
+    # 1. First priority: Try reading local files directly for all matching log sources
+    for lp, st in target_sources:
+        if os.path.exists(lp):
+            try:
+                with open(lp, 'r', encoding='utf-8', errors='ignore') as f:
+                    raw_lines = f.readlines()[-limit:]
+                    for rl in raw_lines:
+                        rl = rl.strip()
+                        if not rl: continue
+                        if search and search not in rl.lower(): continue
 
-                    ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?)', rl)
-                    log_time = ts_match.group(1)[:19] if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                        ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?)', rl)
+                        log_time = ts_match.group(1)[:19] if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-                    lines.append({
-                        "time": log_time,
-                        "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
-                        "source": f"{log_type or 'app'}/local-node",
-                        "msg": rl
-                    })
-        except Exception as ex_read:
-            logger.warning(f"Error reading local log file {log_path}: {ex_read}")
+                        lines.append({
+                            "time": log_time,
+                            "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
+                            "source": f"{st}/local-node",
+                            "msg": rl
+                        })
+            except Exception as ex_read:
+                logger.warning(f"Error reading local log file {lp}: {ex_read}")
 
     # 2. Second priority: If remote host specified, attempt SSH
     srv = db.get_server_by_id(sid) if sid else None

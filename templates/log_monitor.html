@@ -591,18 +591,20 @@ async function fetchLogsNow() {
             }
         }
     } catch (e) {
-        term.innerHTML = '<div style="text-align:center; padding:30px; color:var(--red)">Failed to fetch application log stream.</div>';
+        console.warn("Log fetch error", e);
     }
 }
 
+let lastRenderedHash = '';
 function renderLogLines(lines) {
     const term = document.getElementById('log-terminal-output');
     if (!lines || !lines.length) {
         term.innerHTML = '<div style="text-align:center; padding:30px; color:var(--text3)">No matching log entries found.</div>';
+        lastRenderedHash = '';
         return;
     }
 
-    term.innerHTML = lines.map(l => {
+    const htmlContent = lines.map(l => {
         const lvl = (l.level || 'INFO').toUpperCase();
         const lvlClass = lvl === 'ERROR' ? 'lvl-error' : (lvl === 'WARN' ? 'lvl-warn' : (lvl === 'INFO' ? 'lvl-info' : ''));
         return `
@@ -615,8 +617,11 @@ function renderLogLines(lines) {
         `;
     }).join('');
 
-    // Smooth auto-scroll to bottom for live log stream
-    term.scrollTop = term.scrollHeight;
+    if (htmlContent !== lastRenderedHash) {
+        term.innerHTML = htmlContent;
+        lastRenderedHash = htmlContent;
+        term.scrollTop = term.scrollHeight;
+    }
 }
 
 function filterLogLines() {
@@ -633,7 +638,7 @@ function startAutoRefresh() {
     if (autoRefreshTimer) clearInterval(autoRefreshTimer);
     autoRefreshTimer = setInterval(() => {
         if (isAutoRefresh) fetchLogsNow();
-    }, 2000);
+    }, 1000);
 }
 
 function toggleAutoRefresh() {
