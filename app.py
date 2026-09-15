@@ -2538,6 +2538,9 @@ async def api_add_log_config(request: Request, server_id: Optional[int] = None):
     app_name = body.get("app_name") or body.get("name") or "Application Log"
     service_type = body.get("service_type") or body.get("service") or "nginx"
     log_file_path = body.get("log_file_path") or body.get("path") or "/var/log/nginx/access.log"
+    ssh_user = body.get("ssh_user")
+    ssh_password = body.get("ssh_password")
+    ssh_key_path = body.get("ssh_key_path")
 
     if is_standalone:
         sid = None
@@ -2553,7 +2556,7 @@ async def api_add_log_config(request: Request, server_id: Optional[int] = None):
         if srv:
             sip = srv.get("ip_address") or srv.get("ip") or ""
 
-    cid = db.add_log_config(sid, sip, app_name, service_type, log_file_path)
+    cid = db.add_log_config(sid, sip, app_name, service_type, log_file_path, ssh_user=ssh_user, ssh_password=ssh_password, ssh_key_path=ssh_key_path)
     if cid:
         uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
         db.log_audit(uname, 'ADD_LOG_CONFIG', 'server', sid or 0, f"Configured log source '{app_name}' ({service_type}: {log_file_path})")
@@ -2622,32 +2625,50 @@ async def api_fetch_log_lines(request: Request):
             except Exception as ex_read:
                 logger.warning(f"Error reading local log file {lp}: {ex_read}")
 
-    # 2. Second priority: If remote host specified, attempt SSH
+    # 2. Second priority: If remote host specified or if log_path on remote server, attempt SSH
     srv = db.get_server_by_id(sid) if sid else None
-    if not lines and srv and log_path:
-        host = srv.get("ip_address") or srv.get("ip")
+    matching_cfg = None
+    if log_path:
+        for c in configs:
+            if c.get("log_file_path") == log_path:
+                matching_cfg = c
+                if not srv and c.get("server_id"):
+                    srv = db.get_server_by_id(c.get("server_id"))
+                break
+
+    if not lines and (srv or matching_cfg or log_path):
+        host = (srv.get("ip_address") or srv.get("ip")) if srv else (matching_cfg.get("ip") if matching_cfg else None)
         if host and host not in ["127.0.0.1", "localhost", "172.31.6.247"]:
             try:
+                ssh_user = (matching_cfg.get("ssh_user") if matching_cfg else None) or (srv.get("ssh_user") if srv else None) or "ubuntu"
+                ssh_pwd = (matching_cfg.get("ssh_password") if matching_cfg else None) or (srv.get("ssh_password") if srv else None)
+                ssh_key = (matching_cfg.get("ssh_key_path") if matching_cfg else None) or (srv.get("ssh_key_path") if srv else None)
+
                 out = await run_ssh_command(
                     host=host,
-                    port=srv.get("ssh_port", 22),
-                    user=srv.get("ssh_user", "ubuntu"),
-                    password=srv.get("ssh_password"),
-                    key_path=srv.get("ssh_key_path"),
+                    port=(srv.get("ssh_port") if srv else 22) or 22,
+                    user=ssh_user,
+                    password=ssh_pwd,
+                    key_path=ssh_key,
                     command=f"tail -n {limit} {log_path}"
                 )
                 if out:
                     raw_lines = out.strip().split("\n")
                     for rl in raw_lines:
+                        rl = rl.strip()
+                        if not rl: continue
                         if search and search not in rl.lower(): continue
+                        ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?)', rl)
+                        log_time = ts_match.group(1)[:19] if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
                         lines.append({
-                            "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                            "time": log_time,
                             "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
-                            "source": f"{log_type or 'app'}/{srv.get('hostname', 'node')}",
+                            "source": f"{log_type or 'app'}/{(srv.get('hostname') if srv else host)}",
                             "msg": rl
                         })
-            except Exception:
-                pass
+            except Exception as ex_ssh:
+                logger.warning(f"Error fetching remote SSH logs from {host}: {ex_ssh}")
 
     # 3. System activity feed fallback ONLY when viewing ALL SERVICES or SYSLOG and no log file specified
     if not lines and not log_path and (not log_type or log_type in ["", "all", "syslog", "sys"]):

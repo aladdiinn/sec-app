@@ -2382,6 +2382,23 @@ def delete_project(project_id: int):
                         pass
 
             cur.execute("DELETE FROM projects WHERE id = %s;", (project_id,))
+
+            # server_log_configs Alter
+            for col, col_type in [
+                ('ssh_user', 'VARCHAR(64)'),
+                ('ssh_password', 'VARCHAR(255)'),
+                ('ssh_key_path', 'VARCHAR(255)')
+            ]:
+                try: cur.execute(f"ALTER TABLE server_log_configs ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+
+            # Projects Alter
+            for col, col_type in [
+                ('server_ids', "TEXT DEFAULT '[]'")
+            ]:
+                try: cur.execute(f"ALTER TABLE projects ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+
             if hasattr(conn, 'commit'):
                 try: conn.commit()
                 except Exception: pass
@@ -2400,7 +2417,13 @@ def get_log_configs(server_id=None):
         with conn.cursor() as cur:
             if server_id:
                 cur.execute("""
-                    SELECT c.*, COALESCE(s.hostname, s.name, 'server-node') as hostname, COALESCE(s.ip_address, s.ip, c.server_ip) as ip, p.name as project_name
+                    SELECT c.*,
+                           COALESCE(c.ssh_user, s.ssh_user, 'ubuntu') as ssh_user,
+                           COALESCE(c.ssh_password, s.ssh_password) as ssh_password,
+                           COALESCE(c.ssh_key_path, s.ssh_key_path) as ssh_key_path,
+                           COALESCE(s.hostname, s.name, 'server-node') as hostname,
+                           COALESCE(s.ip_address, s.ip, c.server_ip) as ip,
+                           p.name as project_name
                     FROM server_log_configs c
                     LEFT JOIN servers s ON c.server_id = s.id
                     LEFT JOIN projects p ON s.project_id = p.id
@@ -2409,7 +2432,13 @@ def get_log_configs(server_id=None):
                 """, (server_id,))
             else:
                 cur.execute("""
-                    SELECT c.*, COALESCE(s.hostname, s.name, 'server-node') as hostname, COALESCE(s.ip_address, s.ip, c.server_ip) as ip, p.name as project_name
+                    SELECT c.*,
+                           COALESCE(c.ssh_user, s.ssh_user, 'ubuntu') as ssh_user,
+                           COALESCE(c.ssh_password, s.ssh_password) as ssh_password,
+                           COALESCE(c.ssh_key_path, s.ssh_key_path) as ssh_key_path,
+                           COALESCE(s.hostname, s.name, 'server-node') as hostname,
+                           COALESCE(s.ip_address, s.ip, c.server_ip) as ip,
+                           p.name as project_name
                     FROM server_log_configs c
                     LEFT JOIN servers s ON c.server_id = s.id
                     LEFT JOIN projects p ON s.project_id = p.id
@@ -2426,16 +2455,16 @@ def get_log_configs(server_id=None):
     finally:
         conn.close()
 
-def add_log_config(server_id, server_ip, app_name, service_type, log_file_path):
+def add_log_config(server_id, server_ip, app_name, service_type, log_file_path, ssh_user=None, ssh_password=None, ssh_key_path=None):
     conn = get_db_connection()
     if not conn: return None
     try:
         with conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO server_log_configs (server_id, server_ip, app_name, service_type, log_file_path, created_at)
-                    VALUES (%s, %s, %s, %s, %s, NOW()) RETURNING id;
-                """, (server_id, server_ip, app_name, service_type, log_file_path))
+                    INSERT INTO server_log_configs (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW()) RETURNING id;
+                """, (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path))
                 row = cur.fetchone()
                 cid = row["id"] if isinstance(row, dict) else row[0]
                 if hasattr(conn, 'commit'):
