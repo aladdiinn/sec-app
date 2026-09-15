@@ -2492,9 +2492,18 @@ async def api_add_log_config(request: Request, server_id: Optional[int] = None):
         body = {}
     sid = server_id or body.get("server_id")
     sip = body.get("server_ip", "")
+    is_new = body.get("is_new_node") or False
+    new_name = body.get("new_server_name")
+    new_ip = body.get("new_server_ip")
     app_name = body.get("app_name") or body.get("name") or "Application Log"
     service_type = body.get("service_type") or body.get("service") or "nginx"
     log_file_path = body.get("log_file_path") or body.get("path") or "/var/log/nginx/access.log"
+
+    if (is_new or not sid) and new_name and new_ip:
+        new_sid = db.add_server(new_name, new_ip)
+        if new_sid:
+            sid = new_sid
+            sip = new_ip
 
     if sid and not sip:
         srv = db.get_server_by_id(sid)
