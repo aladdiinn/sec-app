@@ -403,14 +403,14 @@
 
 <!-- ================= ADD APPLICATION MODAL ================= -->
 <div id="add-app-overlay" onclick="closeAddAppModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:998; backdrop-filter:blur(4px)"></div>
-<div id="add-app-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:32px; border-radius:var(--radius-lg); z-index:999; width:520px; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
-        <h3 style="margin:0; color:var(--cyan); font-family:var(--orbitron); font-size:15px; letter-spacing:2px">➕ ADD NEW APPLICATION LOG SOURCE</h3>
+<div id="add-app-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:24px 28px; border-radius:var(--radius-lg); z-index:999; width:540px; max-width:92vw; max-height:88vh; overflow-y:auto; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:10px">
+        <h3 style="margin:0; color:var(--cyan); font-family:var(--orbitron); font-size:14px; letter-spacing:2px">➕ ADD NEW APPLICATION LOG SOURCE</h3>
         <button class="btn btn-ghost" onclick="closeAddAppModal()" style="padding:2px 8px; font-size:14px">✕</button>
     </div>
-    <p class="text-sub" style="margin-bottom:20px; font-size:11px">Configure an application log file for real-time monitoring and parsing.</p>
+    <p class="text-sub" style="margin-bottom:16px; font-size:11px">Configure an application log file for real-time monitoring and parsing.</p>
 
-    <div style="display:flex; flex-direction:column; gap:14px; margin-bottom:24px">
+    <div style="display:flex; flex-direction:column; gap:14px; margin-bottom:16px">
         <!-- Node Type Selector Buttons -->
         <div>
             <label class="stat-label" style="display:block; margin-bottom:6px">MONITORING MODE</label>
@@ -484,15 +484,13 @@
             <label class="stat-label" style="display:block; margin-bottom:6px">LOG FILE PATH</label>
             <input type="text" id="modal-app-log-path" placeholder="/var/log/app.log or /home/ubuntu/script.log" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px">
         </div>
-
-        </div>
     </div>
 
-    <div style="display:flex; justify-content:flex-end; gap:10px">
-        <button class="btn btn-glass" onclick="closeAddAppModal()">Cancel</button>
-        <button class="btn btn-primary" id="btn-save-log-app" onclick="saveLogApplicationConfig()">
+    <div style="display:flex; justify-content:flex-end; gap:10px; border-top:1px solid var(--border); padding-top:14px; margin-top:8px">
+        <button class="btn btn-glass" onclick="closeAddAppModal()" style="padding:8px 16px; font-size:11px">Cancel</button>
+        <button class="btn btn-primary" id="btn-save-log-app" onclick="saveLogApplicationConfig()" style="padding:8px 20px; font-size:11px; font-weight:600; box-shadow:0 0 15px rgba(0,212,255,0.4)">
             <svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg>
-            Save Application
+            Save Application Log Source
         </button>
     </div>
 </div>
