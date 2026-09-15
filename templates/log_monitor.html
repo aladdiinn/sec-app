@@ -559,6 +559,8 @@ function switchNodeMode(mode) {
         }
     });
 
+    const saveBtn = document.getElementById('btn-save-log-app');
+
     if (mode === 'new') {
         btnNew.classList.add('active');
         btnNew.style.color = 'var(--cyan)';
@@ -568,6 +570,7 @@ function switchNodeMode(mode) {
         wrapExist.style.display = 'none';
         wrapStandalone.style.display = 'none';
         wrapNew.style.display = 'block';
+        if (saveBtn) saveBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg> Save & Register New Asset Node`;
     } else if (mode === 'standalone') {
         btnStandalone.classList.add('active');
         btnStandalone.style.color = 'var(--green)';
@@ -577,6 +580,7 @@ function switchNodeMode(mode) {
         wrapExist.style.display = 'none';
         wrapNew.style.display = 'none';
         wrapStandalone.style.display = 'block';
+        if (saveBtn) saveBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg> Save Standalone Log Source (No Asset)`;
     } else {
         btnExist.classList.add('active');
         btnExist.style.color = 'var(--cyan)';
@@ -586,6 +590,7 @@ function switchNodeMode(mode) {
         wrapNew.style.display = 'none';
         wrapStandalone.style.display = 'none';
         wrapExist.style.display = 'block';
+        if (saveBtn) saveBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg> Save Application Log Source`;
     }
 }
 
