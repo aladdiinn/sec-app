@@ -2605,8 +2605,8 @@ async def api_fetch_log_lines(request: Request):
             except Exception:
                 pass
 
-    if not lines:
-        # Generate rich activity feed events if log file empty or not yet generated
+    # 3. System activity feed fallback ONLY when viewing ALL SERVICES or SYSLOG and no log file specified
+    if not lines and not log_path and (not log_type or log_type in ["", "all", "syslog", "sys"]):
         events = db.get_activity_feed(limit=40, project_id=request.session.get("project_id"))
         for ev in events:
             desc = ev.get("description") or ev.get("message") or "System telemetry event"
@@ -2614,7 +2614,7 @@ async def api_fetch_log_lines(request: Request):
             lines.append({
                 "time": str(ev.get("created_at", "")).replace("T", " ")[:19],
                 "level": str(ev.get("severity", "INFO")).upper(),
-                "source": f"{log_type or 'sys'}/{ev.get('hostname') or 'server-node'}",
+                "source": f"syslog/{ev.get('hostname') or 'server-node'}",
                 "msg": desc
             })
 
