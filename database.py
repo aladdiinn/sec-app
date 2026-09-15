@@ -2379,17 +2379,19 @@ def get_log_configs(server_id=None):
         with conn.cursor() as cur:
             if server_id:
                 cur.execute("""
-                    SELECT c.*, COALESCE(s.hostname, s.name, 'server-node') as hostname, COALESCE(s.ip_address, s.ip, c.server_ip) as ip
+                    SELECT c.*, COALESCE(s.hostname, s.name, 'server-node') as hostname, COALESCE(s.ip_address, s.ip, c.server_ip) as ip, p.name as project_name
                     FROM server_log_configs c
                     LEFT JOIN servers s ON c.server_id = s.id
+                    LEFT JOIN projects p ON s.project_id = p.id
                     WHERE c.server_id = %s
                     ORDER BY c.id DESC;
                 """, (server_id,))
             else:
                 cur.execute("""
-                    SELECT c.*, COALESCE(s.hostname, s.name, 'server-node') as hostname, COALESCE(s.ip_address, s.ip, c.server_ip) as ip
+                    SELECT c.*, COALESCE(s.hostname, s.name, 'server-node') as hostname, COALESCE(s.ip_address, s.ip, c.server_ip) as ip, p.name as project_name
                     FROM server_log_configs c
                     LEFT JOIN servers s ON c.server_id = s.id
+                    LEFT JOIN projects p ON s.project_id = p.id
                     ORDER BY c.id DESC;
                 """)
             rows = cur.fetchall()

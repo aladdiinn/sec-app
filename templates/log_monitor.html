@@ -159,6 +159,17 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.config-app-item:hover {
+    background: rgba(0,212,255,0.06);
+    border-color: rgba(0,212,255,0.4);
+}
+.config-app-item.active {
+    background: rgba(0,212,255,0.12);
+    border-color: var(--cyan);
+    box-shadow: 0 0 10px rgba(0,212,255,0.15);
 }
 </style>
 {% endblock %}
@@ -172,10 +183,22 @@
             <button class="btn btn-glass" style="font-size:9px; padding:2px 8px" onclick="openAddAppModal()">+ ADD</button>
         </div>
 
+        <!-- Left Panel Realtime Filter Search Bar -->
+        <div style="padding:8px 12px; border-bottom:1px solid var(--border); background:var(--bg3)">
+            <div style="position:relative">
+                <input type="text" id="left-panel-search-input" placeholder="🔍 Search IP, app, service..." class="mono glass"
+                       style="width:100%; padding:5px 10px 5px 26px; font-size:11px; border-radius:4px"
+                       oninput="filterLeftPanelApps()">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" style="position:absolute; left:8px; top:50%; transform:translateY(-50%)">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+            </div>
+        </div>
+
         <div style="flex:1; overflow-y:auto">
             <!-- Server Selector List -->
             <div id="log-server-list">
-                <div class="server-item-row active" onclick="selectServerFilter(null, this)">
+                <div class="server-item-row active" onclick="selectServerFilter(null, this)" data-search="all servers global telemetry stream">
                     <div class="srv-dot online"></div>
                     <div style="flex:1">
                         <div style="font-size:12px; font-weight:600; color:var(--text)">ALL SERVERS</div>
@@ -183,7 +206,7 @@
                     </div>
                 </div>
                 {% for srv in servers %}
-                <div class="server-item-row" onclick="selectServerFilter('{{ srv.id }}', this)">
+                <div class="server-item-row" onclick="selectServerFilter('{{ srv.id }}', this)" data-search="{{ srv.hostname|lower }} {{ srv.ip_address|lower }}">
                     <div class="srv-dot {{ 'maint' if srv.is_maintenance else ('online' if srv.status == 'online' else 'offline') }}"></div>
                     <div style="flex:1; min-width:0">
                         <div style="font-size:11px; font-weight:600; color:var(--text); text-overflow:ellipsis; overflow:hidden; white-space:nowrap">{{ srv.hostname }}</div>
@@ -198,7 +221,7 @@
                 <span>📦 CONFIGURED LOG APPS</span>
                 <span id="config-count" class="log-tab-badge">0</span>
             </div>
-            <div id="log-app-configs-list" style="padding:10px; max-height:220px; overflow-y:auto">
+            <div id="log-app-configs-list" style="padding:10px; max-height:260px; overflow-y:auto">
                 <div style="text-align:center; color:var(--text3); padding:15px; font-size:11px">Loading configured apps...</div>
             </div>
         </div>
@@ -371,6 +394,8 @@
 {% block extra_js %}
 <script>
 let selectedServerId = null;
+let selectedAppConfigId = null;
+let selectedLogFilePath = null;
 let currentServiceType = '';
 let allLogLines = [];
 let autoRefreshTimer = null;
@@ -382,6 +407,32 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchLogsNow();
     startAutoRefresh();
 });
+
+function filterLeftPanelApps() {
+    const q = (document.getElementById('left-panel-search-input').value || '').toLowerCase().trim();
+    
+    // 1. Filter Servers list
+    document.querySelectorAll('#log-server-list .server-item-row').forEach(row => {
+        const searchAttr = row.getAttribute('data-search') || '';
+        const text = row.innerText.toLowerCase();
+        if (!q || searchAttr.includes(q) || text.includes(q)) {
+            row.style.display = 'flex';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+
+    // 2. Filter Configured Applications list
+    document.querySelectorAll('#log-app-configs-list .config-app-item').forEach(row => {
+        const searchAttr = row.getAttribute('data-search') || '';
+        const text = row.innerText.toLowerCase();
+        if (!q || searchAttr.includes(q) || text.includes(q)) {
+            row.style.display = 'flex';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+}
 
 function switchNodeMode(mode) {
     currentNodeMode = mode;
@@ -520,18 +571,55 @@ async function loadLogConfigs() {
             return;
         }
 
-        container.innerHTML = configs.map(c => `
-            <div class="config-app-item">
-                <div style="flex:1; min-width:0">
-                    <div style="font-size:11px; font-weight:600; color:var(--text)">${c.app_name}</div>
-                    <div style="font-size:9px; color:var(--text3); font-family:var(--mono); text-overflow:ellipsis; overflow:hidden">${c.service_type.toUpperCase()} · ${c.log_file_path}</div>
+        container.innerHTML = configs.map(c => {
+            const searchStr = `${c.app_name || ''} ${c.service_type || ''} ${c.ip || ''} ${c.hostname || ''} ${c.project_name || ''} ${c.log_file_path || ''}`.toLowerCase();
+            const isSelected = selectedAppConfigId === c.id;
+            return `
+                <div class="config-app-item ${isSelected ? 'active' : ''}"
+                     data-search="${escapeHtml(searchStr)}"
+                     onclick="selectAppConfigFilter(${c.id}, '${escapeJs(c.service_type || '')}', ${c.server_id || 'null'}, '${escapeJs(c.log_file_path || '')}', this)">
+                    <div style="flex:1; min-width:0">
+                        <div style="display:flex; align-items:center; justify-content:space-between">
+                            <div style="font-size:11px; font-weight:600; color:var(--text)">${escapeHtml(c.app_name)}</div>
+                            ${c.ip ? `<span style="font-size:9px; color:var(--cyan); font-family:var(--mono)">${escapeHtml(c.ip)}</span>` : ''}
+                        </div>
+                        <div style="font-size:9px; color:var(--text3); font-family:var(--mono); text-overflow:ellipsis; overflow:hidden; white-space:nowrap; margin-top:2px">
+                            <span style="color:var(--amber); font-weight:bold">[${(c.service_type || 'APP').toUpperCase()}]</span> ${escapeHtml(c.log_file_path)}
+                        </div>
+                        ${c.project_name ? `<div style="font-size:8px; color:var(--text3); font-family:var(--mono)">Project: ${escapeHtml(c.project_name)}</div>` : ''}
+                    </div>
+                    <button class="btn btn-glass" onclick="event.stopPropagation(); deleteLogConfig(${c.id})" style="padding:2px 6px; font-size:9px; color:var(--red); border-color:rgba(255,59,92,0.3); margin-left:6px">✕</button>
                 </div>
-                <button class="btn btn-glass" onclick="deleteLogConfig(${c.id})" style="padding:2px 6px; font-size:9px; color:var(--red); border-color:rgba(255,59,92,0.3)">✕</button>
-            </div>
-        `).join('');
+            `;
+        }).join('');
+
+        filterLeftPanelApps();
     } catch (e) {
         console.error("Config load error", e);
     }
+}
+
+function selectAppConfigFilter(configId, serviceType, serverId, logFilePath, el) {
+    document.querySelectorAll('.server-item-row').forEach(r => r.classList.remove('active'));
+    document.querySelectorAll('.config-app-item').forEach(r => r.classList.remove('active'));
+    
+    if (el) el.classList.add('active');
+    
+    selectedAppConfigId = configId;
+    selectedLogFilePath = logFilePath;
+    selectedServerId = serverId;
+
+    if (serviceType) {
+        currentServiceType = serviceType;
+        document.querySelectorAll('.log-tab-btn').forEach(b => {
+            b.classList.remove('active');
+            if (b.getAttribute('onclick') && b.getAttribute('onclick').includes(`'${serviceType}'`)) {
+                b.classList.add('active');
+            }
+        });
+    }
+
+    fetchLogsNow();
 }
 
 async function deleteLogConfig(cid) {
@@ -539,6 +627,10 @@ async function deleteLogConfig(cid) {
     try {
         await apiFetch(`/api/log-monitor/configs/${cid}`, { method: 'DELETE' });
         showToast("Log application removed", "info");
+        if (selectedAppConfigId === cid) {
+            selectedAppConfigId = null;
+            selectedLogFilePath = null;
+        }
         loadLogConfigs();
     } catch (e) {
         showToast("Delete failed", "error");
@@ -547,8 +639,13 @@ async function deleteLogConfig(cid) {
 
 function selectServerFilter(srvId, el) {
     document.querySelectorAll('.server-item-row').forEach(r => r.classList.remove('active'));
+    document.querySelectorAll('.config-app-item').forEach(r => r.classList.remove('active'));
     if (el) el.classList.add('active');
+    
     selectedServerId = srvId;
+    selectedAppConfigId = null;
+    selectedLogFilePath = null;
+
     fetchLogsNow();
 }
 
@@ -560,12 +657,12 @@ function switchServiceTab(type, el) {
 }
 
 async function fetchLogsNow() {
-    const term = document.getElementById('log-terminal-output');
     const tailLimit = parseInt(document.getElementById('log-tail-limit') ? document.getElementById('log-tail-limit').value : 100);
     try {
         const payload = {
             server_id: selectedServerId ? parseInt(selectedServerId) : null,
             log_type: currentServiceType || '',
+            log_file_path: selectedLogFilePath || null,
             search: document.getElementById('log-search-input').value,
             limit: tailLimit
         };
@@ -663,6 +760,10 @@ function clearTerminal() {
 
 function escapeHtml(str) {
     return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function escapeJs(str) {
+    return String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 </script>
 {% endblock %}
