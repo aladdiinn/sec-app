@@ -767,21 +767,23 @@ function renderHistogram(buckets) {
     const maxVal = Math.max(...buckets.map(b => b.total || 1), 1);
     
     container.innerHTML = buckets.map(b => {
-        const heightPct = Math.max(12, Math.round((b.total / maxVal) * 100));
-        const errPct = Math.round(((b.errors || 0) / b.total) * 100);
-        const warnPct = Math.round(((b.warns || 0) / b.total) * 100);
+        const heightPx = Math.max(8, Math.round((b.total / maxVal) * 30));
+        const errPct = b.total ? Math.round(((b.errors || 0) / b.total) * 100) : 0;
+        const warnPct = b.total ? Math.round(((b.warns || 0) / b.total) * 100) : 0;
         const infoPct = 100 - errPct - warnPct;
 
         return `
-        <div style="flex:1; min-width:16px; max-width:32px; display:flex; flex-direction:column; align-items:center; cursor:pointer" 
-             onclick="zoomHistogramTime('${b.time}')" 
+        <div style="display:flex; flex-direction:column; align-items:center; cursor:pointer; min-width:32px" 
+             onclick="zoomHistogramTime('${escapeJs(b.time)}')" 
              title="Time: ${b.time} | Total: ${b.total} | Errors: ${b.errors} | Warns: ${b.warns}">
-            <div style="width:100%; height:${heightPct}%; display:flex; flex-direction:column; border-radius:2px; overflow:hidden; background:var(--bg4)">
-                ${b.errors ? `<div style="height:${errPct}%; background:var(--red)"></div>` : ''}
-                ${b.warns ? `<div style="height:${warnPct}%; background:var(--amber)"></div>` : ''}
-                <div style="height:${infoPct}%; background:var(--cyan); opacity:0.7"></div>
+            <div style="width:20px; height:32px; display:flex; flex-direction:column; justify-content:flex-end; background:rgba(255,255,255,0.06); border-radius:2px; padding:1px">
+                <div style="width:100%; height:${heightPx}px; display:flex; flex-direction:column; border-radius:2px; overflow:hidden">
+                    ${b.errors ? `<div style="height:${errPct}%; background:var(--red)"></div>` : ''}
+                    ${b.warns ? `<div style="height:${warnPct}%; background:var(--amber)"></div>` : ''}
+                    <div style="height:${infoPct}%; background:var(--cyan)"></div>
+                </div>
             </div>
-            <div style="font-size:8px; color:var(--text3); font-family:var(--mono); margin-top:2px; transform:scale(0.85)">${b.time}</div>
+            <div style="font-size:9px; color:var(--cyan); font-weight:600; font-family:var(--mono); margin-top:3px">${escapeHtml(b.time)}</div>
         </div>
         `;
     }).join('');

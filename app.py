@@ -2622,7 +2622,8 @@ async def api_fetch_log_lines(request: Request):
     hist_buckets = {}
     for l in lines:
         t_str = str(l.get("time", ""))
-        time_key = t_str[11:16] if len(t_str) >= 16 and ":" in t_str[11:16] else datetime.now(timezone.utc).strftime("%H:%M")
+        hm_match = re.search(r'(\d{2}:\d{2})', t_str)
+        time_key = hm_match.group(1) if hm_match else datetime.now(timezone.utc).strftime("%H:%M")
         if time_key not in hist_buckets:
             hist_buckets[time_key] = {"time": time_key, "total": 0, "errors": 0, "warns": 0, "info": 0}
         hist_buckets[time_key]["total"] += 1
@@ -2637,17 +2638,21 @@ async def api_fetch_log_lines(request: Request):
     histogram_data = list(hist_buckets.values())
     histogram_data.sort(key=lambda x: x["time"])
 
-    # Calculate log file health & size telemetry
+    # Determine primary file path from log_path or target_sources
+    primary_path = log_path
+    if not primary_path and target_sources:
+        primary_path = target_sources[0][0]
+
     file_stats = {
-        "file_path": log_path or "System Feed",
-        "exists": os.path.exists(log_path) if log_path else True,
+        "file_path": primary_path or "System Telemetry Stream",
+        "exists": os.path.exists(primary_path) if primary_path else True,
         "size_str": "System Feed",
         "size_bytes": 0,
         "health": "ONLINE"
     }
-    if log_path and os.path.exists(log_path):
+    if primary_path and os.path.exists(primary_path):
         try:
-            sb = os.path.getsize(log_path)
+            sb = os.path.getsize(primary_path)
             file_stats["size_bytes"] = sb
             if sb > 1024 * 1024:
                 file_stats["size_str"] = f"{sb / (1024 * 1024):.1f} MB"
