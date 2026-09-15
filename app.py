@@ -524,25 +524,45 @@ def render_template(request: Request, name: str, context: dict = None):
     return templates.TemplateResponse(request, name, ctx)
 
 async def run_ssh_command(host: str, port: int, user: str, password: Optional[str], key_path: Optional[str], command: str) -> Optional[str]:
-    """Execute SSH command using asyncssh with timeout and fallback."""
+    """Execute SSH command using asyncssh with timeout and fallback user detection."""
     if not host or host in ["127.0.0.1", "localhost"]:
         return None
-    try:
-        import asyncssh
-        async with asyncssh.connect(
-            host=host,
-            port=port or 22,
-            username=user or 'ubuntu',
-            password=password or None,
-            client_keys=[key_path] if key_path and os.path.exists(key_path) else None,
-            known_hosts=None,
-            connect_timeout=3
-        ) as conn:
-            result = await conn.run(command, check=False)
-            return result.stdout
-    except Exception as e:
-        logger.warning(f"SSH command to {host} failed: {e}")
-        return None
+
+    users_to_try = []
+    if user:
+        users_to_try.append(user)
+
+    # Automatically extract home username from command path if present e.g. /home/bescom/... -> bescom
+    home_match = re.search(r'/home/([a-zA-Z0-9_\-]+)/', command)
+    if home_match:
+        home_user = home_match.group(1)
+        if home_user not in users_to_try:
+            users_to_try.insert(0, home_user)
+
+    for fallback in ['ubuntu', 'ec2-user', 'root']:
+        if fallback not in users_to_try:
+            users_to_try.append(fallback)
+
+    import asyncssh
+    for attempt_user in users_to_try:
+        try:
+            async with asyncssh.connect(
+                host=host,
+                port=port or 22,
+                username=attempt_user,
+                password=password or None,
+                client_keys=[key_path] if key_path and os.path.exists(key_path) else None,
+                known_hosts=None,
+                connect_timeout=3
+            ) as conn:
+                result = await conn.run(command, check=False)
+                if result.exit_status == 0 or result.stdout:
+                    return result.stdout
+        except Exception as e:
+            logger.warning(f"SSH command to {host} with user '{attempt_user}' failed: {e}")
+            continue
+
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════

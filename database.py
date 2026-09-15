@@ -916,6 +916,27 @@ def get_server_by_id(server_id: int):
     finally:
         conn.close()
 
+def get_server_by_ip(ip: str):
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM servers WHERE ip_address = %s OR ip = %s LIMIT 1;", (ip, ip))
+            row = cur.fetchone()
+            if not row:
+                return None
+            s = dict(row)
+            s["name"] = s.get("name") or s.get("hostname")
+            s["ip"] = s.get("ip") or s.get("ip_address")
+            s["api_token"] = s.get("api_token") or s.get("agent_token") or "sp-token-12345"
+            return s
+    except Exception as e:
+        logger.error(f"Error in get_server_by_ip: {e}")
+        return None
+    finally:
+        conn.close()
+
 def add_server(name: str, ip: str, region: str = "", region_code: str = ""):
     conn = get_db_connection()
     if not conn:
