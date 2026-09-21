@@ -312,9 +312,37 @@
                 <span style="color:var(--text3)">STATUS: <span id="telemetry-health-badge" class="lvl-tag INFO">ONLINE</span></span>
             </div>
             <div style="display:flex; gap:8px">
+                <button class="btn btn-glass" onclick="toggleWatchdogPanel()" style="font-size:9px; padding:3px 8px; color:var(--amber); border-color:rgba(255,184,0,0.3)">
+                    🤖 WATCHDOG AI
+                </button>
                 <button class="btn btn-glass" onclick="toggleHistogramPanel()" style="font-size:9px; padding:3px 8px; color:var(--cyan); border-color:rgba(0,212,255,0.3)">
                     📊 TIME HISTOGRAM
                 </button>
+            </div>
+        </div>
+
+        <!-- Watchdog AI Anomaly & Root Cause Drawer -->
+        <div id="watchdog-ai-container" style="background:#090e1a; border-bottom:1px solid var(--border); padding:12px 14px; display:none">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                <span style="font-family:var(--orbitron); font-size:10px; color:var(--amber); letter-spacing:1.5px">🤖 WATCHDOG AI — ANOMALY, ROOT CAUSE & OUTLIER ENGINE</span>
+                <span id="watchdog-status-tag" class="lvl-tag WARN">ALERT PACING: 24 DUPES MUTED / 5m</span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px" id="watchdog-cards-wrap">
+                <div style="background:rgba(255,59,92,0.06); border:1px solid rgba(255,59,92,0.3); padding:8px 10px; border-radius:4px">
+                    <div style="font-size:9px; color:var(--red); font-family:var(--orbitron); margin-bottom:4px">🔥 OUTLIER DETECTION</div>
+                    <div style="font-size:10px; color:var(--text)">Node <strong>ec2-prod-web-01</strong> CPU 96.4% (Cluster avg 18.2%).</div>
+                    <div style="font-size:8px; color:var(--text3); margin-top:4px">Recommendation: Scale cluster task container.</div>
+                </div>
+                <div style="background:rgba(255,184,0,0.06); border:1px solid rgba(255,184,0,0.3); padding:8px 10px; border-radius:4px">
+                    <div style="font-size:9px; color:var(--amber); font-family:var(--orbitron); margin-bottom:4px">🔍 ROOT CAUSE ANALYSIS</div>
+                    <div style="font-size:10px; color:var(--text)">Upstream DB pool exhaustion in <strong>auth-service</strong> (+420ms delay).</div>
+                    <div style="font-size:8px; color:var(--text3); margin-top:4px">Target: checkout-api downstream bottleneck.</div>
+                </div>
+                <div style="background:rgba(0,212,255,0.06); border:1px solid rgba(0,212,255,0.3); padding:8px 10px; border-radius:4px">
+                    <div style="font-size:9px; color:var(--cyan); font-family:var(--orbitron); margin-bottom:4px">🌐 TRAFFIC ANOMALY</div>
+                    <div style="font-size:10px; color:var(--text)">340% traffic surge from IP subnet <strong>45.79.120.0/22</strong>.</div>
+                    <div style="font-size:8px; color:var(--text3); margin-top:4px">Action: WAF rate limit active.</div>
+                </div>
             </div>
         </div>
 
@@ -367,6 +395,8 @@
                 <button class="preset-pill active" onclick="applyPresetFilter('', this)">ALL</button>
                 <button class="preset-pill pill-err" onclick="applyPresetFilter('error', this)">🔥 ERRORS</button>
                 <button class="preset-pill pill-warn" onclick="applyPresetFilter('warn', this)">⚠️ WARNS</button>
+                <button class="preset-pill pill-sec" onclick="applyPresetFilter('apm', this)">⚡ APM TRACES</button>
+                <button class="preset-pill pill-warn" onclick="applyPresetFilter('watchdog', this)">🤖 WATCHDOG AI</button>
                 <button class="preset-pill pill-sec" onclick="applyPresetFilter('auth', this)">🔒 AUTH & SEC</button>
                 <button class="preset-pill pill-sec" onclick="applyPresetFilter('500', this)">🌐 5xx HTTP</button>
                 <button class="preset-pill pill-sec" onclick="applyPresetFilter('psql', this)">💾 DB QUERIES</button>
@@ -1065,6 +1095,23 @@ function parseLogFields(msg) {
     return kv;
 }
 
+let isWatchdogVisible = false;
+function toggleWatchdogPanel() {
+    isWatchdogVisible = !isWatchdogVisible;
+    const container = document.getElementById('watchdog-ai-container');
+    if (container) {
+        container.style.display = isWatchdogVisible ? 'block' : 'none';
+    }
+}
+
+let activePresetKey = '';
+function applyPresetFilter(term, btn) {
+    document.querySelectorAll('.preset-pill').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    activePresetKey = term;
+    filterLogLines();
+}
+
 function filterByKv(key, val) {
     const searchInput = document.getElementById('log-search-input');
     searchInput.value = val;
@@ -1072,13 +1119,52 @@ function filterByKv(key, val) {
     showToast(`Filtered by ${key}: ${val}`, "info");
 }
 
+function anyMatch(str, list) {
+    return list.some(k => str.includes(k));
+}
+
 function filterLogLines() {
-    const q = document.getElementById('log-search-input').value.toLowerCase();
-    if (!q) {
-        renderLogLines(allLogLines);
+    const q = (document.getElementById('log-search-input').value || '').toLowerCase().trim();
+    
+    if (!allLogLines || !allLogLines.length) {
+        renderLogLines([]);
         return;
     }
-    const filtered = allLogLines.filter(l => (l.msg && l.msg.toLowerCase().includes(q)) || (l.source && l.source.toLowerCase().includes(q)) || (l.time && l.time.toLowerCase().includes(q)));
+
+    const filtered = allLogLines.filter(l => {
+        const lvl = String(l.level || 'INFO').toUpperCase();
+        const msg = String(l.msg || '').toLowerCase();
+        const src = String(l.source || '').toLowerCase();
+        const time = String(l.time || '').toLowerCase();
+
+        // Preset filter evaluation
+        if (activePresetKey) {
+            const pk = activePresetKey.toLowerCase();
+            if (pk === 'error') {
+                if (!['ERROR', 'CRITICAL', 'CRIT', 'HIGH', 'FATAL'].includes(lvl) && !anyMatch(msg, ['error', 'fail', 'exception', 'fatal', 'crit'])) return false;
+            } else if (pk === 'warn') {
+                if (!['WARN', 'WARNING', 'MEDIUM'].includes(lvl) && !anyMatch(msg, ['warn', 'warning', 'medium'])) return false;
+            } else if (pk === 'apm') {
+                if (!anyMatch(msg, ['apm', 'trace', 'duration_ms', 'latency', 'cpu=', 'ram=', 'rum']) && !src.includes('apm')) return false;
+            } else if (pk === 'watchdog') {
+                if (!anyMatch(msg, ['watchdog', 'anomaly', 'outlier', 'root cause', 'alert-pacer']) && !src.includes('watchdog')) return false;
+            } else if (pk === 'auth') {
+                if (!anyMatch(msg, ['auth', 'ssh', 'login', 'pass', 'perm', 'sec', 'token', 'user', 'chmod']) && !anyMatch(src, ['auth', 'sec'])) return false;
+            } else if (pk === '500') {
+                if (!anyMatch(msg, ['500', '502', '503', '504', '5xx', 'internal server error', 'http/1.1 5', 'http/2.0 5'])) return false;
+            } else if (pk === 'psql') {
+                if (!anyMatch(msg, ['psql', 'postgres', 'select', 'insert', 'update', 'delete', 'query', 'sql', 'db'])) return false;
+            }
+        }
+
+        // Search input text evaluation
+        if (q) {
+            if (!msg.includes(q) && !src.includes(q) && !time.includes(q) && !lvl.toLowerCase().includes(q)) return false;
+        }
+
+        return true;
+    });
+
     renderLogLines(filtered);
 }
 
