@@ -145,9 +145,10 @@
     text-align: center;
     display: inline-block;
 }
-.lvl-tag.ERROR { background: rgba(255,59,92,0.2); color: var(--red); }
-.lvl-tag.WARN { background: rgba(255,184,0,0.2); color: var(--amber); }
-.lvl-tag.INFO { background: rgba(0,212,255,0.15); color: var(--cyan); }
+.lvl-tag.ERROR, .lvl-tag.CRITICAL, .lvl-tag.CRIT, .lvl-tag.FATAL { background: rgba(255,59,92,0.25); color: var(--red); }
+.lvl-tag.HIGH { background: rgba(255,92,59,0.25); color: #ff5e3a; }
+.lvl-tag.WARN, .lvl-tag.WARNING, .lvl-tag.MEDIUM { background: rgba(255,184,0,0.2); color: var(--amber); }
+.lvl-tag.INFO, .lvl-tag.LOW { background: rgba(0,212,255,0.15); color: var(--cyan); }
 .lvl-tag.DEBUG { background: rgba(136,153,170,0.2); color: var(--text3); }
 
 .config-app-item {

@@ -29,36 +29,42 @@
 </div>
 
 <!-- Add Server Modal -->
-<div id="add-server-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:40px; border-radius:var(--radius-lg); z-index:1000; width:550px; box-shadow:0 30px 80px rgba(0,0,0,0.9)">
-    <h2 class="card-title" style="font-size:24px; margin-bottom:12px">Onboard Asset</h2>
-    <p class="text-sub" style="margin-bottom:24px">Configure asset metadata before generating the setup command.</p>
+<div id="add-server-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:32px 36px; border-radius:var(--radius-lg); z-index:1000; width:550px; max-width:92vw; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+        <h3 style="margin:0; color:var(--cyan); font-family:var(--orbitron); font-size:15px; letter-spacing:2px">➕ ONBOARD NEW ASSET NODE</h3>
+        <button class="btn btn-ghost" onclick="closeAddServerModal()" style="padding:2px 8px; font-size:14px">✕</button>
+    </div>
+    <p class="text-sub" style="margin-bottom:20px; font-size:11px">Enter asset details to generate your 1-line agent push script (Zero SSH credentials required).</p>
 
-    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:20px">
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-bottom:16px">
         <div>
-            <label class="stat-label">ASSET SITE</label>
-            <select id="onboard-site" class="glass" style="width:100%" onchange="updateOnboardCommand()">
-                <option value="DC">Data Center (DC)</option>
-                <option value="DR">Disaster Recovery (DR)</option>
-                <option value="Cloud">Cloud Infrastructure</option>
-            </select>
+            <label class="stat-label" style="display:block; margin-bottom:6px; color:var(--cyan)">SERVER HOSTNAME</label>
+            <input type="text" id="onboard-hostname" placeholder="e.g. WEB-PROD-01" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px" oninput="updateOnboardCommand()">
         </div>
         <div>
-            <label class="stat-label">SERVER ROLE</label>
-            <select id="onboard-role" class="glass" style="width:100%" onchange="updateOnboardCommand()">
-                <option value="primary">Primary Server</option>
-                <option value="standby">Standby Server (DR)</option>
-                <option value="none">Generic / Agent</option>
-            </select>
+            <label class="stat-label" style="display:block; margin-bottom:6px; color:var(--cyan)">SERVER IP ADDRESS</label>
+            <input type="text" id="onboard-ip" placeholder="e.g. 13.233.25.127" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px" oninput="updateOnboardCommand()">
         </div>
     </div>
 
-    <div style="background:var(--bg-deep); border:1px solid var(--border); padding:16px; border-radius:var(--radius-md); position:relative; margin-bottom:24px">
-        <code id="setup-command" style="font-family:var(--mono); color:var(--cyan); font-size:12px; word-break:break-all">curl -sSL "{{ base_url }}/setup?role=primary&site=DC" | sudo bash</code>
-        <button class="btn btn-glass" style="position:absolute; top:8px; right:8px; padding:4px 10px; font-size:11px" onclick="copySetupCommand()">Copy</button>
+    <div style="margin-bottom:20px">
+        <label class="stat-label" style="display:block; margin-bottom:6px">INFRASTRUCTURE SITE / ENVIRONMENT</label>
+        <select id="onboard-site" class="glass mono" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px" onchange="updateOnboardCommand()">
+            <option value="Cloud">Cloud Infrastructure (AWS / Azure / GCP)</option>
+            <option value="DC">Data Center (DC)</option>
+            <option value="DR">Disaster Recovery (DR)</option>
+        </select>
+    </div>
+
+    <div style="background:var(--bg-deep); border:1px solid var(--border); padding:14px; border-radius:var(--radius-md); position:relative; margin-bottom:20px">
+        <label class="stat-label" style="display:block; margin-bottom:6px; font-size:9px; color:var(--text3)">1-LINE ONBOARDING SCRIPT (RUN ON TARGET NODE):</label>
+        <code id="setup-command" style="font-family:var(--mono); color:var(--cyan); font-size:11px; word-break:break-all">curl -sSL "{{ base_url }}/setup_node.sh?node_name=Node-01&ip=127.0.0.1" | sudo bash</code>
+        <button class="btn btn-glass" style="position:absolute; top:8px; right:8px; padding:4px 10px; font-size:10px; color:var(--cyan); border-color:rgba(0,212,255,0.3)" onclick="copySetupCommand()">📋 Copy</button>
     </div>
 
     <div style="display:flex; justify-content:flex-end; gap:12px">
-        <button class="btn btn-glass" onclick="closeAddServerModal()">Close</button>
+        <button class="btn btn-glass" onclick="closeAddServerModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitOnboardAsset()" style="padding:8px 20px; font-size:11px">Register & Onboard Asset</button>
     </div>
 </div>
 
@@ -234,10 +240,44 @@
     }
 
     function updateOnboardCommand() {
-        const site = document.getElementById('onboard-site').value;
-        const role = document.getElementById('onboard-role').value;
+        const hostname = (document.getElementById('onboard-hostname').value || '').trim() || 'Node-01';
+        const ip = (document.getElementById('onboard-ip').value || '').trim() || '127.0.0.1';
         const root = window.location.origin;
-        document.getElementById('setup-command').innerText = `curl -sSL "${root}/setup?role=${role}&site=${site}" | sudo bash`;
+        document.getElementById('setup-command').innerText = `curl -sSL "${root}/setup_node.sh?node_name=${encodeURIComponent(hostname)}&ip=${encodeURIComponent(ip)}" | sudo bash`;
+    }
+
+    async function submitOnboardAsset() {
+        const hostname = (document.getElementById('onboard-hostname').value || '').trim();
+        const ip = (document.getElementById('onboard-ip').value || '').trim();
+
+        if (!hostname || !ip) {
+            showToast('Please enter both Hostname and IP Address', 'warning');
+            return;
+        }
+
+        try {
+            const res = await apiFetch('/api/servers/add', {
+                method: 'POST',
+                body: JSON.stringify({ name: hostname, hostname: hostname, ip: ip })
+            });
+
+            if (res && (res.ok || res.id)) {
+                showToast('Asset node registered successfully!', 'success');
+                closeAddServerModal();
+                loadServers();
+                
+                const cmd = document.getElementById('setup-command').innerText;
+                showSetupScriptModal({
+                    title: "🚀 ASSET NODE PUSH AGENT SCRIPT",
+                    subtitle: `Run this 1-line command on target node ${hostname} (${ip}) to start outbound log & telemetry streaming (Zero SSH Credentials used):`,
+                    command: cmd
+                });
+            } else {
+                showToast(res.message || 'Registration failed', 'error');
+            }
+        } catch (e) {
+            showToast(e.message || 'Registration error', 'error');
+        }
     }
 
     function closeAddServerModal() {

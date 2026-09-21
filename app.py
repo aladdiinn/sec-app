@@ -2728,7 +2728,15 @@ async def api_fetch_log_lines(request: Request):
     if pushed:
         for pl in pushed:
             msg = pl.get("msg", "")
-            if search and search not in msg.lower(): continue
+            src = pl.get("source", "")
+            if search and search not in msg.lower() and search not in src.lower(): continue
+            if log_type:
+                lt = log_type.lower()
+                if lt == "tomcat" and "tomcat" not in src.lower() and "tomcat" not in msg.lower(): continue
+                elif lt == "nginx" and "nginx" not in src.lower() and "nginx" not in msg.lower(): continue
+                elif lt == "haproxy" and "haproxy" not in src.lower() and "haproxy" not in msg.lower(): continue
+                elif lt in ["syslog", "sys"] and "syslog" not in src.lower() and "kernel" not in msg.lower() and "sys" not in src.lower(): continue
+                elif lt == "auth" and not any(k in src.lower() or k in msg.lower() for k in ["auth", "ssh", "login", "perm"]): continue
             lines.append(pl)
 
     # 2. Second priority: Try reading local files directly for all matching log sources
@@ -2759,24 +2767,15 @@ async def api_fetch_log_lines(request: Request):
 
                             lines.append({
                                 "time": log_time,
-                                "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
+                                "level": "CRITICAL" if "crit" in rl.lower() else ("ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO")),
                                 "source": f"{st}/local-node",
                                 "msg": rl
                             })
                 except Exception as ex_read:
                     logger.warning(f"Error reading local log file {lp}: {ex_read}")
 
-    # 2. Second priority: If remote host specified or if log_path on remote server, attempt SSH
+    # 3. Third priority: Remote SSH log tailing if configured
     srv = db.get_server_by_id(sid) if sid else None
-    matching_cfg = None
-    if log_path:
-        for c in configs:
-            if c.get("log_file_path") == log_path:
-                matching_cfg = c
-                if not srv and c.get("server_id"):
-                    srv = db.get_server_by_id(c.get("server_id"))
-                break
-
     if not lines and (srv or matching_cfg or log_path):
         host = (srv.get("ip_address") or srv.get("ip")) if srv else (matching_cfg.get("ip") if matching_cfg else None)
         if host and host not in ["127.0.0.1", "localhost", "172.31.6.247"]:
@@ -2804,23 +2803,37 @@ async def api_fetch_log_lines(request: Request):
 
                         lines.append({
                             "time": log_time,
-                            "level": "ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO"),
+                            "level": "CRITICAL" if "crit" in rl.lower() else ("ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO")),
                             "source": f"{log_type or 'app'}/{(srv.get('hostname') if srv else host)}",
                             "msg": rl
                         })
             except Exception as ex_ssh:
                 logger.warning(f"Error fetching remote SSH logs from {host}: {ex_ssh}")
 
-    # 3. System activity feed fallback ONLY when viewing ALL SERVICES or SYSLOG and no log file specified
-    if not lines and not log_path and (not log_type or log_type in ["", "all", "syslog", "sys"]):
-        events = db.get_activity_feed(limit=40, project_id=request.session.get("project_id"))
+    # 4. System activity feed fallback when no file log stream available
+    if not lines and not log_path:
+        events = db.get_activity_feed(limit=50, project_id=request.session.get("project_id"))
         for ev in events:
             desc = ev.get("description") or ev.get("message") or "System telemetry event"
-            if search and search not in desc.lower(): continue
+            src_val = f"syslog/{ev.get('hostname') or 'server-node'}"
+            if search and search not in desc.lower() and search not in src_val.lower(): continue
+            
+            # Apply tab filter to activity feed items
+            if log_type:
+                lt = log_type.lower()
+                if lt == "auth" and not any(k in desc.lower() or k in src_val.lower() for k in ["auth", "ssh", "login", "perm", "user", "chmod"]):
+                    continue
+                elif lt == "tomcat" and "tomcat" not in desc.lower() and "tomcat" not in src_val.lower():
+                    continue
+                elif lt == "nginx" and "nginx" not in desc.lower() and "nginx" not in src_val.lower():
+                    continue
+                elif lt == "haproxy" and "haproxy" not in desc.lower() and "haproxy" not in src_val.lower():
+                    continue
+
             lines.append({
                 "time": str(ev.get("created_at", "")).replace("T", " ")[:19],
                 "level": str(ev.get("severity", "INFO")).upper(),
-                "source": f"syslog/{ev.get('hostname') or 'server-node'}",
+                "source": src_val,
                 "msg": desc
             })
 
@@ -2834,9 +2847,9 @@ async def api_fetch_log_lines(request: Request):
             hist_buckets[time_key] = {"time": time_key, "total": 0, "errors": 0, "warns": 0, "info": 0}
         hist_buckets[time_key]["total"] += 1
         lvl = str(l.get("level", "")).upper()
-        if lvl in ["ERROR", "CRIT", "FATAL"]:
+        if lvl in ["ERROR", "CRITICAL", "CRIT", "HIGH", "FATAL"]:
             hist_buckets[time_key]["errors"] += 1
-        elif lvl in ["WARN", "WARNING"]:
+        elif lvl in ["WARN", "WARNING", "MEDIUM"]:
             hist_buckets[time_key]["warns"] += 1
         else:
             hist_buckets[time_key]["info"] += 1
@@ -2846,7 +2859,7 @@ async def api_fetch_log_lines(request: Request):
 
     # Determine primary file path from log_path or target_sources
     primary_path = log_path
-    if not primary_path and target_sources:
+    if not primary_path and 'target_sources' in locals() and target_sources:
         primary_path = target_sources[0][0]
 
     file_stats = {
@@ -2869,15 +2882,23 @@ async def api_fetch_log_lines(request: Request):
         except Exception:
             pass
 
-    # Calculate real dynamic counts from database configured application log sources
+    # Calculate real dynamic counts across all service categories
     all_cfgs = db.get_log_configs()
+    all_feed_events = db.get_activity_feed(limit=100, project_id=request.session.get("project_id"))
+    all_lines_combined = lines + [{
+        "time": str(ev.get("created_at", "")).replace("T", " ")[:19],
+        "level": str(ev.get("severity", "INFO")).upper(),
+        "source": f"syslog/{ev.get('hostname') or 'server-node'}",
+        "msg": ev.get("description") or ev.get("message") or ""
+    } for ev in all_feed_events]
+
     tab_counts = {
-        "tomcat": len([c for c in all_cfgs if c.get("service_type") == "tomcat"]),
-        "nginx": len([c for c in all_cfgs if c.get("service_type") == "nginx"]),
-        "haproxy": len([c for c in all_cfgs if c.get("service_type") == "haproxy"]),
-        "syslog": len([c for c in all_cfgs if c.get("service_type") == "syslog"]),
-        "auth": len([c for c in all_cfgs if c.get("service_type") == "auth"]),
-        "other": len([c for c in all_cfgs if c.get("service_type") in ["other", "custom"]]),
+        "tomcat": len([c for c in all_cfgs if c.get("service_type") == "tomcat"]) or len([l for l in all_lines_combined if "tomcat" in str(l.get("source","")).lower()]),
+        "nginx": len([c for c in all_cfgs if c.get("service_type") == "nginx"]) or len([l for l in all_lines_combined if "nginx" in str(l.get("source","")).lower()]),
+        "haproxy": len([c for c in all_cfgs if c.get("service_type") == "haproxy"]) or len([l for l in all_lines_combined if "haproxy" in str(l.get("source","")).lower()]),
+        "syslog": len([c for c in all_cfgs if c.get("service_type") == "syslog"]) or len([l for l in all_lines_combined if "syslog" in str(l.get("source","")).lower() or "sys" in str(l.get("source","")).lower()]),
+        "auth": len([c for c in all_cfgs if c.get("service_type") == "auth"]) or len([l for l in all_lines_combined if any(k in str(l.get("msg","")).lower() or k in str(l.get("source","")).lower() for k in ["auth", "ssh", "login", "perm"])]),
+        "other": len([c for c in all_cfgs if c.get("service_type") in ["other", "custom"]]) or len([l for l in all_lines_combined if any(k in str(l.get("source","")).lower() for k in ["other", "custom", "app"])]),
         "custom": len([c for c in all_cfgs if c.get("service_type") in ["other", "custom"]])
     }
 
@@ -2886,8 +2907,8 @@ async def api_fetch_log_lines(request: Request):
         "histogram": histogram_data,
         "file_stats": file_stats,
         "stats": {
-            "errors": len([l for l in lines if l.get("level") in ["ERROR", "CRIT", "FATAL"]]),
-            "warns": len([l for l in lines if l.get("level") in ["WARN", "WARNING"]]),
+            "errors": len([l for l in lines if str(l.get("level","")).upper() in ["ERROR", "CRITICAL", "CRIT", "HIGH", "FATAL"]]),
+            "warns": len([l for l in lines if str(l.get("level","")).upper() in ["WARN", "WARNING", "MEDIUM"]]),
             "total": len(lines),
             "rps": round(len(lines) / 60.0, 1) if len(lines) else 0.0
         },
