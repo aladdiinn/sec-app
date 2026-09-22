@@ -324,23 +324,26 @@
         <!-- Watchdog AI Anomaly & Root Cause Drawer -->
         <div id="watchdog-ai-container" style="background:#090e1a; border-bottom:1px solid var(--border); padding:12px 14px; display:none">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-                <span style="font-family:var(--orbitron); font-size:10px; color:var(--amber); letter-spacing:1.5px">🤖 WATCHDOG AI — ANOMALY, ROOT CAUSE & OUTLIER ENGINE</span>
-                <span id="watchdog-status-tag" class="lvl-tag WARN">ALERT PACING: 24 DUPES MUTED / 5m</span>
+                <div style="display:flex; align-items:center; gap:10px">
+                    <span style="font-family:var(--orbitron); font-size:10px; color:var(--amber); letter-spacing:1.5px">🤖 WATCHDOG AI — ANOMALY, ROOT CAUSE & OUTLIER ENGINE</span>
+                    <button class="btn btn-glass" onclick="triggerWatchdogTestSpike()" style="font-size:9px; padding:2px 8px; color:var(--red); border-color:rgba(255,59,92,0.4)">⚡ TRIGGER WATCHDOG TEST SPIKE</button>
+                </div>
+                <span id="watchdog-status-tag" class="lvl-tag WARN">ALERT PACING: 58 DUPES MUTED / 5m</span>
             </div>
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px" id="watchdog-cards-wrap">
                 <div style="background:rgba(255,59,92,0.06); border:1px solid rgba(255,59,92,0.3); padding:8px 10px; border-radius:4px">
                     <div style="font-size:9px; color:var(--red); font-family:var(--orbitron); margin-bottom:4px">🔥 OUTLIER DETECTION</div>
-                    <div style="font-size:10px; color:var(--text)">Node <strong>ec2-prod-web-01</strong> CPU 96.4% (Cluster avg 18.2%).</div>
+                    <div style="font-size:10px; color:var(--text)">Node <strong>ec2-prod-web-01</strong> CPU 98.6% (Cluster avg 16.4%).</div>
                     <div style="font-size:8px; color:var(--text3); margin-top:4px">Recommendation: Scale cluster task container.</div>
                 </div>
                 <div style="background:rgba(255,184,0,0.06); border:1px solid rgba(255,184,0,0.3); padding:8px 10px; border-radius:4px">
                     <div style="font-size:9px; color:var(--amber); font-family:var(--orbitron); margin-bottom:4px">🔍 ROOT CAUSE ANALYSIS</div>
-                    <div style="font-size:10px; color:var(--text)">Upstream DB pool exhaustion in <strong>auth-service</strong> (+420ms delay).</div>
+                    <div style="font-size:10px; color:var(--text)">Upstream DB pool exhaustion in <strong>auth-service</strong> (+620ms delay).</div>
                     <div style="font-size:8px; color:var(--text3); margin-top:4px">Target: checkout-api downstream bottleneck.</div>
                 </div>
                 <div style="background:rgba(0,212,255,0.06); border:1px solid rgba(0,212,255,0.3); padding:8px 10px; border-radius:4px">
                     <div style="font-size:9px; color:var(--cyan); font-family:var(--orbitron); margin-bottom:4px">🌐 TRAFFIC ANOMALY</div>
-                    <div style="font-size:10px; color:var(--text)">340% traffic surge from IP subnet <strong>45.79.120.0/22</strong>.</div>
+                    <div style="font-size:10px; color:var(--text)">480% traffic surge from IP subnet <strong>45.79.120.0/22</strong>.</div>
                     <div style="font-size:8px; color:var(--text3); margin-top:4px">Action: WAF rate limit active.</div>
                 </div>
             </div>
@@ -1101,6 +1104,20 @@ function toggleWatchdogPanel() {
     const container = document.getElementById('watchdog-ai-container');
     if (container) {
         container.style.display = isWatchdogVisible ? 'block' : 'none';
+    }
+}
+
+async function triggerWatchdogTestSpike() {
+    try {
+        const res = await apiFetch('/api/watchdog/test-spike', { method: 'POST' });
+        if (res && res.ok) {
+            showToast(`🚀 Watchdog AI Anomaly Spike Simulated! CPU: ${res.simulated_cpu}, Latency: ${res.simulated_latency}, ${res.muted_duplicates} alerts muted.`, 'warning');
+            fetchLogsNow();
+        } else {
+            showToast('Failed to trigger Watchdog test spike', 'error');
+        }
+    } catch (e) {
+        showToast('Watchdog test trigger error', 'error');
     }
 }
 

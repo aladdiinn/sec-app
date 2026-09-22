@@ -3059,3 +3059,31 @@ async def api_watchdog_analyze():
             "status": "NORMAL"
         }
     }
+
+
+@app.post("/api/watchdog/test-spike")
+@app.get("/api/watchdog/test-spike")
+async def api_watchdog_test_spike(request: Request):
+    """Simulates a CPU / APM Latency & Error Spike to test Watchdog AI Anomaly Detection & Alert Pacing in real time."""
+    spike_lines = [
+        "[WATCHDOG-AI] Outlier Anomaly Triggered: ec2-prod-web-01 CPU usage spiked to 98.6% (Cluster Baseline: 16.4%).",
+        "[APM-TRACE] GET /api/v1/checkout 500 InternalServerError duration_ms=1840ms error='Database pool exhausted'",
+        "[WATCHDOG-AI] Root Cause Analysis: Upstream auth-service pool exhaustion causing +620ms latency on checkout API.",
+        "[WATCHDOG-AI] Traffic Anomaly Alert: 480% sudden request surge detected from subnet 45.79.120.0/22.",
+        "[ALERT-PACER] Alert Pacing active: Muted 58 duplicate 'DB Connection Refused' errors to prevent alert fatigue."
+    ]
+    
+    # Push test anomaly lines to pushed_logs table
+    db.push_log_entries(config_id=None, server_id=1, lines=spike_lines)
+    
+    # Log an alert into DB
+    db.log_alert(1, "WATCHDOG_ANOMALY_SPIKE", "Watchdog AI: Critical CPU & Latency Anomaly Spike detected on ec2-prod-web-01 (98.6% CPU, 1840ms latency)", severity="critical")
+    
+    return {
+        "ok": True,
+        "message": "Watchdog AI Test Spike injected successfully!",
+        "simulated_cpu": "98.6%",
+        "simulated_latency": "1840ms",
+        "muted_duplicates": 58,
+        "pushed_lines": len(spike_lines)
+    }
