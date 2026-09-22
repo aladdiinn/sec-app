@@ -436,7 +436,13 @@ def init_db():
                 cur.execute("""
                     INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, NOW(), NOW());
-                """, ("ec2-prod-web-01", "ec2-prod-web-01", "10.0.0.1", "10.0.0.1", "Ubuntu 22.04 LTS", "sp-token-12345", "sp-token-12345", "online", "info", 1, 0, "ubuntu: apt update", "2m ago"))
+                """, ("ec2-prod-web-01", "ec2-prod-web-01", "172.31.2.38", "172.31.2.38", "Ubuntu 22.04 LTS", "sp-token-12345", "sp-token-12345", "online", "info", 1, 0, "ubuntu: apt update", "2m ago"))
+
+            # Migrate any existing legacy seed server IP from 10.0.0.1 to real server IP 172.31.2.38
+            try:
+                cur.execute("UPDATE servers SET ip = '172.31.2.38', ip_address = '172.31.2.38' WHERE ip LIKE '10.0.0%' OR ip_address LIKE '10.0.0%' OR name = 'NEW-EC2-SERVER';")
+            except Exception as ex_ip_mig:
+                logger.debug(f"IP migration warning: {ex_ip_mig}")
 
             # Update existing rules for chmod/chown and SSH
             try:

@@ -1007,7 +1007,7 @@ async def api_get_geoip():
     points = []
     for s in servers:
         points.append({
-            "ip": s.get("ip", "10.0.0.1"),
+            "ip": s.get("ip", "172.31.2.38"),
             "lat": 37.7749,
             "lon": -122.4194,
             "city": "San Francisco",
@@ -1015,7 +1015,7 @@ async def api_get_geoip():
             "severity": s.get("severity", "info")
         })
     if not points:
-        points.append({"ip": "10.0.0.1", "lat": 37.7749, "lon": -122.4194, "city": "San Francisco", "country": "US", "severity": "info"})
+        points.append({"ip": "172.31.2.38", "lat": 37.7749, "lon": -122.4194, "city": "San Francisco", "country": "US", "severity": "info"})
     return points
 
 @app.get("/api/events")
@@ -1107,8 +1107,8 @@ async def api_add_server(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    name = body.get("name") or body.get("hostname", "new-ec2-server")
-    ip = body.get("ip") or body.get("ip_address", "10.0.0.1")
+    name = body.get("name") or body.get("hostname", "ec2-172-31-2-38")
+    ip = body.get("ip") or body.get("ip_address", "172.31.2.38")
     region = body.get("region", "")
     region_code = body.get("region_code", "")
     ssh_user = body.get("ssh_user", "bescom")

@@ -233,8 +233,8 @@
     }
 
     function updateOnboardCommand() {
-        const hostname = (document.getElementById('onboard-hostname').value || '').trim() || 'Node-01';
-        const ip = (document.getElementById('onboard-ip').value || '').trim() || '127.0.0.1';
+        const hostname = (document.getElementById('onboard-hostname').value || '').trim() || 'ec2-prod-web-01';
+        const ip = (document.getElementById('onboard-ip').value || '').trim() || '172.31.2.38';
         const root = window.location.origin;
         document.getElementById('setup-command').innerText = `curl -sSL "${root}/setup_node.sh?node_name=${encodeURIComponent(hostname)}&ip=${encodeURIComponent(ip)}" | sudo bash`;
     }
