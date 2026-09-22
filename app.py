@@ -3044,6 +3044,18 @@ async def api_fetch_log_lines(request: Request):
                 "msg": tmpl["msg"]
             })
 
+    # Deduplicate log lines by core message payload to avoid syslog vs journalctl duplicates
+    seen_payloads = set()
+    deduped_lines = []
+    for l in lines:
+        raw_m = l.get("msg", "")
+        clean_key = re.sub(r'^\d{2,4}[-/]\d{2}[-/]\d{2,4}[ T]?\d{2}:\d{2}:\d{2}(\.\d+)?|^\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}|ip-\d+-\d+-\d+-\d+|\[\d+\]', '', raw_m).strip()
+        if clean_key in seen_payloads:
+            continue
+        seen_payloads.add(clean_key)
+        deduped_lines.append(l)
+    lines = deduped_lines
+
     # Calculate timeline histogram buckets (grouped by HH:MM timestamp)
     hist_buckets = {}
     for l in lines:

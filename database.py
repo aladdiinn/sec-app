@@ -795,6 +795,9 @@ def save_agent_data(server_id: int, data: dict):
             # Check auth / login / syslog events against rules with single match break
             raw_events = data.get("events", []) or data.get("logins", [])
             for ev in raw_events:
+                ev_ip = str(ev.get('ip', ''))
+                if any(self_ip in ev_ip or self_ip in str(ev.get('message', '')) for self_ip in ["172.31.2.38", "127.0.0.1", "localhost"]):
+                    continue  # Ignore local internal system probes
                 ev_text = f"{ev.get('type', '')} {ev.get('user', '')} {ev.get('ip', '')} {ev.get('message', '')}"
                 for r in active_rules:
                     pat = r.get("pattern", "")
@@ -1405,10 +1408,10 @@ def clean_false_positive_incidents():
     cleaned = 0
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM incidents WHERE description LIKE '%/tmp/%' OR description LIKE '%/var/tmp/%' OR description LIKE '%crontab.%' OR (title LIKE '%Destructive%' AND description LIKE '%crontab%');")
+            cur.execute("DELETE FROM incidents WHERE description LIKE '%/tmp/%' OR description LIKE '%/var/tmp/%' OR description LIKE '%crontab.%' OR (title LIKE '%Destructive%' AND description LIKE '%crontab%') OR (description LIKE '%ec2-user%' AND description LIKE '%172.31.2.38%') OR (title LIKE '%Auth Fail%' AND description LIKE '%172.31.2.38%');")
             try: cleaned += cur.rowcount if hasattr(cur, 'rowcount') and cur.rowcount > 0 else 0
             except Exception: pass
-            cur.execute("DELETE FROM alerts WHERE message LIKE '%/tmp/%' OR message LIKE '%/var/tmp/%' OR message LIKE '%crontab.%';")
+            cur.execute("DELETE FROM alerts WHERE message LIKE '%/tmp/%' OR message LIKE '%/var/tmp/%' OR message LIKE '%crontab.%' OR (message LIKE '%ec2-user%' AND message LIKE '%172.31.2.38%') OR (title LIKE '%Auth Fail%' AND message LIKE '%172.31.2.38%');")
             try: cleaned += cur.rowcount if hasattr(cur, 'rowcount') and cur.rowcount > 0 else 0
             except Exception: pass
             if hasattr(conn, 'commit'):
@@ -1425,10 +1428,31 @@ def create_incident(title, severity, description, assigned_to, server_id=None):
     if any(tmp in full_text for tmp in ["/tmp/", "/var/tmp/", "crontab."]):
         logger.debug(f"Suppressed temporary file incident: {title} - {description}")
         return None
+
+    # Filter out local self IP internal probes
+    if any(self_ip in full_text for self_ip in ["172.31.2.38", "127.0.0.1", "localhost"]) and any(k in full_text for k in ["ec2-user", "auth_fail", "auth fail"]):
+        logger.debug(f"Suppressed local IP auth fail incident: {title} - {description}")
+        return None
+
     conn = get_db_connection()
     if not conn: return None
     try:
         with conn.cursor() as cur:
+            # 60-Second Payload Deduplication Check
+            try:
+                clean_payload = re.sub(r'\d{2,4}[-/]\d{2}[-/]\d{2,4}|\d{2}:\d{2}:\d{2}|ip-\d+-\d+-\d+-\d+|\[\d+\]', '', description or title or '').strip()
+                cur.execute("""
+                    SELECT id FROM incidents
+                    WHERE created_at >= NOW() - INTERVAL '60 seconds'
+                      AND (description LIKE %s OR title LIKE %s)
+                    LIMIT 1;
+                """, (f"%{clean_payload[:25]}%", f"%{clean_payload[:25]}%"))
+                if cur.fetchone():
+                    logger.debug(f"Suppressed duplicate incident within 60s window: {title}")
+                    return None
+            except Exception as ex_inc_dedup:
+                logger.debug(f"Incident dedup warning: {ex_inc_dedup}")
+
             cur.execute("""
                 INSERT INTO incidents (title, severity, description, assigned_to, server_id, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, NOW(), NOW()) RETURNING id;
