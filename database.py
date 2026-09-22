@@ -441,8 +441,10 @@ def init_db():
             # Migrate any existing legacy seed server IP from 10.0.0.1 to real server IP 172.31.2.38
             try:
                 cur.execute("UPDATE servers SET ip = '172.31.2.38', ip_address = '172.31.2.38' WHERE ip LIKE '10.0.0%' OR ip_address LIKE '10.0.0%' OR name = 'NEW-EC2-SERVER';")
+                cur.execute("DELETE FROM projects WHERE name IN ('APDCL MDM', 'PGVCL MDM', 'Nagaland MDM', 'ARUNACHAL AWS');")
+                cur.execute("INSERT INTO projects (name, description) SELECT 'TEST-PROJECT', 'Enterprise Infrastructure Project' WHERE NOT EXISTS (SELECT 1 FROM projects WHERE name = 'TEST-PROJECT');")
             except Exception as ex_ip_mig:
-                logger.debug(f"IP migration warning: {ex_ip_mig}")
+                logger.debug(f"IP/Project migration warning: {ex_ip_mig}")
 
             # Update existing rules for chmod/chown and SSH
             try:
@@ -1702,10 +1704,7 @@ def get_projects():
             projects = cur.fetchall()
             if not projects:
                 default_projects = [
-                    ("APDCL MDM", "Assam Power Distribution MDM servers", "🏭"),
-                    ("PGVCL MDM", "Paschim Gujarat MDM infrastructure", "⚡"),
-                    ("Nagaland MDM", "Nagaland power utility servers", "🗄"),
-                    ("ARUNACHAL AWS", "Arunachal Pradesh cloud instances", "☁")
+                    ("TEST-PROJECT", "Enterprise Infrastructure Project", "🏢")
                 ]
                 for name, desc, icon in default_projects:
                     try:
