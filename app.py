@@ -483,17 +483,38 @@ def get_session_user(request: Request):
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT id, username, email, full_name, role, is_admin FROM users WHERE id = %s AND is_active = TRUE;", (user_id,))
-            return cur.fetchone()
+            u = cur.fetchone()
+            if u:
+                role = (u.get("role") or "normal").lower()
+                if role in ("user", "normal_user"):
+                    role = "normal"
+                if u.get("is_admin") and role not in ("superuser", "admin"):
+                    role = "admin"
+                u["role"] = role
+            return u
     except Exception as e:
         logger.error(f"Error fetching session user: {e}")
         return None
     finally:
         conn.close()
 
+def is_admin_user(request: Request) -> bool:
+    """Returns True if the current session user has Super Admin or Admin privileges."""
+    user = get_session_user(request)
+    if not user:
+        return False
+    role = (user.get("role") or "").lower()
+    return bool(user.get("is_admin") or role in ("superuser", "admin"))
+
 def render_template(request: Request, name: str, context: dict = None):
-    """Safe template renderer providing request, session, project_id, and user context."""
+    """Safe template renderer providing request, session, project_id, user, and is_admin context."""
     if context is None:
         context = {}
+    
+    user = get_session_user(request)
+    is_admin = is_admin_user(request)
+    if user:
+        request.session["user_role"] = user.get("role", "normal")
     
     # Check if project_id query parameter is present in URL (e.g. /dashboard?project_id=2)
     pid_param = request.query_params.get("project_id")
@@ -514,7 +535,8 @@ def render_template(request: Request, name: str, context: dict = None):
     ctx = {
         "request": request,
         "session": request.session,
-        "user": get_session_user(request),
+        "user": user,
+        "is_admin": is_admin,
         "hide_nav": False,
         "error": None,
         "project_id": proj_id,
@@ -522,6 +544,7 @@ def render_template(request: Request, name: str, context: dict = None):
     }
     ctx.update(context)
     return templates.TemplateResponse(request, name, ctx)
+
 
 def get_soc_public_key() -> str:
     """Returns the SOC manager server's SSH public key."""
@@ -885,7 +908,10 @@ async def users_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
+    if not is_admin_user(request):
+        return RedirectResponse(url="/dashboard?error=access_denied", status_code=302)
     return render_template(request, "user_management.html")
+
 
 
 @app.get("/threat-intel", response_class=HTMLResponse)
@@ -1363,6 +1389,8 @@ async def api_get_projects():
 
 @app.post("/api/projects")
 async def api_create_project(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -1402,6 +1430,8 @@ async def api_get_project_assets(project_id: int):
 @app.post("/api/projects/{project_id}/assets")
 @app.post("/api/projects/{project_id}/assign-servers")
 async def api_assign_project_assets(project_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -1430,6 +1460,8 @@ async def api_assign_project_assets(project_id: int, request: Request):
 
 @app.put("/api/projects/{project_id}")
 async def api_update_project(project_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -1450,20 +1482,27 @@ async def api_update_project(project_id: int, request: Request):
     return JSONResponse(status_code=400, content={"ok": False, "message": "Update failed"})
 
 @app.delete("/api/projects/{project_id}")
-async def api_delete_project(project_id: int):
+async def api_delete_project(project_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     if db.delete_project(project_id):
         return {"ok": True, "message": "Project deleted"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
 
+
 # User & Group Management API Endpoints
 
 @app.get("/api/users")
-async def api_get_users():
+async def api_get_users(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     return db.get_users()
 
 @app.post("/api/users")
 @app.post("/api/users/add")
 async def api_create_user(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -1487,6 +1526,8 @@ async def api_create_user(request: Request):
 
 @app.patch("/api/users/{user_id}/role")
 async def api_update_user_role(user_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -1501,6 +1542,8 @@ async def api_update_user_role(user_id: int, request: Request):
 @app.patch("/api/users/{user_id}/status")
 @app.patch("/api/users/{user_id}/disable")
 async def api_toggle_user_status(user_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     new_status = db.toggle_user_status(user_id)
     if new_status is not None:
         uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
@@ -1510,6 +1553,8 @@ async def api_toggle_user_status(user_id: int, request: Request):
 
 @app.delete("/api/users/{user_id}")
 async def api_delete_user(user_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     if db.delete_user(user_id):
         uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
         db.log_audit(uname, "DELETE_USER", "user", user_id, "Deleted user")
@@ -1519,11 +1564,15 @@ async def api_delete_user(user_id: int, request: Request):
 # Group Endpoints
 
 @app.get("/api/groups")
-async def api_get_groups():
+async def api_get_groups(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     return db.get_groups()
 
 @app.get("/api/groups/{group_id}")
-async def api_get_group(group_id: int):
+async def api_get_group(group_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     g = db.get_group_by_id(group_id)
     if g:
         return g
@@ -1531,6 +1580,8 @@ async def api_get_group(group_id: int):
 
 @app.post("/api/groups")
 async def api_create_group(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -1549,6 +1600,8 @@ async def api_create_group(request: Request):
 
 @app.put("/api/groups/{group_id}")
 async def api_update_group(group_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -1561,6 +1614,8 @@ async def api_update_group(group_id: int, request: Request):
 
 @app.delete("/api/groups/{group_id}")
 async def api_delete_group(group_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     if db.delete_group(group_id):
         uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
         db.log_audit(uname, "DELETE_GROUP", "group", group_id, "Deleted group")
@@ -1569,6 +1624,8 @@ async def api_delete_group(group_id: int, request: Request):
 
 @app.post("/api/groups/{group_id}/members")
 async def api_add_group_member(group_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -1585,13 +1642,17 @@ async def api_add_group_member(group_id: int, request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "message": f"Failed to add user: {str(e)}"})
 
 @app.delete("/api/groups/{group_id}/members/{user_id}")
-async def api_remove_group_member(group_id: int, user_id: int):
+async def api_remove_group_member(group_id: int, user_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     if db.remove_user_from_group(user_id, group_id):
         return {"ok": True, "message": "User removed from group"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Removal failed"})
 
 @app.post("/api/groups/{group_id}/projects")
 async def api_assign_group_project(group_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -1604,13 +1665,17 @@ async def api_assign_group_project(group_id: int, request: Request):
     return JSONResponse(status_code=400, content={"ok": False, "message": "Assignment failed"})
 
 @app.delete("/api/groups/{group_id}/projects/{project_id}")
-async def api_remove_group_project(group_id: int, project_id: int):
+async def api_remove_group_project(group_id: int, project_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     if db.remove_project_from_group(group_id, project_id):
         return {"ok": True, "message": "Project removed from group"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Removal failed"})
 
 @app.post("/api/groups/wizard")
 async def api_group_wizard(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -1624,6 +1689,7 @@ async def api_group_wizard(request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "message": str(ve)})
     except Exception as e:
         return JSONResponse(status_code=400, content={"ok": False, "message": f"Wizard failed: {str(e)}"})
+
 
 
 

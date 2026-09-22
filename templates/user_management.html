@@ -324,7 +324,6 @@
                         <select id="nu-role" style="width:100%">
                             <option value="normal">Normal User (Global Read-Only)</option>
                             <option value="superuser">Super Admin (Full Access & Permission Control)</option>
-                            <option value="group_user">Group User (Restricted Project Group Read-Only)</option>
                         </select>
                     </div>
                     <div style="display:flex; gap:10px; margin-top:15px">
@@ -359,11 +358,11 @@
                 <div style="margin-top:15px">
                     <label class="stat-label">SELECT ROLE</label>
                     <select id="eu-role" style="width:100%; margin:10px 0">
-                        <option value="normal" ${currentRole==='normal'?'selected':''}>Normal User</option>
-                        <option value="superuser" ${currentRole==='superuser'||currentRole==='admin'?'selected':''}>Super Admin</option>
-                        <option value="group_user" ${currentRole==='group_user'||currentRole==='gc_user'?'selected':''}>Group User (GC)</option>
+                        <option value="normal" ${currentRole==='normal'||currentRole==='user'?'selected':''}>Normal User (Global Read-Only)</option>
+                        <option value="superuser" ${currentRole==='superuser'||currentRole==='admin'?'selected':''}>Super Admin (Full Access)</option>
                     </select>
                     <p style="font-size:10px; color:var(--text3); margin-bottom:15px">Note: Promoting a user to Super Admin automatically removes them from any restricted Project Groups.</p>
+
                     <div style="display:flex; gap:10px">
                         <button class="btn btn-primary" style="flex:1" onclick="execUpdateRole(${userId})">SAVE ROLE</button>
                         <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
