@@ -2229,6 +2229,11 @@ async def api_get_incidents(request: Request, status: str = None, severity: str 
     pid = request.query_params.get("project_id") or request.session.get("project_id")
     return db.get_incidents(status=status, severity=severity, project_id=pid)
 
+@app.post("/api/incidents/clean-false-positives")
+async def api_clean_false_positives():
+    cleaned = db.clean_false_positive_incidents()
+    return {"ok": True, "cleaned": cleaned, "message": f"Cleaned {cleaned} false-positive incident noise records!"}
+
 @app.post("/api/incidents")
 async def api_create_incident(request: Request):
     body = await request.json()

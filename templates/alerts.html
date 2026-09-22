@@ -33,6 +33,9 @@
                     <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" style="margin-right:6px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                     Refresh
                 </button>
+                <button class="btn btn-glass" onclick="cleanFalsePositives()" style="color:var(--amber); border-color:rgba(255,184,0,0.4)">
+                    🧹 Clean Noise
+                </button>
                 <button class="btn btn-primary" onclick="openCreateIncidentModal()">
                     <svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2.5" fill="none" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                     New Incident
@@ -240,6 +243,16 @@
             if (card) card.remove();
         } catch (e) {
             showToast('Failed to delete incident: ' + e.message, 'error');
+        }
+    }
+
+    async function cleanFalsePositives() {
+        try {
+            const res = await apiFetch('/api/incidents/clean-false-positives', { method: 'POST' });
+            showToast(res.message || 'False positive noise cleaned up!', 'success');
+            loadIncidents();
+        } catch (e) {
+            showToast('Cleanup failed', 'error');
         }
     }
 

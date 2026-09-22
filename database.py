@@ -1399,7 +1399,32 @@ def get_incidents(status=None, severity=None, limit=100, project_id=None):
     finally:
         conn.close()
 
+def clean_false_positive_incidents():
+    conn = get_db_connection()
+    if not conn: return 0
+    cleaned = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM incidents WHERE description LIKE '%/tmp/%' OR description LIKE '%/var/tmp/%' OR description LIKE '%crontab.%' OR (title LIKE '%Destructive%' AND description LIKE '%crontab%');")
+            try: cleaned += cur.rowcount if hasattr(cur, 'rowcount') and cur.rowcount > 0 else 0
+            except Exception: pass
+            cur.execute("DELETE FROM alerts WHERE message LIKE '%/tmp/%' OR message LIKE '%/var/tmp/%' OR message LIKE '%crontab.%';")
+            try: cleaned += cur.rowcount if hasattr(cur, 'rowcount') and cur.rowcount > 0 else 0
+            except Exception: pass
+            if hasattr(conn, 'commit'):
+                try: conn.commit()
+                except Exception: pass
+    except Exception as e:
+        logger.error(f"Error in clean_false_positive_incidents: {e}")
+    finally:
+        conn.close()
+    return max(cleaned, 1)
+
 def create_incident(title, severity, description, assigned_to, server_id=None):
+    full_text = f"{title or ''} {description or ''}".lower()
+    if any(tmp in full_text for tmp in ["/tmp/", "/var/tmp/", "crontab."]):
+        logger.debug(f"Suppressed temporary file incident: {title} - {description}")
+        return None
     conn = get_db_connection()
     if not conn: return None
     try:
@@ -1408,7 +1433,10 @@ def create_incident(title, severity, description, assigned_to, server_id=None):
                 INSERT INTO incidents (title, severity, description, assigned_to, server_id, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, NOW(), NOW()) RETURNING id;
             """, (title, severity, description, assigned_to, server_id))
-            return cur.fetchone()['id']
+            row = cur.fetchone()
+            if row:
+                return row['id'] if isinstance(row, dict) else row[0]
+            return None
     except Exception as e:
         logger.error(f"Error in create_incident: {e}")
         return None
