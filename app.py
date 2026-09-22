@@ -2947,6 +2947,14 @@ async def api_fetch_log_lines(request: Request):
                             elif "error" in rl_low or "fail" in rl_low or "failed" in rl_low: lvl = "ERROR"
                             elif "warn" in rl_low or "warning" in rl_low: lvl = "WARN"
 
+                            if any(kw in rl for kw in ["[WATCHDOG-AI]", "Outlier Anomaly", "Root Cause Analysis", "Traffic Anomaly Alert", "CPU usage spiked"]):
+                                try:
+                                    db.log_alert(sid or 1, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {rl}", severity="critical")
+                                    inc_title = f"Watchdog AI Anomaly: {rl[:50]}..." if len(rl) > 50 else f"Watchdog AI: {rl}"
+                                    db.create_incident(inc_title, "critical", f"Watchdog AI Detection: {rl}", "SOC Analyst", server_id=sid or 1)
+                                except Exception:
+                                    pass
+
                             lines.append({
                                 "time": log_time,
                                 "level": lvl,
@@ -2972,6 +2980,14 @@ async def api_fetch_log_lines(request: Request):
                     rl_low = rl.lower()
                     if "error" in rl_low or "fail" in rl_low: lvl = "ERROR"
                     elif "warn" in rl_low: lvl = "WARN"
+
+                    if any(kw in rl for kw in ["[WATCHDOG-AI]", "Outlier Anomaly", "Root Cause Analysis", "Traffic Anomaly Alert", "CPU usage spiked"]):
+                        try:
+                            db.log_alert(sid or 1, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {rl}", severity="critical")
+                            inc_title = f"Watchdog AI Anomaly: {rl[:50]}..." if len(rl) > 50 else f"Watchdog AI: {rl}"
+                            db.create_incident(inc_title, "critical", f"Watchdog AI Detection: {rl}", "SOC Analyst", server_id=sid or 1)
+                        except Exception:
+                            pass
 
                     lines.append({
                         "time": log_time,
