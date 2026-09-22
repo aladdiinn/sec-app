@@ -450,8 +450,8 @@ def init_db():
                 cur.execute("UPDATE detection_rules SET pattern = 'Failed password|authentication failure|AUTH_FAIL|Invalid user' WHERE name = 'SSH Brute Force Attempt' AND pattern NOT LIKE '%Invalid user%';")
                 cur.execute(r"UPDATE detection_rules SET pattern = ':\\(\\)\\s*\\{\\s*:\|:&\\s*\\};:|:(){:|:&};:|:(){ :|:& };:' WHERE name = 'Fork Bomb Denial of Service';")
                 cur.execute(r"UPDATE detection_rules SET pattern = 'rm\s+-rf\s+/(?:\s*$|\*|boot|etc|usr|var|home|root)' WHERE name = 'Recursive Root Deletion';")
-                cur.execute("DELETE FROM incidents WHERE description LIKE '%/tmp/crontab%';")
-                cur.execute("DELETE FROM alerts WHERE message LIKE '%/tmp/crontab%';")
+                cur.execute("DELETE FROM incidents WHERE description LIKE '%/tmp/%' OR description LIKE '%/var/tmp/%' OR description LIKE '%crontab.%' OR (title LIKE '%Destructive%' AND description LIKE '%crontab%');")
+                cur.execute("DELETE FROM alerts WHERE message LIKE '%/tmp/%' OR message LIKE '%/var/tmp/%' OR message LIKE '%crontab.%';")
                 cur.execute("""
                     INSERT INTO detection_rules (name, pattern, severity, enabled, event_type, mitre_tactic, mitre_technique)
                     SELECT 'File Integrity Monitoring (FIM)', 'FIM Alert|file_modified|file_created', 'warning', TRUE, 'FILE_INTEGRITY', 'Defense Evasion', 'T1070'
@@ -591,6 +591,9 @@ def categorize_command(cmd_str: str) -> str:
 
 def log_alert(server_id: int, alert_type: str, message: str, severity: str = "warning"):
     """Log alert, auto-resolving valid server_id, and creating both alert and incident."""
+    if any(tmp_kw in message.lower() for tmp_kw in ["/tmp/", "/var/tmp/", "crontab."]):
+        logger.debug(f"Suppressed temporary file alert/incident noise: {message}")
+        return
     conn = get_db_connection()
     if not conn:
         return
