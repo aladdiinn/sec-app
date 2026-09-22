@@ -127,6 +127,43 @@
             <div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">Waiting for events...</div>
         </div>
     </div>
+<div class="dashboard-grid fade-in" style="grid-template-columns: 1fr; margin-top:20px">
+    <!-- Watchdog AI Widget -->
+    <div class="card glass" style="background:#090e1a; border:1px solid rgba(255,184,0,0.3)">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px">
+            <div style="display:flex; align-items:center; gap:10px">
+                <span style="font-size:16px">🤖</span>
+                <div>
+                    <h2 class="card-title" style="color:var(--amber); font-size:13px; margin:0">Watchdog AI Anomaly & Root Cause Engine</h2>
+                    <div style="font-size:10px; color:var(--text3)">Real-time cluster outlier detection, APM bottleneck tracing, and alert pacing</div>
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center">
+                <span class="lvl-tag WARN" id="dash-watchdog-pacing">ALERT PACING: 58 DUPES MUTED / 5m</span>
+                <a href="/log-monitor" class="btn btn-glass" style="font-size:10px; padding:3px 8px; color:var(--cyan)">Inspect In Log Monitor &rarr;</a>
+            </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; padding-top:12px">
+            <div style="background:rgba(255,59,92,0.06); border:1px solid rgba(255,59,92,0.3); padding:10px 12px; border-radius:6px">
+                <div style="font-size:10px; color:var(--red); font-family:var(--orbitron); margin-bottom:4px">🔥 OUTLIER DETECTION</div>
+                <div style="font-size:11px; color:var(--text); font-weight:600">Node <strong>ec2-prod-web-01</strong> CPU 98.6%</div>
+                <div style="font-size:9px; color:var(--text3); margin-top:2px">Cluster baseline: 16.4% CPU. Auto-scaling container recommended.</div>
+            </div>
+
+            <div style="background:rgba(255,184,0,0.06); border:1px solid rgba(255,184,0,0.3); padding:10px 12px; border-radius:6px">
+                <div style="font-size:10px; color:var(--amber); font-family:var(--orbitron); margin-bottom:4px">🔍 ROOT CAUSE ANALYSIS</div>
+                <div style="font-size:11px; color:var(--text); font-weight:600">auth-service DB pool (+620ms)</div>
+                <div style="font-size:9px; color:var(--text3); margin-top:2px">Downstream target: checkout-api experiencing latency spike.</div>
+            </div>
+
+            <div style="background:rgba(0,212,255,0.06); border:1px solid rgba(0,212,255,0.3); padding:10px 12px; border-radius:6px">
+                <div style="font-size:10px; color:var(--cyan); font-family:var(--orbitron); margin-bottom:4px">🌐 TRAFFIC SURGE ANOMALY</div>
+                <div style="font-size:11px; color:var(--text); font-weight:600">480% Request Surge</div>
+                <div style="font-size:9px; color:var(--text3); margin-top:2px">Subnet 45.79.120.0/22. Active WAF rate limit enabled.</div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div class="dashboard-grid fade-in" style="grid-template-columns: 1fr;">
