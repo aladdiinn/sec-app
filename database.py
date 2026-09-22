@@ -72,11 +72,12 @@ class SQLiteConnectionWrapper:
         self.conn.close()
 
 def get_db_connection():
-    """Establish and return PostgreSQL connection or fallback SQLite connection."""
+    """Establish and return PostgreSQL connection. Strictly requires PostgreSQL database."""
+    require_postgres = os.getenv("REQUIRE_POSTGRES", "true").lower() in ("true", "1", "yes")
     try:
         if DATABASE_URL:
             url = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
-            conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor, connect_timeout=2)
+            conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor, connect_timeout=5)
         else:
             conn = psycopg2.connect(
                 host=DB_HOST,
@@ -85,13 +86,16 @@ def get_db_connection():
                 user=DB_USER,
                 password=DB_PASS,
                 cursor_factory=psycopg2.extras.RealDictCursor,
-                connect_timeout=2
+                connect_timeout=5
             )
         conn.autocommit = True
         return conn
     except Exception as e:
-        logger.warning(f"PostgreSQL connection offline ({e}). Using local SQLite database.")
-    
+        logger.error(f"PostgreSQL Connection Error: {e}")
+        if require_postgres:
+            raise RuntimeError(f"PostgreSQL Database Connection Failed: {e}. Strict database mode enabled — application will not open without PostgreSQL.")
+        logger.warning(f"PostgreSQL connection offline ({e}). Using local SQLite fallback.")
+
     try:
         db_path = os.path.join(os.path.dirname(__file__), "securepulse.db")
         conn = sqlite3.connect(db_path)
