@@ -2611,7 +2611,24 @@ async def view_log_monitor_page(request: Request):
 
 @app.get("/api/log-monitor/configs")
 async def api_get_log_configs(server_id: Optional[int] = None):
-    return db.get_log_configs(server_id=server_id)
+    cfgs = db.get_log_configs(server_id=server_id)
+    if not cfgs and not server_id:
+        # Auto-discover local system log sources if none registered yet
+        default_sys_files = [
+            ("Syslog System Stream", "syslog", "/var/log/syslog"),
+            ("Auth & SSH Security", "auth", "/var/log/auth.log"),
+            ("Nginx Access Log", "nginx", "/var/log/nginx/access.log"),
+            ("Nginx Error Log", "nginx", "/var/log/nginx/error.log"),
+            ("Tomcat Catalina Server Log", "tomcat", "/opt/tomcat/logs/catalina.out"),
+            ("HAProxy Load Balancer", "haproxy", "/var/log/haproxy.log"),
+            ("Package Manager Audit Log", "other", "/var/log/dpkg.log"),
+            ("Cloud Init Telemetry", "other", "/var/log/cloud-init.log")
+        ]
+        for name, stype, path in default_sys_files:
+            if os.path.exists(path):
+                db.add_log_config(None, "127.0.0.1", name, stype, path)
+        cfgs = db.get_log_configs()
+    return cfgs
 
 @app.get("/api/servers/{server_id}/log-configs")
 async def api_get_server_log_configs(server_id: int):
@@ -2810,7 +2827,78 @@ async def api_fetch_log_lines(request: Request):
             except Exception as ex_ssh:
                 logger.warning(f"Error fetching remote SSH logs from {host}: {ex_ssh}")
 
-    # 4. DataDog Live Telemetry Stream fallback with FRESH CURRENT TIMESTAMPS
+    # 4. Priority 4: Read REAL Linux system log files & systemd journalctl directly from server disk
+    if not lines and not log_path:
+        sys_paths = []
+        lt = (log_type or "").lower()
+        if not lt or lt in ["syslog", "sys"]:
+            sys_paths.extend([("/var/log/syslog", "syslog"), ("/var/log/messages", "syslog"), ("/var/log/kern.log", "syslog")])
+        if not lt or lt == "auth":
+            sys_paths.extend([("/var/log/auth.log", "auth"), ("/var/log/secure", "auth")])
+        if not lt or lt == "nginx":
+            sys_paths.extend([("/var/log/nginx/access.log", "nginx"), ("/var/log/nginx/error.log", "nginx")])
+        if not lt or lt == "tomcat":
+            sys_paths.extend([("/opt/tomcat/logs/catalina.out", "tomcat"), ("/var/log/tomcat/catalina.out", "tomcat"), ("/var/log/tomcat9/catalina.out", "tomcat")])
+        if not lt or lt == "haproxy":
+            sys_paths.extend([("/var/log/haproxy.log", "haproxy")])
+        if not lt or lt in ["other", "custom"]:
+            sys_paths.extend([("/var/log/dpkg.log", "other"), ("/var/log/cloud-init.log", "other"), ("/var/log/alternatives.log", "other")])
+
+        for filepath, stype in sys_paths:
+            if os.path.exists(filepath):
+                try:
+                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                        file_lines = f.readlines()[-limit:]
+                        for rl in file_lines:
+                            rl = rl.strip()
+                            if not rl: continue
+                            if search and search.lower() not in rl.lower(): continue
+
+                            ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?|[A-Za-z]{3}\s+\d+\s+\d{2}:\d{2}:\d{2})', rl)
+                            log_time = ts_match.group(1) if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+                            lvl = "INFO"
+                            rl_low = rl.lower()
+                            if "crit" in rl_low or "fatal" in rl_low: lvl = "CRITICAL"
+                            elif "error" in rl_low or "fail" in rl_low or "failed" in rl_low: lvl = "ERROR"
+                            elif "warn" in rl_low or "warning" in rl_low: lvl = "WARN"
+
+                            lines.append({
+                                "time": log_time,
+                                "level": lvl,
+                                "source": f"{stype}/{os.path.basename(filepath)}",
+                                "msg": rl
+                            })
+                except Exception as e:
+                    logger.warning(f"Could not read real log file {filepath}: {e}")
+
+        # Try journalctl if syslog file is empty
+        if not lines and (not lt or lt in ["syslog", "auth", "sys"]):
+            try:
+                cmd = ["journalctl", "-n", str(limit), "--no-pager"]
+                out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=2).decode("utf-8", errors="ignore")
+                for rl in out.splitlines():
+                    rl = rl.strip()
+                    if not rl: continue
+                    if search and search.lower() not in rl.lower(): continue
+                    ts_match = re.search(r'([A-Za-z]{3}\s+\d+\s+\d{2}:\d{2}:\d{2})', rl)
+                    log_time = ts_match.group(1) if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    lvl = "INFO"
+                    rl_low = rl.lower()
+                    if "error" in rl_low or "fail" in rl_low: lvl = "ERROR"
+                    elif "warn" in rl_low: lvl = "WARN"
+
+                    lines.append({
+                        "time": log_time,
+                        "level": lvl,
+                        "source": "syslog/journalctl",
+                        "msg": rl
+                    })
+            except Exception:
+                pass
+
+    # 5. DataDog Live Telemetry Stream fallback if no real log files exist on dev environment
     if not lines and not log_path:
         now_dt = datetime.now(timezone.utc)
         telemetry_samples = [
