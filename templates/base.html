@@ -107,6 +107,10 @@
                     <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
                     AUDIT LOG
                 </a>
+                <a href="/approvals" class="nav-item {% if active == 'approvals' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    AGENT APPROVALS <span id="pending-approvals-badge" style="display:none; font-size:9px; background:var(--red); color:#fff; padding:1px 6px; border-radius:10px; margin-left:auto; font-weight:bold">0</span>
+                </a>
                 <a href="/settings" class="nav-item {% if active == 'settings' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
                     SETTINGS
@@ -379,6 +383,24 @@
                 alert("Playbooks feature is currently disabled");
             }
         }
+
+        async function updatePendingApprovalsBadge() {
+            const badge = document.getElementById('pending-approvals-badge');
+            if (!badge) return;
+            try {
+                const res = await apiFetch('/api/approvals/count');
+                if (res && res.count > 0) {
+                    badge.innerText = res.count;
+                    badge.style.display = 'inline-block';
+                } else {
+                    badge.style.display = 'none';
+                }
+            } catch (e) {}
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            updatePendingApprovalsBadge();
+            setInterval(updatePendingApprovalsBadge, 15000);
+        });
     </script>
     {% block extra_js %}{% endblock %}
 </body>

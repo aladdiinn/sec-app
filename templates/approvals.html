@@ -1,32 +1,126 @@
 {% extends "base.html" %}
+{% set active = 'approvals' %}
+{% block page_title %}Agent Approvals{% endblock %}
+{% block page_sub %}Manage target node agent onboarding & registration requests{% endblock %}
+
 {% block content %}
-<div class="container mt-4">
-    <h2 class="mb-4">Pending Instance Approvals</h2>
-    <div class="card bg-dark text-white p-3">
-        <table class="table table-dark table-hover">
+<div class="fade-in">
+    <!-- Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px">
+        <div>
+            <h2 class="card-title" style="margin:0; font-size:16px; color:var(--cyan)">🛡 NODE ONBOARDING APPROVAL QUEUE</h2>
+            <div style="font-size:11px; color:var(--text3)">Review and grant approval for target node agent push scripts in real time.</div>
+        </div>
+        <div style="display:flex; gap:12px">
+            <select id="filter-approval-status" class="glass" style="padding:8px 16px; border-radius:var(--radius-sm); color:var(--text); border:1px solid var(--border)" onchange="loadApprovals()">
+                <option value="">All Statuses</option>
+                <option value="pending" selected>Pending Only</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+            </select>
+            <button class="btn btn-glass" onclick="loadApprovals()" style="font-size:11px">🔄 Refresh Queue</button>
+        </div>
+    </div>
+
+    <!-- Approvals List Grid / Card -->
+    <div class="card glass" style="padding:0; overflow:hidden">
+        <table style="width:100%; border-collapse:collapse; text-align:left; font-size:12px">
             <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>HOSTNAME</th>
-                    <th>IP ADDRESS</th>
-                    <th>TOKEN</th>
-                    <th>STATUS</th>
+                <tr style="background:rgba(0,212,255,0.06); border-bottom:1px solid var(--border); font-family:var(--orbitron); color:var(--cyan); font-size:10px; letter-spacing:1px">
+                    <th style="padding:14px 18px">NODE HOSTNAME</th>
+                    <th style="padding:14px 18px">IP ADDRESS</th>
+                    <th style="padding:14px 18px">AGENT TOKEN</th>
+                    <th style="padding:14px 18px">STATUS</th>
+                    <th style="padding:14px 18px">REQUESTED AT</th>
+                    <th style="padding:14px 18px; text-align:right">ACTIONS</th>
                 </tr>
             </thead>
-            <tbody>
-                {% for a in approvals %}
-                <tr>
-                    <td>{{ a.id }}</td>
-                    <td>{{ a.hostname }}</td>
-                    <td>{{ a.ip_address }}</td>
-                    <td><code>{{ a.agent_token }}</code></td>
-                    <td><span class="badge bg-warning">{{ a.status }}</span></td>
-                </tr>
-                {% else %}
-                <tr><td colspan="5" class="text-center text-muted">No pending approvals</td></tr>
-                {% endfor %}
+            <tbody id="approvals-table-body">
+                <tr><td colspan="6" style="text-align:center; padding:40px; color:var(--text3)">Loading onboarding approval requests...</td></tr>
             </tbody>
         </table>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function loadApprovals() {
+        const tbody = document.getElementById('approvals-table-body');
+        const statusFilter = document.getElementById('filter-approval-status').value;
+        let url = '/api/approvals';
+        if (statusFilter) url += `?status=${statusFilter}`;
+
+        try {
+            const data = await apiFetch(url);
+            const list = Array.isArray(data) ? data : (data.approvals || []);
+
+            if (!list.length) {
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--text3)">No ${statusFilter || ''} onboarding requests found.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = list.map(a => {
+                const id = a.id;
+                const status = (a.status || 'pending').toLowerCase();
+                const badgeStyle = status === 'approved' ? 'background:rgba(0,255,136,0.15); color:var(--green); border:1px solid rgba(0,255,136,0.3)' : (status === 'pending' ? 'background:rgba(255,184,0,0.15); color:var(--amber); border:1px solid rgba(255,184,0,0.3)' : 'background:rgba(255,59,92,0.15); color:var(--red); border:1px solid rgba(255,59,92,0.3)');
+
+                return `
+                <tr style="border-bottom:1px solid var(--border); transition:background 0.2s" class="table-row-hover">
+                    <td style="padding:14px 18px; font-weight:700; color:var(--text)">🖥 ${a.hostname}</td>
+                    <td style="padding:14px 18px; font-family:var(--mono); color:var(--cyan)">${a.ip_address || '172.31.2.38'}</td>
+                    <td style="padding:14px 18px; font-family:var(--mono); font-size:11px; color:var(--text3)">${a.agent_token}</td>
+                    <td style="padding:14px 18px">
+                        <span style="padding:3px 10px; border-radius:4px; font-size:10px; font-family:var(--orbitron); text-transform:uppercase; ${badgeStyle}">
+                            ${status}
+                        </span>
+                    </td>
+                    <td style="padding:14px 18px; color:var(--text3); font-size:11px">${a.requested_at ? new Date(a.requested_at).toLocaleString() : 'Just now'}</td>
+                    <td style="padding:14px 18px; text-align:right">
+                        ${status === 'pending' ? `
+                            <button onclick="approveAssetRequest(${id})" class="btn btn-primary" style="padding:4px 12px; font-size:11px; margin-right:6px">
+                                ✓ APPROVE ASSET
+                            </button>
+                            <button onclick="rejectAssetRequest(${id})" class="btn btn-glass" style="padding:4px 12px; font-size:11px; color:var(--red); border-color:rgba(255,59,92,0.4)">
+                                ✕ REJECT
+                            </button>
+                        ` : '<span style="color:var(--text3); font-size:11px">Resolved</span>'}
+                    </td>
+                </tr>
+                `;
+            }).join('');
+        } catch (e) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--red)">Failed to load approval requests.</td></tr>`;
+        }
+    }
+
+    async function approveAssetRequest(id) {
+        try {
+            const res = await apiFetch(`/api/approvals/${id}/approve`, { method: 'POST' });
+            if (res.ok) {
+                showToast('Node asset approved! Script on target server will resume & complete.', 'success');
+                loadApprovals();
+                if (typeof updatePendingApprovalsBadge === 'function') updatePendingApprovalsBadge();
+            }
+        } catch (e) {
+            showToast(e.message || 'Approval failed', 'error');
+        }
+    }
+
+    async function rejectAssetRequest(id) {
+        if (!confirm('Reject this target node onboarding request?')) return;
+        try {
+            const res = await apiFetch(`/api/approvals/${id}/reject`, { method: 'POST' });
+            if (res.ok) {
+                showToast('Node asset request rejected.', 'warning');
+                loadApprovals();
+                if (typeof updatePendingApprovalsBadge === 'function') updatePendingApprovalsBadge();
+            }
+        } catch (e) {
+            showToast(e.message || 'Rejection failed', 'error');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadApprovals);
+</script>
 {% endblock %}

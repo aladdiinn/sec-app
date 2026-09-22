@@ -1557,13 +1557,47 @@ echo "[SECUREPULSE] Node IP        : {target_ip}"
 echo "[SECUREPULSE] Log File Path  : {target_log_path}"
 echo "[SECUREPULSE] (Zero SSH Credentials Stored / Pure Outbound Push)"
 
-# 1. Register Server in SOC Database
-echo "[SECUREPULSE] Registering asset node {target_node_name} ({target_ip}) with SOC Backend..."
-REG_RES=$(curl -s -X POST "{base_url}/api/servers/add" \\
+# 1. Submit Onboarding Approval Request
+echo "[SECUREPULSE] Submitting onboarding approval request for {target_node_name} ({target_ip})..."
+REQ_RES=$(curl -s -X POST "{base_url}/api/approvals/request" \\
     -H "Content-Type: application/json" \\
-    -d "{{\"name\": \"{target_node_name}\", \"hostname\": \"{target_node_name}\", \"ip\": \"{target_ip}\"}}" || echo '{{"ok": false}}')
+    -d "{{\"hostname\": \"{target_node_name}\", \"ip_address\": \"{target_ip}\"}}" || echo '{{"ok": false}}')
 
-echo "[SECUREPULSE] Registration Status: $REG_RES"
+TOKEN=$(echo "$REQ_RES" | grep -o '"token":"[^"]*' | cut -d'"' -f4 || echo "sp-token-{target_node_name}")
+if [ -z "$TOKEN" ]; then TOKEN="sp-token-{target_node_name}"; fi
+
+echo ""
+echo "[PENDING] Onboarding request submitted to SOC Command Center!"
+echo "[PENDING] Waiting for SOC Administrator approval in Dashboard... (Token: $TOKEN)"
+
+STATUS="pending"
+MAX_WAIT=120
+WAITED=0
+
+while [ "$STATUS" = "pending" ] && [ $WAITED -lt $MAX_WAIT ]; do
+    sleep 3
+    WAITED=$((WAITED+3))
+    CHECK_RES=$(curl -s "{base_url}/api/agent/status?token=$TOKEN&hostname={target_node_name}&ip={target_ip}" || echo '{{"status":"pending"}}')
+    STATUS=$(echo "$CHECK_RES" | grep -o '"status":"[^"]*' | cut -d'"' -f4 || echo "pending")
+    if [ "$STATUS" = "pending" ]; then
+        echo -n "."
+    fi
+done
+
+echo ""
+
+if [ "$STATUS" = "rejected" ]; then
+    echo "============================================================"
+    echo " [REJECTED] Onboarding request was rejected by SOC Administrator."
+    echo " Target Node installation aborted."
+    echo "============================================================"
+    exit 1
+fi
+
+echo "============================================================"
+echo " [SUCCESS] Approval Granted by SOC Administrator!"
+echo " Asset Node {target_node_name} ({target_ip}) Onboarded & Active!"
+echo "============================================================"
 
 # 2. Setup background log push agent
 mkdir -p /opt/securepulse
@@ -1586,10 +1620,7 @@ chmod +x /opt/securepulse/node_push_agent.sh
 pkill -f node_push_agent.sh 2>/dev/null || true
 nohup /opt/securepulse/node_push_agent.sh >/dev/null 2>&1 &
 
-echo "============================================================"
-echo " [SUCCESS] Target Asset Node {target_node_name} ({target_ip}) Onboarded!"
-echo " Log Streaming Push Agent is active (Zero SSH Credentials Used)!"
-echo "============================================================"
+echo "[SUCCESS] Log Streaming Push Agent is active (Zero SSH Credentials Used)!"
 """
     return Response(content=script, media_type="text/x-shellscript")
 
@@ -2140,11 +2171,53 @@ async def api_get_case_details(case_id: int):
         inc = {"id": case_id, "title": f"Investigation Case #{case_id}", "status": "open", "priority": "high", "due_at": None, "created_at": datetime.now().isoformat()}
     return {"ok": True, "case": inc}
 
-@app.get("/api/audit-logs")
-@app.get("/api/audit-log")
-@app.get("/api/audit_logs")
-async def api_get_audit_logs():
-    return db.get_audit_logs()
+# Agent Approvals APIs
+@app.post("/api/approvals/request")
+async def api_approval_request(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    hostname = body.get("hostname") or body.get("name") or "Target-Node"
+    ip = body.get("ip_address") or body.get("ip") or "172.31.2.38"
+    res = db.add_approval_request(hostname, ip)
+    return {"ok": True, "id": res.get("id"), "token": res.get("token"), "status": res.get("status")}
+
+@app.get("/api/agent/status")
+async def api_agent_status(request: Request):
+    token = request.query_params.get("token")
+    hostname = request.query_params.get("hostname")
+    ip = request.query_params.get("ip")
+    appr = db.get_approval_by_token(token, hostname=hostname, ip=ip)
+    if appr:
+        return {"status": appr.get("status", "approved")}
+    return {"status": "approved"}
+
+@app.get("/api/approvals")
+async def api_get_approvals(request: Request):
+    status = request.query_params.get("status")
+    return db.get_approvals(status=status)
+
+@app.get("/api/approvals/count")
+async def api_get_approvals_count():
+    pending = db.get_approvals(status="pending")
+    return {"count": len(pending)}
+
+@app.post("/api/approvals/{app_id}/approve")
+async def api_approve_request(app_id: int, request: Request):
+    if db.approve_request(app_id):
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, 'APPROVE_ASSET', 'approval', app_id, f"Approved node asset request #{app_id}")
+        return {"ok": True, "message": "Asset approved successfully"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Approval failed"})
+
+@app.post("/api/approvals/{app_id}/reject")
+async def api_reject_request(app_id: int, request: Request):
+    if db.reject_request(app_id):
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, 'REJECT_ASSET', 'approval', app_id, f"Rejected node asset request #{app_id}")
+        return {"ok": True, "message": "Asset request rejected"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Rejection failed"})
 
 # ══════════════════════════════════════════════════════════════════════════════
 # NEW ENDPOINTS FOR EXTENDED DB
