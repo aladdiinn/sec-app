@@ -376,6 +376,34 @@ def init_db():
                 );
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS groups (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) UNIQUE NOT NULL,
+                    description TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_groups (
+                    id SERIAL PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    group_id INT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, group_id)
+                );
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS group_projects (
+                    id SERIAL PRIMARY KEY,
+                    group_id INT NOT NULL,
+                    project_id INT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(group_id, project_id)
+                );
+            """)
+
+
             # Alerts Alter
             for col, col_type in [
                 ('case_id', 'INT'),
@@ -2809,3 +2837,534 @@ def get_pushed_logs(config_id=None, server_id=None, limit=100):
         return []
     finally:
         conn.close()
+
+
+def get_users():
+    """Retrieve all users with their roles, active status, group memberships, and assigned projects."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, username, email, full_name, role, is_admin, is_active, created_at
+                FROM users ORDER BY id ASC;
+            """)
+            users = cur.fetchall()
+            for u in users:
+                uid = u.get("id")
+                # Normalize role
+                role = (u.get("role") or "normal").lower()
+                if u.get("is_admin") and role not in ("superuser", "admin"):
+                    role = "admin"
+                u["role"] = role
+
+                # Fetch Groups for user
+                cur.execute("""
+                    SELECT g.id, g.name, g.description
+                    FROM groups g
+                    JOIN user_groups ug ON g.id = ug.group_id
+                    WHERE ug.user_id = %s;
+                """, (uid,))
+                u["groups"] = cur.fetchall() or []
+
+                # Fetch assigned projects from user's groups
+                cur.execute("""
+                    SELECT DISTINCT p.id, p.name
+                    FROM projects p
+                    JOIN group_projects gp ON p.id = gp.project_id
+                    JOIN user_groups ug ON gp.group_id = ug.group_id
+                    WHERE ug.user_id = %s;
+                """, (uid,))
+                u["projects"] = cur.fetchall() or []
+
+                # Convert created_at to string
+                if u.get("created_at"):
+                    u["created_at"] = str(u["created_at"])[:19]
+            return users
+    except Exception as e:
+        logger.error(f"Error in get_users: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_user_by_id(user_id: int):
+    """Retrieve a single user by ID with groups and projects."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, username, email, full_name, role, is_admin, is_active, created_at
+                FROM users WHERE id = %s;
+            """, (user_id,))
+            u = cur.fetchone()
+            if not u: return None
+            role = (u.get("role") or "normal").lower()
+            if u.get("is_admin") and role not in ("superuser", "admin"):
+                role = "admin"
+            u["role"] = role
+
+            cur.execute("""
+                SELECT g.id, g.name, g.description
+                FROM groups g JOIN user_groups ug ON g.id = ug.group_id
+                WHERE ug.user_id = %s;
+            """, (user_id,))
+            u["groups"] = cur.fetchall() or []
+
+            cur.execute("""
+                SELECT DISTINCT p.id, p.name FROM projects p
+                JOIN group_projects gp ON p.id = gp.project_id
+                JOIN user_groups ug ON gp.group_id = ug.group_id
+                WHERE ug.user_id = %s;
+            """, (user_id,))
+            u["projects"] = cur.fetchall() or []
+            return u
+    except Exception as e:
+        logger.error(f"Error in get_user_by_id: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def create_user(username, email, password, role="normal", full_name=None):
+    """Create a new user in the database."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            role_clean = (role or "normal").lower()
+            if role_clean not in ("superuser", "admin", "normal", "group_user"):
+                role_clean = "normal"
+            is_adm = True if role_clean in ("superuser", "admin") else False
+            hashed = generate_password_hash(password)
+            email_val = email or f"{username}@securepulse.local"
+            
+            cur.execute("""
+                INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, TRUE, NOW())
+                RETURNING id;
+            """, (username, email_val, hashed, role_clean, full_name or username, is_adm))
+            row = cur.fetchone()
+            new_id = row.get("id") if row else None
+            return new_id
+    except Exception as e:
+        logger.error(f"Error in create_user: {e}")
+        raise e
+    finally:
+        conn.close()
+
+
+def update_user_role(user_id: int, role: str):
+    """Update user role. Enforces safety constraint that Admins cannot be in Groups."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            role_clean = (role or "normal").lower()
+            if role_clean not in ("superuser", "admin", "normal", "group_user"):
+                role_clean = "normal"
+            is_adm = True if role_clean in ("superuser", "admin") else False
+
+            if is_adm:
+                # Remove user from all groups if promoted to Admin
+                cur.execute("DELETE FROM user_groups WHERE user_id = %s;", (user_id,))
+
+            cur.execute("""
+                UPDATE users SET role = %s, is_admin = %s WHERE id = %s;
+            """, (role_clean, is_adm, user_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error in update_user_role: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def toggle_user_status(user_id: int):
+    """Toggle user active status."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_active FROM users WHERE id = %s;", (user_id,))
+            row = cur.fetchone()
+            if not row: return None
+            new_status = not row.get("is_active", True)
+            cur.execute("UPDATE users SET is_active = %s WHERE id = %s;", (new_status, user_id))
+            return new_status
+    except Exception as e:
+        logger.error(f"Error in toggle_user_status: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def delete_user(user_id: int):
+    """Delete user and cleanup relationships."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM user_groups WHERE user_id = %s;", (user_id,))
+            cur.execute("DELETE FROM users WHERE id = %s;", (user_id,))
+            return True
+    except Exception as e:
+        logger.error(f"Error in delete_user: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def get_groups():
+    """Retrieve all project groups with members and assigned projects."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, description, created_at FROM groups ORDER BY id ASC;")
+            groups = cur.fetchall()
+            for g in groups:
+                gid = g.get("id")
+                # Get group members (Normal Users / Group Users)
+                cur.execute("""
+                    SELECT u.id, u.username, u.email, u.full_name, u.role
+                    FROM users u JOIN user_groups ug ON u.id = ug.user_id
+                    WHERE ug.group_id = %s ORDER BY u.id ASC;
+                """, (gid,))
+                g["members"] = cur.fetchall() or []
+                g["member_count"] = len(g["members"])
+
+                # Get assigned projects
+                cur.execute("""
+                    SELECT p.id, p.name, p.description
+                    FROM projects p JOIN group_projects gp ON p.id = gp.project_id
+                    WHERE gp.group_id = %s ORDER BY p.id ASC;
+                """, (gid,))
+                g["projects"] = cur.fetchall() or []
+                g["project_count"] = len(g["projects"])
+
+                if g.get("created_at"):
+                    g["created_at"] = str(g["created_at"])[:19]
+            return groups
+    except Exception as e:
+        logger.error(f"Error in get_groups: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_group_by_id(group_id: int):
+    """Retrieve a single group by ID with members and projects."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, description, created_at FROM groups WHERE id = %s;", (group_id,))
+            g = cur.fetchone()
+            if not g: return None
+            cur.execute("""
+                SELECT u.id, u.username, u.email, u.full_name, u.role
+                FROM users u JOIN user_groups ug ON u.id = ug.user_id
+                WHERE ug.group_id = %s;
+            """, (group_id,))
+            g["members"] = cur.fetchall() or []
+
+            cur.execute("""
+                SELECT p.id, p.name, p.description
+                FROM projects p JOIN group_projects gp ON p.id = gp.project_id
+                WHERE gp.group_id = %s;
+            """, (group_id,))
+            g["projects"] = cur.fetchall() or []
+            return g
+    except Exception as e:
+        logger.error(f"Error in get_group_by_id: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def create_group(name: str, description: str = ""):
+    """Create a new project group."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO groups (name, description, created_at)
+                VALUES (%s, %s, NOW()) RETURNING id;
+            """, (name, description))
+            row = cur.fetchone()
+            return row.get("id") if row else None
+    except Exception as e:
+        logger.error(f"Error in create_group: {e}")
+        raise e
+    finally:
+        conn.close()
+
+
+def update_group(group_id: int, name: str, description: str = ""):
+    """Update project group details."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE groups SET name = %s, description = %s WHERE id = %s;", (name, description, group_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error in update_group: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def delete_group(group_id: int):
+    """Delete group and remove member and project relationships."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM user_groups WHERE group_id = %s;", (group_id,))
+            cur.execute("DELETE FROM group_projects WHERE group_id = %s;", (group_id,))
+            cur.execute("DELETE FROM groups WHERE id = %s;", (group_id,))
+            return True
+    except Exception as e:
+        logger.error(f"Error in delete_group: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def add_user_to_group(user_id: int, group_id: int):
+    """
+    Add user to a group.
+    ENFORCES CONSTRAINT: Admin users (superuser/admin) CANNOT be added to a Group.
+    """
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, username, role, is_admin FROM users WHERE id = %s;", (user_id,))
+            u = cur.fetchone()
+            if not u:
+                raise ValueError("User not found.")
+            
+            role = (u.get("role") or "").lower()
+            is_adm = u.get("is_admin") or role in ("superuser", "admin")
+            if is_adm:
+                raise ValueError("Admin users cannot be added to a Group. Groups support Normal Users only.")
+
+            cur.execute("""
+                INSERT INTO user_groups (user_id, group_id, created_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (user_id, group_id) DO NOTHING;
+            """, (user_id, group_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error in add_user_to_group: {e}")
+        raise e
+    finally:
+        conn.close()
+
+
+def remove_user_from_group(user_id: int, group_id: int):
+    """Remove user from a group."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM user_groups WHERE user_id = %s AND group_id = %s;", (user_id, group_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error in remove_user_from_group: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def assign_project_to_group(group_id: int, project_id: int):
+    """Assign project access to a group."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO group_projects (group_id, project_id, created_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (group_id, project_id) DO NOTHING;
+            """, (group_id, project_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error in assign_project_to_group: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def remove_project_from_group(group_id: int, project_id: int):
+    """Remove project access from a group."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM group_projects WHERE group_id = %s AND project_id = %s;", (group_id, project_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error in remove_project_from_group: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def create_group_user_wizard(data: dict):
+    """
+    Guided 5-step Group User & Group Creation Wizard.
+    Data format:
+    {
+      "group_name": "...",
+      "group_description": "...",
+      "gc_username": "...",
+      "gc_email": "...",
+      "gc_password": "...",
+      "existing_user_ids": [1, 2],
+      "new_members": [{"username": "...", "email": "...", "password": "...", "full_name": "..."}, ...],
+      "existing_project_ids": [10, 12],
+      "new_projects": [{"name": "...", "description": "..."}, ...]
+    }
+    """
+    conn = get_db_connection()
+    if not conn:
+        raise RuntimeError("Database connection unavailable.")
+    try:
+        with conn.cursor() as cur:
+            # Step 1: Create Group User (GC User)
+            gc_username = data.get("gc_username")
+            gc_email = data.get("gc_email") or f"{gc_username}@securepulse.local"
+            gc_pass = data.get("gc_password") or "GroupUser123!"
+            
+            hashed_gc = generate_password_hash(gc_pass)
+            cur.execute("""
+                INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active, created_at)
+                VALUES (%s, %s, %s, 'group_user', %s, FALSE, TRUE, NOW())
+                ON CONFLICT (username) DO UPDATE SET role = 'group_user'
+                RETURNING id;
+            """, (gc_username, gc_email, hashed_gc, f"{gc_username} (GC User)"))
+            gc_row = cur.fetchone()
+            gc_user_id = gc_row.get("id") if gc_row else None
+
+            # Step 2: Create Group
+            gname = data.get("group_name") or f"{gc_username}_group"
+            gdesc = data.get("group_description") or "Project Group managed via GC Wizard"
+            
+            cur.execute("""
+                INSERT INTO groups (name, description, created_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
+                RETURNING id;
+            """, (gname, gdesc))
+            group_row = cur.fetchone()
+            group_id = group_row.get("id")
+
+            # Add GC User to the group
+            cur.execute("INSERT INTO user_groups (user_id, group_id, created_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING;", (gc_user_id, group_id))
+
+            # Step 3: Add Existing Normal Users to Group (Enforce no admins!)
+            existing_user_ids = data.get("existing_user_ids") or []
+            for uid in existing_user_ids:
+                cur.execute("SELECT id, role, is_admin FROM users WHERE id = %s;", (uid,))
+                usr = cur.fetchone()
+                if usr:
+                    if usr.get("is_admin") or (usr.get("role") or "").lower() in ("superuser", "admin"):
+                        raise ValueError(f"Admin users cannot be added to a Group. Groups support Normal Users only.")
+                    cur.execute("INSERT INTO user_groups (user_id, group_id, created_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING;", (uid, group_id))
+
+            # Add New Normal Members created during Wizard
+            new_members = data.get("new_members") or []
+            for nm in new_members:
+                m_uname = nm.get("username")
+                m_email = nm.get("email") or f"{m_uname}@securepulse.local"
+                m_pass = nm.get("password") or "NormalUser123!"
+                m_name = nm.get("full_name") or m_uname
+                m_hashed = generate_password_hash(m_pass)
+                
+                cur.execute("""
+                    INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active, created_at)
+                    VALUES (%s, %s, %s, 'normal', %s, FALSE, TRUE, NOW())
+                    ON CONFLICT (username) DO NOTHING
+                    RETURNING id;
+                """, (m_uname, m_email, m_hashed, m_name))
+                m_row = cur.fetchone()
+                m_id = m_row.get("id") if m_row else None
+                if not m_id:
+                    cur.execute("SELECT id FROM users WHERE username = %s;", (m_uname,))
+                    m_row2 = cur.fetchone()
+                    if m_row2: m_id = m_row2.get("id")
+                if m_id:
+                    cur.execute("INSERT INTO user_groups (user_id, group_id, created_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING;", (m_id, group_id))
+
+            # Step 4: Assign Project Access
+            existing_project_ids = data.get("existing_project_ids") or []
+            for pid in existing_project_ids:
+                cur.execute("INSERT INTO group_projects (group_id, project_id, created_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING;", (group_id, pid))
+
+            new_projects = data.get("new_projects") or []
+            for np in new_projects:
+                p_name = np.get("name")
+                p_desc = np.get("description") or "Created during Group User Wizard"
+                cur.execute("""
+                    INSERT INTO projects (name, description, created_at)
+                    VALUES (%s, %s, NOW())
+                    RETURNING id;
+                """, (p_name, p_desc))
+                p_row = cur.fetchone()
+                if p_row:
+                    cur.execute("INSERT INTO group_projects (group_id, project_id, created_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING;", (group_id, p_row.get("id")))
+
+            return {
+                "group_id": group_id,
+                "group_name": gname,
+                "gc_user_id": gc_user_id,
+                "gc_username": gc_username
+            }
+    except Exception as e:
+        logger.error(f"Error in create_group_user_wizard: {e}")
+        raise e
+    finally:
+        conn.close()
+
+
+def get_user_allowed_project_ids(user_id: int):
+    """
+    Calculate allowed project IDs for a given user according to 3-tier RBAC rules:
+    - Super Admin / Admin: ALL project IDs
+    - Normal User: Union of assigned group project IDs (or all if unassigned)
+    - Group User (GC User): Union of assigned group project IDs ONLY
+    """
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT role, is_admin FROM users WHERE id = %s;", (user_id,))
+            u = cur.fetchone()
+            if not u: return []
+            role = (u.get("role") or "").lower()
+            if u.get("is_admin") or role in ("superuser", "admin"):
+                cur.execute("SELECT id FROM projects;")
+                return [r["id"] for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT DISTINCT gp.project_id
+                FROM group_projects gp JOIN user_groups ug ON gp.group_id = ug.group_id
+                WHERE ug.user_id = %s;
+            """, (user_id,))
+            pids = [r["project_id"] for r in cur.fetchall()]
+            if not pids and role == "normal":
+                cur.execute("SELECT id FROM projects;")
+                return [r["id"] for r in cur.fetchall()]
+            return pids
+    except Exception as e:
+        logger.error(f"Error in get_user_allowed_project_ids: {e}")
+        return []
+    finally:
+        conn.close()
+

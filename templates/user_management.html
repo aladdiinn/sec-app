@@ -1,169 +1,770 @@
 {% extends "base.html" %}
 {% set active = 'user-management' %}
-{% block title %}User Management — SecurePulse{% endblock %}
+{% block title %}User Management & RBAC — SecurePulse{% endblock %}
 {% block page_title %}USER MANAGEMENT & RBAC{% endblock %}
-{% block page_sub %}Manage administrative access, roles, and account security{% endblock %}
+{% block page_sub %}3-Tier Role Architecture, Group Access Inheritance, and Guided Group User Onboarding{% endblock %}
 
 {% block content %}
+<style>
+    /* User Management Custom Cyber Styling */
+    .stat-bar { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; }
+    .stat-card { flex: 1; min-width: 170px; padding: 14px 18px; border-radius: 8px; }
+    
+    .tab-toolbar {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 15px; gap: 15px; flex-wrap: wrap;
+    }
+    .tab-group { display: flex; gap: 8px; background: rgba(0,0,0,0.3); padding: 4px; border-radius: 8px; border: 1px solid var(--border); }
+    .tab-btn {
+        background: transparent; border: none; color: var(--text2); padding: 6px 14px;
+        font-family: var(--font-mono, monospace); font-size: 11px; text-transform: uppercase;
+        border-radius: 6px; cursor: pointer; transition: all 0.2s;
+    }
+    .tab-btn.active { background: rgba(0, 200, 255, 0.15); color: var(--cyan); border: 1px solid var(--cyan); font-weight: bold; }
+    
+    .badge-purple { background: rgba(147, 51, 234, 0.18); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
+    .badge-info { background: rgba(59, 130, 246, 0.18); color: #60a5fa; border: 1px solid rgba(96, 165, 250, 0.4); }
+    .badge-critical { background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(248, 113, 113, 0.4); }
+
+    /* Wizard Modal Styling */
+    .wizard-container { width: 680px; max-width: 95vw; max-height: 90vh; overflow-y: auto; padding: 25px; }
+    .wizard-stepper { display: flex; justify-content: space-between; margin-bottom: 25px; position: relative; }
+    .wizard-stepper::before {
+        content: ''; position: absolute; top: 15px; left: 10%; right: 10%; height: 2px;
+        background: var(--border); z-index: 1;
+    }
+    .step-node {
+        position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 6px;
+    }
+    .step-circle {
+        width: 32px; height: 32px; border-radius: 50%; background: #0f172a; border: 2px solid var(--border);
+        color: var(--text3); font-weight: bold; font-size: 12px; display: flex; align-items: center; justify-content: center;
+        transition: all 0.3s;
+    }
+    .step-node.active .step-circle { border-color: var(--cyan); background: rgba(0,200,255,0.2); color: var(--cyan); box-shadow: 0 0 10px rgba(0,200,255,0.4); }
+    .step-node.completed .step-circle { border-color: var(--green); background: rgba(34,197,94,0.2); color: var(--green); }
+    .step-label { font-size: 10px; color: var(--text3); font-family: var(--font-mono, monospace); text-transform: uppercase; }
+    .step-node.active .step-label { color: var(--cyan); font-weight: bold; }
+
+    .wizard-pane { display: none; }
+    .wizard-pane.active { display: block; animation: fadeIn 0.25s ease-in-out; }
+
+    .alert-banner {
+        background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.5);
+        color: #fca5a5; padding: 10px 14px; border-radius: 6px; font-size: 11px; margin-bottom: 15px; display: none;
+    }
+    .tag-item {
+        display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px;
+        font-size: 10px; font-family: var(--font-mono, monospace); margin: 2px;
+    }
+</style>
+
 <div class="fade-in">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
-        <div style="display:flex; gap:15px">
-            <div class="card glass" style="padding:10px 20px">
-                <span class="stat-label">TOTAL USERS</span>
-                <span class="stat-value" id="count-total">0</span>
-            </div>
-            <div class="card glass" style="padding:10px 20px">
-                <span class="stat-label">ACTIVE SESSIONS</span>
-                <span class="stat-value" id="count-active">0</span>
-            </div>
+
+    <!-- Stat Metric Cards -->
+    <div class="stat-bar">
+        <div class="card glass stat-card">
+            <span class="stat-label">TOTAL USERS</span>
+            <span class="stat-value" id="stat-total-users" style="color:var(--cyan)">0</span>
         </div>
-        <button class="btn btn-primary" onclick="openCreateUser()">+ ADD NEW USER</button>
+        <div class="card glass stat-card">
+            <span class="stat-label">SUPER ADMINS</span>
+            <span class="stat-value" id="stat-admins" style="color:var(--red)">0</span>
+        </div>
+        <div class="card glass stat-card">
+            <span class="stat-label">NORMAL USERS</span>
+            <span class="stat-value" id="stat-normal-users" style="color:var(--blue, #3b82f6)">0</span>
+        </div>
+        <div class="card glass stat-card">
+            <span class="stat-label">GROUP USERS (GC)</span>
+            <span class="stat-value" id="stat-gc-users" style="color:#c084fc">0</span>
+        </div>
+        <div class="card glass stat-card">
+            <span class="stat-label">PROJECT GROUPS</span>
+            <span class="stat-value" id="stat-groups" style="color:var(--amber)">0</span>
+        </div>
     </div>
 
+    <!-- Filter Toolbar & Action Buttons -->
+    <div class="tab-toolbar">
+        <div class="tab-group">
+            <button class="tab-btn active" onclick="switchView('all', this)">ALL USERS</button>
+            <button class="tab-btn" onclick="switchView('admins', this)">SUPER ADMINS</button>
+            <button class="tab-btn" onclick="switchView('normal', this)">NORMAL USERS</button>
+            <button class="tab-btn" onclick="switchView('gc', this)">GROUP USERS (GC)</button>
+            <button class="tab-btn" onclick="switchView('groups', this)">PROJECT GROUPS</button>
+        </div>
+
+        <div style="display:flex; gap:10px; align-items:center">
+            <input type="text" id="search-filter" placeholder="Search user, email, role or group..."
+                   style="padding:6px 12px; width:220px; font-size:11px" onkeyup="filterTable()">
+            <button class="btn btn-glass" onclick="openCreateUserModal()">+ ADD USER</button>
+            <button class="btn btn-primary" onclick="startGroupWizard()">⚡ CREATE GROUP (5-STEP)</button>
+        </div>
+    </div>
+
+    <!-- Main Table Container -->
     <div class="card glass" style="padding:0">
-        <table class="data-table">
+        
+        <!-- Users Table -->
+        <table class="data-table" id="users-table">
             <thead>
                 <tr>
                     <th>USER / EMAIL</th>
                     <th>ROLE</th>
                     <th>STATUS</th>
-                    <th>MFA</th>
-                    <th>LAST LOGIN</th>
+                    <th>ASSIGNED GROUPS</th>
+                    <th>PROJECT ACCESS</th>
+                    <th>CREATED AT</th>
                     <th>ACTIONS</th>
                 </tr>
             </thead>
             <tbody id="user-list">
-                <!-- Users injected here -->
+                <tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text3)">Loading user directory...</td></tr>
+            </tbody>
+        </table>
+
+        <!-- Groups Table -->
+        <table class="data-table" id="groups-table" style="display:none">
+            <thead>
+                <tr>
+                    <th>GROUP NAME</th>
+                    <th>DESCRIPTION</th>
+                    <th>MEMBERS (NORMAL USERS)</th>
+                    <th>ASSIGNED PROJECTS</th>
+                    <th>CREATED AT</th>
+                    <th>ACTIONS</th>
+                </tr>
+            </thead>
+            <tbody id="group-list">
+                <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text3)">Loading project groups...</td></tr>
             </tbody>
         </table>
     </div>
 </div>
 
 <!-- Modal Overlay -->
-<div id="modal-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); backdrop-filter:blur(5px); display:none; z-index:9999; align-items:center; justify-content:center">
-    <div class="card" id="modal-content" style="width:450px; padding:30px">
-        <!-- Modal content -->
+<div id="modal-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); backdrop-filter:blur(6px); display:none; z-index:9999; align-items:center; justify-content:center">
+    <div class="card" id="modal-content" style="padding:25px">
+        <!-- Content dynamic -->
     </div>
 </div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    async function loadUsers() {
-        try {
-            const users = await apiFetch('/api/users');
-            const list = document.getElementById('user-list');
-            document.getElementById('count-total').innerText = users.length;
-            document.getElementById('count-active').innerText = users.filter(u => u.last_login).length;
+    let globalUsers = [];
+    let globalGroups = [];
+    let globalProjects = [];
+    let currentView = 'all';
 
-            list.innerHTML = users.map(u => `
+    async function loadData() {
+        try {
+            const [users, groups, projects] = await Promise.all([
+                apiFetch('/api/users'),
+                apiFetch('/api/groups'),
+                apiFetch('/api/projects')
+            ]);
+            globalUsers = users || [];
+            globalGroups = groups || [];
+            globalProjects = projects || [];
+
+            updateStats();
+            renderTables();
+        } catch (e) {
+            showToast('Failed to load user management data', 'error');
+        }
+    }
+
+    function updateStats() {
+        document.getElementById('stat-total-users').innerText = globalUsers.length;
+        document.getElementById('stat-admins').innerText = globalUsers.filter(u => u.role === 'superuser' || u.role === 'admin' || u.is_admin).length;
+        document.getElementById('stat-normal-users').innerText = globalUsers.filter(u => u.role === 'normal' || u.role === 'user').length;
+        document.getElementById('stat-gc-users').innerText = globalUsers.filter(u => u.role === 'group_user' || u.role === 'gc_user').length;
+        document.getElementById('stat-groups').innerText = globalGroups.length;
+    }
+
+    function switchView(view, btn) {
+        currentView = view;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+
+        if (view === 'groups') {
+            document.getElementById('users-table').style.display = 'none';
+            document.getElementById('groups-table').style.display = 'table';
+        } else {
+            document.getElementById('users-table').style.display = 'table';
+            document.getElementById('groups-table').style.display = 'none';
+        }
+        renderTables();
+    }
+
+    function renderTables() {
+        const query = (document.getElementById('search-filter').value || '').toLowerCase();
+
+        if (currentView === 'groups') {
+            const filteredGroups = globalGroups.filter(g => 
+                g.name.toLowerCase().includes(query) || (g.description || '').toLowerCase().includes(query)
+            );
+            const tbody = document.getElementById('group-list');
+            if (filteredGroups.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text3)">No project groups found.</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = filteredGroups.map(g => `
                 <tr>
                     <td>
-                        <div style="font-weight:600">${u.full_name || u.username || 'Unnamed'}</div>
-                        <div class="mono" style="font-size:10px; color:var(--text3)">${u.username}</div>
+                        <div style="font-weight:700; color:var(--cyan)">${g.name}</div>
+                        <div class="mono" style="font-size:10px; color:var(--text3)">ID: #${g.id}</div>
                     </td>
-                    <td><span class="badge badge-${u.role === 'superuser' ? 'critical' : u.role === 'admin' ? 'warning' : 'info'}">${u.role}</span></td>
-                    <td><span class="badge badge-${u.is_active ? 'success' : 'critical'}">${u.is_active ? 'ACTIVE' : 'DISABLED'}</span></td>
-                    <td><span class="mono" style="color:${u.mfa_enabled ? 'var(--green)' : 'var(--text3)'}">${u.mfa_enabled ? 'ENABLED' : 'OFF'}</span></td>
-                    <td class="mono" style="font-size:10px">${u.last_login ? new Date(u.last_login).toLocaleString() : 'NEVER'}</td>
+                    <td style="font-size:11px">${g.description || 'No description'}</td>
                     <td>
-                        <div style="display:flex; gap:8px">
-                            <button class="btn btn-glass" onclick="openEditRole(${u.id}, '${u.role}')">ROLE</button>
-                            <button class="btn btn-glass" style="color:${u.is_active ? 'var(--red)' : 'var(--green)'}" onclick="toggleUser(${u.id})">
-                                ${u.is_active ? 'DISABLE' : 'ENABLE'}
-                            </button>
-                        </div>
+                        ${(g.members || []).map(m => `<span class="tag-item badge-info">${m.username}</span>`).join('') || '<span style="color:var(--text3); font-size:10px">No members</span>'}
+                        <div style="margin-top:4px"><button class="btn btn-glass" style="font-size:9px; padding:2px 6px" onclick="openAddMemberModal(${g.id})">+ Add Member</button></div>
+                    </td>
+                    <td>
+                        ${(g.projects || []).map(p => `<span class="tag-item badge-purple">${p.name}</span>`).join('') || '<span style="color:var(--text3); font-size:10px">No projects assigned</span>'}
+                        <div style="margin-top:4px"><button class="btn btn-glass" style="font-size:9px; padding:2px 6px" onclick="openAssignProjectModal(${g.id})">+ Assign Project</button></div>
+                    </td>
+                    <td class="mono" style="font-size:10px">${g.created_at || 'N/A'}</td>
+                    <td>
+                        <button class="btn btn-glass" style="color:var(--red); font-size:10px; padding:4px 8px" onclick="deleteGroup(${g.id})">DELETE</button>
                     </td>
                 </tr>
             `).join('');
-        } catch (e) { showToast('Failed to load users', 'error'); }
+        } else {
+            let filteredUsers = globalUsers.filter(u => {
+                if (currentView === 'admins') return u.role === 'superuser' || u.role === 'admin' || u.is_admin;
+                if (currentView === 'normal') return u.role === 'normal' || u.role === 'user';
+                if (currentView === 'gc') return u.role === 'group_user' || u.role === 'gc_user';
+                return true;
+            });
+
+            filteredUsers = filteredUsers.filter(u =>
+                (u.username || '').toLowerCase().includes(query) ||
+                (u.email || '').toLowerCase().includes(query) ||
+                (u.full_name || '').toLowerCase().includes(query) ||
+                (u.role || '').toLowerCase().includes(query)
+            );
+
+            const tbody = document.getElementById('user-list');
+            if (filteredUsers.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text3)">No users found.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = filteredUsers.map(u => {
+                let roleBadgeClass = 'badge-info';
+                let roleLabel = 'NORMAL USER';
+                if (u.role === 'superuser' || u.role === 'admin' || u.is_admin) {
+                    roleBadgeClass = 'badge-critical';
+                    roleLabel = u.role === 'superuser' ? 'SUPER ADMIN' : 'ADMINISTRATOR';
+                } else if (u.role === 'group_user' || u.role === 'gc_user') {
+                    roleBadgeClass = 'badge-purple';
+                    roleLabel = 'GROUP USER (GC)';
+                }
+
+                const groupsTags = (u.groups || []).map(g => `<span class="tag-item badge-info">${g.name}</span>`).join('') || '<span style="color:var(--text3); font-size:10px">None</span>';
+                const projectTags = (u.projects || []).map(p => `<span class="tag-item badge-purple">${p.name}</span>`).join('') || '<span style="color:var(--text3); font-size:10px">Global Read</span>';
+
+                return `
+                    <tr>
+                        <td>
+                            <div style="font-weight:600">${u.full_name || u.username}</div>
+                            <div class="mono" style="font-size:10px; color:var(--text3)">${u.email || u.username}</div>
+                        </td>
+                        <td><span class="badge ${roleBadgeClass}">${roleLabel}</span></td>
+                        <td><span class="badge ${u.is_active ? 'badge-success' : 'badge-critical'}">${u.is_active ? 'ACTIVE' : 'DISABLED'}</span></td>
+                        <td>${groupsTags}</td>
+                        <td>${projectTags}</td>
+                        <td class="mono" style="font-size:10px">${u.created_at || 'N/A'}</td>
+                        <td>
+                            <div style="display:flex; gap:6px">
+                                <button class="btn btn-glass" style="font-size:10px; padding:3px 8px" onclick="openEditRoleModal(${u.id}, '${u.role}')">ROLE</button>
+                                <button class="btn btn-glass" style="font-size:10px; padding:3px 8px; color:${u.is_active ? 'var(--red)' : 'var(--green)'}" onclick="toggleUserStatus(${u.id})">
+                                    ${u.is_active ? 'DISABLE' : 'ENABLE'}
+                                </button>
+                                <button class="btn btn-glass" style="font-size:10px; padding:3px 8px; color:var(--red)" onclick="deleteUser(${u.id})">DELETE</button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
     }
 
-    function openCreateUser() {
+    function filterTable() { renderTables(); }
+
+    /* Single User Modal */
+    function openCreateUserModal() {
         showModal(`
-            <h3 class="card-title">ADD NEW USER</h3>
-            <div style="margin-top:20px; display:flex; flex-direction:column; gap:15px">
-                <div>
-                    <label class="stat-label">EMAIL ADDRESS (OPTIONAL)</label>
-                    <input type="email" id="new-email" style="width:100%" placeholder="user@securepulse.local">
-                </div>
-                <div>
-                    <label class="stat-label">USERNAME</label>
-                    <input type="text" id="new-username" style="width:100%" placeholder="jdoe">
-                </div>
-                <div>
-                    <label class="stat-label">FULL NAME</label>
-                    <input type="text" id="new-name" style="width:100%" placeholder="John Doe">
-                </div>
-                <div>
-                    <label class="stat-label">INITIAL PASSWORD</label>
-                    <input type="password" id="new-pass" style="width:100%">
-                </div>
-                <div>
-                    <label class="stat-label">ASSIGN ROLE</label>
-                    <select id="new-role" style="width:100%">
-                        <option value="normal">Normal User</option>
-                        <option value="admin">Administrator</option>
-                        <option value="superuser">Superuser</option>
-                    </select>
-                </div>
-                <div style="display:flex; gap:10px; margin-top:10px">
-                    <button class="btn btn-primary" style="flex:1" onclick="execCreateUser()">CREATE ACCOUNT</button>
-                    <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
+            <div style="width:420px">
+                <h3 class="card-title">ADD NEW USER ACCOUNT</h3>
+                <p style="font-size:11px; color:var(--text3); margin-bottom:15px">Create a direct Super Admin, Normal User, or GC User</p>
+                <div style="display:flex; flex-direction:column; gap:12px">
+                    <div>
+                        <label class="stat-label">USERNAME</label>
+                        <input type="text" id="nu-username" style="width:100%" placeholder="e.g. jsmith">
+                    </div>
+                    <div>
+                        <label class="stat-label">FULL NAME</label>
+                        <input type="text" id="nu-fullname" style="width:100%" placeholder="e.g. John Smith">
+                    </div>
+                    <div>
+                        <label class="stat-label">EMAIL ADDRESS</label>
+                        <input type="email" id="nu-email" style="width:100%" placeholder="jsmith@securepulse.local">
+                    </div>
+                    <div>
+                        <label class="stat-label">INITIAL PASSWORD</label>
+                        <input type="password" id="nu-password" style="width:100%" placeholder="••••••••">
+                    </div>
+                    <div>
+                        <label class="stat-label">ASSIGN ROLE</label>
+                        <select id="nu-role" style="width:100%">
+                            <option value="normal">Normal User (Global Read-Only)</option>
+                            <option value="superuser">Super Admin (Full Access & Permission Control)</option>
+                            <option value="group_user">Group User (Restricted Project Group Read-Only)</option>
+                        </select>
+                    </div>
+                    <div style="display:flex; gap:10px; margin-top:15px">
+                        <button class="btn btn-primary" style="flex:1" onclick="execCreateUser()">CREATE ACCOUNT</button>
+                        <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
+                    </div>
                 </div>
             </div>
         `);
     }
 
     async function execCreateUser() {
-        const data = {
-            email: document.getElementById('new-email').value,
-            username: document.getElementById('new-username').value,
-            full_name: document.getElementById('new-name').value,
-            password: document.getElementById('new-pass').value,
-            role: document.getElementById('new-role').value
+        const body = {
+            username: document.getElementById('nu-username').value,
+            full_name: document.getElementById('nu-fullname').value,
+            email: document.getElementById('nu-email').value,
+            password: document.getElementById('nu-password').value,
+            role: document.getElementById('nu-role').value
         };
         try {
-            await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(data) });
-            showToast('User created', 'success');
+            await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(body) });
+            showToast('User created successfully', 'success');
             closeModal();
-            loadUsers();
-        } catch (e) { showToast('Creation failed', 'error'); }
+            loadData();
+        } catch (e) { showToast(e.message || 'Creation failed', 'error'); }
     }
 
-    function openEditRole(id, current) {
+    function openEditRoleModal(userId, currentRole) {
         showModal(`
-            <h3 class="card-title">UPDATE USER ROLE</h3>
-            <div style="margin-top:20px">
-                <label class="stat-label">SELECT NEW ROLE</label>
-                <select id="edit-role-val" style="width:100%; margin:10px 0">
-                    <option value="normal" ${current === 'normal' ? 'selected' : ''}>Normal User</option>
-                    <option value="admin" ${current === 'admin' ? 'selected' : ''}>Administrator</option>
-                    <option value="superuser" ${current === 'superuser' ? 'selected' : ''}>Superuser</option>
-                </select>
-                <div style="display:flex; gap:10px; margin-top:20px">
-                    <button class="btn btn-primary" style="flex:1" onclick="execUpdateRole(${id})">SAVE CHANGES</button>
-                    <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
+            <div style="width:360px">
+                <h3 class="card-title">UPDATE USER ROLE</h3>
+                <div style="margin-top:15px">
+                    <label class="stat-label">SELECT ROLE</label>
+                    <select id="eu-role" style="width:100%; margin:10px 0">
+                        <option value="normal" ${currentRole==='normal'?'selected':''}>Normal User</option>
+                        <option value="superuser" ${currentRole==='superuser'||currentRole==='admin'?'selected':''}>Super Admin</option>
+                        <option value="group_user" ${currentRole==='group_user'||currentRole==='gc_user'?'selected':''}>Group User (GC)</option>
+                    </select>
+                    <p style="font-size:10px; color:var(--text3); margin-bottom:15px">Note: Promoting a user to Super Admin automatically removes them from any restricted Project Groups.</p>
+                    <div style="display:flex; gap:10px">
+                        <button class="btn btn-primary" style="flex:1" onclick="execUpdateRole(${userId})">SAVE ROLE</button>
+                        <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
+                    </div>
                 </div>
             </div>
         `);
     }
 
-    async function execUpdateRole(id) {
-        const role = document.getElementById('edit-role-val').value;
+    async function execUpdateRole(userId) {
+        const role = document.getElementById('eu-role').value;
         try {
-            await apiFetch(`/api/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) });
-            showToast('Role updated', 'success');
+            await apiFetch(`/api/users/${userId}/role`, { method: 'PATCH', body: JSON.stringify({ role }) });
+            showToast('User role updated', 'success');
             closeModal();
-            loadUsers();
-        } catch (e) { showToast('Update failed', 'error'); }
+            loadData();
+        } catch (e) { showToast('Failed to update role', 'error'); }
     }
 
-    async function toggleUser(id) {
+    async function toggleUserStatus(userId) {
         try {
-            await apiFetch(`/api/users/${id}/disable`, { method: 'PATCH' });
-            loadUsers();
-        } catch (e) { showToast('Action failed', 'error'); }
+            await apiFetch(`/api/users/${userId}/status`, { method: 'PATCH' });
+            loadData();
+        } catch (e) { showToast('Status change failed', 'error'); }
+    }
+
+    async function deleteUser(userId) {
+        if (!confirm('Are you sure you want to delete this user?')) return;
+        try {
+            await apiFetch(`/api/users/${userId}`, { method: 'DELETE' });
+            showToast('User deleted', 'success');
+            loadData();
+        } catch (e) { showToast('Delete failed', 'error'); }
+    }
+
+    /* Group Management Modals */
+    function openAddMemberModal(groupId) {
+        const normalUsers = globalUsers.filter(u => u.role !== 'superuser' && u.role !== 'admin' && !u.is_admin);
+        showModal(`
+            <div style="width:420px">
+                <h3 class="card-title">ADD MEMBER TO GROUP</h3>
+                <p style="font-size:11px; color:var(--text3); margin-bottom:12px">Groups support Normal Users only.</p>
+                <div id="add-member-alert" class="alert-banner">
+                    ⚠️ Admin users cannot be added to a Group. Groups support Normal Users only.
+                </div>
+                <div style="margin-top:10px">
+                    <label class="stat-label">SELECT USER</label>
+                    <select id="am-user-id" style="width:100%; margin-bottom:15px">
+                        ${globalUsers.map(u => `
+                            <option value="${u.id}" ${u.is_admin || u.role==='superuser' || u.role==='admin' ? 'disabled' : ''}>
+                                ${u.username} (${u.role.toUpperCase()}) ${u.is_admin || u.role==='superuser' || u.role==='admin' ? '— [ADMIN BLOCKED]' : ''}
+                            </option>
+                        `).join('')}
+                    </select>
+                    <div style="display:flex; gap:10px">
+                        <button class="btn btn-primary" style="flex:1" onclick="execAddGroupMember(${groupId})">ADD MEMBER</button>
+                        <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
+                    </div>
+                </div>
+            </div>
+        `);
+    }
+
+    async function execAddGroupMember(groupId) {
+        const userId = parseInt(document.getElementById('am-user-id').value);
+        try {
+            await apiFetch(`/api/groups/${groupId}/members`, { method: 'POST', body: JSON.stringify({ user_id: userId }) });
+            showToast('Member added to group', 'success');
+            closeModal();
+            loadData();
+        } catch (e) {
+            document.getElementById('add-member-alert').style.display = 'block';
+            showToast(e.message || 'Failed to add member', 'error');
+        }
+    }
+
+    function openAssignProjectModal(groupId) {
+        showModal(`
+            <div style="width:400px">
+                <h3 class="card-title">ASSIGN PROJECT ACCESS</h3>
+                <p style="font-size:11px; color:var(--text3); margin-bottom:15px">Link project access to this group</p>
+                <div>
+                    <label class="stat-label">SELECT PROJECT</label>
+                    <select id="ap-project-id" style="width:100%; margin-bottom:15px">
+                        ${globalProjects.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+                    </select>
+                    <div style="display:flex; gap:10px">
+                        <button class="btn btn-primary" style="flex:1" onclick="execAssignGroupProject(${groupId})">LINK PROJECT</button>
+                        <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
+                    </div>
+                </div>
+            </div>
+        `);
+    }
+
+    async function execAssignGroupProject(groupId) {
+        const projectId = parseInt(document.getElementById('ap-project-id').value);
+        try {
+            await apiFetch(`/api/groups/${groupId}/projects`, { method: 'POST', body: JSON.stringify({ project_id: projectId }) });
+            showToast('Project assigned to group', 'success');
+            closeModal();
+            loadData();
+        } catch (e) { showToast('Failed to assign project', 'error'); }
+    }
+
+    async function deleteGroup(groupId) {
+        if (!confirm('Are you sure you want to delete this project group?')) return;
+        try {
+            await apiFetch(`/api/groups/${groupId}`, { method: 'DELETE' });
+            showToast('Group deleted', 'success');
+            loadData();
+        } catch (e) { showToast('Delete failed', 'error'); }
+    }
+
+
+    /* 5-STEP GUIDED GROUP CREATION WIZARD */
+    let wizardCurrentStep = 1;
+    let wizardData = {
+        group_name: '', group_description: '',
+        gc_username: '', gc_email: '', gc_password: '',
+        existing_user_ids: [], new_members: [],
+        existing_project_ids: [], new_projects: []
+    };
+
+    function startGroupWizard() {
+        wizardCurrentStep = 1;
+        wizardData = {
+            group_name: '', group_description: '',
+            gc_username: '', gc_email: '', gc_password: '',
+            existing_user_ids: [], new_members: [],
+            existing_project_ids: [], new_projects: []
+        };
+        renderWizardModal();
+    }
+
+    function renderWizardModal() {
+        const availableNormalUsers = globalUsers.filter(u => u.role !== 'superuser' && u.role !== 'admin' && !u.is_admin);
+        const adminUsers = globalUsers.filter(u => u.role === 'superuser' || u.role === 'admin' || u.is_admin);
+
+        showModal(`
+            <div class="wizard-container">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px">
+                    <h3 class="card-title" style="margin:0; color:var(--cyan)">⚡ GUIDED GROUP USER & GROUP WIZARD</h3>
+                    <span class="mono" style="font-size:11px; color:var(--text3)">STEP ${wizardCurrentStep} OF 5</span>
+                </div>
+
+                <!-- Stepper Node Progress -->
+                <div class="wizard-stepper">
+                    <div class="step-node ${wizardCurrentStep===1?'active':wizardCurrentStep>1?'completed':''}">
+                        <div class="step-circle">1</div>
+                        <div class="step-label">DETAILS</div>
+                    </div>
+                    <div class="step-node ${wizardCurrentStep===2?'active':wizardCurrentStep>2?'completed':''}">
+                        <div class="step-circle">2</div>
+                        <div class="step-label">MEMBERS</div>
+                    </div>
+                    <div class="step-node ${wizardCurrentStep===3?'active':wizardCurrentStep>3?'completed':''}">
+                        <div class="step-circle">3</div>
+                        <div class="step-label">PROJECTS</div>
+                    </div>
+                    <div class="step-node ${wizardCurrentStep===4?'active':wizardCurrentStep>4?'completed':''}">
+                        <div class="step-circle">4</div>
+                        <div class="step-label">REVIEW</div>
+                    </div>
+                    <div class="step-node ${wizardCurrentStep===5?'active':''}">
+                        <div class="step-circle">5</div>
+                        <div class="step-label">FINALIZE</div>
+                    </div>
+                </div>
+
+                <div id="wizard-error-banner" class="alert-banner"></div>
+
+                <!-- STEP 1: Details -->
+                <div class="wizard-pane ${wizardCurrentStep===1?'active':''}">
+                    <h4 style="color:var(--text1); margin-bottom:10px">Step 1: Group User & Project Group Details</h4>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
+                        <div>
+                            <label class="stat-label">GROUP NAME *</label>
+                            <input type="text" id="wz-gname" value="${wizardData.group_name}" style="width:100%" placeholder="e.g. Grid-Ops-Group">
+                        </div>
+                        <div>
+                            <label class="stat-label">GROUP DESCRIPTION</label>
+                            <input type="text" id="wz-gdesc" value="${wizardData.group_description}" style="width:100%" placeholder="e.g. Infrastructure Read Access">
+                        </div>
+                        <div>
+                            <label class="stat-label">GC USER USERNAME *</label>
+                            <input type="text" id="wz-gcuname" value="${wizardData.gc_username}" style="width:100%" placeholder="e.g. gc_operator">
+                        </div>
+                        <div>
+                            <label class="stat-label">GC USER EMAIL</label>
+                            <input type="email" id="wz-gcemail" value="${wizardData.gc_email}" style="width:100%" placeholder="gc_operator@securepulse.local">
+                        </div>
+                        <div style="grid-column: span 2">
+                            <label class="stat-label">GC USER INITIAL PASSWORD *</label>
+                            <input type="password" id="wz-gcpass" value="${wizardData.gc_password||'GroupUser123!'}" style="width:100%">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 2: Choose Members -->
+                <div class="wizard-pane ${wizardCurrentStep===2?'active':''}">
+                    <h4 style="color:var(--text1); margin-bottom:6px">Step 2: Add Members to Group</h4>
+                    <p style="font-size:11px; color:var(--text3); margin-bottom:12px">Select existing Normal Users or create new Normal Users directly.</p>
+                    
+                    <div style="max-height:160px; overflow-y:auto; border:1px solid var(--border); padding:10px; border-radius:6px; background:rgba(0,0,0,0.2); margin-bottom:15px">
+                        <label class="stat-label" style="display:block; margin-bottom:6px">EXISTING USERS DIRECTORY</label>
+                        ${globalUsers.map(u => {
+                            const isAdmin = u.is_admin || u.role === 'superuser' || u.role === 'admin';
+                            const checked = wizardData.existing_user_ids.includes(u.id);
+                            return `
+                                <div style="display:flex; align-items:center; justify-content:space-between; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05)">
+                                    <label style="font-size:11px; cursor:${isAdmin?'not-allowed':'pointer'}; color:${isAdmin?'var(--red)':'var(--text1)'}">
+                                        <input type="checkbox" value="${u.id}" ${checked?'checked':''} ${isAdmin?'disabled':''} onchange="handleWizardUserCheck(this, ${isAdmin})">
+                                        <strong>${u.username}</strong> (${u.role.toUpperCase()})
+                                    </label>
+                                    ${isAdmin ? '<span class="mono" style="font-size:9px; color:var(--red)">[ADMIN BLOCKED]</span>' : ''}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px">
+                        <label class="stat-label">INLINE CREATE NEW NORMAL MEMBER (OPTIONAL)</label>
+                        <div style="display:flex; gap:8px; margin-top:4px">
+                            <input type="text" id="wz-nm-username" placeholder="Username" style="flex:1; font-size:11px">
+                            <input type="email" id="wz-nm-email" placeholder="Email (optional)" style="flex:1; font-size:11px">
+                            <button class="btn btn-glass" style="font-size:10px" onclick="addWizardInlineMember()">+ Add Member</button>
+                        </div>
+                        <div id="wz-new-members-list" style="margin-top:8px">
+                            ${wizardData.new_members.map((m, idx) => `
+                                <span class="tag-item badge-info">${m.username} <a href="javascript:void(0)" onclick="removeWizardInlineMember(${idx})" style="color:var(--red); margin-left:4px">×</a></span>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 3: Assign Project Access -->
+                <div class="wizard-pane ${wizardCurrentStep===3?'active':''}">
+                    <h4 style="color:var(--text1); margin-bottom:6px">Step 3: Assign Project Access</h4>
+                    <p style="font-size:11px; color:var(--text3); margin-bottom:12px">Select projects to grant read-only access to this group.</p>
+
+                    <div style="max-height:160px; overflow-y:auto; border:1px solid var(--border); padding:10px; border-radius:6px; background:rgba(0,0,0,0.2); margin-bottom:15px">
+                        <label class="stat-label" style="display:block; margin-bottom:6px">EXISTING PROJECTS</label>
+                        ${globalProjects.map(p => {
+                            const checked = wizardData.existing_project_ids.includes(p.id);
+                            return `
+                                <div style="padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05)">
+                                    <label style="font-size:11px; cursor:pointer">
+                                        <input type="checkbox" value="${p.id}" ${checked?'checked':''} onchange="handleWizardProjectCheck(this)">
+                                        <strong style="color:var(--cyan)">${p.name}</strong> — <span style="color:var(--text3)">${p.description || ''}</span>
+                                    </label>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px">
+                        <label class="stat-label">CREATE NEW PROJECT INLINE (OPTIONAL)</label>
+                        <div style="display:flex; gap:8px; margin-top:4px">
+                            <input type="text" id="wz-np-name" placeholder="Project Name" style="flex:1; font-size:11px">
+                            <input type="text" id="wz-np-desc" placeholder="Description" style="flex:1; font-size:11px">
+                            <button class="btn btn-glass" style="font-size:10px" onclick="addWizardInlineProject()">+ Create Project</button>
+                        </div>
+                        <div id="wz-new-projects-list" style="margin-top:8px">
+                            ${wizardData.new_projects.map((p, idx) => `
+                                <span class="tag-item badge-purple">${p.name} <a href="javascript:void(0)" onclick="removeWizardInlineProject(${idx})" style="color:var(--red); margin-left:4px">×</a></span>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 4: Review -->
+                <div class="wizard-pane ${wizardCurrentStep===4?'active':''}">
+                    <h4 style="color:var(--text1); margin-bottom:10px">Step 4: Review Configuration</h4>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:11px">
+                        <div class="card glass" style="padding:12px">
+                            <div class="stat-label" style="color:var(--cyan)">GROUP & GC USER</div>
+                            <div style="margin-top:6px"><strong>Group Name:</strong> ${wizardData.group_name}</div>
+                            <div><strong>GC Username:</strong> ${wizardData.gc_username}</div>
+                            <div><strong>Email:</strong> ${wizardData.gc_email || wizardData.gc_username+'@securepulse.local'}</div>
+                        </div>
+                        <div class="card glass" style="padding:12px">
+                            <div class="stat-label" style="color:var(--amber)">MEMBERS & PROJECTS</div>
+                            <div style="margin-top:6px"><strong>Selected User IDs:</strong> ${wizardData.existing_user_ids.join(', ') || 'None'}</div>
+                            <div><strong>Inline Members:</strong> ${wizardData.new_members.map(m=>m.username).join(', ') || 'None'}</div>
+                            <div><strong>Assigned Projects:</strong> ${wizardData.existing_project_ids.join(', ') || 'None'} ${wizardData.new_projects.map(p=>p.name).join(', ')}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 5: Finalize -->
+                <div class="wizard-pane ${wizardCurrentStep===5?'active':''}">
+                    <div style="text-align:center; padding:20px 0">
+                        <div style="font-size:40px; margin-bottom:10px">🚀</div>
+                        <h3 style="color:var(--green)">Group & Group User Created Successfully!</h3>
+                        <p style="font-size:11px; color:var(--text3); margin-top:6px">Project access permissions have been assigned and live read-only inheritance enabled.</p>
+                    </div>
+                </div>
+
+                <!-- Wizard Actions -->
+                <div style="display:flex; justify-content:space-between; margin-top:20px; border-top:1px solid var(--border); padding-top:15px">
+                    ${wizardCurrentStep > 1 && wizardCurrentStep < 5 ? '<button class="btn btn-glass" onclick="wizardPrev()">← BACK</button>' : '<div></div>'}
+                    <div style="display:flex; gap:10px">
+                        ${wizardCurrentStep < 4 ? '<button class="btn btn-primary" onclick="wizardNext()">NEXT STEP →</button>' : ''}
+                        ${wizardCurrentStep === 4 ? '<button class="btn btn-primary" style="background:var(--green)" onclick="execSubmitWizard()">⚡ FINALIZE & SUBMIT</button>' : ''}
+                        ${wizardCurrentStep === 5 ? '<button class="btn btn-primary" onclick="closeModal(); loadData();">DONE</button>' : ''}
+                        ${wizardCurrentStep < 5 ? '<button class="btn btn-glass" onclick="closeModal()">CANCEL</button>' : ''}
+                    </div>
+                </div>
+            </div>
+        `);
+    }
+
+    function wizardNext() {
+        const errBanner = document.getElementById('wizard-error-banner');
+        errBanner.style.display = 'none';
+
+        if (wizardCurrentStep === 1) {
+            wizardData.group_name = document.getElementById('wz-gname').value.trim();
+            wizardData.group_description = document.getElementById('wz-gdesc').value.trim();
+            wizardData.gc_username = document.getElementById('wz-gcuname').value.trim();
+            wizardData.gc_email = document.getElementById('wz-gcemail').value.trim();
+            wizardData.gc_password = document.getElementById('wz-gcpass').value.trim();
+
+            if (!wizardData.group_name || !wizardData.gc_username) {
+                errBanner.innerText = '⚠️ Group Name and GC User Username are required.';
+                errBanner.style.display = 'block';
+                return;
+            }
+        }
+        wizardCurrentStep++;
+        renderWizardModal();
+    }
+
+    function wizardPrev() {
+        wizardCurrentStep--;
+        renderWizardModal();
+    }
+
+    function handleWizardUserCheck(chk, isAdmin) {
+        const errBanner = document.getElementById('wizard-error-banner');
+        errBanner.style.display = 'none';
+        if (isAdmin) {
+            chk.checked = false;
+            errBanner.innerText = '⚠️ Admin users cannot be added to a Group. Groups support Normal Users only.';
+            errBanner.style.display = 'block';
+            return;
+        }
+        const uid = parseInt(chk.value);
+        if (chk.checked) {
+            if (!wizardData.existing_user_ids.includes(uid)) wizardData.existing_user_ids.push(uid);
+        } else {
+            wizardData.existing_user_ids = wizardData.existing_user_ids.filter(id => id !== uid);
+        }
+    }
+
+    function addWizardInlineMember() {
+        const u = document.getElementById('wz-nm-username').value.trim();
+        const e = document.getElementById('wz-nm-email').value.trim();
+        if (!u) return;
+        wizardData.new_members.push({ username: u, email: e });
+        renderWizardModal();
+    }
+
+    function removeWizardInlineMember(idx) {
+        wizardData.new_members.splice(idx, 1);
+        renderWizardModal();
+    }
+
+    function handleWizardProjectCheck(chk) {
+        const pid = parseInt(chk.value);
+        if (chk.checked) {
+            if (!wizardData.existing_project_ids.includes(pid)) wizardData.existing_project_ids.push(pid);
+        } else {
+            wizardData.existing_project_ids = wizardData.existing_project_ids.filter(id => id !== pid);
+        }
+    }
+
+    function addWizardInlineProject() {
+        const n = document.getElementById('wz-np-name').value.trim();
+        const d = document.getElementById('wz-np-desc').value.trim();
+        if (!n) return;
+        wizardData.new_projects.push({ name: n, description: d });
+        renderWizardModal();
+    }
+
+    function removeWizardInlineProject(idx) {
+        wizardData.new_projects.splice(idx, 1);
+        renderWizardModal();
+    }
+
+    async function execSubmitWizard() {
+        try {
+            await apiFetch('/api/groups/wizard', { method: 'POST', body: JSON.stringify(wizardData) });
+            wizardCurrentStep = 5;
+            renderWizardModal();
+        } catch (e) {
+            const errBanner = document.getElementById('wizard-error-banner');
+            errBanner.innerText = `⚠️ ${e.message || 'Wizard execution failed'}`;
+            errBanner.style.display = 'block';
+        }
     }
 
     function showModal(html) {
@@ -172,6 +773,6 @@
     }
     function closeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
 
-    window.addEventListener('load', loadUsers);
+    window.addEventListener('load', loadData);
 </script>
 {% endblock %}

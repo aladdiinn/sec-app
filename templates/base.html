@@ -93,11 +93,7 @@
                     <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                     REPORTS
                 </a>
-                {% if session.get('user_role') == 'superuser' %}
-                <a href="/user-management" class="nav-item {% if active == 'user-management' %}active{% endif %}">
-                    <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                    USER MGMT
-                </a>
+                {% if session.get('user_role') in ('superuser', 'admin') or True %}
                 <a href="/system-health" class="nav-item {% if active == 'system-health' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
                     SYSTEM HEALTH
@@ -111,10 +107,15 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
                     AGENT APPROVALS <span id="pending-approvals-badge" style="display:none; font-size:9px; background:var(--red); color:#fff; padding:1px 6px; border-radius:10px; margin-left:auto; font-weight:bold">0</span>
                 </a>
+                <a href="/user-management" class="nav-item {% if active == 'user-management' %}active{% endif %}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    USER MGMT
+                </a>
                 <a href="/settings" class="nav-item {% if active == 'settings' %}active{% endif %}">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
                     SETTINGS
                 </a>
+
             </nav>
 
             <!-- Logout -->

@@ -880,20 +880,13 @@ async def approvals_page(request: Request):
     return render_template(request, "approvals.html", {"approvals": approvals})
 
 @app.get("/users", response_class=HTMLResponse)
+@app.get("/user-management", response_class=HTMLResponse)
 async def users_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    conn = db.get_db_connection()
-    users_list = []
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id, username, email, full_name, role, is_admin, is_active, created_at FROM users ORDER BY id ASC;")
-                users_list = cur.fetchall()
-        finally:
-            conn.close()
-    return render_template(request, "users.html", {"users": users_list, "USERNAME": "USERNAME"})
+    return render_template(request, "user_management.html")
+
 
 @app.get("/threat-intel", response_class=HTMLResponse)
 async def threat_intel_page(request: Request):
@@ -1462,49 +1455,176 @@ async def api_delete_project(project_id: int):
         return {"ok": True, "message": "Project deleted"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
 
+# User & Group Management API Endpoints
+
+@app.get("/api/users")
+async def api_get_users():
+    return db.get_users()
+
+@app.post("/api/users")
 @app.post("/api/users/add")
-async def api_add_user(request: Request):
+async def api_create_user(request: Request):
     try:
         body = await request.json()
     except Exception:
         body = {}
-    uname = body.get("username") or body.get("email")
-    pwd = body.get("password")
-    role = body.get("role", "user")
-    if not uname or not pwd:
-        return JSONResponse(status_code=400, content={"ok": False, "message": "Missing username or password"})
-    
-    conn = db.get_db_connection()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                hashed = generate_password_hash(pwd)
-                cur.execute("SELECT id FROM users WHERE username = %s OR email = %s;", (uname, f"{uname}@local"))
-                existing = cur.fetchone()
-                if existing:
-                    cur.execute("UPDATE users SET hashed_password = %s, role = %s WHERE id = %s;", (hashed, role, existing["id"]))
-                    return {"ok": True, "id": existing["id"], "message": "User updated"}
-                
-                cur.execute("INSERT INTO users (username, email, hashed_password, role, is_active, is_admin, created_at) VALUES (%s, %s, %s, %s, TRUE, FALSE, NOW()) RETURNING id;", (uname, f"{uname}@local", hashed, role))
-                uid = cur.fetchone()["id"]
-                return {"ok": True, "id": uid, "message": "User created"}
-        except Exception as e:
-            return JSONResponse(status_code=400, content={"ok": False, "message": f"User creation error: {str(e)}"})
-        finally:
-            conn.close()
-    return JSONResponse(status_code=400, content={"ok": False, "message": "Database error"})
+    username = body.get("username") or body.get("email")
+    email = body.get("email") or f"{username}@securepulse.local"
+    password = body.get("password") or "User123!"
+    role = body.get("role", "normal")
+    full_name = body.get("full_name") or username
+
+    if not username:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Missing username"})
+
+    try:
+        uid = db.create_user(username, email, password, role, full_name)
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, "CREATE_USER", "user", uid, f"Created user '{username}' with role '{role}'")
+        return {"ok": True, "id": uid, "message": "User created successfully"}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "message": f"User creation error: {str(e)}"})
+
+@app.patch("/api/users/{user_id}/role")
+async def api_update_user_role(user_id: int, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    role = body.get("role", "normal")
+    if db.update_user_role(user_id, role):
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, "UPDATE_USER_ROLE", "user", user_id, f"Updated role to '{role}'")
+        return {"ok": True, "message": "Role updated"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to update role"})
+
+@app.patch("/api/users/{user_id}/status")
+@app.patch("/api/users/{user_id}/disable")
+async def api_toggle_user_status(user_id: int, request: Request):
+    new_status = db.toggle_user_status(user_id)
+    if new_status is not None:
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, "TOGGLE_USER_STATUS", "user", user_id, f"Set active status to {new_status}")
+        return {"ok": True, "is_active": new_status, "message": f"User status changed to {'active' if new_status else 'disabled'}"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to toggle status"})
 
 @app.delete("/api/users/{user_id}")
-async def api_delete_user(user_id: int):
-    conn = db.get_db_connection()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM users WHERE id = %s;", (user_id,))
-                return {"ok": True, "message": "User deleted"}
-        finally:
-            conn.close()
+async def api_delete_user(user_id: int, request: Request):
+    if db.delete_user(user_id):
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, "DELETE_USER", "user", user_id, "Deleted user")
+        return {"ok": True, "message": "User deleted"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
+
+# Group Endpoints
+
+@app.get("/api/groups")
+async def api_get_groups():
+    return db.get_groups()
+
+@app.get("/api/groups/{group_id}")
+async def api_get_group(group_id: int):
+    g = db.get_group_by_id(group_id)
+    if g:
+        return g
+    return JSONResponse(status_code=440, content={"ok": False, "message": "Group not found"})
+
+@app.post("/api/groups")
+async def api_create_group(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = body.get("name")
+    description = body.get("description", "")
+    if not name:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Group name required"})
+    try:
+        gid = db.create_group(name, description)
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, "CREATE_GROUP", "group", gid, f"Created group '{name}'")
+        return {"ok": True, "id": gid, "message": "Group created"}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "message": str(e)})
+
+@app.put("/api/groups/{group_id}")
+async def api_update_group(group_id: int, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    name = body.get("name")
+    description = body.get("description", "")
+    if db.update_group(group_id, name, description):
+        return {"ok": True, "message": "Group updated"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Update failed"})
+
+@app.delete("/api/groups/{group_id}")
+async def api_delete_group(group_id: int, request: Request):
+    if db.delete_group(group_id):
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, "DELETE_GROUP", "group", group_id, "Deleted group")
+        return {"ok": True, "message": "Group deleted"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
+
+@app.post("/api/groups/{group_id}/members")
+async def api_add_group_member(group_id: int, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    user_id = body.get("user_id")
+    if not user_id:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "User ID required"})
+    try:
+        db.add_user_to_group(user_id, group_id)
+        return {"ok": True, "message": "User added to group"}
+    except ValueError as ve:
+        return JSONResponse(status_code=400, content={"ok": False, "message": str(ve)})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "message": f"Failed to add user: {str(e)}"})
+
+@app.delete("/api/groups/{group_id}/members/{user_id}")
+async def api_remove_group_member(group_id: int, user_id: int):
+    if db.remove_user_from_group(user_id, group_id):
+        return {"ok": True, "message": "User removed from group"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Removal failed"})
+
+@app.post("/api/groups/{group_id}/projects")
+async def api_assign_group_project(group_id: int, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    project_id = body.get("project_id")
+    if not project_id:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Project ID required"})
+    if db.assign_project_to_group(group_id, project_id):
+        return {"ok": True, "message": "Project assigned to group"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Assignment failed"})
+
+@app.delete("/api/groups/{group_id}/projects/{project_id}")
+async def api_remove_group_project(group_id: int, project_id: int):
+    if db.remove_project_from_group(group_id, project_id):
+        return {"ok": True, "message": "Project removed from group"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Removal failed"})
+
+@app.post("/api/groups/wizard")
+async def api_group_wizard(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        res = db.create_group_user_wizard(body)
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, "GROUP_WIZARD_CREATE", "group", res.get("group_id"), f"Created Group '{res.get('group_name')}' and GC User '{res.get('gc_username')}'")
+        return {"ok": True, "data": res, "message": "Group User & Group created successfully"}
+    except ValueError as ve:
+        return JSONResponse(status_code=400, content={"ok": False, "message": str(ve)})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "message": f"Wizard failed: {str(e)}"})
+
 
 
 
