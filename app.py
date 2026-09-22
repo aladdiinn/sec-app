@@ -3078,6 +3078,10 @@ async def api_watchdog_test_spike(request: Request):
     
     # Log an alert into DB
     db.log_alert(1, "WATCHDOG_ANOMALY_SPIKE", "Watchdog AI: Critical CPU & Latency Anomaly Spike detected on ec2-prod-web-01 (98.6% CPU, 1840ms latency)", severity="critical")
+    try:
+        db.create_incident("Watchdog AI: Critical CPU & Latency Anomaly", "critical", "Outlier Anomaly: ec2-prod-web-01 CPU spiked to 98.6%. Root Cause: Upstream auth-service pool exhaustion.", "SOC Analyst", server_id=1)
+    except Exception:
+        pass
     
     return {
         "ok": True,
