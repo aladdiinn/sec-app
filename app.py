@@ -2912,7 +2912,7 @@ async def api_fetch_log_lines(request: Request):
                 logger.warning(f"Error fetching remote SSH logs from {host}: {ex_ssh}")
 
     # 4. Priority 4: Read REAL Linux system log files & systemd journalctl directly from server disk
-    if not lines and not log_path:
+    if not log_path or (log_type and log_type.lower() in ["syslog", "sys", "auth"]):
         sys_paths = []
         lt = (log_type or "").lower()
         if not lt or lt in ["syslog", "sys"]:
@@ -2964,8 +2964,8 @@ async def api_fetch_log_lines(request: Request):
                 except Exception as e:
                     logger.warning(f"Could not read real log file {filepath}: {e}")
 
-        # Try journalctl if syslog file is empty
-        if not lines and (not lt or lt in ["syslog", "auth", "sys"]):
+        # Also read journalctl system log entries
+        if (not lt or lt in ["syslog", "auth", "sys"]):
             try:
                 cmd = ["journalctl", "-n", str(limit), "--no-pager"]
                 out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=2).decode("utf-8", errors="ignore")
@@ -3191,3 +3191,20 @@ async def api_watchdog_test_spike(request: Request):
         "muted_duplicates": 58,
         "pushed_lines": len(spike_lines)
     }
+
+
+@app.post("/api/watchdog/push")
+async def api_watchdog_push(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    msg = body.get("message") or body.get("line") or body.get("log") or "[WATCHDOG-AI] Outlier Anomaly: Server metric spike detected"
+    sid = body.get("server_id") or 1
+    
+    db.push_log_entries(config_id=None, server_id=sid, lines=[msg])
+    db.log_alert(sid, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {msg}", severity="critical")
+    inc_title = f"Watchdog AI Anomaly: {msg[:50]}..." if len(msg) > 50 else f"Watchdog AI: {msg}"
+    iid = db.create_incident(inc_title, "critical", f"Watchdog AI Detection: {msg}", "SOC Analyst", server_id=sid)
+    
+    return {"ok": True, "incident_id": iid, "message": "Watchdog anomaly pushed successfully & Incident created!"}
