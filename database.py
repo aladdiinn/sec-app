@@ -2667,6 +2667,15 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                         VALUES (%s, %s, %s, %s, %s, NOW());
                     """, (config_id, server_id, level, source, line_str))
                     saved += 1
+
+                    # Real-Time Watchdog Anomaly & Incident Auto-Trigger
+                    if any(kw in line_str for kw in ["[WATCHDOG-AI]", "Outlier Anomaly", "Root Cause Analysis", "Traffic Anomaly Alert", "CPU usage spiked"]) or (level == "ERROR" and "watchdog" in line_str.lower()):
+                        try:
+                            log_alert(server_id or 1, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {line_str}", severity="critical")
+                            inc_title = f"Watchdog AI Anomaly: {line_str[:50]}..." if len(line_str) > 50 else f"Watchdog AI: {line_str}"
+                            create_incident(inc_title, "critical", f"Watchdog AI Detection: {line_str}", "SOC Analyst", server_id=server_id or 1)
+                        except Exception as ex_wd_inc:
+                            logger.debug(f"Watchdog incident creation error: {ex_wd_inc}")
                 
                 # Trim old logs to keep table lightweight (max 2000 per config)
                 if config_id:

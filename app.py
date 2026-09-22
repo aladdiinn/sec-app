@@ -2436,6 +2436,12 @@ async def api_change_password(request: Request):
     finally:
         conn.close()
 
+@app.get("/api/audit-logs")
+@app.get("/api/audit-log")
+@app.get("/api/audit_logs")
+async def api_get_audit_logs():
+    return db.get_audit_logs()
+
 # Aliases for direct script/test calls
 api_get_audit_log = api_get_audit_logs
 api_dashboard_counts = api_dashboard_counts_new
