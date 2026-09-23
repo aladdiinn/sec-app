@@ -1359,7 +1359,7 @@ async def api_get_alerts(request: Request = None, limit: int = 100, severity: st
                     query += " AND (a.title ILIKE %s OR a.message ILIKE %s OR s.hostname ILIKE %s)"
                     params.extend([f"%{clean_q}%", f"%{clean_q}%", f"%{clean_q}%"])
 
-            query += " ORDER BY a.created_at DESC LIMIT %s"
+            query += " ORDER BY CASE WHEN LOWER(a.severity) = 'critical' THEN 1 WHEN LOWER(a.severity) IN ('warning', 'high', 'trouble') THEN 2 ELSE 3 END, a.created_at DESC LIMIT %s"
             params.append(limit)
             cur.execute(query, params)
             items = cur.fetchall()

@@ -2,3 +2,6 @@ __pycache__/
 *.py[cod]
 app.log
 .env
+
+securepulse.db
+*.db
