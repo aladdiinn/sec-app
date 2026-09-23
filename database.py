@@ -389,6 +389,37 @@ def init_db():
                 ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS source VARCHAR(512);
             """)
 
+            # Backfill existing pushed_logs so categories (postgres, tomcat, os) display immediately
+            try:
+                cur.execute("""
+                    UPDATE pushed_logs
+                    SET log_type = 'postgres',
+                        source = CASE WHEN source LIKE 'node-agent/%' OR source LIKE 'app-agent/%' OR source IS NULL THEN '/var/log/postgresql/postgresql.log' ELSE source END
+                    WHERE (log_type IS NULL OR log_type = '' OR log_type = 'os') AND (
+                        message ILIKE '%statement:%' OR message ILIKE '%checkpoint%' OR message ILIKE '%duration:%'
+                        OR message ILIKE '%drop database%' OR message ILIKE '%drop table%' OR message ILIKE '%drop schema%'
+                        OR message ILIKE '%dropdb%' OR message ILIKE '%dropuser%' OR message ILIKE '%alter user%'
+                        OR message ILIKE '%alter role%' OR message ILIKE '%grant %' OR message ILIKE '%pg_hba%'
+                        OR message ILIKE '%autovacuum%' OR message ILIKE '%postgres%' OR message ILIKE '%pgsql%'
+                        OR source ILIKE '%postgres%' OR source ILIKE '%pgsql%'
+                    );
+                    UPDATE pushed_logs
+                    SET log_type = 'tomcat',
+                        source = CASE WHEN source LIKE 'node-agent/%' OR source LIKE 'app-agent/%' OR source IS NULL THEN '/opt/tomcat/logs/catalina.out' ELSE source END
+                    WHERE (log_type IS NULL OR log_type = '' OR log_type = 'os') AND (
+                        message ILIKE '%catalina%' OR message ILIKE '%org.apache%' OR message ILIKE '%tomcat%'
+                        OR message ILIKE '%coyote%' OR message ILIKE '%protocolhandler%' OR message ILIKE '%outofmemory%'
+                        OR message ILIKE '%spring%' OR message ILIKE '%hibernate%'
+                        OR source ILIKE '%tomcat%' OR source ILIKE '%catalina%' OR source ILIKE '%nohup%'
+                    );
+                    UPDATE pushed_logs
+                    SET log_type = 'os',
+                        source = CASE WHEN source LIKE 'node-agent/%' OR source LIKE 'app-agent/%' OR source IS NULL THEN '/var/log/syslog' ELSE source END
+                    WHERE log_type IS NULL OR log_type = '';
+                """)
+            except Exception as _ex_bf:
+                logger.debug(f"Pushed logs backfill notice: {_ex_bf}")
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS groups (
                     id SERIAL PRIMARY KEY,
@@ -2933,6 +2964,82 @@ def delete_log_config(config_id: int):
     finally:
         conn.close()
 
+def classify_log_entry(message: str, source: str = "", log_type: str = None) -> tuple:
+    """
+    Classifies an incoming log line into (log_type, source, log_level).
+    Ensures log_type is NEVER null, so category tabs (postgres, tomcat, os, errors, userdel)
+    display the proper lines reliably.
+    """
+    msg_str = str(message or "").strip()
+    msg_lower = msg_str.lower()
+    src_str = str(source or "").strip()
+    src_lower = src_str.lower()
+    lt = str(log_type or "").lower().strip()
+
+    def _detect_level(m_low: str) -> str:
+        if any(k in m_low for k in ["fatal", "critical", "crit", "emerg", "panic", "outofmemory", "drop database"]):
+            return "CRITICAL"
+        if any(k in m_low for k in ["error", "exception", "severe", "failed", "denied", "refused", "failure"]):
+            return "ERROR"
+        if any(k in m_low for k in ["warn", "warning", "checkpoint", "alert"]):
+            return "WARN"
+        return "INFO"
+
+    level = _detect_level(msg_lower)
+
+    # 1. PostgreSQL detection
+    is_pg = (
+        lt in ("postgres", "pgsql") or
+        any(k in src_lower for k in ["postgres", "pgsql", "5432"]) or
+        any(k in msg_lower for k in [
+            "statement:", "checkpoint", "duration:", "pg_hba", "autovacuum:",
+            "database system is ready", "database system was shut down",
+            "could not connect to server", "fatal:  password authentication",
+            "drop database", "drop table", "drop schema", "dropdb", "dropuser",
+            "alter user", "alter role", "grant all", "with superuser", "vacuum",
+            "permission denied for database", "must be superuser"
+        ]) or
+        bool(re.search(r'\[\d+\]:\s*(?:log|error|fatal|detail|hint|statement|warning):', msg_lower)) or
+        bool(re.search(r'\b(select\s+.*from|insert\s+into|update\s+\w+\s+set|delete\s+from|create\s+table|drop\s+database|truncate|alter\s+user|alter\s+role|grant\s+all)\b', msg_lower))
+    )
+    if is_pg:
+        clean_src = src_str if (src_str and "node-agent" not in src_str and "app-agent" not in src_str) else "/var/log/postgresql/postgresql.log"
+        return "postgres", clean_src, level
+
+    # 2. Tomcat / Application detection
+    is_tomcat = (
+        lt in ("tomcat", "catalina", "app") or
+        any(k in src_lower for k in ["tomcat", "catalina", "nohup", "coyote", "8080", "8443"]) or
+        any(k in msg_lower for k in [
+            "catalina", "org.apache.catalina", "org.apache.coyote", "org.apache.tomcat",
+            "protocolhandler", "deployment of web application", "starting service",
+            "stopping service", "outofmemoryerror", "stackoverflowerror",
+            "java.lang.", "spring", "hibernate"
+        ])
+    )
+    if is_tomcat:
+        clean_src = src_str if (src_str and "node-agent" not in src_str and "app-agent" not in src_str) else "/opt/tomcat/logs/catalina.out"
+        return "tomcat", clean_src, level
+
+    # 3. OS System detection
+    is_os = (
+        lt in ("os", "auth", "syslog", "kernel", "audit", "journal") or
+        any(k in src_lower for k in ["auth", "syslog", "secure", "audit", "kern", "journal", "dpkg", "boot", "cron", "messages"]) or
+        any(k in msg_lower for k in [
+            "systemd[", "sshd[", "kernel:", "cron[", "sudo:", "su:", "pam_unix",
+            "userdel", "deluser", "useradd", "adduser", "usermod", "chmod", "chown",
+            "session opened", "session closed", "accepted password", "failed password", "invalid user"
+        ])
+    )
+    if is_os:
+        clean_src = src_str if (src_str and "node-agent" not in src_str and "app-agent" not in src_str) else "/var/log/syslog"
+        return "os", clean_src, level
+
+    # Fallback default: keep existing type or 'os'
+    clean_src = src_str if (src_str and "node-agent" not in src_str and "app-agent" not in src_str) else "/var/log/syslog"
+    return lt if lt else "os", clean_src, level
+
+
 def push_log_entries(config_id=None, server_id=None, lines=None):
     if not lines: return 0
     conn = get_db_connection()
@@ -2960,17 +3067,18 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                     ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS source VARCHAR(512);
                 """)
                 for line in lines:
-                    # Support both plain strings and structured dicts from the new agent
+                    # Support both plain strings and structured dicts from the agent
                     if isinstance(line, dict) and 'line' in line:
                         line_str = str(line['line']).strip()
-                        row_source = line.get('source') or (f"app-agent/{config_id}" if config_id else f"node-agent/{server_id or 0}")
-                        row_log_type = line.get('log_type') or None
+                        raw_source = line.get('source') or (f"app-agent/{config_id}" if config_id else f"node-agent/{server_id or 0}")
+                        raw_log_type = line.get('log_type') or None
                     else:
                         line_str = str(line).strip()
-                        row_source = f"app-agent/{config_id}" if config_id else f"node-agent/{server_id or 0}"
-                        row_log_type = None
+                        raw_source = f"app-agent/{config_id}" if config_id else f"node-agent/{server_id or 0}"
+                        raw_log_type = None
                     if not line_str: continue
-                    level = "ERROR" if any(w in line_str.lower() for w in ["error", "fail", "exception", "fatal"]) else ("WARN" if "warn" in line_str.lower() else "INFO")
+
+                    row_log_type, row_source, level = classify_log_entry(line_str, raw_source, raw_log_type)
 
                     cur.execute("""
                         INSERT INTO pushed_logs (config_id, server_id, log_level, source, log_type, message, created_at)
@@ -3007,6 +3115,26 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                                 log_alert(server_id, "SUSPICIOUS_ACTIVITY", f"Suspicious Activity Detected: {line_str}", severity="high", title="Suspicious Activity Alert")
                             except Exception as ex_susp_inc:
                                 logger.debug(f"Suspicious activity incident error: {ex_susp_inc}")
+
+                        # 4. PostgreSQL Critical Operations (drop database, drop table, drop schema, alter user)
+                        elif row_log_type == 'postgres' and any(kw in lower_line for kw in ["drop database", "drop schema", "drop table", "truncate", "alter user", "alter role", "grant all", "with superuser"]):
+                            try:
+                                sev = "critical" if any(kw in lower_line for kw in ["drop database", "drop schema", "drop table", "truncate"]) else "warning"
+                                title = "PostgreSQL Database Deletion Alert" if sev == "critical" else "PostgreSQL Privilege Escalation Alert"
+                                atype = "PG_DB_DELETED" if sev == "critical" else "PG_PRIVILEGE_CHANGE"
+                                log_alert(server_id, atype, f"SOAR Detections [PostgreSQL]: {line_str[:250]}", severity=sev, title=title)
+                            except Exception as ex_pg_inc:
+                                logger.debug(f"PostgreSQL log alert creation error: {ex_pg_inc}")
+
+                        # 5. OS userdel and permission alterations
+                        elif any(kw in lower_line for kw in ["userdel", "deluser", "chmod 777", "chown root"]):
+                            try:
+                                sev = "critical" if "userdel" in lower_line or "deluser" in lower_line else "high"
+                                title = "User Account Deletion Alert (userdel)" if "userdel" in lower_line or "deluser" in lower_line else "Insecure Permission Grant"
+                                atype = "USER_DELETED" if "userdel" in lower_line or "deluser" in lower_line else "INSECURE_PERM_CHANGE"
+                                log_alert(server_id, atype, f"SOAR Detections [OS Security]: {line_str[:250]}", severity=sev, title=title)
+                            except Exception as ex_os_inc:
+                                logger.debug(f"OS security alert creation error: {ex_os_inc}")
                 
                 # Trim old logs to keep table lightweight (max 2000 per config)
                 if config_id:

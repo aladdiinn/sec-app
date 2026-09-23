@@ -730,8 +730,10 @@
                 streamUrl += `&log_type=${encodeURIComponent(cat)}`;
             }
             const freshLogs = await apiFetch(streamUrl);
-            if (Array.isArray(freshLogs)) {
+            if (Array.isArray(freshLogs) && freshLogs.length > 0) {
                 currentModalLogs = freshLogs;
+            } else if (Array.isArray(freshLogs) && freshLogs.length === 0 && cat === 'all') {
+                currentModalLogs = [];
             }
         } catch(e) {
             console.warn('Error fetching logs for category:', e);
@@ -749,9 +751,9 @@
             available = currentModalFiles.filter(f => {
                 const ft = (f.log_type || '').toLowerCase();
                 const src = (f.source || '').toLowerCase();
-                if (modalActiveCategory === 'os') return ft === 'os' || anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal']);
-                if (modalActiveCategory === 'tomcat') return ft === 'tomcat' || anyMatch(src, ['tomcat', 'catalina', 'nohup']);
-                if (modalActiveCategory === 'postgres') return ft === 'postgres' || anyMatch(src, ['postgres', 'pgsql']);
+                if (modalActiveCategory === 'os') return ft === 'os' || anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal', 'systemd']);
+                if (modalActiveCategory === 'tomcat') return ft === 'tomcat' || anyMatch(src, ['tomcat', 'catalina', 'nohup', 'coyote']);
+                if (modalActiveCategory === 'postgres') return ft === 'postgres' || anyMatch(src, ['postgres', 'pgsql', '5432']);
                 return true;
             });
         }
@@ -798,15 +800,37 @@
             if (modalActiveCategory === 'soar') {
                 if (!isModalLogSecurityThreat(line, src)) return false;
             } else if (modalActiveCategory === 'os') {
-                if (ltype !== 'os' && !anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal'])) return false;
+                const isOs = ltype === 'os' || ltype === 'auth' || ltype === 'syslog' || ltype === 'kernel' || ltype === 'audit' ||
+                             anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal', 'dpkg', 'boot', 'cron', 'systemd']) ||
+                             anyMatch(line, ['systemd[', 'sshd[', 'kernel:', 'cron[', 'sudo:', 'su:', 'pam_unix', 'useradd', 'adduser', 'userdel', 'deluser', 'chmod', 'chown', 'session opened', 'session closed']) ||
+                             (!ltype && !anyMatch(src, ['postgres', 'pgsql', 'tomcat', 'catalina']) && !anyMatch(line, ['statement:', 'checkpoint', 'duration:', 'org.apache', 'catalina']));
+                if (!isOs) return false;
             } else if (modalActiveCategory === 'tomcat') {
-                if (ltype !== 'tomcat' && !anyMatch(src, ['tomcat', 'catalina', 'nohup']) && !anyMatch(line, ['tomcat', 'catalina', 'org.apache.catalina'])) return false;
+                const isTomcat = ltype === 'tomcat' || ltype === 'catalina' || ltype === 'app' ||
+                                 anyMatch(src, ['tomcat', 'catalina', 'nohup', 'coyote', '8080']) ||
+                                 anyMatch(line, ['tomcat', 'catalina', 'org.apache', 'coyote', 'protocolhandler', 'outofmemory', 'java.lang.', 'spring', 'hibernate', 'starting service', 'stopping service']);
+                if (!isTomcat) return false;
             } else if (modalActiveCategory === 'postgres') {
-                if (ltype !== 'postgres' && !anyMatch(src, ['postgres', 'pgsql']) && !anyMatch(line, ['postgres'])) return false;
+                const isPg = ltype === 'postgres' || ltype === 'pgsql' ||
+                             anyMatch(src, ['postgres', 'pgsql', '5432']) ||
+                             anyMatch(line, [
+                                 'postgres', 'pgsql', 'statement:', 'checkpoint', 'duration:', 'fatal:  password',
+                                 'pg_hba', 'autovacuum:', 'drop database', 'drop table', 'drop schema', 'dropdb',
+                                 'dropuser', 'alter user', 'alter role', 'grant all', 'grant select', 'grant update',
+                                 'vacuum', 'database system is ready'
+                             ]) ||
+                             /\[\d+\]:\s*(?:log|error|fatal|detail|hint|statement|warning):/i.test(line) ||
+                             /\b(select\s+.*from|insert\s+into|update\s+\w+\s+set|delete\s+from|create\s+table|drop\s+database|truncate|alter\s+user|alter\s+role|grant\s+all)\b/i.test(line);
+                if (!isPg) return false;
             } else if (modalActiveCategory === 'errors') {
-                if (!anyMatch(line, ['error', 'fatal', 'crit', 'exception', 'severe', 'failed'])) return false;
+                const isErr = anyMatch(line, ['error', 'fatal', 'crit', 'exception', 'severe', 'failed', 'failure', 'denied', 'panic']) ||
+                              (l.level || l.log_level || '').toUpperCase().includes('ERR') ||
+                              (l.level || l.log_level || '').toUpperCase().includes('CRIT') ||
+                              (l.level || l.log_level || '').toUpperCase().includes('FATAL');
+                if (!isErr) return false;
             } else if (modalActiveCategory === 'userdel') {
-                if (!anyMatch(line, ['userdel', 'deluser', 'useradd', 'adduser', 'usermod', 'chmod', 'chown', 'sudo', 'su:'])) return false;
+                const isUser = anyMatch(line, ['userdel', 'deluser', 'useradd', 'adduser', 'usermod', 'chmod', 'chown', 'sudo:', 'su:', 'pam_unix', 'password changed', 'groupadd', 'groupdel']);
+                if (!isUser) return false;
             }
 
             if (modalActiveFile && (l.source || l.log_path) !== modalActiveFile) return false;
@@ -824,12 +848,17 @@
                 'all': 'Log Streams'
             };
             const catLabel = catNames[modalActiveCategory] || modalActiveCategory.toUpperCase();
+
+            const bufferNote = (currentModalLogs.length > 0)
+                ? `<div style="font-size:11px; color:#94a3b8; margin-top:8px">Showing 0 matching lines out of ${currentModalLogs.length} lines in buffer. <button class="btn btn-glass" onclick="selectModalLogCategory('all')" style="margin-left:8px; font-size:10px; padding:2px 8px; cursor:pointer">⚡ View All Streams</button></div>`
+                : `<div style="font-size:11px; color:#38bdf8; margin-top:8px">Ensure agent daemon is running on target host, or click <strong>⚡ ALL STREAMS</strong></div>`;
+
             logBox.innerHTML = `
             <div style="color:#94a3b8; text-align:center; padding:35px">
                 <div style="font-size:24px; margin-bottom:8px">📄</div>
                 <div style="font-size:13px; font-weight:600; color:#e2e8f0; margin-bottom:4px">No log lines found for ${escapeHtml(catLabel)}</div>
                 <div style="font-size:11px; color:#64748b">Filter: ${modalActiveCategory.toUpperCase()} ${modalActiveFile ? '· File: ' + escapeHtml(modalActiveFile) : ''}</div>
-                <div style="font-size:11px; color:#38bdf8; margin-top:8px">Ensure agent daemon is running on target host, or click <strong>⚡ ALL STREAMS</strong></div>
+                ${bufferNote}
             </div>`;
             return;
         }

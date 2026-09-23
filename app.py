@@ -1714,7 +1714,10 @@ async def api_agent_push(request: Request):
     # Also process logs included in telemetry payload
     logs = data.get("logs", [])
     if not logs and data.get("log_lines"):
-        logs = [{"line": l, "source": "/var/log/syslog", "log_type": "os"} for l in data.get("log_lines")]
+        logs = []
+        for l in data.get("log_lines"):
+            c_type, c_src, _ = db.classify_log_entry(l, "/var/log/syslog")
+            logs.append({"line": l, "source": c_src, "log_type": c_type})
     if logs:
         db.push_log_entries(server_id=server_id, lines=logs)
 
@@ -2896,9 +2899,37 @@ PY_EOF
 chmod +x /opt/securepulse/node_push_agent.py
 pkill -f node_push_agent.py 2>/dev/null || true
 pkill -f node_push_agent.sh 2>/dev/null || true
-nohup python3 /opt/securepulse/node_push_agent.py > /var/log/securepulse_agent.log 2>&1 &
+
+# Register as systemd service so systemctl restart/status/stop securepulse works
+if command -v systemctl >/dev/null 2>&1; then
+    cat << 'SERVICE_EOF' > /etc/systemd/system/securepulse.service
+[Unit]
+Description=SecurePulse SOC Node Agent Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/securepulse
+ExecStart=/usr/bin/python3 /opt/securepulse/node_push_agent.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/securepulse_agent.log
+StandardError=append:/var/log/securepulse_agent.log
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable securepulse 2>/dev/null || true
+    systemctl restart securepulse 2>/dev/null || nohup python3 /opt/securepulse/node_push_agent.py > /var/log/securepulse_agent.log 2>&1 &
+else
+    nohup python3 /opt/securepulse/node_push_agent.py > /var/log/securepulse_agent.log 2>&1 &
+fi
 
 echo "[SUCCESS] SecurePulse Agent Daemon is active & streaming telemetry!"
+echo "[INFO] Manage service: systemctl restart securepulse | systemctl status securepulse"
 """
     return Response(content=script, media_type="text/x-shellscript")
 
@@ -4677,22 +4708,52 @@ async def api_log_streams(
             if log_type and log_type.lower() != 'all':
                 lt = log_type.lower()
                 if lt == 'os':
-                    query += " AND (pl.log_type IN ('os', 'auth', 'syslog', 'kernel', 'audit') OR pl.source ILIKE '%auth%' OR pl.source ILIKE '%syslog%' OR pl.source ILIKE '%secure%' OR pl.source ILIKE '%audit%' OR pl.source ILIKE '%journal%')"
+                    query += """ AND (
+                        pl.log_type IN ('os', 'auth', 'syslog', 'kernel', 'audit', 'journal')
+                        OR pl.source ILIKE '%auth%' OR pl.source ILIKE '%syslog%' OR pl.source ILIKE '%secure%'
+                        OR pl.source ILIKE '%audit%' OR pl.source ILIKE '%journal%' OR pl.source ILIKE '%kern%'
+                        OR pl.message ILIKE '%systemd[%' OR pl.message ILIKE '%sshd[%' OR pl.message ILIKE '%kernel:%'
+                        OR pl.message ILIKE '%cron[%' OR pl.message ILIKE '%sudo:%' OR pl.message ILIKE '%pam_unix%'
+                        OR pl.message ILIKE '%session opened%' OR pl.message ILIKE '%session closed%'
+                        OR pl.message ILIKE '%useradd%' OR pl.message ILIKE '%userdel%' OR pl.message ILIKE '%chmod%'
+                        OR (pl.log_type IS NULL AND pl.source NOT ILIKE '%postgres%' AND pl.source NOT ILIKE '%tomcat%')
+                    )"""
                 elif lt == 'tomcat':
-                    query += " AND (pl.log_type IN ('tomcat', 'app', 'nohup') OR pl.source ILIKE '%tomcat%' OR pl.source ILIKE '%catalina%' OR pl.source ILIKE '%nohup%' OR pl.message ILIKE '%catalina%' OR pl.message ILIKE '%org.apache.catalina%')"
+                    query += """ AND (
+                        pl.log_type IN ('tomcat', 'app', 'nohup', 'catalina')
+                        OR pl.source ILIKE '%tomcat%' OR pl.source ILIKE '%catalina%' OR pl.source ILIKE '%nohup%'
+                        OR pl.message ILIKE '%catalina%' OR pl.message ILIKE '%org.apache%'
+                        OR pl.message ILIKE '%coyote%' OR pl.message ILIKE '%protocolhandler%'
+                        OR pl.message ILIKE '%outofmemory%' OR pl.message ILIKE '%java.lang%'
+                        OR pl.message ILIKE '%spring%' OR pl.message ILIKE '%hibernate%'
+                    )"""
                 elif lt == 'postgres':
-                    query += " AND (pl.log_type IN ('postgres', 'pgsql') OR pl.source ILIKE '%postgres%' OR pl.source ILIKE '%pgsql%' OR pl.message ILIKE '%postgres%')"
+                    query += """ AND (
+                        pl.log_type IN ('postgres', 'pgsql')
+                        OR pl.source ILIKE '%postgres%' OR pl.source ILIKE '%pgsql%'
+                        OR pl.message ILIKE '%postgres%' OR pl.message ILIKE '%pgsql%'
+                        OR pl.message ILIKE '%statement:%' OR pl.message ILIKE '%checkpoint%'
+                        OR pl.message ILIKE '%duration:%' OR pl.message ILIKE '%pg_hba%'
+                        OR pl.message ILIKE '%autovacuum%' OR pl.message ILIKE '%drop database%'
+                        OR pl.message ILIKE '%drop table%' OR pl.message ILIKE '%drop schema%'
+                        OR pl.message ILIKE '%dropdb%' OR pl.message ILIKE '%dropuser%'
+                        OR pl.message ILIKE '%alter user%' OR pl.message ILIKE '%alter role%'
+                        OR pl.message ILIKE '%grant %' OR pl.message ILIKE '%database system%'
+                        OR pl.message ILIKE '%vacuum %'
+                    )"""
                 elif lt == 'soar':
                     query += """ AND (
                         pl.message ILIKE '%drop database%' OR pl.message ILIKE '%drop table%' OR pl.message ILIKE '%truncate%'
+                        OR pl.message ILIKE '%drop schema%' OR pl.message ILIKE '%dropdb%' OR pl.message ILIKE '%dropuser%'
                         OR pl.message ILIKE '%alter user%' OR pl.message ILIKE '%alter role%' OR pl.message ILIKE '%grant all%'
                         OR pl.message ILIKE '%userdel%' OR pl.message ILIKE '%deluser%' OR pl.message ILIKE '%chmod 777%'
+                        OR pl.message ILIKE '%chmod %+s%' OR pl.message ILIKE '%chown %root%'
                         OR pl.message ILIKE '%usermod%sudo%' OR pl.message ILIKE '%outofmemory%' OR pl.message ILIKE '%soar%'
                     )"""
                 elif lt == 'errors':
-                    query += " AND (pl.log_level IN ('ERROR', 'CRITICAL', 'FATAL') OR pl.message ILIKE '%error%' OR pl.message ILIKE '%fatal%' OR pl.message ILIKE '%exception%' OR pl.message ILIKE '%fail%')"
+                    query += " AND (pl.log_level IN ('ERROR', 'CRITICAL', 'FATAL') OR pl.message ILIKE '%error%' OR pl.message ILIKE '%fatal%' OR pl.message ILIKE '%exception%' OR pl.message ILIKE '%fail%' OR pl.message ILIKE '%severe%' OR pl.message ILIKE '%denied%')"
                 elif lt == 'userdel':
-                    query += " AND (pl.message ILIKE '%userdel%' OR pl.message ILIKE '%deluser%' OR pl.message ILIKE '%chmod%' OR pl.message ILIKE '%chown%' OR pl.message ILIKE '%usermod%' OR pl.message ILIKE '%useradd%' OR pl.message ILIKE '%adduser%')"
+                    query += " AND (pl.message ILIKE '%userdel%' OR pl.message ILIKE '%deluser%' OR pl.message ILIKE '%chmod%' OR pl.message ILIKE '%chown%' OR pl.message ILIKE '%usermod%' OR pl.message ILIKE '%useradd%' OR pl.message ILIKE '%adduser%' OR pl.message ILIKE '%sudo:%' OR pl.message ILIKE '%su:%')"
 
             query += " ORDER BY pl.id DESC LIMIT %s"
             params.append(min(limit, 500))
