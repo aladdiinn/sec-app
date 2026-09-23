@@ -848,33 +848,9 @@ async function openImage3Modal(serverId) {
             }).join('');
         }
 
-        // Modal Log SOAR Threat Banner (LOG-BASED ONLY, EXCLUDE SSH BRUTE FORCE / AUTH FAIL NOISE)
-        modalLogThreatAlerts = alerts.filter(a => {
-            const at = (a.alert_type || '').toLowerCase();
-            const t = (a.title || '').toLowerCase();
-            const msg = (a.message || '').toLowerCase();
-            // Strictly exclude SSH brute force & login auth fail
-            if (at.includes('auth_fail') || at.includes('ssh_brute') || t.includes('brute force') || t.includes('auth fail')) {
-                return false;
-            }
-            return at.includes('pg_') || at.includes('db_') || at.includes('privilege') || at.includes('user_deleted') ||
-                   at.includes('perm') || at.includes('tomcat') || at.includes('root') || at.includes('sudo') ||
-                   t.includes('postgres') || t.includes('privilege') || t.includes('deletion') || t.includes('tomcat') ||
-                   t.includes('escalation') || t.includes('user') || t.includes('permission') ||
-                   msg.includes('drop ') || msg.includes('userdel') || msg.includes('chmod') || msg.includes('tomcat');
-        });
-
-        const modalBanner = document.getElementById('modal-soar-alerts-bar');
-        const modalBannerText = document.getElementById('modal-soar-alerts-text');
-        if (modalBanner && modalBannerText) {
-            if (modalLogThreatAlerts.length > 0) {
-                const top = modalLogThreatAlerts[0];
-                modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:#94a3b8; font-size:9px">(${top.created_at_formatted || 'recent'})</span>`;
-                modalBanner.style.display = 'flex';
-            } else {
-                modalBanner.style.display = 'none';
-            }
-        }
+        // Store all alerts for context-sensitive SOAR banner filtering
+        modalAllAlerts = alerts;
+        updateModalSoarBanner();
 
         // Store logs and populate files
         try {
@@ -912,9 +888,60 @@ let currentModalLogs = [];
 let currentModalFiles = [];
 let modalActiveCategory = 'all';
 let modalActiveFile = '';
+let modalAllAlerts = [];
 let modalLogThreatAlerts = [];
 
-function selectModalLogCategory(cat) {
+function updateModalSoarBanner() {
+    const modalBanner = document.getElementById('modal-soar-alerts-bar');
+    const modalBannerText = document.getElementById('modal-soar-alerts-text');
+    if (!modalBanner || !modalBannerText) return;
+
+    const cat = (modalActiveCategory || 'all').toLowerCase();
+
+    // Filter alerts strictly for log threats relevant to this category
+    const relevantAlerts = (modalAllAlerts || []).filter(a => {
+        const at = (a.alert_type || '').toUpperCase();
+        const t = (a.title || '').toLowerCase();
+        const msg = (a.message || '').toLowerCase();
+
+        // Strictly exclude sudo su, interactive root escalation, SSH brute force, and auth fail noise
+        if (at.includes('AUTH_FAIL') || at.includes('SSH_BRUTE') || at.includes('SUDO_ROOT') ||
+            t.includes('root escalation') || msg.includes('sudo su') || msg.includes('su - root') ||
+            t.includes('brute force') || t.includes('auth fail')) {
+            return false;
+        }
+
+        if (cat === 'postgres') {
+            return at.startsWith('PG_') || t.includes('postgres') || msg.includes('postgres') ||
+                   t.includes('database deletion') || msg.includes('drop database') || msg.includes('drop table');
+        }
+        if (cat === 'tomcat') {
+            return at.startsWith('TOMCAT_') || t.includes('tomcat') || msg.includes('tomcat') ||
+                   msg.includes('catalina') || msg.includes('outofmemory');
+        }
+        if (cat === 'os') {
+            return at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' ||
+                   t.includes('user deletion') || t.includes('insecure permission') ||
+                   msg.includes('userdel') || msg.includes('deluser') || msg.includes('chmod 777');
+        }
+        // For 'all', 'soar', 'errors', 'userdel' - only match real log threats
+        return at.startsWith('PG_') || at.startsWith('TOMCAT_') || at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' ||
+               t.includes('postgres') || t.includes('tomcat') || t.includes('user deletion') || t.includes('insecure permission') ||
+               msg.includes('drop database') || msg.includes('drop table') || msg.includes('userdel') || msg.includes('chmod 777');
+    });
+
+    modalLogThreatAlerts = relevantAlerts;
+
+    if (relevantAlerts.length > 0) {
+        const top = relevantAlerts[0];
+        modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:#94a3b8; font-size:9px">(${top.created_at_formatted || 'recent'})</span>`;
+        modalBanner.style.display = 'flex';
+    } else {
+        modalBanner.style.display = 'none';
+    }
+}
+
+async function selectModalLogCategory(cat) {
     modalActiveCategory = cat;
     document.querySelectorAll('.i3-log-cat-btn').forEach(b => b.classList.remove('active'));
     const btn = document.getElementById(`btn-cat-${cat}`);
@@ -924,7 +951,28 @@ function selectModalLogCategory(cat) {
     const sel = document.getElementById('modal-log-file-select');
     if (sel) sel.value = '';
 
+    // Update SOAR banner dynamically based on the selected category
+    updateModalSoarBanner();
     updateModalFileSelector();
+
+    const logBox = document.getElementById('i3-logs-box');
+    if (logBox) {
+        logBox.innerHTML = `<div style="color:#94a3b8; text-align:center; padding:30px">⚡ Loading ${escapeHtml(cat.toUpperCase())} log stream...</div>`;
+    }
+
+    try {
+        let streamUrl = `/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200`;
+        if (cat && cat !== 'all') {
+            streamUrl += `&log_type=${encodeURIComponent(cat)}`;
+        }
+        const freshLogs = await apiFetch(streamUrl);
+        if (Array.isArray(freshLogs)) {
+            currentModalLogs = freshLogs;
+        }
+    } catch(e) {
+        console.warn('Error fetching logs for category:', e);
+    }
+
     renderModalLogs();
 }
 
@@ -937,7 +985,7 @@ function updateModalFileSelector() {
         available = currentModalFiles.filter(f => {
             const ft = (f.log_type || '').toLowerCase();
             const src = (f.source || '').toLowerCase();
-            if (modalActiveCategory === 'os') return ft === 'os' || anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern']);
+            if (modalActiveCategory === 'os') return ft === 'os' || anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal']);
             if (modalActiveCategory === 'tomcat') return ft === 'tomcat' || anyMatch(src, ['tomcat', 'catalina', 'nohup']);
             if (modalActiveCategory === 'postgres') return ft === 'postgres' || anyMatch(src, ['postgres', 'pgsql']);
             return true;
@@ -963,13 +1011,14 @@ function isModalLogSecurityThreat(text, src) {
     if (!text) return false;
     const str = String(text).toLowerCase();
     const source = String(src || '').toLowerCase();
-    // Exclude SSH brute force & login auth fail noise
-    if ((str.includes('auth_fail') || str.includes('ssh_brute') || str.includes('failed password') || str.includes('invalid user')) &&
-        !anyMatch(str, ['drop database', 'drop table', 'truncate', 'userdel', 'chmod 777', 'alter user', 'alter role', 'grant all'])) {
+    // Exclude SSH brute force & login auth fail noise & interactive sudo su
+    if (str.includes('auth_fail') || str.includes('ssh_brute') || str.includes('failed password') || str.includes('invalid user') ||
+        str.includes('sudo su') || str.includes('su - root')) {
         return false;
     }
-    return /drop\s+database|drop\s+schema|drop\s+table|truncate|dropdb|dropuser|alter\s+user|alter\s+role|grant\s+all|with\s+superuser|createuser|userdel|deluser|usermod.*sudo|chmod\s+.*777|chmod\s+.*\+s|chown\s+.*root|\/etc\/shadow|\/etc\/sudoers|visudo|sudoedit|outofmemoryerror|stackoverflowerror|soar\s+detection/i.test(str) ||
-           (anyMatch(source, ['postgres', 'pgsql', 'audit']) && anyMatch(str, ['error', 'fatal', 'denied', 'drop', 'alter', 'grant', 'delete']));
+    return /drop\s+database|drop\s+schema|drop\s+table|truncate|dropdb|dropuser|alter\s+user|alter\s+role|grant\s+all|with\s+superuser|createuser|userdel|deluser|usermod.*sudo|chmod\s+.*777|chmod\s+.*\+s|chown\s+.*root|\/etc\/shadow|\/etc\/sudoers|outofmemoryerror|stackoverflowerror|soar\s+detection/i.test(str) ||
+           (anyMatch(source, ['postgres', 'pgsql']) && anyMatch(str, ['fatal', 'denied', 'drop', 'alter', 'grant', 'delete'])) ||
+           (anyMatch(source, ['tomcat', 'catalina']) && anyMatch(str, ['fatal', 'outofmemory', 'severe']));
 }
 
 function renderModalLogs() {
@@ -987,9 +1036,9 @@ function renderModalLogs() {
         if (modalActiveCategory === 'soar') {
             if (!isModalLogSecurityThreat(line, src)) return false;
         } else if (modalActiveCategory === 'os') {
-            if (ltype !== 'os' && !anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern'])) return false;
+            if (ltype !== 'os' && !anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal'])) return false;
         } else if (modalActiveCategory === 'tomcat') {
-            if (ltype !== 'tomcat' && !anyMatch(src, ['tomcat', 'catalina', 'nohup']) && !anyMatch(line, ['tomcat', 'catalina'])) return false;
+            if (ltype !== 'tomcat' && !anyMatch(src, ['tomcat', 'catalina', 'nohup']) && !anyMatch(line, ['tomcat', 'catalina', 'org.apache.catalina'])) return false;
         } else if (modalActiveCategory === 'postgres') {
             if (ltype !== 'postgres' && !anyMatch(src, ['postgres', 'pgsql']) && !anyMatch(line, ['postgres'])) return false;
         } else if (modalActiveCategory === 'errors') {
@@ -1039,12 +1088,22 @@ function renderModalLogs() {
             return;
         }
 
+        const catNames = {
+            'os': 'OS System Logs (/var/log/syslog, auth.log, journalctl)',
+            'tomcat': 'Tomcat & Application Logs (catalina.out, nohup.out)',
+            'postgres': 'PostgreSQL Database Logs',
+            'errors': 'Error / Fatal Logs',
+            'userdel': 'User & Permission Event Logs',
+            'all': 'Log Streams'
+        };
+        const catLabel = catNames[modalActiveCategory] || modalActiveCategory.toUpperCase();
+
         logBox.innerHTML = `
         <div style="color:#94a3b8; text-align:center; padding:35px">
             <div style="font-size:24px; margin-bottom:8px">📄</div>
-            <div style="font-size:13px; font-weight:600; color:#e2e8f0; margin-bottom:4px">No log lines found</div>
-            <div style="font-size:11px; color:#64748b">Filter: ${modalActiveCategory.toUpperCase()} ${modalActiveFile ? '· ' + escapeHtml(modalActiveFile) : ''}</div>
-            <div style="font-size:11px; color:#38bdf8; margin-top:8px">Waiting for target node stream, or click <strong>ALL</strong> / <strong>OS</strong></div>
+            <div style="font-size:13px; font-weight:600; color:#e2e8f0; margin-bottom:4px">No log lines found for ${escapeHtml(catLabel)}</div>
+            <div style="font-size:11px; color:#64748b">Filter: ${modalActiveCategory.toUpperCase()} ${modalActiveFile ? '· File: ' + escapeHtml(modalActiveFile) : ''}</div>
+            <div style="font-size:11px; color:#38bdf8; margin-top:8px">Ensure agent daemon is running on target host, or click <strong>⚡ ALL STREAMS</strong></div>
         </div>`;
         return;
     }
@@ -1065,14 +1124,14 @@ function renderModalLogs() {
 
     logBox.innerHTML = topNotice + filtered.map(l => {
         const text = l.line || l.message || '';
-        const isThreat = isModalLogSecurityThreat(text, l.source || l.log_path);
+        const sourcePath = l.source || l.log_path || '/var/log/syslog';
+        const isThreat = isModalLogSecurityThreat(text, sourcePath);
         const lower = text.toLowerCase();
-        const isErr = isThreat || lower.includes('fatal') || lower.includes('error') || lower.includes('auth_fail') || lower.includes('invalid user') || lower.includes('failed password') || lower.includes('critical');
+        const isErr = isThreat || lower.includes('fatal') || lower.includes('error') || lower.includes('critical');
         const isWarn = lower.includes('warn') || lower.includes('alert') || lower.includes('privilege');
 
         const textColor = isThreat ? '#f87171' : (isErr ? '#ef4444' : (isWarn ? '#f59e0b' : '#f8fafc'));
         const ts = l.created_at_formatted || (l.created_at ? new Date(l.created_at).toLocaleTimeString() : 'log');
-        const sourcePath = l.source || l.log_path || '/var/log/syslog';
 
         return `
         <div style="padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03); display:flex; align-items:flex-start; gap:8px">
@@ -1132,7 +1191,11 @@ function escapeHtml(text) {
 async function refreshModalLogs() {
     if (!activeModalServerId) return;
     try {
-        const stream = await apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200`);
+        let streamUrl = `/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200`;
+        if (modalActiveCategory && modalActiveCategory !== 'all') {
+            streamUrl += `&log_type=${encodeURIComponent(modalActiveCategory)}`;
+        }
+        const stream = await apiFetch(streamUrl);
         if (Array.isArray(stream)) {
             currentModalLogs = stream;
             renderModalLogs();

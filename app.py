@@ -1713,8 +1713,31 @@ async def api_agent_push(request: Request):
 
     # Also process logs included in telemetry payload
     logs = data.get("logs", [])
+    if not logs and data.get("log_lines"):
+        logs = [{"line": l, "source": "/var/log/syslog", "log_type": "os"} for l in data.get("log_lines")]
     if logs:
         db.push_log_entries(server_id=server_id, lines=logs)
+
+    # Auto-register discovered log paths into server_log_configs
+    discovered = data.get("discovered_log_paths", [])
+    if discovered and server_id:
+        try:
+            for p in discovered:
+                p_str = str(p).strip()
+                if not p_str: continue
+                lt = "os"
+                plow = p_str.lower()
+                if "postgres" in plow or "pgsql" in plow: lt = "postgres"
+                elif "tomcat" in plow or "catalina" in plow or "nohup" in plow: lt = "tomcat"
+                db.add_log_config(
+                    server_id=server_id,
+                    server_ip=data.get("server_ip") or "",
+                    app_name=f"Auto-{lt.upper()}",
+                    service_type=lt,
+                    log_file_path=p_str
+                )
+        except Exception as ex_disc:
+            logger.debug(f"Auto-config discovered paths error: {ex_disc}")
 
     # Run real-time SIEM / IDS / IPS Detection Engine
     try:
@@ -1725,7 +1748,7 @@ async def api_agent_push(request: Request):
     return {"status": "ok", "ok": True, "server_id": server_id, "message": "Agent telemetry ingested and analyzed"}
 
 @app.get("/api/alerts")
-async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False):
+async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False, log_type: Optional[str] = None):
     conn = db.get_db_connection()
     if not conn: return {"items": [], "total": 0}
     try:
@@ -1736,10 +1759,26 @@ async def api_get_alerts(request: Request = None, limit: int = 100, severity: st
                 query += " AND a.server_id = %s"
                 params.append(server_id)
 
-            # Support log_only: exclude SSH brute force & login auth fail noise
+            # Support log_type filter (postgres, tomcat, os)
+            req_log_type = log_type or (request and request.query_params.get("log_type", ""))
+            if req_log_type:
+                rlt = req_log_type.lower()
+                if rlt in ("postgres", "pgsql"):
+                    query += " AND (a.alert_type IN ('PG_DB_DELETED', 'PG_PRIVILEGE_CHANGE', 'PG_ACCESS_DENIED', 'PG_AUTH_FAILURE') OR a.title ILIKE '%postgres%')"
+                elif rlt in ("tomcat", "nohup", "catalina"):
+                    query += " AND (a.alert_type IN ('TOMCAT_CRITICAL_ERROR', 'TOMCAT_APP_ERROR') OR a.title ILIKE '%tomcat%')"
+                elif rlt == "os":
+                    query += " AND (a.alert_type IN ('USER_DELETED', 'INSECURE_PERM_CHANGE') OR a.title ILIKE '%user deletion%' OR a.title ILIKE '%insecure permission%')"
+
+            # Support log_only: strictly include only log-based security detections
+            # (Excludes sudo su, interactive command history, and SSH brute force noise)
             req_log_only = log_only or (request and request.query_params.get("log_only", "").lower() in ("true", "1", "yes"))
-            if req_log_only:
-                query += " AND a.alert_type NOT IN ('AUTH_FAIL', 'SSH_BRUTE_FORCE', 'AUTH_FAIL_THRESHOLD') AND a.title NOT ILIKE '%brute force%' AND a.title NOT ILIKE '%auth fail%'"
+            if req_log_only and not req_log_type:
+                query += """ AND a.alert_type IN (
+                    'PG_DB_DELETED', 'PG_PRIVILEGE_CHANGE', 'PG_ACCESS_DENIED', 'PG_AUTH_FAILURE',
+                    'USER_DELETED', 'INSECURE_PERM_CHANGE',
+                    'TOMCAT_CRITICAL_ERROR', 'TOMCAT_APP_ERROR', 'WATCHDOG_AI_ANOMALY'
+                )"""
             
             # Support both is_resolved and status query params
             resolved_val = None
@@ -2473,10 +2512,19 @@ def auto_discover_log_paths():
         ("/var/log/audit/audit.log", "os"),
         ("/var/log/kern.log", "os"),
         ("/var/log/sudo.log", "os"),
+        ("/var/log/dpkg.log", "os"),
+        ("/var/log/boot.log", "os"),
     ]
     for path, ltype in os_log_candidates:
         if os.path.exists(path):
             paths[path] = ltype
+
+    # If no physical OS log files found, check journalctl
+    if not any(lt == 'os' for lt in paths.values()):
+        try:
+            subprocess.check_output(["journalctl", "-n", "1", "--no-pager"], stderr=subprocess.DEVNULL, timeout=2)
+            paths["systemd/journal"] = "os"
+        except: pass
 
     # Tomcat / nohup log discovery
     tomcat_candidates = [
@@ -2486,7 +2534,16 @@ def auto_discover_log_paths():
         "/usr/local/tomcat/logs/catalina.out",
         "/opt/apache-tomcat*/logs/catalina.out",
         "/var/log/tomcat*/*.log",
-        "/opt/tomcat*/logs/*.log"
+        "/opt/tomcat*/logs/*.log",
+        "/usr/share/tomcat*/logs/catalina.out",
+        "/usr/share/tomcat*/*.log",
+        "/data/tomcat*/logs/catalina.out",
+        "/data/tomcat*/logs/*.log",
+        "/data/logs/catalina.out",
+        "/data/logs/*.log",
+        "/var/log/catalina.out",
+        "/home/*/tomcat/logs/catalina.out",
+        "/home/*/catalina.out"
     ]
     for candidate in tomcat_candidates:
         matched = glob.glob(candidate)
@@ -2498,10 +2555,17 @@ def auto_discover_log_paths():
     try:
         out = subprocess.check_output(["ps", "aux"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
         for line in out.split("\\n"):
-            if "catalina" in line.lower() or "tomcat" in line.lower():
+            line_l = line.lower()
+            if "catalina" in line_l or "tomcat" in line_l:
                 m = re.search(r'-Dcatalina\\.home=([^\\s]+)', line)
                 if m:
                     cat_log = os.path.join(m.group(1), "logs", "catalina.out")
+                    if os.path.exists(cat_log): paths[cat_log] = "tomcat"
+                    for ext_lg in glob.glob(os.path.join(m.group(1), "logs", "*.log")):
+                        paths[ext_lg] = "tomcat"
+                m_base = re.search(r'-Dcatalina\\.base=([^\\s]+)', line)
+                if m_base:
+                    cat_log = os.path.join(m_base.group(1), "logs", "catalina.out")
                     if os.path.exists(cat_log): paths[cat_log] = "tomcat"
                 m2 = re.search(r'-classpath\\s+([^\\s]+)', line)
                 if m2:
@@ -2510,11 +2574,27 @@ def auto_discover_log_paths():
                     if os.path.exists(nohup_path): paths[nohup_path] = "tomcat"
     except: pass
 
+    # Check tomcat systemd service
+    try:
+        out = subprocess.check_output(["systemctl", "is-active", "tomcat"], stderr=subprocess.DEVNULL, timeout=2).decode().strip()
+        if out in ("active", "activating"):
+            paths["systemd/tomcat"] = "tomcat"
+    except:
+        try:
+            out = subprocess.check_output(["systemctl", "list-units", "--type=service", "--state=running"], stderr=subprocess.DEVNULL, timeout=2).decode()
+            if "tomcat" in out.lower():
+                paths["systemd/tomcat"] = "tomcat"
+        except: pass
+
     # nohup.out discovery
-    nohup_candidates = ["/opt/nohup.out", "/home/ubuntu/nohup.out", "/root/nohup.out", "/opt/app/nohup.out", "/var/log/nohup.out"]
-    for path in nohup_candidates:
-        if os.path.exists(path):
-            paths[path] = "tomcat"
+    nohup_candidates = [
+        "/opt/nohup.out", "/home/ubuntu/nohup.out", "/root/nohup.out",
+        "/opt/app/nohup.out", "/var/log/nohup.out", "/home/*/nohup.out", "/opt/*/nohup.out"
+    ]
+    for cand in nohup_candidates:
+        for path in glob.glob(cand):
+            if os.path.exists(path):
+                paths[path] = "tomcat"
 
     # PostgreSQL log discovery (Ubuntu/Debian, RHEL/CentOS, Amazon Linux, Rocky/Alma)
     pg_candidates = [
@@ -2555,6 +2635,14 @@ def auto_discover_log_paths():
                                 if os.path.exists(lg):
                                     paths[lg] = "postgres"
     except: pass
+
+    # If postgres is running but no physical log file found, check journalctl
+    if not any(lt == 'postgres' for lt in paths.values()):
+        try:
+            out = subprocess.check_output(["systemctl", "is-active", "postgresql"], stderr=subprocess.DEVNULL, timeout=2).decode().strip()
+            if out in ("active", "activating"):
+                paths["systemd/postgresql"] = "postgres"
+        except: pass
 
     return paths
 
@@ -2656,40 +2744,74 @@ def get_bash_commands():
 log_positions = {{}}
 
 def get_new_log_lines(max_lines_per_file=50):
-    result = []
+    cat_lines = {{"os": [], "tomcat": [], "postgres": [], "other": []}}
+
     for path, ltype in discovered_paths.items():
+        if path.startswith("systemd/"):
+            continue
         try:
             if not os.path.exists(path): continue
             size = os.path.getsize(path)
-            pos = log_positions.get(path, max(0, size - 10000))
+            pos = log_positions.get(path, max(0, size - 15000))
             if size < pos: pos = 0
             with open(path, 'r', errors='ignore') as f:
                 f.seek(pos)
-                raw_lines = f.readlines()[:max_lines_per_file]
+                raw_lines = f.readlines()
                 log_positions[path] = f.tell()
-                for line in raw_lines:
+                for line in raw_lines[-max_lines_per_file:]:
                     line = line.strip()
                     if not line: continue
                     lt = ltype
                     lower_l = line.lower()
                     if any(k in lower_l for k in ['postgres', 'pgsql', 'fatal:  password authentication', 'no pg_hba.conf', 'drop database', 'drop table', 'alter user', 'alter role', 'grant all', 'drop schema']):
                         lt = 'postgres'
-                    elif 'tomcat' in lower_l or 'catalina' in lower_l or 'nohup' in lower_l or 'org.apache.catalina' in lower_l:
+                    elif any(k in lower_l for k in ['tomcat', 'catalina', 'nohup', 'org.apache.catalina', 'spring', 'hibernate']):
                         lt = 'tomcat'
-                    result.append({{"line": line, "source": path, "log_type": lt}})
+                    
+                    item = {{"line": line, "source": path, "log_type": lt}}
+                    if lt in cat_lines:
+                        cat_lines[lt].append(item)
+                    else:
+                        cat_lines["other"].append(item)
         except: pass
 
-    # If no OS files discovered, read journalctl as fallback
-    if not any(lt == 'os' for lt in discovered_paths.values()):
+    # If systemd/journal registered or no OS lines yet, collect from journalctl
+    if "systemd/journal" in discovered_paths or not cat_lines["os"]:
         try:
-            out = subprocess.check_output(["journalctl", "-n", "25", "--no-pager", "-o", "short-iso"], stderr=subprocess.DEVNULL, timeout=4).decode("utf-8", errors="ignore")
+            out = subprocess.check_output(["journalctl", "-n", "35", "--no-pager", "-o", "short-iso"], stderr=subprocess.DEVNULL, timeout=4).decode("utf-8", errors="ignore")
             for line in out.strip().split("\\n"):
                 line = line.strip()
                 if line:
-                    result.append({{"line": line, "source": "systemd/journal", "log_type": "os"}})
+                    cat_lines["os"].append({{"line": line, "source": "systemd/journal", "log_type": "os"}})
         except: pass
 
-    return result
+    # If systemd/tomcat registered, read from journalctl
+    if "systemd/tomcat" in discovered_paths:
+        try:
+            out = subprocess.check_output(["journalctl", "-u", "tomcat", "-u", "tomcat9", "-u", "tomcat10", "-n", "35", "--no-pager", "-o", "short-iso"], stderr=subprocess.DEVNULL, timeout=4).decode("utf-8", errors="ignore")
+            for line in out.strip().split("\\n"):
+                line = line.strip()
+                if line:
+                    cat_lines["tomcat"].append({{"line": line, "source": "systemd/tomcat", "log_type": "tomcat"}})
+        except: pass
+
+    # If systemd/postgresql registered, read from journalctl
+    if "systemd/postgresql" in discovered_paths:
+        try:
+            out = subprocess.check_output(["journalctl", "-u", "postgresql", "-n", "35", "--no-pager", "-o", "short-iso"], stderr=subprocess.DEVNULL, timeout=4).decode("utf-8", errors="ignore")
+            for line in out.strip().split("\\n"):
+                line = line.strip()
+                if line:
+                    cat_lines["postgres"].append({{"line": line, "source": "systemd/postgresql", "log_type": "postgres"}})
+        except: pass
+
+    # Balance lines across categories: up to 40 each so no single source starves the rest
+    balanced = []
+    balanced.extend(cat_lines["os"][-40:])
+    balanced.extend(cat_lines["tomcat"][-40:])
+    balanced.extend(cat_lines["postgres"][-40:])
+    balanced.extend(cat_lines["other"][-20:])
+    return balanced
 
 # Main loop
 print(f"[SecurePulse Agent] Starting. SOC: {{SOC_URL}}, Node: {{TARGET_NAME}} ({{TARGET_IP}}), Server ID: {{ASSIGNED_SERVER_ID}}")
@@ -4555,11 +4677,22 @@ async def api_log_streams(
             if log_type and log_type.lower() != 'all':
                 lt = log_type.lower()
                 if lt == 'os':
-                    query += " AND (pl.log_type IN ('os', 'auth', 'syslog', 'kernel', 'audit') OR pl.source ILIKE '%auth%' OR pl.source ILIKE '%syslog%' OR pl.source ILIKE '%secure%' OR pl.source ILIKE '%audit%')"
+                    query += " AND (pl.log_type IN ('os', 'auth', 'syslog', 'kernel', 'audit') OR pl.source ILIKE '%auth%' OR pl.source ILIKE '%syslog%' OR pl.source ILIKE '%secure%' OR pl.source ILIKE '%audit%' OR pl.source ILIKE '%journal%')"
                 elif lt == 'tomcat':
-                    query += " AND (pl.log_type = 'tomcat' OR pl.source ILIKE '%tomcat%' OR pl.source ILIKE '%catalina%' OR pl.source ILIKE '%nohup%' OR pl.message ILIKE '%catalina%')"
+                    query += " AND (pl.log_type IN ('tomcat', 'app', 'nohup') OR pl.source ILIKE '%tomcat%' OR pl.source ILIKE '%catalina%' OR pl.source ILIKE '%nohup%' OR pl.message ILIKE '%catalina%' OR pl.message ILIKE '%org.apache.catalina%')"
                 elif lt == 'postgres':
-                    query += " AND (pl.log_type = 'postgres' OR pl.source ILIKE '%postgres%' OR pl.source ILIKE '%pgsql%' OR pl.message ILIKE '%postgres%')"
+                    query += " AND (pl.log_type IN ('postgres', 'pgsql') OR pl.source ILIKE '%postgres%' OR pl.source ILIKE '%pgsql%' OR pl.message ILIKE '%postgres%')"
+                elif lt == 'soar':
+                    query += """ AND (
+                        pl.message ILIKE '%drop database%' OR pl.message ILIKE '%drop table%' OR pl.message ILIKE '%truncate%'
+                        OR pl.message ILIKE '%alter user%' OR pl.message ILIKE '%alter role%' OR pl.message ILIKE '%grant all%'
+                        OR pl.message ILIKE '%userdel%' OR pl.message ILIKE '%deluser%' OR pl.message ILIKE '%chmod 777%'
+                        OR pl.message ILIKE '%usermod%sudo%' OR pl.message ILIKE '%outofmemory%' OR pl.message ILIKE '%soar%'
+                    )"""
+                elif lt == 'errors':
+                    query += " AND (pl.log_level IN ('ERROR', 'CRITICAL', 'FATAL') OR pl.message ILIKE '%error%' OR pl.message ILIKE '%fatal%' OR pl.message ILIKE '%exception%' OR pl.message ILIKE '%fail%')"
+                elif lt == 'userdel':
+                    query += " AND (pl.message ILIKE '%userdel%' OR pl.message ILIKE '%deluser%' OR pl.message ILIKE '%chmod%' OR pl.message ILIKE '%chown%' OR pl.message ILIKE '%usermod%' OR pl.message ILIKE '%useradd%' OR pl.message ILIKE '%adduser%')"
 
             query += " ORDER BY pl.id DESC LIMIT %s"
             params.append(min(limit, 500))
@@ -4599,6 +4732,26 @@ async def api_server_log_files(server_id: int):
                 LIMIT 50;
             """, (server_id,))
             files = [dict(r) for r in cur.fetchall()]
+
+            # Also check server_log_configs
+            try:
+                cur.execute("""
+                    SELECT log_file_path as source, COALESCE(service_type, 'os') as log_type, 0 as count
+                    FROM server_log_configs
+                    WHERE server_id = %s AND log_file_path IS NOT NULL AND log_file_path != '';
+                """, (server_id,))
+                cfg_files = [dict(r) for r in cur.fetchall()]
+                existing = {f["source"] for f in files}
+                for cf in cfg_files:
+                    if cf["source"] not in existing:
+                        files.append(cf)
+            except Exception: pass
+
+            # Ensure systemd/journal fallback if no OS source is present
+            has_os = any(f.get("log_type") == "os" or any(k in (f.get("source") or "").lower() for k in ["auth", "syslog", "secure", "journal", "audit"]) for f in files)
+            if not has_os:
+                files.append({"source": "systemd/journal", "log_type": "os", "count": 0})
+
             return {"files": files}
     except Exception as e:
         logger.error(f"Error in api_server_log_files: {e}")

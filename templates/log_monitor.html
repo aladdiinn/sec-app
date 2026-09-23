@@ -1021,19 +1021,41 @@ async function fetchLogsNow() {
         console.warn("Log fetch error", e);
     }
 
-    // Check active SOAR alerts for banner (LOG-BASED ONLY, EXCLUDE SSH BRUTE FORCE / AUTH FAIL NOISE)
+    // Check active SOAR alerts for banner (LOG-BASED ONLY, EXCLUDE SSH BRUTE FORCE / AUTH FAIL NOISE & INTERACTIVE SUDO)
     try {
         const srvParam = selectedServerId ? `&server_id=${selectedServerId}` : '';
         const alertsRes = await apiFetch(`/api/alerts?limit=50&is_resolved=false&log_only=true${srvParam}`);
         const rawAlerts = (alertsRes && alertsRes.items) ? alertsRes.items : [];
+        const svc = (currentServiceType || '').toLowerCase();
+        
         const activeAlerts = rawAlerts.filter(a => {
-            const at = (a.alert_type || '').toLowerCase();
+            const at = (a.alert_type || '').toUpperCase();
             const t = (a.title || '').toLowerCase();
-            // Strictly exclude SSH brute force & login auth noise
-            if (at.includes('auth_fail') || at.includes('ssh_brute') || t.includes('brute force') || t.includes('auth fail')) {
+            const msg = (a.message || '').toLowerCase();
+
+            // Strictly exclude SSH brute force, login noise, sudo su command history
+            if (at.includes('AUTH_FAIL') || at.includes('SSH_BRUTE') || at.includes('SUDO_ROOT') ||
+                t.includes('root escalation') || msg.includes('sudo su') || msg.includes('su - root') ||
+                t.includes('brute force') || t.includes('auth fail')) {
                 return false;
             }
-            return true;
+
+            if (svc === 'postgres') {
+                return at.startsWith('PG_') || t.includes('postgres') || msg.includes('postgres') ||
+                       t.includes('database deletion') || msg.includes('drop database') || msg.includes('drop table');
+            }
+            if (svc === 'tomcat') {
+                return at.startsWith('TOMCAT_') || t.includes('tomcat') || msg.includes('tomcat') ||
+                       msg.includes('catalina') || msg.includes('outofmemory');
+            }
+            if (svc === 'os') {
+                return at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' ||
+                       t.includes('user deletion') || t.includes('insecure permission') ||
+                       msg.includes('userdel') || msg.includes('deluser') || msg.includes('chmod 777');
+            }
+            return at.startsWith('PG_') || at.startsWith('TOMCAT_') || at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' ||
+                   t.includes('postgres') || t.includes('tomcat') || t.includes('user deletion') || t.includes('insecure permission') ||
+                   msg.includes('drop database') || msg.includes('drop table') || msg.includes('userdel') || msg.includes('chmod 777');
         });
         window.activeLogThreatAlerts = activeAlerts;
         const banner = document.getElementById('live-soar-alerts-bar');
@@ -1054,13 +1076,14 @@ function isLogSecurityThreat(msg, src) {
     if (!msg) return false;
     const str = String(msg).toLowerCase();
     const source = String(src || '').toLowerCase();
-    // Exclude SSH brute force & login auth fail noise
-    if ((str.includes('auth_fail') || str.includes('ssh_brute') || str.includes('failed password') || str.includes('invalid user')) &&
-        !anyMatch(str, ['drop database', 'drop table', 'truncate', 'userdel', 'chmod 777', 'alter user', 'alter role', 'grant all'])) {
+    // Exclude SSH brute force & login auth fail noise & interactive sudo su
+    if (str.includes('auth_fail') || str.includes('ssh_brute') || str.includes('failed password') || str.includes('invalid user') ||
+        str.includes('sudo su') || str.includes('su - root')) {
         return false;
     }
-    return /drop\s+database|drop\s+schema|drop\s+table|truncate|dropdb|dropuser|alter\s+user|alter\s+role|grant\s+all|with\s+superuser|createuser|userdel|deluser|usermod.*sudo|chmod\s+.*777|chmod\s+.*\+s|chown\s+.*root|\/etc\/shadow|\/etc\/sudoers|visudo|sudoedit|outofmemoryerror|stackoverflowerror|soar\s+detection/i.test(str) ||
-           (anyMatch(source, ['postgres', 'pgsql', 'audit']) && anyMatch(str, ['error', 'fatal', 'denied', 'drop', 'alter', 'grant', 'delete']));
+    return /drop\s+database|drop\s+schema|drop\s+table|truncate|dropdb|dropuser|alter\s+user|alter\s+role|grant\s+all|with\s+superuser|createuser|userdel|deluser|usermod.*sudo|chmod\s+.*777|chmod\s+.*\+s|chown\s+.*root|\/etc\/shadow|\/etc\/sudoers|outofmemoryerror|stackoverflowerror|soar\s+detection/i.test(str) ||
+           (anyMatch(source, ['postgres', 'pgsql']) && anyMatch(str, ['fatal', 'denied', 'drop', 'alter', 'grant', 'delete'])) ||
+           (anyMatch(source, ['tomcat', 'catalina']) && anyMatch(str, ['fatal', 'outofmemory', 'severe']));
 }
 
 let lastRenderedHash = '';

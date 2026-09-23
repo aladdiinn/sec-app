@@ -207,10 +207,59 @@
             </div>
         </div>
 
+        <!-- TAB 4: LOG STREAMS (Tomcat, Postgres, OS, SOAR Detections) -->
         <div id="i3t-logs" style="display:none">
             <div style="background:#1e293b; padding:20px; border-radius:8px">
-                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">📑 Log Streams (Tomcat, Postgres, OS)</div>
-                <div id="i3-logs-box" style="background:#050811; padding:12px; border-radius:6px; height:260px; overflow-y:auto; font-family:monospace; font-size:11px"><div style="color:#94a3b8; text-align:center; padding:30px">Loading logs...</div></div>
+                <!-- Real-Time SOAR Detections Banner for This Server (Image 1 Style) -->
+                <div id="modal-soar-alerts-bar" style="display:none; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:7px 12px; font-size:11px; align-items:center; justify-content:space-between; margin-bottom:12px">
+                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden">
+                        <span style="background:rgba(239,68,68,0.25); color:#ef4444; border:1px solid rgba(239,68,68,0.5); padding:2px 6px; border-radius:4px; font-weight:700; font-size:10px; flex-shrink:0">🚨 SOAR DETECTIONS</span>
+                        <span id="modal-soar-alerts-text" style="color:#f8fafc; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">Active Threat Alert</span>
+                    </div>
+                    <div style="display:flex; gap:6px; align-items:center; flex-shrink:0">
+                        <button class="btn btn-glass" onclick="selectModalLogCategory('soar')" style="font-size:9px; padding:2px 8px; color:#ef4444; border-color:rgba(239,68,68,0.4)">⚡ FILTER THREATS</button>
+                        <button class="btn btn-glass" onclick="switchI3Tab('incidents', document.querySelectorAll('.i3-tab')[1])" style="font-size:9px; padding:2px 8px; color:#38bdf8; border-color:rgba(56,189,248,0.4)">VIEW INCIDENTS</button>
+                    </div>
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
+                    <div style="font-size:14px; font-weight:700; color:#f8fafc">📑 Auto-Discovered Log Streams</div>
+                    
+                    <!-- Presets & Category Options -->
+                    <div style="display:flex; gap:6px; background:#090f1d; padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); flex-wrap:wrap">
+                        <button class="i3-log-cat-btn active" id="btn-cat-all" onclick="selectModalLogCategory('all')">⚡ All Streams</button>
+                        <button class="i3-log-cat-btn cat-soar" id="btn-cat-soar" onclick="selectModalLogCategory('soar')">🚨 SOAR Threats</button>
+                        <button class="i3-log-cat-btn" id="btn-cat-os" onclick="selectModalLogCategory('os')">💻 OS Logs</button>
+                        <button class="i3-log-cat-btn" id="btn-cat-tomcat" onclick="selectModalLogCategory('tomcat')">☕ Tomcat</button>
+                        <button class="i3-log-cat-btn" id="btn-cat-postgres" onclick="selectModalLogCategory('postgres')">🐘 PostgreSQL</button>
+                        <button class="i3-log-cat-btn" id="btn-cat-errors" onclick="selectModalLogCategory('errors')">🔥 Errors</button>
+                        <button class="i3-log-cat-btn" id="btn-cat-userdel" onclick="selectModalLogCategory('userdel')">👤 User & Perm</button>
+                    </div>
+                </div>
+
+                <!-- Log Files Selector & Export Bar -->
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; background:#090f1d; padding:8px 12px; border-radius:6px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.06)">
+                    <div style="display:flex; align-items:center; gap:8px">
+                        <span style="font-size:11px; font-weight:700; color:#38bdf8">LOG FILE:</span>
+                        <select id="modal-log-file-select" onchange="filterModalLogsByFile()" style="font-size:11px; background:#1e293b; border:1px solid rgba(255,255,255,0.12); color:#f8fafc; padding:4px 10px; border-radius:4px; max-width:280px; font-family:monospace">
+                            <option value="">-- All Discovered Files --</option>
+                        </select>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+                        <input type="text" id="modal-log-search" placeholder="🔍 Filter lines..." oninput="renderModalLogs()" style="font-size:11px; background:#1e293b; border:1px solid rgba(255,255,255,0.12); color:#f8fafc; padding:4px 10px; border-radius:4px; width:150px; font-family:monospace">
+                        <button class="btn btn-glass" style="font-size:10px; padding:4px 8px" onclick="refreshModalLogs()" title="Refresh Logs">🔄</button>
+                        
+                        <span style="font-size:10px; color:#64748b; font-family:'Orbitron',monospace; margin-left:4px">EXPORT:</span>
+                        <button class="btn btn-glass" onclick="exportModalLogs('csv')" style="font-size:9px; padding:3px 7px; color:#10b981; border-color:rgba(16,185,129,0.3)">📄 CSV</button>
+                        <button class="btn btn-glass" onclick="exportModalLogs('json')" style="font-size:9px; padding:3px 7px; color:#38bdf8; border-color:rgba(56,189,248,0.3)">{ } JSON</button>
+                        <button class="btn btn-glass" onclick="exportModalLogs('raw')" style="font-size:9px; padding:3px 7px; color:#f59e0b; border-color:rgba(245,158,11,0.3)">📜 RAW</button>
+                    </div>
+                </div>
+
+                <!-- Log Output Terminal -->
+                <div id="i3-logs-box" style="background:#050811; border:1px solid rgba(255,255,255,0.1); padding:14px; border-radius:6px; height:340px; overflow-y:auto; font-family:monospace; font-size:11px; color:#e2e8f0; line-height:1.6">
+                    <div style="color:#94a3b8; text-align:center; padding:30px">Loading pushed log stream...</div>
+                </div>
             </div>
         </div>
 
@@ -462,6 +511,422 @@
             await loadServerLogConfigs(serverId);
         } catch (e) {
             showToast('Delete failed', 'error');
+        }
+    }
+
+    let activeModalServerId = null;
+    let currentModalLogs = [];
+    let currentModalFiles = [];
+    let modalActiveCategory = 'all';
+    let modalActiveFile = '';
+    let modalAllAlerts = [];
+    let modalLogThreatAlerts = [];
+
+    function switchI3Tab(tabName, btn) {
+        document.querySelectorAll('.i3-tab').forEach(t => {
+            t.classList.remove('active');
+            t.style.color = '#94a3b8';
+            t.style.borderBottom = 'none';
+        });
+        if (btn) {
+            btn.classList.add('active');
+            btn.style.color = '#38bdf8';
+            btn.style.borderBottom = '2px solid #38bdf8';
+        }
+        ['overview', 'incidents', 'resources', 'logs', 'settings'].forEach(t => {
+            const el = document.getElementById(`i3t-${t}`);
+            if (el) el.style.display = (t === tabName) ? 'block' : 'none';
+        });
+    }
+
+    function closeImage3Modal() {
+        const m = document.getElementById('i3-modal');
+        const o = document.getElementById('i3-modal-overlay');
+        if (m) m.style.display = 'none';
+        if (o) o.style.display = 'none';
+    }
+
+    async function openImage3Modal(serverId) {
+        activeModalServerId = serverId;
+        const o = document.getElementById('i3-modal-overlay');
+        const m = document.getElementById('i3-modal');
+        if (o) o.style.display = 'block';
+        if (m) m.style.display = 'flex';
+        
+        const nameEl = document.getElementById('i3-srv-name');
+        if (nameEl) nameEl.innerText = 'Loading asset details...';
+        const subEl = document.getElementById('i3-srv-sub');
+        if (subEl) subEl.innerText = 'Please wait...';
+
+        switchI3Tab('overview', document.querySelector('.i3-tab'));
+
+        try {
+            const details = await apiFetch(`/api/servers/${serverId}/details`);
+            const srv = details.server || {};
+            const name = srv.hostname || srv.name || 'Unknown Node';
+            const ip = srv.ip_address || srv.ip || '0.0.0.0';
+            const status = (srv.status || 'online').toLowerCase();
+
+            if (nameEl) nameEl.innerText = name;
+            const b = document.getElementById('i3-srv-status-badge');
+            if (b) {
+                b.innerText = status.toUpperCase();
+                b.style.background = status === 'online' ? '#10b981' : status === 'maintenance' ? '#f59e0b' : '#ef4444';
+            }
+            if (subEl) subEl.innerText = `Host: ${ip} · OS: ${srv.os_info || 'Linux'} · Project: ${srv.project_name || 'N/A'}`;
+
+            if (document.getElementById('i3-info-name')) document.getElementById('i3-info-name').innerText = name;
+            if (document.getElementById('i3-info-type')) document.getElementById('i3-info-type').innerText = srv.os_info || 'Linux Server';
+            if (document.getElementById('i3-info-host')) document.getElementById('i3-info-host').innerText = ip;
+            if (document.getElementById('i3-info-db')) document.getElementById('i3-info-db').innerText = srv.name || name;
+            const infStat = document.getElementById('i3-info-status');
+            if (infStat) {
+                infStat.innerText = status.toUpperCase();
+                infStat.style.color = status === 'online' ? '#10b981' : '#ef4444';
+            }
+
+            const cpu = srv.cpu_percent || 0;
+            const ram = srv.memory_percent || 0;
+            const disk = srv.disk_percent || 0;
+            if (document.getElementById('i3-conn-pct')) document.getElementById('i3-conn-pct').innerText = cpu + '%';
+            if (document.getElementById('i3-conn-bar')) {
+                document.getElementById('i3-conn-bar').style.width = Math.min(cpu, 100) + '%';
+                document.getElementById('i3-conn-bar').style.background = cpu > 85 ? '#ef4444' : cpu > 70 ? '#f59e0b' : '#38bdf8';
+            }
+
+            const procs = details.processes || [];
+            const procBody = document.getElementById('i3-procs-body');
+            if (procBody) {
+                if (!procs.length) {
+                    procBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px; color:#94a3b8">No high-resource processes detected</td></tr>';
+                } else {
+                    procBody.innerHTML = procs.map(p => `
+                        <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+                            <td style="padding:8px; font-family:monospace; color:#38bdf8">${p.pid}</td>
+                            <td style="padding:8px; font-weight:600; color:#f8fafc">${escapeHtml(p.name)}</td>
+                            <td style="padding:8px; color:${p.cpu>85?'#ef4444':'#f8fafc'}">${p.cpu}%</td>
+                            <td style="padding:8px; color:${p.memory>85?'#ef4444':'#f8fafc'}">${p.memory}%</td>
+                            <td style="padding:8px; color:#94a3b8">${escapeHtml(p.user)}</td>
+                        </tr>
+                    `).join('');
+                }
+            }
+
+            const alerts = details.alerts || [];
+            const incList = document.getElementById('i3-incidents-list');
+            if (incList) {
+                if (!alerts.length) {
+                    incList.innerHTML = '<div style="text-align:center; padding:30px; color:#10b981; font-weight:600">✅ No active incidents or alerts for this asset</div>';
+                } else {
+                    incList.innerHTML = alerts.map(a => {
+                        const isCrit = (a.severity || '').toLowerCase() === 'critical';
+                        return `
+                        <div style="background:rgba(255,255,255,0.03); border-left:3px solid ${isCrit?'#ef4444':'#f59e0b'}; padding:10px 14px; margin-bottom:8px; border-radius:4px">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
+                                <strong style="color:#f8fafc; font-size:12px">${escapeHtml(a.title || a.alert_type)}</strong>
+                                <span style="font-size:10px; color:#64748b">${a.created_at_formatted || 'recent'}</span>
+                            </div>
+                            <div style="font-size:11px; color:#94a3b8">${escapeHtml(a.message || '')}</div>
+                        </div>`;
+                    }).join('');
+                }
+            }
+
+            modalAllAlerts = alerts;
+            updateModalSoarBanner();
+
+            try {
+                const stream = await apiFetch(`/api/log-monitor/streams?server_id=${serverId}&limit=200`);
+                currentModalLogs = Array.isArray(stream) ? stream : (details.logs || []);
+            } catch(es) {
+                currentModalLogs = details.logs || [];
+            }
+            modalActiveCategory = 'all';
+            modalActiveFile = '';
+
+            try {
+                const filesRes = await apiFetch(`/api/servers/${serverId}/log-files`);
+                currentModalFiles = filesRes.files || [];
+                updateModalFileSelector();
+            } catch(ef) {
+                currentModalFiles = [];
+            }
+
+            renderModalLogs();
+        } catch(e) {
+            console.error('Modal load error:', e);
+            showToast('Error loading asset details', 'error');
+        }
+    }
+
+    function updateModalSoarBanner() {
+        const modalBanner = document.getElementById('modal-soar-alerts-bar');
+        const modalBannerText = document.getElementById('modal-soar-alerts-text');
+        if (!modalBanner || !modalBannerText) return;
+
+        const cat = (modalActiveCategory || 'all').toLowerCase();
+
+        const relevantAlerts = (modalAllAlerts || []).filter(a => {
+            const at = (a.alert_type || '').toUpperCase();
+            const t = (a.title || '').toLowerCase();
+            const msg = (a.message || '').toLowerCase();
+
+            if (at.includes('AUTH_FAIL') || at.includes('SSH_BRUTE') || at.includes('SUDO_ROOT') ||
+                t.includes('root escalation') || msg.includes('sudo su') || msg.includes('su - root') ||
+                t.includes('brute force') || t.includes('auth fail')) {
+                return false;
+            }
+
+            if (cat === 'postgres') {
+                return at.startsWith('PG_') || t.includes('postgres') || msg.includes('postgres') ||
+                       t.includes('database deletion') || msg.includes('drop database') || msg.includes('drop table');
+            }
+            if (cat === 'tomcat') {
+                return at.startsWith('TOMCAT_') || t.includes('tomcat') || msg.includes('tomcat') ||
+                       msg.includes('catalina') || msg.includes('outofmemory');
+            }
+            if (cat === 'os') {
+                return at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' ||
+                       t.includes('user deletion') || t.includes('insecure permission') ||
+                       msg.includes('userdel') || msg.includes('deluser') || msg.includes('chmod 777');
+            }
+            return at.startsWith('PG_') || at.startsWith('TOMCAT_') || at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' ||
+                   t.includes('postgres') || t.includes('tomcat') || t.includes('user deletion') || t.includes('insecure permission') ||
+                   msg.includes('drop database') || msg.includes('drop table') || msg.includes('userdel') || msg.includes('chmod 777');
+        });
+
+        modalLogThreatAlerts = relevantAlerts;
+
+        if (relevantAlerts.length > 0) {
+            const top = relevantAlerts[0];
+            modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:#94a3b8; font-size:9px">(${top.created_at_formatted || 'recent'})</span>`;
+            modalBanner.style.display = 'flex';
+        } else {
+            modalBanner.style.display = 'none';
+        }
+    }
+
+    async function selectModalLogCategory(cat) {
+        modalActiveCategory = cat;
+        document.querySelectorAll('.i3-log-cat-btn').forEach(b => b.classList.remove('active'));
+        const btn = document.getElementById(`btn-cat-${cat}`);
+        if (btn) btn.classList.add('active');
+
+        modalActiveFile = '';
+        const sel = document.getElementById('modal-log-file-select');
+        if (sel) sel.value = '';
+
+        updateModalSoarBanner();
+        updateModalFileSelector();
+
+        const logBox = document.getElementById('i3-logs-box');
+        if (logBox) {
+            logBox.innerHTML = `<div style="color:#94a3b8; text-align:center; padding:30px">⚡ Loading ${escapeHtml(cat.toUpperCase())} log stream...</div>`;
+        }
+
+        try {
+            let streamUrl = `/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200`;
+            if (cat && cat !== 'all') {
+                streamUrl += `&log_type=${encodeURIComponent(cat)}`;
+            }
+            const freshLogs = await apiFetch(streamUrl);
+            if (Array.isArray(freshLogs)) {
+                currentModalLogs = freshLogs;
+            }
+        } catch(e) {
+            console.warn('Error fetching logs for category:', e);
+        }
+
+        renderModalLogs();
+    }
+
+    function updateModalFileSelector() {
+        const sel = document.getElementById('modal-log-file-select');
+        if (!sel) return;
+
+        let available = currentModalFiles;
+        if (modalActiveCategory !== 'all' && modalActiveCategory !== 'soar' && modalActiveCategory !== 'errors' && modalActiveCategory !== 'userdel') {
+            available = currentModalFiles.filter(f => {
+                const ft = (f.log_type || '').toLowerCase();
+                const src = (f.source || '').toLowerCase();
+                if (modalActiveCategory === 'os') return ft === 'os' || anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal']);
+                if (modalActiveCategory === 'tomcat') return ft === 'tomcat' || anyMatch(src, ['tomcat', 'catalina', 'nohup']);
+                if (modalActiveCategory === 'postgres') return ft === 'postgres' || anyMatch(src, ['postgres', 'pgsql']);
+                return true;
+            });
+        }
+
+        sel.innerHTML = '<option value="">-- All Discovered Files (' + available.length + ') --</option>' +
+            available.map(f => `<option value="${escapeHtml(f.source)}">${escapeHtml(f.source)} (${f.count || 0} lines)</option>`).join('');
+        modalActiveFile = '';
+    }
+
+    function anyMatch(str, words) {
+        return words.some(w => str.includes(w));
+    }
+
+    function filterModalLogsByFile() {
+        const sel = document.getElementById('modal-log-file-select');
+        modalActiveFile = sel ? sel.value : '';
+        renderModalLogs();
+    }
+
+    function isModalLogSecurityThreat(text, src) {
+        if (!text) return false;
+        const str = String(text).toLowerCase();
+        const source = String(src || '').toLowerCase();
+        if (str.includes('auth_fail') || str.includes('ssh_brute') || str.includes('failed password') || str.includes('invalid user') ||
+            str.includes('sudo su') || str.includes('su - root')) {
+            return false;
+        }
+        return /drop\s+database|drop\s+schema|drop\s+table|truncate|dropdb|dropuser|alter\s+user|alter\s+role|grant\s+all|with\s+superuser|createuser|userdel|deluser|usermod.*sudo|chmod\s+.*777|chmod\s+.*\+s|chown\s+.*root|\/etc\/shadow|\/etc\/sudoers|outofmemoryerror|stackoverflowerror|soar\s+detection/i.test(str) ||
+               (anyMatch(source, ['postgres', 'pgsql']) && anyMatch(str, ['fatal', 'denied', 'drop', 'alter', 'grant', 'delete'])) ||
+               (anyMatch(source, ['tomcat', 'catalina']) && anyMatch(str, ['fatal', 'outofmemory', 'severe']));
+    }
+
+    function renderModalLogs() {
+        const logBox = document.getElementById('i3-logs-box');
+        if (!logBox) return;
+
+        const query = (document.getElementById('modal-log-search') ? document.getElementById('modal-log-search').value : '').toLowerCase().trim();
+
+        let filtered = currentModalLogs.filter(l => {
+            const line = (l.line || l.message || '').toLowerCase();
+            const src = (l.source || l.log_path || '').toLowerCase();
+            const ltype = (l.log_type || '').toLowerCase();
+
+            if (modalActiveCategory === 'soar') {
+                if (!isModalLogSecurityThreat(line, src)) return false;
+            } else if (modalActiveCategory === 'os') {
+                if (ltype !== 'os' && !anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal'])) return false;
+            } else if (modalActiveCategory === 'tomcat') {
+                if (ltype !== 'tomcat' && !anyMatch(src, ['tomcat', 'catalina', 'nohup']) && !anyMatch(line, ['tomcat', 'catalina', 'org.apache.catalina'])) return false;
+            } else if (modalActiveCategory === 'postgres') {
+                if (ltype !== 'postgres' && !anyMatch(src, ['postgres', 'pgsql']) && !anyMatch(line, ['postgres'])) return false;
+            } else if (modalActiveCategory === 'errors') {
+                if (!anyMatch(line, ['error', 'fatal', 'crit', 'exception', 'severe', 'failed'])) return false;
+            } else if (modalActiveCategory === 'userdel') {
+                if (!anyMatch(line, ['userdel', 'deluser', 'useradd', 'adduser', 'usermod', 'chmod', 'chown', 'sudo', 'su:'])) return false;
+            }
+
+            if (modalActiveFile && (l.source || l.log_path) !== modalActiveFile) return false;
+            if (query && !line.includes(query) && !src.includes(query)) return false;
+            return true;
+        });
+
+        if (!filtered.length) {
+            const catNames = {
+                'os': 'OS System Logs (/var/log/syslog, auth.log, journalctl)',
+                'tomcat': 'Tomcat & Application Logs (catalina.out, nohup.out)',
+                'postgres': 'PostgreSQL Database Logs',
+                'errors': 'Error / Fatal Logs',
+                'userdel': 'User & Permission Event Logs',
+                'all': 'Log Streams'
+            };
+            const catLabel = catNames[modalActiveCategory] || modalActiveCategory.toUpperCase();
+            logBox.innerHTML = `
+            <div style="color:#94a3b8; text-align:center; padding:35px">
+                <div style="font-size:24px; margin-bottom:8px">📄</div>
+                <div style="font-size:13px; font-weight:600; color:#e2e8f0; margin-bottom:4px">No log lines found for ${escapeHtml(catLabel)}</div>
+                <div style="font-size:11px; color:#64748b">Filter: ${modalActiveCategory.toUpperCase()} ${modalActiveFile ? '· File: ' + escapeHtml(modalActiveFile) : ''}</div>
+                <div style="font-size:11px; color:#38bdf8; margin-top:8px">Ensure agent daemon is running on target host, or click <strong>⚡ ALL STREAMS</strong></div>
+            </div>`;
+            return;
+        }
+
+        logBox.innerHTML = filtered.map(l => {
+            const text = l.line || l.message || '';
+            const sourcePath = l.source || l.log_path || '/var/log/syslog';
+            const isThreat = isModalLogSecurityThreat(text, sourcePath);
+            const lower = text.toLowerCase();
+            const isErr = isThreat || lower.includes('fatal') || lower.includes('error') || lower.includes('critical');
+            const isWarn = lower.includes('warn') || lower.includes('alert') || lower.includes('privilege');
+
+            const textColor = isThreat ? '#f87171' : (isErr ? '#ef4444' : (isWarn ? '#f59e0b' : '#f8fafc'));
+            const ts = l.created_at_formatted || (l.created_at ? new Date(l.created_at).toLocaleTimeString() : 'log');
+
+            return `
+            <div style="padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03); display:flex; align-items:flex-start; gap:8px">
+                <span style="color:#38bdf8; flex-shrink:0">[${ts}]</span>
+                ${isThreat ? '<span style="background:#ef4444; color:#fff; font-size:8px; padding:1px 5px; border-radius:3px; font-weight:700; flex-shrink:0">🚨 SOAR</span>' : ''}
+                <span style="color:#a855f7; flex-shrink:0; max-width:200px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">${escapeHtml(sourcePath)}:</span>
+                <span style="color:${textColor}; word-break:break-all">${escapeHtml(text)}</span>
+            </div>
+            `;
+        }).join('');
+
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    async function refreshModalLogs() {
+        if (!activeModalServerId) return;
+        try {
+            let streamUrl = `/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200`;
+            if (modalActiveCategory && modalActiveCategory !== 'all') {
+                streamUrl += `&log_type=${encodeURIComponent(modalActiveCategory)}`;
+            }
+            const stream = await apiFetch(streamUrl);
+            if (Array.isArray(stream)) {
+                currentModalLogs = stream;
+                renderModalLogs();
+                showToast('Logs refreshed', 'info');
+            }
+        } catch(e) {
+            showToast('Failed to refresh logs', 'error');
+        }
+    }
+
+    function exportModalLogs(format) {
+        if (!currentModalLogs || !currentModalLogs.length) {
+            showToast("No log entries to export for this asset", "warning");
+            return;
+        }
+        let content = "";
+        let filename = `server_${activeModalServerId || 'asset'}_logs_${new Date().toISOString().slice(0,10)}`;
+        let mimeType = "text/plain";
+
+        if (format === 'csv') {
+            filename += ".csv";
+            mimeType = "text/csv";
+            content = "Timestamp,Source,LogType,Message\n" + currentModalLogs.map(l => 
+                `"${l.created_at_formatted || l.created_at || ''}","${l.source || ''}","${l.log_type || ''}","${(l.line || l.message || '').replace(/"/g, '""')}"`
+            ).join("\n");
+        } else if (format === 'json') {
+            filename += ".json";
+            mimeType = "application/json";
+            content = JSON.stringify(currentModalLogs, null, 2);
+        } else {
+            filename += ".log";
+            content = currentModalLogs.map(l => `[${l.created_at_formatted || l.created_at || ''}] [${l.source || l.log_type || 'LOG'}] ${l.line || l.message || ''}`).join("\n");
+        }
+
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast(`Exported ${currentModalLogs.length} logs as ${format.toUpperCase()}`, "success");
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.innerText = text;
+        return div.innerHTML;
+    }
+
+    async function toggleMaintInModal() {
+        if (!activeModalServerId) return;
+        try {
+            await apiFetch(`/api/servers/${activeModalServerId}/maintenance`, { method: 'POST' });
+            showToast('Maintenance mode toggled', 'success');
+            openImage3Modal(activeModalServerId);
+            loadServers();
+        } catch(e) {
+            showToast('Failed to toggle maintenance', 'error');
         }
     }
 
