@@ -2200,10 +2200,10 @@ def get_dashboard_counts(project_id=None):
             cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (status = 'offline' OR status = 'down');", params)
             down_servers = (cur.fetchone() or {}).get("cnt", 0)
 
-            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE '%db%' OR LOWER(hostname) LIKE '%db%' OR LOWER(os_info) LIKE '%postgres%');", params)
+            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE %s OR LOWER(hostname) LIKE %s OR LOWER(os_info) LIKE %s);", list(params) + ['%db%', '%db%', '%postgres%'])
             total_db = (cur.fetchone() or {}).get("cnt", 0)
 
-            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE '%app%' OR LOWER(hostname) LIKE '%app%' OR LOWER(name) LIKE '%web%');", params)
+            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE %s OR LOWER(hostname) LIKE %s OR LOWER(name) LIKE %s);", list(params) + ['%app%', '%app%', '%web%'])
             total_apps = (cur.fetchone() or {}).get("cnt", 0)
 
             sql_clause_a, params_a = _build_pid_filter("s.project_id", project_id)

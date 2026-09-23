@@ -2323,33 +2323,41 @@ def auto_discover_log_paths():
         if os.path.exists(path) and os.access(path, os.R_OK):
             paths[path] = "tomcat"
 
-    # PostgreSQL log discovery
+    # PostgreSQL log discovery (Ubuntu/Debian, RHEL/CentOS, Amazon Linux, Rocky/Alma)
     pg_candidates = [
         "/var/log/postgresql/*.log",
+        "/var/log/postgresql/*/*.log",
+        "/var/lib/pgsql/*/data/log/*.log",
         "/var/lib/pgsql/*/data/pg_log/*.log",
+        "/var/lib/pgsql/data/log/*.log",
         "/var/lib/pgsql/data/pg_log/*.log",
         "/var/lib/postgresql/*/main/pg_log/*.log",
         "/var/lib/postgresql/*/main/log/*.log",
+        "/var/lib/postgresql/data/*.log",
+        "/var/log/postgres*.log",
+        "/opt/postgresql*/logs/*.log"
     ]
     for candidate in pg_candidates:
         matched = glob.glob(candidate)
-        for path in sorted(matched, key=os.path.getmtime, reverse=True)[:2]:
+        for path in sorted(matched, key=os.path.getmtime, reverse=True)[:3]:
             if os.path.exists(path) and os.access(path, os.R_OK):
                 paths[path] = "postgres"
 
-    # Find postgres log from running process
+    # Find postgres log from running processes (any process with -D data directory)
     try:
         out = subprocess.check_output(["ps", "aux"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
         for line in out.split("\n"):
-            if 'postgres' in line.lower() and 'logger' in line.lower():
+            if 'postgres' in line.lower():
                 m = re.search(r'-D\s+([^\s]+)', line)
                 if m:
-                    data_dir = m.group(1)
-                    for sub in ['pg_log', 'log']:
+                    data_dir = m.group(1).strip()
+                    for sub in ['pg_log', 'log', '']:
                         log_dir = os.path.join(data_dir, sub)
                         if os.path.exists(log_dir):
                             logs = sorted(glob.glob(os.path.join(log_dir, '*.log')), key=os.path.getmtime, reverse=True)
-                            if logs: paths[logs[0]] = "postgres"
+                            for lg in logs[:3]:
+                                if os.path.exists(lg) and os.access(lg, os.R_OK):
+                                    paths[lg] = "postgres"
     except: pass
 
     return paths
@@ -2526,7 +2534,7 @@ PY_EOF
 chmod +x /opt/securepulse/node_push_agent.py
 pkill -f node_push_agent.py 2>/dev/null || true
 pkill -f node_push_agent.sh 2>/dev/null || true
-nohup python3 /opt/securepulse/node_push_agent.py >/dev/null 2>&1 &
+nohup python3 /opt/securepulse/node_push_agent.py > /var/log/securepulse_agent.log 2>&1 &
 
 echo "[SUCCESS] SecurePulse Agent Daemon is active & streaming telemetry!"
 """
