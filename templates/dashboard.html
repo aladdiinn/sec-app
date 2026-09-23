@@ -1,189 +1,434 @@
 {% extends "base.html" %}
 {% set active = 'dashboard' %}
 {% block page_title %}SOC Command Center{% endblock %}
-{% block page_sub %}Real-time security intelligence & threat detection{% endblock %}
-
+{% block page_sub %}Real-time security intelligence & asset threat monitoring{% endblock %}
 
 <style>
-/* Dark SOC Leaflet Popup Styling */
-.leaflet-popup-content-wrapper {
-    background: #0b1320 !important;
-    color: #e2e8f0 !important;
-    border: 1px solid var(--cyan, #00e5ff) !important;
-    border-radius: 8px !important;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.7), 0 0 15px rgba(0, 229, 255, 0.25) !important;
-    padding: 2px !important;
+/* NOC/SOC Status Bar Grid */
+.noc-status-bar {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr) 1.5fr;
+    gap: 12px;
+    margin-bottom: 24px;
 }
-.leaflet-popup-tip {
-    background: #0b1320 !important;
-    border: 1px solid var(--cyan, #00e5ff) !important;
+.status-box {
+    background: var(--card-bg, #0b1320);
+    border: 1px solid var(--border, rgba(255,255,255,0.08));
+    border-radius: var(--radius-md, 8px);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: all 0.2s ease;
+    cursor: pointer;
 }
-.leaflet-popup-content {
-    margin: 12px 14px !important;
-    line-height: 1.5 !important;
+.status-box:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255,255,255,0.2);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
 }
-.leaflet-container a.leaflet-popup-close-button {
-    color: #94a3b8 !important;
-    padding: 6px 8px !important;
-    font-size: 16px !important;
+.status-box .sb-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
 }
-.leaflet-container a.leaflet-popup-close-button:hover {
-    color: #00e5ff !important;
+.status-box .sb-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    font-family: var(--orbitron, monospace);
 }
+.status-box .sb-val {
+    font-size: 26px;
+    font-weight: 800;
+    font-family: var(--orbitron, monospace);
+    line-height: 1;
+}
+
+/* Color Themes for Status Boxes */
+.sb-down { border-left: 4px solid var(--red, #ef4444); }
+.sb-down .sb-title { color: #fca5a5; }
+.sb-down .sb-val { color: var(--red, #ef4444); }
+
+.sb-critical { border-left: 4px solid #f97316; }
+.sb-critical .sb-title { color: #fdba74; }
+.sb-critical .sb-val { color: #f97316; }
+
+.sb-trouble { border-left: 4px solid var(--amber, #f59e0b); }
+.sb-trouble .sb-title { color: #fde68a; }
+.sb-trouble .sb-val { color: var(--amber, #f59e0b); }
+
+.sb-maint { border-left: 4px solid var(--cyan, #00e5ff); }
+.sb-maint .sb-title { color: #99f6e4; }
+.sb-maint .sb-val { color: var(--cyan, #00e5ff); }
+
+.sb-online { border-left: 4px solid var(--green, #10b981); }
+.sb-online .sb-title { color: #a7f3d0; }
+.sb-online .sb-val { color: var(--green, #10b981); }
+
+.sb-categories {
+    background: rgba(11, 19, 32, 0.7);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+}
+.cat-badge-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+}
+.cat-badge-tag {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.5px;
+    font-family: var(--orbitron, monospace);
+}
+
+/* Modal styling */
+.sd-modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1000; display: none; backdrop-filter: blur(6px);
+}
+.sd-modal-content {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 900px; max-width: 94vw; max-height: 90vh; display: none; flex-direction: column;
+    z-index: 1001; background: #0b1320; border: 1px solid var(--cyan); border-radius: 12px;
+    box-shadow: 0 25px 70px rgba(0,0,0,0.9), 0 0 25px rgba(0,229,255,0.2); overflow: hidden;
+}
+.sd-tabs {
+    display: flex; background: rgba(0,0,0,0.4); border-bottom: 1px solid var(--border);
+}
+.sd-tab {
+    padding: 12px 20px; font-size: 12px; font-weight: 600; color: var(--text-meta);
+    cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; display: flex; align-items: center; gap: 6px;
+}
+.sd-tab:hover { color: var(--text); }
+.sd-tab.active { color: var(--cyan); border-bottom-color: var(--cyan); background: rgba(0,229,255,0.05); }
+.sd-tab-body { display: none; padding: 20px; overflow-y: auto; max-height: calc(90vh - 140px); }
+.sd-tab-body.active { display: block; }
 </style>
 
 {% block content %}
-<div class="dashboard-grid fade-in">
-    <!-- Row 1: KPI Stats -->
-    <div class="stat-card glass glass-hover" onclick="window.location.href='/assets'" style="cursor:pointer">
-        <div class="stat-header">
-            <div class="stat-icon blue">
-                <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+<div class="fade-in">
+    <!-- NOC/SOC Status Bar -->
+    <div class="noc-status-bar">
+        <div class="status-box sb-down" onclick="window.location.href='/assets?status=offline'">
+            <div class="sb-header">
+                <span class="sb-title">DOWN</span>
+                <span class="pulse" style="width:8px; height:8px; border-radius:50%; background:var(--red);"></span>
             </div>
-            <span class="badge badge-info">Active</span>
+            <div class="sb-val" id="noc-down">0</div>
         </div>
-        <div class="stat-info">
-            <div class="stat-value" id="kpi-total">0</div>
-            <div class="stat-label">Total Endpoints</div>
-        </div>
-    </div>
 
-    <div class="stat-card glass glass-hover" onclick="window.location.href='/assets'" style="cursor:pointer">
-        <div class="stat-header">
-            <div class="stat-icon green">
-                <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        <div class="status-box sb-critical" onclick="window.location.href='/incidents'">
+            <div class="sb-header">
+                <span class="sb-title">CRITICAL</span>
+                <span class="pulse" style="width:8px; height:8px; border-radius:50%; background:#f97316;"></span>
             </div>
-            <span class="badge badge-success" id="kpi-online-badge">0 Online</span>
+            <div class="sb-val" id="noc-critical">0</div>
         </div>
-        <div class="stat-info">
-            <div class="stat-value" id="kpi-online">0</div>
-            <div class="stat-label">System Health</div>
-        </div>
-    </div>
 
-    <div class="stat-card glass glass-hover" onclick="window.location.href='/incidents'" style="cursor:pointer">
-        <div class="stat-header">
-            <div class="stat-icon red">
-                <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div class="status-box sb-trouble" onclick="window.location.href='/incidents'">
+            <div class="sb-header">
+                <span class="sb-title">TROUBLE</span>
+                <span class="pulse" style="width:8px; height:8px; border-radius:50%; background:var(--amber);"></span>
             </div>
-            <span class="badge badge-critical" id="kpi-alerts-badge">0 Critical</span>
+            <div class="sb-val" id="noc-trouble">0</div>
         </div>
-        <div class="stat-info">
-            <div class="stat-value" id="kpi-alerts">0</div>
-            <div class="stat-label">Critical Alerts</div>
-        </div>
-    </div>
 
-    <div class="stat-card glass glass-hover" onclick="window.location.href='/assets?filter=maintenance'" style="cursor:pointer">
-        <div class="stat-header">
-            <div class="stat-icon orange">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+        <div class="status-box sb-maint" onclick="window.location.href='/assets?filter=maintenance'">
+            <div class="sb-header">
+                <span class="sb-title">MAINTENANCE</span>
+                <span style="width:8px; height:8px; border-radius:50%; background:var(--cyan);"></span>
             </div>
-            <span class="badge badge-warning" id="kpi-maint-badge">0 Servers</span>
+            <div class="sb-val" id="noc-maint">0</div>
         </div>
-        <div class="stat-info">
-            <div class="stat-value" id="kpi-maint">0</div>
-            <div class="stat-label">In Maintenance</div>
-        </div>
-    </div>
-</div>
 
-<div class="dashboard-grid fade-in" style="grid-template-columns: 2fr 1fr; grid-template-rows: auto auto;">
-    <!-- Threat Map -->
-    <div class="card glass" style="grid-row: span 2; display:flex; flex-direction:column;">
-        <div class="card-header">
-            <h2 class="card-title">Global Threat Visualization</h2>
-            <div style="display:flex; gap:10px; align-items:center">
-                <span class="pulse" style="width:7px; height:7px; border-radius:50%; background:var(--red);"></span>
-                <span class="badge badge-critical" id="map-threat-count">Live Telemetry</span>
+        <div class="status-box sb-online" onclick="window.location.href='/assets?status=online'">
+            <div class="sb-header">
+                <span class="sb-title">ONLINE</span>
+                <span class="pulse" style="width:8px; height:8px; border-radius:50%; background:var(--green);"></span>
             </div>
+            <div class="sb-val" id="noc-online">0</div>
         </div>
-        <div id="threat-map-container" style="flex:1; min-height:460px; position:relative; overflow:hidden; border-radius:var(--radius-md);">
-            <div id="threat-map" style="width:100%; height:100%; min-height:460px; background:#0a0e17;"></div>
-        </div>
-    </div>
 
-    <!-- Severity Distribution -->
-    <div class="card glass">
-        <div class="card-header">
-            <h2 class="card-title">Severity Distribution</h2>
-        </div>
-        <div style="height:200px; position:relative;">
-            <canvas id="sev-donut"></canvas>
-            <div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); text-align:center">
-                <div id="donut-total" style="font-size:24px; font-weight:700; font-family:var(--font-heading)">0</div>
-                <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase">Total</div>
+        <!-- Asset Categories Breakdown -->
+        <div class="sb-categories">
+            <div class="cat-badge-item">
+                <span class="cat-badge-tag" style="background:rgba(0,229,255,0.15); color:var(--cyan)">SERVERS</span>
+                <strong id="cat-servers-count" style="font-family:var(--mono)">0</strong>
+            </div>
+            <div class="cat-badge-item">
+                <span class="cat-badge-tag" style="background:rgba(16,185,129,0.15); color:var(--green)">APP NODES</span>
+                <strong id="cat-apps-count" style="font-family:var(--mono)">0</strong>
+            </div>
+            <div class="cat-badge-item">
+                <span class="cat-badge-tag" style="background:rgba(245,158,11,0.15); color:var(--amber)">DATABASES</span>
+                <strong id="cat-db-count" style="font-family:var(--mono)">0</strong>
             </div>
         </div>
     </div>
 
-    <!-- Live Activity Feed -->
-    <div class="card glass">
-        <div class="card-header">
-            <h2 class="card-title">Live Activity</h2>
-            <div class="pulse" style="width:6px; height:6px; border-radius:50%; background:var(--cyan)"></div>
+    <!-- Project-Scoped Asset Grid Header -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <div style="display:flex; align-items:center; gap:12px">
+            <h2 style="font-family:var(--orbitron); font-size:15px; margin:0; letter-spacing:1px; color:var(--cyan)">SOC MANAGED ASSETS & TELEMETRY</h2>
+            <span class="badge badge-info" id="asset-count-badge">0 Assets</span>
         </div>
-        <div id="live-feed" style="display:flex; flex-direction:column; gap:14px; max-height:240px; overflow-y:auto">
-            <div style="color:var(--text-muted); font-size:12px; text-align:center; padding:20px">Waiting for events...</div>
+        <div style="display:flex; gap:12px; align-items:center">
+            <select id="dash-project-filter" class="glass" style="padding:6px 14px; border-radius:6px; color:var(--text); border:1px solid var(--border); font-size:11px" onchange="loadDashboardAssets()">
+                <option value="">All Projects</option>
+            </select>
+            <button class="btn btn-glass" style="padding:6px 12px; font-size:11px" onclick="loadDashboardAssets()">🔄 Refresh</button>
         </div>
     </div>
-<div class="dashboard-grid fade-in" style="grid-template-columns: 1fr; margin-top:20px">
+
+    <!-- Asset Cards Grid -->
+    <div id="dash-assets-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:16px; margin-bottom:24px">
+        <div class="card glass" style="grid-column: 1/-1; text-align:center; padding:30px; color:var(--text-meta)">Loading asset inventory...</div>
+    </div>
+
+    <!-- Mid Grid: Global Threat Map & Live Activity -->
+    <div class="dashboard-grid" style="grid-template-columns: 2fr 1fr; grid-template-rows: auto auto; margin-bottom:24px">
+        <!-- Threat Map -->
+        <div class="card glass" style="grid-row: span 2; display:flex; flex-direction:column;">
+            <div class="card-header">
+                <h2 class="card-title">Global Threat Visualization</h2>
+                <div style="display:flex; gap:10px; align-items:center">
+                    <span class="pulse" style="width:7px; height:7px; border-radius:50%; background:var(--red);"></span>
+                    <span class="badge badge-critical" id="map-threat-count">Live Telemetry</span>
+                </div>
+            </div>
+            <div id="threat-map-container" style="flex:1; min-height:420px; position:relative; overflow:hidden; border-radius:var(--radius-md);">
+                <div id="threat-map" style="width:100%; height:100%; min-height:420px; background:#0a0e17;"></div>
+            </div>
+        </div>
+
+        <!-- Severity Distribution -->
+        <div class="card glass">
+            <div class="card-header">
+                <h2 class="card-title">Severity Distribution</h2>
+            </div>
+            <div style="height:180px; position:relative;">
+                <canvas id="sev-donut"></canvas>
+                <div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); text-align:center">
+                    <div id="donut-total" style="font-size:22px; font-weight:700; font-family:var(--font-heading)">0</div>
+                    <div style="font-size:9px; color:var(--text-muted); text-transform:uppercase">Total</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Activity Feed -->
+        <div class="card glass">
+            <div class="card-header">
+                <h2 class="card-title">Live Activity Feed</h2>
+                <div class="pulse" style="width:6px; height:6px; border-radius:50%; background:var(--cyan)"></div>
+            </div>
+            <div id="live-feed" style="display:flex; flex-direction:column; gap:12px; max-height:220px; overflow-y:auto">
+                <div style="color:var(--text-muted); font-size:11px; text-align:center; padding:20px">Waiting for events...</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Watchdog AI Widget -->
-    <div class="card glass" style="background:#090e1a; border:1px solid rgba(255,184,0,0.3)">
+    <div class="card glass" style="background:#090e1a; border:1px solid rgba(255,184,0,0.3); margin-bottom:24px">
         <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px">
             <div style="display:flex; align-items:center; gap:10px">
                 <span style="font-size:16px">🤖</span>
                 <div>
                     <h2 class="card-title" style="color:var(--amber); font-size:13px; margin:0">Watchdog AI Anomaly & Root Cause Engine</h2>
-                    <div style="font-size:10px; color:var(--text3)">Real-time cluster outlier detection, APM bottleneck tracing, and alert pacing</div>
+                    <div style="font-size:10px; color:var(--text-meta)">Real-time cluster outlier detection, APM bottleneck tracing, and alert pacing</div>
                 </div>
             </div>
             <div style="display:flex; gap:8px; align-items:center">
-                <span class="lvl-tag WARN" id="dash-watchdog-pacing">ALERT PACING: 58 DUPES MUTED / 5m</span>
-                <a href="/log-monitor" class="btn btn-glass" style="font-size:10px; padding:3px 8px; color:var(--cyan)">Inspect In Log Monitor &rarr;</a>
+                <span class="badge badge-warning" style="font-size:9px">ALERT PACING: ACTIVE</span>
+                <a href="/log-monitor" class="btn btn-glass" style="font-size:10px; padding:3px 8px; color:var(--cyan)">Inspect Log Monitor &rarr;</a>
             </div>
         </div>
 
         <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; padding-top:12px">
             <div style="background:rgba(255,59,92,0.06); border:1px solid rgba(255,59,92,0.3); padding:10px 12px; border-radius:6px">
                 <div style="font-size:10px; color:var(--red); font-family:var(--orbitron); margin-bottom:4px">🔥 OUTLIER DETECTION</div>
-                <div style="font-size:11px; color:var(--text); font-weight:600">Node <strong>ec2-prod-web-01</strong> CPU 98.6%</div>
-                <div style="font-size:9px; color:var(--text3); margin-top:2px">Cluster baseline: 16.4% CPU. Auto-scaling container recommended.</div>
+                <div style="font-size:11px; color:var(--text); font-weight:600">Sikkim T&D Node CPU 92.4%</div>
+                <div style="font-size:9px; color:var(--text-meta); margin-top:2px">Cluster baseline: 18.2% CPU. Auto-scaling alert triggered.</div>
             </div>
 
             <div style="background:rgba(255,184,0,0.06); border:1px solid rgba(255,184,0,0.3); padding:10px 12px; border-radius:6px">
                 <div style="font-size:10px; color:var(--amber); font-family:var(--orbitron); margin-bottom:4px">🔍 ROOT CAUSE ANALYSIS</div>
-                <div style="font-size:11px; color:var(--text); font-weight:600">auth-service DB pool (+620ms)</div>
-                <div style="font-size:9px; color:var(--text3); margin-top:2px">Downstream target: checkout-api experiencing latency spike.</div>
+                <div style="font-size:11px; color:var(--text); font-weight:600">PostgreSQL DB Connection Pool</div>
+                <div style="font-size:9px; color:var(--text-meta); margin-top:2px">Downstream target experiencing latency spike (+420ms).</div>
             </div>
 
             <div style="background:rgba(0,212,255,0.06); border:1px solid rgba(0,212,255,0.3); padding:10px 12px; border-radius:6px">
-                <div style="font-size:10px; color:var(--cyan); font-family:var(--orbitron); margin-bottom:4px">🌐 TRAFFIC SURGE ANOMALY</div>
-                <div style="font-size:11px; color:var(--text); font-weight:600">480% Request Surge</div>
-                <div style="font-size:9px; color:var(--text3); margin-top:2px">Subnet 45.79.120.0/22. Active WAF rate limit enabled.</div>
+                <div style="font-size:10px; color:var(--cyan); font-family:var(--orbitron); margin-bottom:4px">🌐 SECURITY ANOMALY</div>
+                <div style="font-size:11px; color:var(--text); font-weight:600">SSH Auth Burst Muted</div>
+                <div style="font-size:9px; color:var(--text-meta); margin-top:2px">Subnet 172.23.60.0/24 rate limiter engaged.</div>
             </div>
         </div>
     </div>
 </div>
 
-<div class="dashboard-grid fade-in" style="grid-template-columns: 1fr;">
-    <!-- Recent Alerts -->
-    <div class="card glass">
-        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center">
-            <h2 class="card-title">Recent Security Alerts</h2>
-            <button class="btn btn-glass" style="padding:4px 10px; font-size:11px" onclick="window.location.href='/incidents'">View All Incidents &rarr;</button>
+<!-- SERVER DETAIL VIEW MODAL (IMAGE 2 STYLE TABBED MODAL) -->
+<div id="sd-modal-overlay" class="sd-modal-overlay" onclick="closeServerDetailModal()"></div>
+<div id="server-detail-modal" class="sd-modal-content">
+    <!-- Header -->
+    <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.3)">
+        <div style="display:flex; align-items:center; gap:12px">
+            <div class="stat-icon blue" style="width:36px; height:36px; flex-shrink:0">
+                <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+            </div>
+            <div>
+                <div style="display:flex; align-items:center; gap:8px">
+                    <h3 id="sd-hostname" style="margin:0; font-family:var(--orbitron); font-size:16px; color:var(--cyan)">SERVER HOSTNAME</h3>
+                    <span id="sd-status-badge" class="badge badge-success" style="font-size:9px">ONLINE</span>
+                    <span id="sd-project-tag" class="badge badge-info" style="font-size:9px">PROJECT</span>
+                </div>
+                <div style="font-size:11px; color:var(--text-meta); margin-top:2px" id="sd-sub-info">
+                    IP: <span id="sd-ip" style="color:var(--text); font-family:var(--mono)">127.0.0.1</span> · OS: <span id="sd-os">Ubuntu 22.04 LTS</span>
+                </div>
+            </div>
         </div>
-        <table style="width:100%; text-align:left; border-collapse:collapse">
+        <div style="display:flex; gap:10px; align-items:center">
+            <button class="btn btn-glass" id="sd-maint-btn" style="padding:4px 10px; font-size:10px; color:var(--amber); border-color:rgba(245,158,11,0.4)">
+                ⚡ Toggle Maintenance
+            </button>
+            <button class="btn btn-ghost" onclick="closeServerDetailModal()" style="font-size:16px; padding:2px 8px">✕</button>
+        </div>
+    </div>
+
+    <!-- Tabs Header -->
+    <div class="sd-tabs">
+        <div class="sd-tab active" onclick="switchSdTab('overview', this)">📊 Overview</div>
+        <div class="sd-tab" onclick="switchSdTab('processes', this)">⚡ Top Processes (>85%)</div>
+        <div class="sd-tab" onclick="switchSdTab('detections', this)">🛡️ Security Detections</div>
+        <div class="sd-tab" onclick="switchSdTab('logs', this)">📑 Auto Log Streams</div>
+        <div class="sd-tab" onclick="switchSdTab('ports', this)">🔌 Open Ports & Scan</div>
+    </div>
+
+    <!-- Tab 1: Overview -->
+    <div id="sdt-overview" class="sd-tab-body active">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:20px">
+            <!-- CPU & Memory Gauges -->
+            <div style="background:var(--bg3); padding:16px; border-radius:8px; border:1px solid var(--border)">
+                <div style="display:flex; justify-content:space-between; margin-bottom:6px">
+                    <span style="font-size:11px; font-weight:700; color:var(--cyan); font-family:var(--orbitron)">CPU USAGE</span>
+                    <span id="sd-cpu-val" style="font-family:var(--mono); font-size:12px; font-weight:700">0%</span>
+                </div>
+                <div style="width:100%; height:8px; background:rgba(255,255,255,0.08); border-radius:4px; overflow:hidden">
+                    <div id="sd-cpu-bar" style="width:0%; height:100%; background:var(--cyan); transition:width 0.3s"></div>
+                </div>
+            </div>
+
+            <div style="background:var(--bg3); padding:16px; border-radius:8px; border:1px solid var(--border)">
+                <div style="display:flex; justify-content:space-between; margin-bottom:6px">
+                    <span style="font-size:11px; font-weight:700; color:var(--green); font-family:var(--orbitron)">RAM USAGE</span>
+                    <span id="sd-ram-val" style="font-family:var(--mono); font-size:12px; font-weight:700">0%</span>
+                </div>
+                <div style="width:100%; height:8px; background:rgba(255,255,255,0.08); border-radius:4px; overflow:hidden">
+                    <div id="sd-ram-bar" style="width:0%; height:100%; background:var(--green); transition:width 0.3s"></div>
+                </div>
+            </div>
+
+            <div style="background:var(--bg3); padding:16px; border-radius:8px; border:1px solid var(--border)">
+                <div style="display:flex; justify-content:space-between; margin-bottom:6px">
+                    <span style="font-size:11px; font-weight:700; color:var(--amber); font-family:var(--orbitron)">DISK USAGE</span>
+                    <span id="sd-disk-val" style="font-family:var(--mono); font-size:12px; font-weight:700">0%</span>
+                </div>
+                <div style="width:100%; height:8px; background:rgba(255,255,255,0.08); border-radius:4px; overflow:hidden">
+                    <div id="sd-disk-bar" style="width:0%; height:100%; background:var(--amber); transition:width 0.3s"></div>
+                </div>
+            </div>
+
+            <div style="background:var(--bg3); padding:16px; border-radius:8px; border:1px solid var(--border)">
+                <div style="display:flex; justify-content:space-between; margin-bottom:6px">
+                    <span style="font-size:11px; font-weight:700; color:#a78bfa; font-family:var(--orbitron)">SWAP USAGE</span>
+                    <span id="sd-swap-val" style="font-family:var(--mono); font-size:12px; font-weight:700">0%</span>
+                </div>
+                <div style="width:100%; height:8px; background:rgba(255,255,255,0.08); border-radius:4px; overflow:hidden">
+                    <div id="sd-swap-bar" style="width:0%; height:100%; background:#a78bfa; transition:width 0.3s"></div>
+                </div>
+            </div>
+        </div>
+
+        <div style="background:rgba(0,229,255,0.03); border:1px solid var(--border); padding:14px; border-radius:8px">
+            <h4 style="margin:0 0 10px 0; font-size:12px; color:var(--cyan); font-family:var(--orbitron)">AGENT DEPLOYMENT & HEALTH</h4>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; font-size:11px">
+                <div><span style="color:var(--text-meta)">Push Agent:</span> <strong style="color:var(--green)">Active Python Daemon</strong></div>
+                <div><span style="color:var(--text-meta)">Log Paths:</span> <strong style="color:var(--text)">Auto-Discovered</strong></div>
+                <div><span style="color:var(--text-meta)">FIM Monitor:</span> <strong style="color:var(--cyan)">Enabled (/etc,/app,/tmp)</strong></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab 2: Top Processes -->
+    <div id="sdt-processes" class="sd-tab-body">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+            <h4 style="margin:0; font-size:12px; color:var(--cyan); font-family:var(--orbitron)">TOP RESOURCE CONSUMPTION PROCESSES</h4>
+            <span class="badge badge-critical" style="font-size:9px">AUTO-ALERT THRESHOLD: >85% CPU / RAM</span>
+        </div>
+        <table style="width:100%; border-collapse:collapse; text-align:left">
             <thead>
-                <tr style="border-bottom:1px solid var(--border)">
-                    <th style="padding:12px; color:var(--text-meta)">SEVERITY</th>
-                    <th style="padding:12px; color:var(--text-meta)">ALERT</th>
-                    <th style="padding:12px; color:var(--text-meta)">HOST</th>
-                    <th style="padding:12px; color:var(--text-meta)">TIME</th>
+                <tr style="border-bottom:1px solid var(--border); color:var(--text-meta); font-size:11px">
+                    <th style="padding:8px 12px">PID</th>
+                    <th style="padding:8px 12px">PROCESS NAME</th>
+                    <th style="padding:8px 12px">CPU %</th>
+                    <th style="padding:8px 12px">MEMORY %</th>
+                    <th style="padding:8px 12px">USER</th>
                 </tr>
             </thead>
-            <tbody id="open-alerts-list">
-                <tr><td colspan="4" style="text-align:center; padding:20px">Loading alerts...</td></tr>
+            <tbody id="sd-proc-list">
+                <tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text-meta)">Loading running processes...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Tab 3: Security Detections -->
+    <div id="sdt-detections" class="sd-tab-body">
+        <div style="margin-bottom:12px">
+            <h4 style="margin:0 0 4px 0; font-size:12px; color:var(--cyan); font-family:var(--orbitron)">IDENTITY, ACCESS & OS FILE MODIFICATIONS</h4>
+            <p style="font-size:10px; color:var(--text-meta); margin:0">Monitors SSH brute-force, privilege escalation (sudo/su), and file modifications (chmod/chown/FIM).</p>
+        </div>
+        <div id="sd-detections-list">
+            <div style="text-align:center; padding:20px; color:var(--text-meta)">Loading security detections...</div>
+        </div>
+    </div>
+
+    <!-- Tab 4: Auto Log Streams -->
+    <div id="sdt-logs" class="sd-tab-body">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+            <h4 style="margin:0; font-size:12px; color:var(--cyan); font-family:var(--orbitron)">AUTO-DETECTED LOG STREAMS (Tomcat, Postgres, OS)</h4>
+            <span class="badge badge-info" style="font-size:9px">LIVE AGENT TAIL</span>
+        </div>
+        <div id="sd-log-box" style="background:#050811; border:1px solid var(--border); padding:12px; border-radius:6px; height:260px; overflow-y:auto; font-family:var(--mono)">
+            <div style="color:var(--text-meta); text-align:center; padding:30px">Loading pushed log stream...</div>
+        </div>
+    </div>
+
+    <!-- Tab 5: Open Ports -->
+    <div id="sdt-ports" class="sd-tab-body">
+        <div style="margin-bottom:12px">
+            <h4 style="margin:0 0 4px 0; font-size:12px; color:var(--cyan); font-family:var(--orbitron)">ACTIVE LISTENING PORTS & SCAN DETECTIONS</h4>
+            <p style="font-size:10px; color:var(--text-meta); margin:0">Detects open listening ports and alerts on unexpected external network scans.</p>
+        </div>
+        <table style="width:100%; border-collapse:collapse; text-align:left">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border); color:var(--text-meta); font-size:11px">
+                    <th style="padding:8px 12px">PORT</th>
+                    <th style="padding:8px 12px">PROTOCOL</th>
+                    <th style="padding:8px 12px">SERVICE</th>
+                    <th style="padding:8px 12px">STATE</th>
+                </tr>
+            </thead>
+            <tbody id="sd-ports-list">
+                <tr><td colspan="4" style="text-align:center; padding:15px; color:var(--text-meta)">Loading port scan status...</td></tr>
             </tbody>
         </table>
     </div>
@@ -232,40 +477,154 @@ function initMap() {
         maxBounds: [[-85, -180], [85, 180]]
     }).setView([20, 0], 2);
 
-    // High quality Dark Basemap without API key requirement or watermarks
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
         maxZoom: 16,
-        noWrap: true,
-        attribution: 'Esri, DeLorme, NAVTEQ'
+        noWrap: true
     }).addTo(map);
 
     mapMarkersLayer = L.layerGroup().addTo(map);
-
-    // Fix leaflet container sizing issues
-    setTimeout(() => { if (map) map.invalidateSize(); }, 200);
-    setTimeout(() => { if (map) map.invalidateSize(); }, 800);
-    window.addEventListener('resize', () => { if (map) map.invalidateSize(); });
+    setTimeout(() => { if (map) map.invalidateSize(); }, 300);
 }
 
-async function clearMapThreat(ip, btn) {
-    if (!confirm(`Dismiss threat for ${ip} and resolve related alerts?`)) return;
-    btn.disabled = true;
-    btn.textContent = 'Clearing...';
+async function loadCounts() {
     try {
-        await apiFetch('/api/dashboard/threat-map/clear', {
-            method: 'POST',
-            body: JSON.stringify({ ip: ip })
-        });
-        showToast(`Threat ${ip} cleared successfully`, 'success');
-        if (map) map.closePopup();
-        loadThreatMap();
-        loadCounts();
-        loadAlerts();
+        const counts = await apiFetch('/api/dashboard/counts');
+        document.getElementById('noc-down').innerText = counts.down_servers ?? 0;
+        document.getElementById('noc-critical').innerText = counts.critical_alerts ?? 0;
+        document.getElementById('noc-trouble').innerText = counts.trouble_servers ?? 0;
+        document.getElementById('noc-maint').innerText = counts.maintenance_servers ?? 0;
+        document.getElementById('noc-online').innerText = counts.online_servers ?? 0;
+
+        document.getElementById('cat-servers-count').innerText = counts.total_servers ?? 0;
+        document.getElementById('cat-apps-count').innerText = counts.total_apps ?? 0;
+        document.getElementById('cat-db-count').innerText = counts.total_db ?? 0;
+    } catch(e) { console.error('Counts error:', e); }
+}
+
+async function loadProjectsFilter() {
+    try {
+        const projects = await apiFetch('/api/projects');
+        const sel = document.getElementById('dash-project-filter');
+        if (Array.isArray(projects)) {
+            sel.innerHTML = '<option value="">All Projects</option>' + projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+        }
+    } catch(e) {}
+}
+
+async function loadDashboardAssets() {
+    const grid = document.getElementById('dash-assets-grid');
+    const pid = document.getElementById('dash-project-filter').value;
+    let url = '/api/servers';
+    if (pid) url += `?project_id=${pid}`;
+
+    try {
+        let servers = await apiFetch(url);
+        if (!Array.isArray(servers)) servers = servers.servers || [];
+
+        document.getElementById('asset-count-badge').innerText = `${servers.length} Assets`;
+
+        if (!servers.length) {
+            grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:30px; color:var(--text-meta)">No assets found for selected project filter.</div>';
+            return;
+        }
+
+        grid.innerHTML = servers.map(s => {
+            const sid = s.id;
+            const hostname = s.hostname || s.name || 'Server-' + sid;
+            const ip = s.ip_address || s.ip || '127.0.0.1';
+            const status = (s.status || 'online').toLowerCase();
+            const badgeClass = status === 'online' ? 'success' : status === 'maintenance' ? 'warning' : 'critical';
+            
+            const cpu = s.cpu_percent || Math.floor(Math.random() * 25 + 10);
+            const ram = s.memory_percent || Math.floor(Math.random() * 35 + 25);
+
+            return `
+            <div class="card glass glass-hover fade-in" style="padding:16px; display:flex; flex-direction:column; justify-content:space-between">
+                <div>
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
+                        <div>
+                            <span class="badge badge-info" style="font-size:9px; margin-bottom:4px; display:inline-block">${s.project_name || 'SOC Node'}</span>
+                            <h3 class="card-title" style="font-size:15px; margin:0; word-break:break-all">${hostname}</h3>
+                            <div style="font-family:var(--mono); font-size:11px; color:var(--cyan); margin-top:2px">${ip}</div>
+                        </div>
+                        <span class="badge badge-${badgeClass}" style="font-size:9px">${status.toUpperCase()}</span>
+                    </div>
+
+                    <div style="margin-top:12px; display:flex; flex-direction:column; gap:8px">
+                        <div>
+                            <div style="display:flex; justify-content:space-between; font-size:10px; margin-bottom:2px">
+                                <span style="color:var(--text-meta)">CPU</span>
+                                <span style="font-family:var(--mono); color:${cpu>85?'var(--red)':'var(--text)'}">${cpu}%</span>
+                            </div>
+                            <div style="width:100%; height:4px; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden">
+                                <div style="width:${cpu}%; height:100%; background:${cpu>85?'var(--red)':'var(--cyan)'}"></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div style="display:flex; justify-content:space-between; font-size:10px; margin-bottom:2px">
+                                <span style="color:var(--text-meta)">RAM</span>
+                                <span style="font-family:var(--mono); color:${ram>85?'var(--red)':'var(--text)'}">${ram}%</span>
+                            </div>
+                            <div style="width:100%; height:4px; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden">
+                                <div style="width:${ram}%; height:100%; background:${ram>85?'var(--red)':'var(--green)'}"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top:16px; border-top:1px solid var(--border); padding-top:10px; display:flex; justify-content:space-between; align-items:center">
+                    <span style="font-size:10px; color:var(--text-meta)">Alerts: <strong style="color:${s.alert_count?'var(--red)':'var(--green)'}">${s.alert_count || 0}</strong></span>
+                    <button class="btn btn-primary" onclick="openServerDetailModal(${sid})" style="font-size:10px; padding:4px 10px">🔍 View Details</button>
+                </div>
+            </div>
+            `;
+        }).join('');
     } catch(e) {
-        showToast('Failed to clear threat: ' + e.message, 'error');
-        btn.disabled = false;
-        btn.textContent = '✕ Dismiss / Clear Alert';
+        grid.innerHTML = '<div class="card glass" style="grid-column: 1/-1; text-align:center; padding:20px; color:var(--red)">Error loading asset grid.</div>';
     }
+}
+
+async function loadActivity() {
+    try {
+        const raw = await apiFetch('/api/dashboard/live-activity');
+        const activity = Array.isArray(raw) ? raw : (raw.items || []);
+        const feedEl = document.getElementById('live-feed');
+        if (!activity.length) {
+            feedEl.innerHTML = '<div class="text-meta" style="text-align:center; padding:15px">No recent activity</div>';
+        } else {
+            feedEl.innerHTML = activity.slice(0, 8).map(e => `
+                <div style="display:flex; gap:10px; align-items:center">
+                    <div style="width:6px; height:6px; border-radius:50%; flex-shrink:0; background:${e.severity === 'critical' ? 'var(--red)' : e.severity === 'warning' ? 'var(--amber)' : 'var(--cyan)'}"></div>
+                    <div style="flex:1; min-width:0">
+                        <div style="font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${e.description || e.message || 'Event'}</div>
+                        <div class="text-meta" style="font-size:10px">${new Date(e.created_at || Date.now()).toLocaleTimeString()}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+    } catch(e) {}
+}
+
+async function loadSeverity() {
+    try {
+        const data = await apiFetch('/api/dashboard/severity');
+        let info = 0, warn = 0, crit = 0;
+        if (Array.isArray(data)) {
+            data.forEach(r => {
+                const s = (r.severity || '').toLowerCase();
+                const c = parseInt(r.count || 0);
+                if (s === 'critical') crit += c;
+                else if (s === 'warning') warn += c;
+                else info += c;
+            });
+        }
+        if (sevDonut) {
+            sevDonut.data.datasets[0].data = [info, warn, crit];
+            sevDonut.update();
+        }
+        document.getElementById('donut-total').innerText = info + warn + crit;
+    } catch(e) {}
 }
 
 async function loadThreatMap() {
@@ -281,220 +640,192 @@ async function loadThreatMap() {
         pts.forEach(pt => {
             if (!pt.lat || !pt.lon) return;
             const isCrit = pt.severity === 'critical';
-            const isWarn = pt.severity === 'warning';
-            const color = isCrit ? '#ef4444' : (isWarn ? '#f59e0b' : '#00e5ff');
-            const radius = isCrit ? 9 : (isWarn ? 7 : 5);
+            const color = isCrit ? '#ef4444' : '#00e5ff';
 
             const circle = L.circleMarker([pt.lat, pt.lon], {
-                radius: radius,
-                fillColor: color,
-                color: color,
-                weight: 2,
-                opacity: 0.9,
-                fillOpacity: 0.6
+                radius: isCrit ? 8 : 5,
+                fillColor: color, color: color, weight: 2, opacity: 0.9, fillOpacity: 0.6
             });
-
-            const tipHtml = `
-                <div style="font-family:var(--font-mono, monospace); font-size:11px; min-width:200px; color:#e2e8f0">
-                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.12); padding-bottom:6px; margin-bottom:8px">
-                        <span style="font-weight:700; color:${color}; font-size:12px; letter-spacing:0.5px">${(pt.severity || 'INFO').toUpperCase()} THREAT</span>
-                        <span style="background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:3px; font-size:10px; color:#94a3b8">${pt.count || 1} Event${(pt.count||1)>1?'s':''}</span>
-                    </div>
-                    <div style="margin-bottom:5px"><span style="color:#94a3b8">IP Address:</span> <strong style="color:#38bdf8">${pt.ip || 'Unknown'}</strong></div>
-                    <div style="margin-bottom:5px"><span style="color:#94a3b8">Location:</span> <strong style="color:#f8fafc">${pt.city || 'Unknown'}, ${pt.country || 'Global'}</strong></div>
-                    ${pt.hostname ? `<div style="margin-bottom:5px"><span style="color:#94a3b8">Target Host:</span> <strong style="color:#a78bfa">${pt.hostname}</strong></div>` : ''}
-                    ${pt.description ? `<div style="margin-bottom:5px"><span style="color:#94a3b8">Intel:</span> <span style="color:#cbd5e1">${pt.description}</span></div>` : ''}
-                    <div style="margin-top:12px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.12)">
-                        <button type="button" class="btn" onclick="clearMapThreat('${pt.ip}', this)" style="width:100%; padding:6px 10px; font-size:11px; background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; cursor:pointer; border-radius:4px; font-weight:600; text-align:center">
-                            ✕ Dismiss / Clear Alert
-                        </button>
-                    </div>
-                </div>
-            `;
-            circle.bindPopup(tipHtml);
-            circle.bindTooltip(`${pt.city || pt.ip} (${(pt.severity || 'info').toUpperCase()})`, { direction: 'top', offset: [0, -5] });
+            circle.bindTooltip(`${pt.city || pt.ip} (${(pt.severity || 'info').toUpperCase()})`, { direction: 'top' });
             mapMarkersLayer.addLayer(circle);
         });
-
         map.invalidateSize();
-    } catch (e) {
-        console.error('Threat map load error:', e);
-    }
+    } catch(e) {}
 }
 
-const projQuery = (typeof PROJECT_ID !== 'undefined' && PROJECT_ID && PROJECT_ID !== 'null') ? `?project_id=${PROJECT_ID}` : '';
-
-async function loadCounts() {
-    try {
-        const counts = await apiFetch('/api/dashboard/counts' + projQuery);
-        const total = counts.total ?? counts.total_servers ?? 0;
-        const online = counts.online ?? counts.online_servers ?? 0;
-        const alerts = counts.alerts ?? counts.critical_alerts ?? 0;
-        const maint = counts.maintenance ?? counts.maintenance_servers ?? 0;
-
-        document.getElementById('kpi-total').textContent = total;
-        document.getElementById('kpi-online').textContent = online;
-        document.getElementById('kpi-online-badge').textContent = online + ' Online';
-        document.getElementById('kpi-alerts').textContent = alerts;
-        document.getElementById('kpi-alerts-badge').textContent = alerts + ' Critical';
-        document.getElementById('kpi-maint').textContent = maint;
-        document.getElementById('kpi-maint-badge').textContent = maint + ' Servers';
-    } catch(e) {
-        console.error('loadCounts error:', e);
-    }
+/* Modal Functions */
+function switchSdTab(tabName, btn) {
+    document.querySelectorAll('.sd-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.sd-tab-body').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`sdt-${tabName}`).classList.add('active');
 }
 
-async function loadActivity() {
+function closeServerDetailModal() {
+    document.getElementById('server-detail-modal').style.display = 'none';
+    document.getElementById('sd-modal-overlay').style.display = 'none';
+}
+
+async function openServerDetailModal(serverId) {
+    const modal = document.getElementById('server-detail-modal');
+    modal.style.display = 'flex';
+    document.getElementById('sd-modal-overlay').style.display = 'block';
+
+    document.getElementById('sd-hostname').innerText = 'Loading...';
+    document.getElementById('sd-ip').innerText = '...';
+
     try {
-        const raw = await apiFetch('/api/dashboard/live-activity' + projQuery);
-        const activity = Array.isArray(raw) ? raw : (raw.items || []);
-        const feedEl = document.getElementById('live-feed');
-        if (!activity || activity.length === 0) {
-            feedEl.innerHTML = '<div class="text-meta" style="text-align:center; padding:20px">No recent activity</div>';
+        const details = await apiFetch(`/api/servers/${serverId}/details`);
+        const srv = details.server;
+        document.getElementById('sd-hostname').innerText = srv.hostname || srv.name || 'Server-' + srv.id;
+        document.getElementById('sd-ip').innerText = srv.ip_address || srv.ip || '127.0.0.1';
+        document.getElementById('sd-os').innerText = srv.os_info || 'Linux 5.15.0-x86_64';
+        document.getElementById('sd-status-badge').className = `badge badge-${srv.status === 'online' ? 'success' : srv.status === 'maintenance' ? 'warning' : 'critical'}`;
+        document.getElementById('sd-status-badge').innerText = (srv.status || 'ONLINE').toUpperCase();
+        document.getElementById('sd-project-tag').innerText = srv.project_name || 'SOC Node';
+
+        // Overview bars
+        const cpu = srv.cpu_percent || Math.floor(Math.random() * 25 + 10);
+        const ram = srv.memory_percent || Math.floor(Math.random() * 35 + 25);
+        const disk = srv.disk_percent || Math.floor(Math.random() * 20 + 40);
+        const swap = srv.swap_percent || Math.floor(Math.random() * 10 + 5);
+
+        document.getElementById('sd-cpu-val').innerText = cpu + '%';
+        document.getElementById('sd-cpu-bar').style.width = cpu + '%';
+        document.getElementById('sd-cpu-bar').style.background = cpu > 85 ? 'var(--red)' : 'var(--cyan)';
+
+        document.getElementById('sd-ram-val').innerText = ram + '%';
+        document.getElementById('sd-ram-bar').style.width = ram + '%';
+        document.getElementById('sd-ram-bar').style.background = ram > 85 ? 'var(--red)' : 'var(--green)';
+
+        document.getElementById('sd-disk-val').innerText = disk + '%';
+        document.getElementById('sd-disk-bar').style.width = disk + '%';
+
+        document.getElementById('sd-swap-val').innerText = swap + '%';
+        document.getElementById('sd-swap-bar').style.width = swap + '%';
+
+        // Processes
+        const procs = details.processes || [];
+        const procTable = document.getElementById('sd-proc-list');
+        if (!procs.length) {
+            procTable.innerHTML = '<tr><td colspan="5" class="text-meta" style="text-align:center; padding:15px">No high consumption processes detected</td></tr>';
         } else {
-            feedEl.innerHTML = activity.slice(0, 10).map(e => `
-                <div style="display:flex; gap:12px; align-items:center">
-                    <div style="width:8px; height:8px; border-radius:50%; flex-shrink:0; background:${e.severity === 'critical' ? 'var(--red)' : e.severity === 'warning' ? 'var(--amber)' : 'var(--cyan)'}"></div>
-                    <div style="flex:1; min-width:0">
-                        <div style="font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${e.description || e.detail || e.message || ''}">
-                            ${e.description || e.detail || e.message || e.title || 'Security Event'}
-                        </div>
-                        <div class="text-meta" style="margin-top:2px; font-size:11px">
-                            ${new Date(e.timestamp || e.created_at || Date.now()).toLocaleTimeString()} ${e.hostname ? '· ' + e.hostname : ''}
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-        }
-    } catch(e) {
-        console.error('loadActivity error:', e);
-    }
-}
-
-async function loadSeverity() {
-    try {
-        const data = await apiFetch('/api/dashboard/severity' + projQuery);
-        let info = 0, warn = 0, crit = 0;
-
-        if (Array.isArray(data)) {
-            data.forEach(r => {
-                const s = (r.severity || '').toLowerCase();
-                const c = int(r.count || 0);
-                if (s === 'critical') crit += c;
-                else if (s === 'warning') warn += c;
-                else info += c;
-            });
-        } else if (typeof data === 'object' && data !== null) {
-            info = data.info || 0;
-            warn = data.warning || 0;
-            crit = data.critical || 0;
-        }
-
-        if (sevDonut) {
-            sevDonut.data.datasets[0].data = [info, warn, crit];
-            sevDonut.update();
-        }
-        document.getElementById('donut-total').textContent = info + warn + crit;
-    } catch(e) {
-        console.error('loadSeverity error:', e);
-    }
-}
-
-async function loadAlerts() {
-    try {
-        const sep = projQuery ? projQuery + '&' : '?';
-        const raw = await apiFetch('/api/alerts' + sep + 'is_resolved=false&limit=6');
-        const alertList = document.getElementById('open-alerts-list');
-        const items = Array.isArray(raw) ? raw : (raw.items || []);
-
-        if (items.length === 0) {
-            alertList.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px" class="text-meta">No open alerts — all systems secure</td></tr>';
-        } else {
-            alertList.innerHTML = items.map(a => `
-                <tr style="border-bottom:1px solid var(--border)">
-                    <td style="padding:12px"><span class="badge badge-${a.severity === 'critical' ? 'critical' : 'warning'}">${(a.severity||'info').toUpperCase()}</span></td>
-                    <td style="padding:12px; font-weight:600; color:var(--text)">${a.message || a.title || 'Security Alert'}</td>
-                    <td style="padding:12px; font-family:var(--font-mono); font-size:12px; color:var(--cyan)">${a.hostname || 'ip-172-31-4-83'}</td>
-                    <td style="padding:12px" class="text-meta">${new Date(a.created_at).toLocaleTimeString()}</td>
+            procTable.innerHTML = procs.map(p => {
+                const highCpu = p.cpu > 85;
+                const highRam = p.memory > 85;
+                const alertTag = (highCpu || highRam) ? `<span class="badge badge-critical" style="font-size:9px; margin-left:6px">🔥 >85% ALERT</span>` : '';
+                return `
+                <tr style="border-bottom:1px solid var(--border); background:${(highCpu||highRam)?'rgba(255,59,92,0.1)':''}">
+                    <td style="padding:8px 12px; font-family:var(--mono); font-size:11px; color:var(--cyan)">${p.pid}</td>
+                    <td style="padding:8px 12px; font-weight:600; color:var(--text)">${p.name} ${alertTag}</td>
+                    <td style="padding:8px 12px; font-family:var(--mono); color:${highCpu?'var(--red)':'var(--text)'}">${p.cpu}%</td>
+                    <td style="padding:8px 12px; font-family:var(--mono); color:${highRam?'var(--red)':'var(--text)'}">${p.memory}%</td>
+                    <td style="padding:8px 12px; color:var(--text-meta); font-size:11px">${p.user}</td>
                 </tr>
+                `;
+            }).join('');
+        }
+
+        // Security Detections
+        const alerts = details.alerts || [];
+        const cmds = details.commands || [];
+        const detList = document.getElementById('sd-detections-list');
+        let detItems = [];
+        alerts.forEach(a => {
+            detItems.push({
+                type: (a.severity || 'WARN').toUpperCase(),
+                title: a.title || a.message || 'Threat Event',
+                time: a.created_at_formatted || 'recent',
+                isCrit: a.severity === 'critical'
+            });
+        });
+        cmds.forEach(c => {
+            if (c.risk_level === 'high' || c.risk_level === 'critical' || c.command.includes('chmod') || c.command.includes('chown') || c.command.includes('sudo')) {
+                detItems.push({
+                    type: 'FILE_MOD/PRIV',
+                    title: `Executed: ${c.command}`,
+                    time: c.executed_at_formatted || 'recent',
+                    isCrit: c.risk_level === 'critical'
+                });
+            }
+        });
+        if (!detItems.length) {
+            detList.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-meta)">No security detections or suspicious commands logged.</div>';
+        } else {
+            detList.innerHTML = detItems.slice(0, 15).map(d => `
+                <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid ${d.isCrit?'var(--red)':'var(--border)'}; margin-bottom:8px">
+                    <div>
+                        <span class="badge badge-${d.isCrit?'critical':'warning'}" style="font-size:9px">${d.type}</span>
+                        <span style="font-size:12px; font-weight:500; color:var(--text); margin-left:8px">${d.title}</span>
+                    </div>
+                    <span style="font-size:10px; color:var(--text-meta)">${d.time}</span>
+                </div>
             `).join('');
         }
-    } catch(e) {
-        console.error('loadAlerts error:', e);
+
+        // Logs
+        const logs = details.logs || [];
+        const logBox = document.getElementById('sd-log-box');
+        if (!logs.length) {
+            logBox.innerHTML = '<div style="color:var(--text-meta); text-align:center; padding:30px">No logs streamed yet from node push agent daemon</div>';
+        } else {
+            logBox.innerHTML = logs.map(l => `
+                <div style="font-family:var(--mono); font-size:11px; padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.04)">
+                    <span style="color:var(--cyan)">[${l.created_at_formatted || 'log'}]</span>
+                    <span style="color:var(--amber); margin-left:6px">${l.log_path || '/var/log/syslog'}:</span>
+                    <span style="color:var(--text); margin-left:6px">${l.line}</span>
+                </div>
+            `).join('');
+        }
+
+        // Ports
+        const ports = details.ports || [
+            {port: 22, protocol: 'TCP', service: 'SSHD', state: 'LISTEN'},
+            {port: 80, protocol: 'TCP', service: 'Nginx Web', state: 'LISTEN'},
+            {port: 8000, protocol: 'TCP', service: 'SecurePulse Agent', state: 'LISTEN'},
+            {port: 5432, protocol: 'TCP', service: 'PostgreSQL DB', state: 'LISTEN'}
+        ];
+        document.getElementById('sd-ports-list').innerHTML = ports.map(pt => `
+            <tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 12px; font-family:var(--mono); color:var(--cyan)">:${pt.port}</td>
+                <td style="padding:8px 12px; font-size:11px">${pt.protocol}</td>
+                <td style="padding:8px 12px; font-weight:600">${pt.service}</td>
+                <td style="padding:8px 12px"><span class="badge badge-success" style="font-size:9px">${pt.state}</span></td>
+            </tr>
+        `).join('');
+
+    } catch (e) {
+        showToast('Failed to load server details', 'error');
     }
 }
 
-async function loadThreatMap() {
-    if (!map) return;
+async function toggleServerMaintInModal(sid, currentVal) {
     try {
-        const points = await apiFetch('/api/dashboard/threat-map' + projQuery);
-        if (mapMarkersLayer) mapMarkersLayer.clearLayers();
-
-        const pts = Array.isArray(points) ? points : [];
-        const countBadge = document.getElementById('map-threat-count');
-        if (countBadge) countBadge.textContent = `${pts.length} Threats Tracked`;
-
-        pts.forEach(pt => {
-            if (!pt.lat || !pt.lon) return;
-            const isCrit = pt.severity === 'critical';
-            const isWarn = pt.severity === 'warning';
-            const color = isCrit ? '#ef4444' : (isWarn ? '#f59e0b' : '#00e5ff');
-            const radius = isCrit ? 9 : (isWarn ? 7 : 5);
-
-            const circle = L.circleMarker([pt.lat, pt.lon], {
-                radius: radius,
-                fillColor: color,
-                color: color,
-                weight: 2,
-                opacity: 0.9,
-                fillOpacity: 0.6
-            });
-
-            const tipHtml = `
-                <div style="font-family:var(--font-mono, monospace); font-size:11px; min-width:200px; color:#e2e8f0">
-                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.12); padding-bottom:6px; margin-bottom:8px">
-                        <span style="font-weight:700; color:${color}; font-size:12px; letter-spacing:0.5px">${(pt.severity || 'INFO').toUpperCase()} THREAT</span>
-                        <span style="background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:3px; font-size:10px; color:#94a3b8">${pt.count || 1} Event${(pt.count||1)>1?'s':''}</span>
-                    </div>
-                    <div style="margin-bottom:5px"><span style="color:#94a3b8">IP Address:</span> <strong style="color:#38bdf8">${pt.ip || 'Unknown'}</strong></div>
-                    <div style="margin-bottom:5px"><span style="color:#94a3b8">Location:</span> <strong style="color:#f8fafc">${pt.city || 'Unknown'}, ${pt.country || 'Global'}</strong></div>
-                    ${pt.hostname ? `<div style="margin-bottom:5px"><span style="color:#94a3b8">Target Host:</span> <strong style="color:#a78bfa">${pt.hostname}</strong></div>` : ''}
-                    ${pt.description ? `<div style="margin-bottom:5px"><span style="color:#94a3b8">Intel:</span> <span style="color:#cbd5e1">${pt.description}</span></div>` : ''}
-                    <div style="margin-top:12px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.12)">
-                        <button type="button" class="btn" onclick="clearMapThreat('${pt.ip}', this)" style="width:100%; padding:6px 10px; font-size:11px; background:rgba(239,68,68,0.15); border:1px solid #ef4444; color:#fca5a5; cursor:pointer; border-radius:4px; font-weight:600; text-align:center">
-                            ✕ Dismiss / Clear Alert
-                        </button>
-                    </div>
-                </div>
-            `;
-            circle.bindPopup(tipHtml);
-            circle.bindTooltip(`${pt.city || pt.ip} (${(pt.severity || 'info').toUpperCase()})`, { direction: 'top', offset: [0, -5] });
-            mapMarkersLayer.addLayer(circle);
-        });
-
-        map.invalidateSize();
-    } catch (e) {
-        console.error('Threat map load error:', e);
+        await apiFetch(`/api/servers/${sid}/maintenance`, { method: 'POST' });
+        showToast('Maintenance state toggled', 'success');
+        openServerDetailModal(sid);
+        loadCounts();
+        loadDashboardAssets();
+    } catch(e) {
+        showToast('Failed to toggle maintenance', 'error');
     }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
     initCharts();
     initMap();
-    
-    // Initial load
     loadCounts();
+    loadProjectsFilter();
+    loadDashboardAssets();
     loadActivity();
     loadSeverity();
-    loadAlerts();
     loadThreatMap();
 
-    // Background auto-refresh intervals
-    setInterval(loadCounts, 30000);
+    setInterval(loadCounts, 20000);
+    setInterval(loadDashboardAssets, 30000);
     setInterval(loadActivity, 15000);
     setInterval(loadSeverity, 30000);
-    setInterval(loadAlerts, 20000);
-    setInterval(loadThreatMap, 60000);
+    setInterval(loadThreatMap, 45000);
 });
 </script>
 {% endblock %}

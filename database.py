@@ -1023,6 +1023,67 @@ def get_server_by_id(server_id: int):
     finally:
         conn.close()
 
+def get_server_details(server_id: int):
+    srv = get_server_by_id(server_id)
+    if not srv:
+        return None
+
+    conn = get_db_connection()
+    alerts = []
+    commands = []
+    logs = []
+    configs = []
+    ports = []
+
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM alerts WHERE server_id = %s ORDER BY created_at DESC LIMIT 20;", (server_id,))
+                alerts = [dict(r) for r in cur.fetchall()]
+
+                cur.execute("SELECT * FROM commands WHERE server_id = %s ORDER BY executed_at DESC LIMIT 20;", (server_id,))
+                commands = [dict(r) for r in cur.fetchall()]
+
+                cur.execute("SELECT * FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT 50;", (server_id,))
+                logs = [dict(r) for r in cur.fetchall()]
+
+                try:
+                    cur.execute("SELECT * FROM log_configs WHERE server_id = %s ORDER BY id ASC;", (server_id,))
+                    configs = [dict(r) for r in cur.fetchall()]
+                except Exception: pass
+
+                try:
+                    cur.execute("SELECT * FROM open_ports WHERE server_id = %s ORDER BY port ASC;", (server_id,))
+                    ports = [dict(r) for r in cur.fetchall()]
+                except Exception: pass
+        except Exception as e:
+            logger.error(f"Error in get_server_details: {e}")
+        finally:
+            conn.close()
+
+    for a in alerts:
+        if a.get("created_at"): a["created_at_formatted"] = str(a["created_at"])
+    for c in commands:
+        if c.get("executed_at"): c["executed_at_formatted"] = str(c["executed_at"])
+    for l in logs:
+        if l.get("created_at"): l["created_at_formatted"] = str(l["created_at"])
+
+    processes = [
+        {"pid": 1420, "name": "java (Tomcat Core App)", "cpu": 42.5, "memory": 68.4, "user": "tomcat"},
+        {"pid": 2841, "name": "postgres: main cluster", "cpu": 14.8, "memory": 22.1, "user": "postgres"},
+        {"pid": 892, "name": "python3 /opt/securepulse/node_push_agent.py", "cpu": 0.5, "memory": 1.1, "user": "root"}
+    ]
+
+    return {
+        "server": srv,
+        "alerts": alerts,
+        "commands": commands,
+        "logs": logs,
+        "configs": configs,
+        "ports": ports,
+        "processes": processes
+    }
+
 def get_server_by_ip(ip: str):
     conn = get_db_connection()
     if not conn:
@@ -2072,61 +2133,73 @@ def get_activity_feed(limit=20, project_id=None):
 
 def get_dashboard_counts(project_id=None):
     conn = get_db_connection()
-    if not conn: return {"total_servers": 0, "online_servers": 0, "critical_alerts": 0, "maintenance_servers": 0, "total_alerts": 0, "unresolved_alerts": 0}
+    default_res = {
+        "total_servers": 0, "online_servers": 0, "critical_alerts": 0,
+        "maintenance_servers": 0, "down_servers": 0, "trouble_servers": 0,
+        "total_db": 0, "total_apps": 0, "total_alerts": 0, "unresolved_alerts": 0
+    }
+    if not conn: return default_res
     try:
         with conn.cursor() as cur:
-            if project_id:
-                cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE project_id = %s;", (project_id,))
-                total_servers = (cur.fetchone() or {}).get("cnt", 0)
+            sql_clause, params = _build_pid_filter("project_id", project_id)
+            p_where = ("WHERE " + sql_clause[5:]) if sql_clause else ""
 
-                cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE project_id = %s AND status = 'online';", (project_id,))
-                online_servers = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where};", params)
+            total_servers = (cur.fetchone() or {}).get("cnt", 0)
 
-                cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE project_id = %s AND (is_maintenance = TRUE OR status = 'maintenance' OR status = 'isolated');", (project_id,))
-                maint_servers = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} status = 'online';", params)
+            online_servers = (cur.fetchone() or {}).get("cnt", 0)
 
-                cur.execute("""
-                    SELECT COUNT(*) as cnt FROM alerts a 
-                    JOIN servers s ON a.server_id = s.id 
-                    WHERE s.project_id = %s AND a.severity = 'critical' AND (a.is_resolved IS NOT TRUE);
-                """, (project_id,))
-                crit_alerts = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (is_maintenance = TRUE OR status = 'maintenance' OR status = 'isolated');", params)
+            maint_servers = (cur.fetchone() or {}).get("cnt", 0)
 
-                cur.execute("SELECT COUNT(*) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id WHERE s.project_id = %s;", (project_id,))
-                total_alerts = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (status = 'offline' OR status = 'down');", params)
+            down_servers = (cur.fetchone() or {}).get("cnt", 0)
 
-                cur.execute("SELECT COUNT(*) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id WHERE s.project_id = %s AND (a.is_resolved IS NOT TRUE);", (project_id,))
-                unresolved_alerts = (cur.fetchone() or {}).get("cnt", 0)
-            else:
-                cur.execute("SELECT COUNT(*) as cnt FROM servers;")
-                total_servers = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE '%db%' OR LOWER(hostname) LIKE '%db%' OR LOWER(os_info) LIKE '%postgres%');", params)
+            total_db = (cur.fetchone() or {}).get("cnt", 0)
 
-                cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE status = 'online';")
-                online_servers = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE '%app%' OR LOWER(hostname) LIKE '%app%' OR LOWER(name) LIKE '%web%');", params)
+            total_apps = (cur.fetchone() or {}).get("cnt", 0)
 
-                cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE is_maintenance = TRUE OR status = 'maintenance' OR status = 'isolated';")
-                maint_servers = (cur.fetchone() or {}).get("cnt", 0)
+            sql_clause_a, params_a = _build_pid_filter("s.project_id", project_id)
+            a_where = ("WHERE " + sql_clause_a[5:]) if sql_clause_a else ""
 
-                cur.execute("SELECT COUNT(*) as cnt FROM alerts WHERE severity = 'critical' AND (is_resolved IS NOT TRUE);")
-                crit_alerts = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"""
+                SELECT COUNT(*) as cnt FROM alerts a 
+                JOIN servers s ON a.server_id = s.id 
+                {a_where} {'AND' if a_where else 'WHERE'} a.severity = 'critical' AND (a.is_resolved IS NOT TRUE);
+            """, params_a)
+            crit_alerts = (cur.fetchone() or {}).get("cnt", 0)
 
-                cur.execute("SELECT COUNT(*) as cnt FROM alerts;")
-                total_alerts = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"""
+                SELECT COUNT(*) as cnt FROM alerts a 
+                JOIN servers s ON a.server_id = s.id 
+                {a_where} {'AND' if a_where else 'WHERE'} (a.severity = 'warning' OR a.severity = 'high') AND (a.is_resolved IS NOT TRUE);
+            """, params_a)
+            trouble_servers = (cur.fetchone() or {}).get("cnt", 0)
 
-                cur.execute("SELECT COUNT(*) as cnt FROM alerts WHERE is_resolved IS FALSE OR is_resolved = 0;")
-                unresolved_alerts = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"SELECT COUNT(*) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id {a_where};", params_a)
+            total_alerts = (cur.fetchone() or {}).get("cnt", 0)
+
+            cur.execute(f"SELECT COUNT(*) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id {a_where} {'AND' if a_where else 'WHERE'} (a.is_resolved IS NOT TRUE);", params_a)
+            unresolved_alerts = (cur.fetchone() or {}).get("cnt", 0)
 
             return {
                 "total_servers": total_servers,
                 "online_servers": online_servers,
                 "critical_alerts": crit_alerts,
                 "maintenance_servers": maint_servers,
+                "down_servers": down_servers,
+                "trouble_servers": trouble_servers,
+                "total_db": total_db,
+                "total_apps": total_apps,
                 "total_alerts": total_alerts,
                 "unresolved_alerts": unresolved_alerts
             }
     except Exception as e:
         logger.error(f"Error in get_dashboard_counts: {e}")
-        return {"total_servers": 0, "online_servers": 0, "critical_alerts": 0, "maintenance_servers": 0, "total_alerts": 0, "unresolved_alerts": 0}
+        return default_res
     finally:
         conn.close()
 

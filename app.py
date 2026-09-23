@@ -1120,6 +1120,13 @@ async def api_get_server_by_id(server_id: int):
         raise HTTPException(status_code=404, detail="Server not found")
     return server
 
+@app.get("/api/servers/{server_id}/details")
+async def api_get_server_details(server_id: int):
+    details = db.get_server_details(server_id)
+    if not details:
+        raise HTTPException(status_code=404, detail="Server not found")
+    return details
+
 @app.post("/api/servers/add")
 async def api_add_server(request: Request):
     try:
@@ -1152,6 +1159,13 @@ async def api_delete_server(server_id: int):
     if success:
         return {"ok": True, "message": "Server deleted"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
+
+@app.get("/api/servers/{server_id}/details")
+async def api_get_server_details(server_id: int):
+    details = db.get_server_details(server_id)
+    if not details:
+        raise HTTPException(status_code=404, detail="Server details not found")
+    return details
 
 @app.post("/api/servers/{server_id}/action")
 async def api_server_action(server_id: int, request: Request):
