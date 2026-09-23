@@ -1539,6 +1539,24 @@ async def api_update_user_role(user_id: int, request: Request):
         return {"ok": True, "message": "Role updated"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to update role"})
 
+@app.patch("/api/users/{user_id}/password")
+async def api_change_user_password(user_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    new_password = body.get("password")
+    if not new_password:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "New password required"})
+    if db.change_user_password(user_id, new_password):
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, "CHANGE_USER_PASSWORD", "user", user_id, f"Changed password for user #{user_id}")
+        return {"ok": True, "message": "Password updated successfully"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to update password"})
+
+
 @app.patch("/api/users/{user_id}/status")
 @app.patch("/api/users/{user_id}/disable")
 async def api_toggle_user_status(user_id: int, request: Request):

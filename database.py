@@ -145,19 +145,20 @@ def init_db():
                 except Exception:
                     pass
 
-            # Always seed/update admin user
-            hashed_admin = generate_password_hash("admin")
-            cur.execute("SELECT id FROM users WHERE username = %s OR email = %s;", ("admin", "admin@securepulse.local"))
+            # Seed primary super admin with exact password Admin@1234
+            hashed_admin = generate_password_hash("Admin@1234")
+            cur.execute("SELECT id FROM users WHERE LOWER(username) IN ('admin', 'superuser') OR is_admin = TRUE;")
             admin_row = cur.fetchone()
             if not admin_row:
                 cur.execute("""
                     INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active, created_at)
-                    VALUES (%s, %s, %s, 'admin', 'System Administrator', TRUE, TRUE, NOW());
+                    VALUES (%s, %s, %s, 'superuser', 'System Administrator', TRUE, TRUE, NOW());
                 """, ("admin", "admin@securepulse.local", hashed_admin))
             else:
                 cur.execute("""
-                    UPDATE users SET username = 'admin', hashed_password = %s, role = 'admin', is_admin = TRUE, is_active = TRUE WHERE id = %s;
+                    UPDATE users SET username = 'admin', email = 'admin@securepulse.local', hashed_password = %s, role = 'superuser', is_admin = TRUE, is_active = TRUE WHERE id = %s;
                 """, (hashed_admin, admin_row["id"]))
+
 
             # Servers Table
             cur.execute("""
@@ -3367,4 +3368,21 @@ def get_user_allowed_project_ids(user_id: int):
         return []
     finally:
         conn.close()
+
+
+def change_user_password(user_id: int, new_password: str):
+    """Update password hash for a given user ID."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            hashed = generate_password_hash(new_password)
+            cur.execute("UPDATE users SET hashed_password = %s WHERE id = %s;", (hashed, user_id))
+            return True
+    except Exception as e:
+        logger.error(f"Error in change_user_password: {e}")
+        return False
+    finally:
+        conn.close()
+
 
