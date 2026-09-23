@@ -229,10 +229,14 @@
                     </td>
                     <td class="mono" style="font-size:10px">${g.created_at || 'N/A'}</td>
                     <td>
-                        <button class="btn btn-glass" style="color:var(--red); font-size:10px; padding:4px 8px" onclick="deleteGroup(${g.id})">DELETE</button>
+                        <div style="display:flex; gap:6px">
+                            <button class="btn btn-glass" style="color:var(--cyan); font-size:10px; padding:4px 8px" onclick="openManageGroupModal(${g.id})">⚙ MANAGE GROUP</button>
+                            <button class="btn btn-glass" style="color:var(--red); font-size:10px; padding:4px 8px" onclick="deleteGroup(${g.id})">DELETE</button>
+                        </div>
                     </td>
                 </tr>
             `).join('');
+
         } else {
             let filteredUsers = globalUsers.filter(u => {
                 if (currentView === 'admins') return u.role === 'superuser' || u.role === 'admin' || u.is_admin;
@@ -586,11 +590,13 @@
 
                     <div style="border-top:1px solid var(--border); padding-top:10px">
                         <label class="stat-label">INLINE CREATE NEW NORMAL MEMBER (OPTIONAL)</label>
-                        <div style="display:flex; gap:8px; margin-top:4px">
-                            <input type="text" id="wz-nm-username" placeholder="Username" style="flex:1; font-size:11px">
-                            <input type="email" id="wz-nm-email" placeholder="Email (optional)" style="flex:1; font-size:11px">
-                            <button class="btn btn-glass" style="font-size:10px" onclick="addWizardInlineMember()">+ Add Member</button>
+                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:6px; margin-top:4px">
+                            <input type="text" id="wz-nm-username" placeholder="Username *" style="font-size:11px">
+                            <input type="email" id="wz-nm-email" placeholder="Email (optional)" style="font-size:11px">
+                            <input type="password" id="wz-nm-password" placeholder="Password *" style="font-size:11px">
+                            <button class="btn btn-glass" style="font-size:10px; color:var(--cyan)" onclick="addWizardInlineMember()">+ Add Member</button>
                         </div>
+
                         <div id="wz-new-members-list" style="margin-top:8px">
                             ${wizardData.new_members.map((m, idx) => `
                                 <span class="tag-item badge-info">${m.username} <a href="javascript:void(0)" onclick="removeWizardInlineMember(${idx})" style="color:var(--red); margin-left:4px">×</a></span>
@@ -722,8 +728,12 @@
     function addWizardInlineMember() {
         const u = document.getElementById('wz-nm-username').value.trim();
         const e = document.getElementById('wz-nm-email').value.trim();
-        if (!u) return;
-        wizardData.new_members.push({ username: u, email: e });
+        const p = document.getElementById('wz-nm-password').value.trim();
+        if (!u) {
+            showToast('Username required for inline member', 'error');
+            return;
+        }
+        wizardData.new_members.push({ username: u, email: e, password: p || 'NormalUser123!' });
         renderWizardModal();
     }
 
@@ -732,38 +742,183 @@
         renderWizardModal();
     }
 
-    function handleWizardProjectCheck(chk) {
-        const pid = parseInt(chk.value);
-        if (chk.checked) {
-            if (!wizardData.existing_project_ids.includes(pid)) wizardData.existing_project_ids.push(pid);
-        } else {
-            wizardData.existing_project_ids = wizardData.existing_project_ids.filter(id => id !== pid);
-        }
+    /* COMPREHENSIVE EDIT / MANAGE GROUP MODAL */
+    function openManageGroupModal(groupId) {
+        const group = globalGroups.find(g => g.id === groupId);
+        if (!group) return;
+
+        showModal(`
+            <div style="width:620px; max-width:95vw; max-height:85vh; overflow-y:auto; padding:10px">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+                    <h3 class="card-title" style="color:var(--cyan); margin:0">⚙ MANAGE GROUP: ${group.name}</h3>
+                    <span class="mono" style="font-size:11px; color:var(--text3)">ID: #${group.id}</span>
+                </div>
+                <p style="font-size:11px; color:var(--text3); margin-bottom:15px">Edit group details, add/remove members, and update project permissions.</p>
+
+                <div id="mg-alert-banner" class="alert-banner"></div>
+
+                <!-- 1. GROUP DETAILS -->
+                <div class="card glass" style="padding:15px; margin-bottom:15px">
+                    <label class="stat-label" style="color:var(--cyan)">1. GROUP DETAILS</label>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px">
+                        <div>
+                            <label class="stat-label">GROUP NAME</label>
+                            <input type="text" id="mg-name" value="${group.name}" style="width:100%; font-size:11px">
+                        </div>
+                        <div>
+                            <label class="stat-label">DESCRIPTION</label>
+                            <input type="text" id="mg-desc" value="${group.description || ''}" style="width:100%; font-size:11px">
+                        </div>
+                    </div>
+                    <div style="margin-top:10px">
+                        <button class="btn btn-primary" style="font-size:11px; padding:4px 12px" onclick="execSaveGroupDetails(${group.id})">SAVE DETAILS</button>
+                    </div>
+                </div>
+
+                <!-- 2. MEMBERS MANAGEMENT -->
+                <div class="card glass" style="padding:15px; margin-bottom:15px">
+                    <label class="stat-label" style="color:var(--amber)">2. GROUP MEMBERS (${(group.members || []).length})</label>
+                    <div style="margin-top:8px; max-height:130px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px; background:rgba(0,0,0,0.2)">
+                        ${(group.members || []).map(m => `
+                            <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05)">
+                                <span style="font-size:11px"><strong>${m.username}</strong> (${m.email || 'no email'}) <span class="badge badge-info" style="font-size:9px">${(m.role||'normal').toUpperCase()}</span></span>
+                                <button class="btn btn-glass" style="color:var(--red); font-size:9px; padding:2px 6px" onclick="execRemoveGroupMember(${group.id}, ${m.id})">REMOVE</button>
+                            </div>
+                        `).join('') || '<div style="font-size:10px; color:var(--text3)">No members in this group</div>'}
+                    </div>
+
+                    <!-- Add Existing User -->
+                    <div style="margin-top:10px; display:flex; gap:8px">
+                        <select id="mg-add-user-id" style="flex:1; font-size:11px">
+                            <option value="">-- Select Existing User to Add --</option>
+                            ${globalUsers.map(u => {
+                                const isAdmin = u.is_admin || u.role === 'superuser' || u.role === 'admin';
+                                const isAlreadyMember = (group.members || []).some(m => m.id === u.id);
+                                return `<option value="${u.id}" ${isAdmin || isAlreadyMember ? 'disabled' : ''}>
+                                    ${u.username} (${u.role.toUpperCase()}) ${isAdmin ? '[ADMIN BLOCKED]' : isAlreadyMember ? '[ALREADY MEMBER]' : ''}
+                                </option>`;
+                            }).join('')}
+                        </select>
+                        <button class="btn btn-glass" style="font-size:10px" onclick="execAddExistingToGroup(${group.id})">+ ADD MEMBER</button>
+                    </div>
+
+                    <!-- Inline Create New Member -->
+                    <div style="margin-top:12px; border-top:1px dashed var(--border); padding-top:10px">
+                        <label class="stat-label">CREATE NEW MEMBER INLINE & ADD TO GROUP</label>
+                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:6px; margin-top:4px">
+                            <input type="text" id="mg-nu-uname" placeholder="Username *" style="font-size:10px; padding:4px">
+                            <input type="email" id="mg-nu-email" placeholder="Email (optional)" style="font-size:10px; padding:4px">
+                            <input type="password" id="mg-nu-pass" placeholder="Password *" style="font-size:10px; padding:4px">
+                            <button class="btn btn-glass" style="font-size:10px; color:var(--cyan)" onclick="execCreateAndAddMember(${group.id})">+ CREATE & ADD</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. ASSIGNED PROJECTS -->
+                <div class="card glass" style="padding:15px; margin-bottom:15px">
+                    <label class="stat-label" style="color:#c084fc">3. ASSIGNED PROJECT ACCESS (${(group.projects || []).length})</label>
+                    <div style="margin-top:8px; max-height:100px; overflow-y:auto; border:1px solid var(--border); padding:8px; border-radius:6px; background:rgba(0,0,0,0.2)">
+                        ${(group.projects || []).map(p => `
+                            <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05)">
+                                <span style="font-size:11px"><strong style="color:var(--cyan)">${p.name}</strong> — ${p.description || ''}</span>
+                                <button class="btn btn-glass" style="color:var(--red); font-size:9px; padding:2px 6px" onclick="execRemoveGroupProject(${group.id}, ${p.id})">UNLINK</button>
+                            </div>
+                        `).join('') || '<div style="font-size:10px; color:var(--text3)">No projects linked to this group</div>'}
+                    </div>
+
+                    <div style="margin-top:10px; display:flex; gap:8px">
+                        <select id="mg-assign-proj-id" style="flex:1; font-size:11px">
+                            <option value="">-- Select Project to Link --</option>
+                            ${globalProjects.map(p => {
+                                const isAssigned = (group.projects || []).some(gp => gp.id === p.id);
+                                return `<option value="${p.id}" ${isAssigned ? 'disabled' : ''}>
+                                    ${p.name} ${isAssigned ? '[LINKED]' : ''}
+                                </option>`;
+                            }).join('')}
+                        </select>
+                        <button class="btn btn-glass" style="font-size:10px" onclick="execAssignProjectToGroup(${group.id})">+ LINK PROJECT</button>
+                    </div>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:10px">
+                    <button class="btn btn-primary" onclick="closeModal(); loadData();">DONE</button>
+                </div>
+            </div>
+        `);
     }
 
-    function addWizardInlineProject() {
-        const n = document.getElementById('wz-np-name').value.trim();
-        const d = document.getElementById('wz-np-desc').value.trim();
-        if (!n) return;
-        wizardData.new_projects.push({ name: n, description: d });
-        renderWizardModal();
-    }
-
-    function removeWizardInlineProject(idx) {
-        wizardData.new_projects.splice(idx, 1);
-        renderWizardModal();
-    }
-
-    async function execSubmitWizard() {
+    async function execSaveGroupDetails(groupId) {
+        const name = document.getElementById('mg-name').value.trim();
+        const description = document.getElementById('mg-desc').value.trim();
+        if (!name) return showToast('Group name required', 'error');
         try {
-            await apiFetch('/api/groups/wizard', { method: 'POST', body: JSON.stringify(wizardData) });
-            wizardCurrentStep = 5;
-            renderWizardModal();
+            await apiFetch(`/api/groups/${groupId}`, { method: 'PUT', body: JSON.stringify({ name, description }) });
+            showToast('Group details updated', 'success');
+            await loadData();
+            openManageGroupModal(groupId);
+        } catch (e) { showToast('Update failed', 'error'); }
+    }
+
+    async function execRemoveGroupMember(groupId, userId) {
+        try {
+            await apiFetch(`/api/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
+            showToast('Member removed from group', 'success');
+            await loadData();
+            openManageGroupModal(groupId);
+        } catch (e) { showToast('Removal failed', 'error'); }
+    }
+
+    async function execAddExistingToGroup(groupId) {
+        const uid = parseInt(document.getElementById('mg-add-user-id').value);
+        if (!uid) return showToast('Select a user to add', 'error');
+        try {
+            await apiFetch(`/api/groups/${groupId}/members`, { method: 'POST', body: JSON.stringify({ user_id: uid }) });
+            showToast('Member added to group', 'success');
+            await loadData();
+            openManageGroupModal(groupId);
         } catch (e) {
-            const errBanner = document.getElementById('wizard-error-banner');
-            errBanner.innerText = `⚠️ ${e.message || 'Wizard execution failed'}`;
-            errBanner.style.display = 'block';
+            document.getElementById('mg-alert-banner').innerText = `⚠️ ${e.message || 'Failed to add member'}`;
+            document.getElementById('mg-alert-banner').style.display = 'block';
         }
+    }
+
+    async function execCreateAndAddMember(groupId) {
+        const u = document.getElementById('mg-nu-uname').value.trim();
+        const e = document.getElementById('mg-nu-email').value.trim();
+        const p = document.getElementById('mg-nu-pass').value.trim();
+        if (!u || !p) return showToast('Username and password required', 'error');
+        try {
+            const newUser = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify({ username: u, email: e, password: p, role: 'normal' }) });
+            if (newUser && newUser.id) {
+                await apiFetch(`/api/groups/${groupId}/members`, { method: 'POST', body: JSON.stringify({ user_id: newUser.id }) });
+                showToast('Member created & added to group', 'success');
+                await loadData();
+                openManageGroupModal(groupId);
+            }
+        } catch (err) {
+            document.getElementById('mg-alert-banner').innerText = `⚠️ ${err.message || 'Inline creation failed'}`;
+            document.getElementById('mg-alert-banner').style.display = 'block';
+        }
+    }
+
+    async function execRemoveGroupProject(groupId, projectId) {
+        try {
+            await apiFetch(`/api/groups/${groupId}/projects/${projectId}`, { method: 'DELETE' });
+            showToast('Project unlinked from group', 'success');
+            await loadData();
+            openManageGroupModal(groupId);
+        } catch (e) { showToast('Unlink failed', 'error'); }
+    }
+
+    async function execAssignProjectToGroup(groupId) {
+        const pid = parseInt(document.getElementById('mg-assign-proj-id').value);
+        if (!pid) return showToast('Select a project to link', 'error');
+        try {
+            await apiFetch(`/api/groups/${groupId}/projects`, { method: 'POST', body: JSON.stringify({ project_id: pid }) });
+            showToast('Project linked to group', 'success');
+            await loadData();
+            openManageGroupModal(groupId);
+        } catch (e) { showToast('Assignment failed', 'error'); }
     }
 
     function showModal(html) {
@@ -775,3 +930,4 @@
     window.addEventListener('load', loadData);
 </script>
 {% endblock %}
+
