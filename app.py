@@ -1887,8 +1887,8 @@ ip = "'"$NODE_IP"'"
 for line in sys.stdin:
     line = line.rstrip("\r\n")
     if not line: continue
-    data = json.dumps({"server_ip": ip, "line": line}).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    data = json.dumps({{"server_ip": ip, "line": line}}).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={{"Content-Type": "application/json"}})
     try:
         urllib.request.urlopen(req, timeout=3)
     except Exception:
