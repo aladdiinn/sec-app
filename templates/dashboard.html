@@ -825,7 +825,12 @@ async function openImage3Modal(serverId) {
         }
 
         // Store logs and populate files
-        currentModalLogs = details.logs || [];
+        try {
+            const stream = await apiFetch(`/api/log-monitor/streams?server_id=${serverId}&limit=200`);
+            currentModalLogs = (Array.isArray(stream) && stream.length > 0) ? stream : (details.logs || []);
+        } catch(es) {
+            currentModalLogs = details.logs || [];
+        }
         modalActiveCategory = 'all';
         modalActiveFile = '';
         
@@ -862,6 +867,10 @@ function selectModalLogCategory(cat) {
     const btn = document.getElementById(`btn-cat-${cat}`);
     if (btn) btn.classList.add('active');
 
+    modalActiveFile = '';
+    const sel = document.getElementById('modal-log-file-select');
+    if (sel) sel.value = '';
+
     updateModalFileSelector();
     renderModalLogs();
 }
@@ -882,8 +891,8 @@ function updateModalFileSelector() {
         });
     }
 
-    sel.innerHTML = '<option value="">-- All Discovered Files --</option>' +
-        available.map(f => `<option value="${f.source}">${f.source} (${f.count || 0} lines)</option>`).join('');
+    sel.innerHTML = '<option value="">-- All Discovered Files (' + available.length + ') --</option>' +
+        available.map(f => `<option value="${escapeHtml(f.source)}">${escapeHtml(f.source)} (${f.count || 0} lines)</option>`).join('');
     modalActiveFile = '';
 }
 
@@ -931,7 +940,13 @@ function renderModalLogs() {
     });
 
     if (!filtered.length) {
-        logBox.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:40px"><div style="font-size:20px; margin-bottom:8px">📄</div>No log lines found for the selected filter or log file.</div>';
+        logBox.innerHTML = `
+        <div style="color:#94a3b8; text-align:center; padding:35px">
+            <div style="font-size:24px; margin-bottom:8px">📄</div>
+            <div style="font-size:13px; font-weight:600; color:#e2e8f0; margin-bottom:4px">No log lines found</div>
+            <div style="font-size:11px; color:#64748b">Filter: ${modalActiveCategory.toUpperCase()} ${modalActiveFile ? '· ' + escapeHtml(modalActiveFile) : ''}</div>
+            <div style="font-size:11px; color:#38bdf8; margin-top:8px">Waiting for target node stream, or click <strong>ALL</strong> / <strong>OS</strong></div>
+        </div>`;
         return;
     }
 
@@ -942,13 +957,13 @@ function renderModalLogs() {
         const isWarn = lower.includes('warn') || lower.includes('alert') || lower.includes('privilege');
 
         const textColor = isErr ? '#ef4444' : (isWarn ? '#f59e0b' : '#f8fafc');
-        const ts = l.created_at_formatted || 'log';
+        const ts = l.created_at_formatted || (l.created_at ? new Date(l.created_at).toLocaleTimeString() : 'log');
         const sourcePath = l.source || l.log_path || '/var/log/syslog';
 
         return `
         <div style="padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.03); display:flex; align-items:flex-start; gap:8px">
             <span style="color:#38bdf8; flex-shrink:0">[${ts}]</span>
-            <span style="color:#a855f7; flex-shrink:0; max-width:200px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">${sourcePath}:</span>
+            <span style="color:#a855f7; flex-shrink:0; max-width:200px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">${escapeHtml(sourcePath)}:</span>
             <span style="color:${textColor}; word-break:break-all">${escapeHtml(text)}</span>
         </div>
         `;

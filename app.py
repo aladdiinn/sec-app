@@ -1542,27 +1542,89 @@ async def api_agent_push(request: Request):
         data = {}
     
     server_id = data.get("server_id")
-    server_ip = data.get("server_ip")
-    hostname = data.get("hostname")
+    server_ip = (data.get("server_ip") or "").strip()
+    hostname = (data.get("hostname") or "").strip()
+    client_ip = request.client.host if request.client else None
 
-    if not server_id and (server_ip or hostname):
-        srv = None
-        if server_ip: srv = db.get_server_by_ip(server_ip)
-        if not srv and hostname:
-            conn = db.get_db_connection()
-            if conn:
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT * FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (hostname, hostname))
-                        r = cur.fetchone()
-                        if r: srv = dict(r)
-                except Exception: pass
-                finally: conn.close()
-        if srv:
-            server_id = srv.get("id")
+    # Step 1: Validate server_id if provided
+    if server_id:
+        srv = db.get_server_by_id(server_id)
+        if not srv:
+            server_id = None
 
+    # Step 2: Match by server_ip (and client_ip if remote)
     if not server_id:
-        server_id = 1
+        ips_to_try = []
+        if server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
+            ips_to_try.append(server_ip)
+        if client_ip and client_ip not in ("127.0.0.1", "localhost") and client_ip not in ips_to_try:
+            ips_to_try.append(client_ip)
+
+        for ip_candidate in ips_to_try:
+            srv = db.get_server_by_ip(ip_candidate)
+            if srv:
+                server_id = srv.get("id")
+                break
+
+    # Step 3: Match by hostname
+    if not server_id and hostname and hostname.lower() not in ("localhost", "target-node"):
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT * FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) ORDER BY id DESC LIMIT 1;", (hostname, hostname))
+                    r = cur.fetchone()
+                    if r:
+                        server_id = r["id"] if isinstance(r, dict) else r[0]
+            except Exception: pass
+            finally: conn.close()
+
+    # Step 4: Check approvals table for approved record
+    if not server_id:
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT * FROM approvals 
+                        WHERE status = 'approved' AND (
+                            (LOWER(hostname) = LOWER(%s) AND hostname != '') OR 
+                            (ip_address = %s AND ip_address != '') OR
+                            (ip_address = %s AND ip_address != '')
+                        ) ORDER BY id DESC LIMIT 1;
+                    """, (hostname, server_ip, client_ip or ''))
+                    appr = cur.fetchone()
+                    if appr:
+                        appr_dict = dict(appr)
+                        hname = appr_dict.get("hostname") or hostname or "Remote-Node"
+                        a_ip = appr_dict.get("ip_address") or server_ip or client_ip or "127.0.0.1"
+                        cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR ip = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (hname, a_ip, a_ip))
+                        srow = cur.fetchone()
+                        if srow:
+                            server_id = srow["id"] if isinstance(srow, dict) else srow[0]
+                        else:
+                            new_sid = db.add_server(hname, a_ip)
+                            if new_sid: server_id = new_sid
+            except Exception: pass
+            finally: conn.close()
+
+    # Step 5: Auto-register server if it has a non-loopback remote IP
+    if not server_id:
+        remote_ip = server_ip if (server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost")) else (client_ip if client_ip not in ("127.0.0.1", "localhost") else None)
+        if remote_ip:
+            hname = hostname or f"node-{remote_ip}"
+            new_sid = db.add_server(hname, remote_ip)
+            if new_sid:
+                server_id = new_sid
+        elif hostname and hostname.lower() not in ("localhost", "target-node"):
+            new_sid = db.add_server(hostname, "127.0.0.1")
+            if new_sid:
+                server_id = new_sid
+        else:
+            server_id = 1
+
+    # Inject resolved server_id back into data
+    data["server_id"] = server_id
 
     db.save_agent_data(server_id, data)
 
@@ -1586,7 +1648,7 @@ async def api_agent_push(request: Request):
     except Exception as ex_det:
         logger.error(f"Detection engine execution error: {ex_det}")
 
-    return {"status": "ok", "ok": True, "message": "Agent telemetry ingested and analyzed"}
+    return {"status": "ok", "ok": True, "server_id": server_id, "message": "Agent telemetry ingested and analyzed"}
 
 @app.get("/api/alerts")
 async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None):
@@ -2120,22 +2182,48 @@ async def setup_script(request: Request, node_name: Optional[str] = None, ip: Op
 
     script = f"""#!/bin/bash
 set -e
+
+# Self-elevation check
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        echo "[SECUREPULSE] Elevating privileges via sudo..."
+        exec sudo bash "$0" "$@"
+    fi
+fi
+
 echo "============================================================"
 echo " SecurePulse SOC Command Center — Target Node Push Agent"
 echo "============================================================"
 echo "[SECUREPULSE] SOC Server URL : {base_url}"
-echo "[SECUREPULSE] Node Name      : {target_node_name}"
-echo "[SECUREPULSE] Node IP        : {target_ip}"
-echo "[SECUREPULSE] Log File Path  : {target_log_path}"
 echo "[SECUREPULSE] (Zero SSH Credentials Stored / Pure Outbound Push)"
 
-# 1. Submit Onboarding Approval Request
-echo "[SECUREPULSE] Submitting onboarding approval request for {target_node_name} ({target_ip})..."
+# 0. Auto-detect real Outward IP and Hostname on the target machine
+DETECTED_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{{print $7}}' || hostname -I 2>/dev/null | awk '{{print $1}}')
+if [ -z "$DETECTED_IP" ] || [ "$DETECTED_IP" = "127.0.0.1" ]; then
+    DETECTED_IP=$(curl -s --connect-timeout 2 http://checkip.amazonaws.com 2>/dev/null || hostname -i 2>/dev/null | awk '{{print $1}}')
+fi
 
-PAYLOAD_JSON=$(cat << 'JSON_EOF'
+NODE_IP="{target_ip}"
+if [ -n "$DETECTED_IP" ] && ([ "$NODE_IP" = "127.0.0.1" ] || [ -z "$NODE_IP" ]); then
+    NODE_IP="$DETECTED_IP"
+fi
+
+DETECTED_HOST=$(hostname -f 2>/dev/null || hostname 2>/dev/null || cat /etc/hostname 2>/dev/null || echo "")
+NODE_NAME="{target_node_name}"
+if [ -n "$DETECTED_HOST" ] && ([ "$NODE_NAME" = "Target-Node" ] || [ -z "$NODE_NAME" ]); then
+    NODE_NAME="$DETECTED_HOST"
+fi
+
+echo "[SECUREPULSE] Target Node IP   : $NODE_IP"
+echo "[SECUREPULSE] Target Hostname  : $NODE_NAME"
+
+# 1. Submit Onboarding Approval Request
+echo "[SECUREPULSE] Submitting onboarding approval request for $NODE_NAME ($NODE_IP)..."
+
+PAYLOAD_JSON=$(cat << JSON_EOF
 {{
-  "hostname": {escaped_hostname},
-  "ip_address": {escaped_ip}
+  "hostname": "$NODE_NAME",
+  "ip_address": "$NODE_IP"
 }}
 JSON_EOF
 )
@@ -2144,8 +2232,8 @@ REQ_RES=$(curl -s -X POST "{base_url}/api/approvals/request" \\
     -H "Content-Type: application/json" \\
     -d "$PAYLOAD_JSON" || echo '{{"ok": false}}')
 
-TOKEN=$(echo "$REQ_RES" | grep -o '"token":"[^"]*' | cut -d'"' -f4 || echo "sp-token-{target_node_name}")
-if [ -z "$TOKEN" ]; then TOKEN="sp-token-{target_node_name}"; fi
+TOKEN=$(echo "$REQ_RES" | grep -o '"token":"[^"]*' | cut -d'"' -f4 || echo "sp-token-$NODE_NAME")
+if [ -z "$TOKEN" ]; then TOKEN="sp-token-$NODE_NAME"; fi
 
 echo ""
 echo "[PENDING] Onboarding request submitted to SOC Command Center!"
@@ -2154,12 +2242,14 @@ echo "[PENDING] Waiting for SOC Administrator approval in Dashboard... (Token: $
 STATUS="pending"
 MAX_WAIT=300
 WAITED=0
+ASSIGNED_ID=""
 
 while [ "$STATUS" = "pending" ] && [ $WAITED -lt $MAX_WAIT ]; do
     sleep 3
     WAITED=$((WAITED+3))
-    CHECK_RES=$(curl -s -G "{base_url}/api/agent/status" --data-urlencode "token=$TOKEN" --data-urlencode "hostname={target_node_name}" --data-urlencode "ip={target_ip}" || echo '{{"status":"pending"}}')
+    CHECK_RES=$(curl -s -G "{base_url}/api/agent/status" --data-urlencode "token=$TOKEN" --data-urlencode "hostname=$NODE_NAME" --data-urlencode "ip=$NODE_IP" || echo '{{"status":"pending"}}')
     STATUS=$(echo "$CHECK_RES" | grep -o '"status":"[^"]*' | cut -d'"' -f4 || echo "pending")
+    ASSIGNED_ID=$(echo "$CHECK_RES" | grep -o '"server_id":[0-9]*' | cut -d':' -f2 || echo "")
     if [ "$STATUS" = "pending" ]; then
         echo -n "."
     fi
@@ -2178,32 +2268,54 @@ fi
 if [ "$STATUS" != "approved" ]; then
     echo "============================================================"
     echo " [TIMED OUT] Approval not received within $MAX_WAIT seconds."
-    echo " Please approve in SOC Dashboard under Agent Approvals and re-run."
+    echo " Please approve under 'SERVER APPROVALS' in SOC Dashboard and re-run."
     echo "============================================================"
     exit 1
 fi
 
 echo "============================================================"
 echo " [SUCCESS] Approval Granted by SOC Administrator!"
-echo " Asset Node {target_node_name} ({target_ip}) Onboarded & Active!"
+echo " Asset Node $NODE_NAME ($NODE_IP) Onboarded & Active (Server ID: ${{ASSIGNED_ID:-auto}})!"
 echo "============================================================"
+
+# Ensure readable permissions for log files
+chmod +r /var/log/auth.log /var/log/secure /var/log/syslog /var/log/messages 2>/dev/null || true
+chmod -R +r /var/log/postgresql 2>/dev/null || true
+chmod -R +r /var/log/tomcat* 2>/dev/null || true
 
 # 2. Setup background Python Push Agent Daemon
 mkdir -p /opt/securepulse
 
-cat << 'PY_EOF' > /opt/securepulse/node_push_agent.py
+cat << PY_EOF > /opt/securepulse/node_push_agent.py
 import os, sys, time, json, socket, subprocess, glob, re, hashlib
 import urllib.request, urllib.error
 from datetime import datetime
 
 SOC_URL = "{base_url}".rstrip("/")
-TARGET_IP = "{target_ip}"
-TARGET_NAME = "{target_node_name}"
+TARGET_IP = "$NODE_IP"
+TARGET_NAME = "$NODE_NAME"
+ASSIGNED_SERVER_ID = int("$ASSIGNED_ID") if "$ASSIGNED_ID".isdigit() else {server_id or "None"}
 PUSH_INTERVAL = 30  # seconds
 
 def get_hostname():
     try: return socket.gethostname()
     except: return TARGET_NAME
+
+def check_assigned_server_id():
+    global ASSIGNED_SERVER_ID
+    if ASSIGNED_SERVER_ID is not None:
+        return ASSIGNED_SERVER_ID
+    try:
+        url = f"{{SOC_URL}}/api/agent/status?ip={{TARGET_IP}}&hostname={{get_hostname()}}"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=5) as r:
+            res = json.loads(r.read().decode())
+            sid = res.get("server_id")
+            if sid:
+                ASSIGNED_SERVER_ID = int(sid)
+                return ASSIGNED_SERVER_ID
+    except: pass
+    return ASSIGNED_SERVER_ID
 
 def get_cpu_percent():
     try:
@@ -2239,7 +2351,7 @@ def get_processes():
     procs = []
     try:
         out = subprocess.check_output(["ps", "aux", "--no-headers"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.strip().split("\n")[:50]:
+        for line in out.strip().split("\\n")[:50]:
             parts = line.split(None, 10)
             if len(parts) < 11: continue
             try:
@@ -2255,62 +2367,64 @@ def get_open_ports():
     ports = []
     try:
         out = subprocess.check_output(["ss", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.strip().split("\n")[1:]:
-            m = re.search(r':(\d+)\s+', line)
+        for line in out.strip().split("\\n")[1:]:
+            m = re.search(r':(\\d+)\\s+', line)
             if m:
                 port = int(m.group(1))
-                proc = re.search(r'users:\(\("([^"]+)"', line)
+                proc = re.search(r'users:\\(\\("([^"]+)"', line)
                 ports.append({{"port": port, "process": proc.group(1) if proc else "unknown"}})
     except:
         try:
             out = subprocess.check_output(["netstat", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-            for line in out.strip().split("\n"):
-                m = re.search(r':(\d+)\s+', line)
+            for line in out.strip().split("\\n"):
+                m = re.search(r':(\\d+)\\s+', line)
                 if m: ports.append({{"port": int(m.group(1)), "process": "unknown"}})
         except: pass
     return ports
 
 def auto_discover_log_paths():
-    # Auto-discover log file paths by OS type, running processes, and common locations.
     paths = {{}}
 
-    # OS Log Discovery (Ubuntu/Debian vs RHEL/CentOS)
+    # OS Log Discovery (Ubuntu/Debian vs RHEL/CentOS/Rocky/Amazon Linux)
     os_log_candidates = [
-        ("/var/log/auth.log", "os"),       # Ubuntu/Debian SSH auth
-        ("/var/log/secure", "os"),          # RHEL/CentOS SSH auth
-        ("/var/log/syslog", "os"),          # Ubuntu/Debian syslog
-        ("/var/log/messages", "os"),        # RHEL/CentOS syslog
-        ("/var/log/audit/audit.log", "os"), # Audit daemon
-        ("/var/log/kern.log", "os"),        # Kernel log
-        ("/var/log/sudo.log", "os"),        # Sudo log (if configured)
+        ("/var/log/auth.log", "os"),
+        ("/var/log/secure", "os"),
+        ("/var/log/syslog", "os"),
+        ("/var/log/messages", "os"),
+        ("/var/log/audit/audit.log", "os"),
+        ("/var/log/kern.log", "os"),
+        ("/var/log/sudo.log", "os"),
     ]
     for path, ltype in os_log_candidates:
-        if os.path.exists(path) and os.access(path, os.R_OK):
+        if os.path.exists(path):
             paths[path] = ltype
 
     # Tomcat / nohup log discovery
     tomcat_candidates = [
         "/opt/tomcat/logs/catalina.out",
+        "/opt/tomcat*/logs/catalina.out",
         "/var/log/tomcat*/catalina.out",
         "/usr/local/tomcat/logs/catalina.out",
         "/opt/apache-tomcat*/logs/catalina.out",
+        "/var/log/tomcat*/*.log",
+        "/opt/tomcat*/logs/*.log"
     ]
     for candidate in tomcat_candidates:
         matched = glob.glob(candidate)
         for path in matched:
-            if os.path.exists(path) and os.access(path, os.R_OK):
+            if os.path.exists(path):
                 paths[path] = "tomcat"
 
     # Find tomcat from running processes
     try:
         out = subprocess.check_output(["ps", "aux"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.split("\n"):
+        for line in out.split("\\n"):
             if "catalina" in line.lower() or "tomcat" in line.lower():
-                m = re.search(r'-Dcatalina\.home=([^\s]+)', line)
+                m = re.search(r'-Dcatalina\\.home=([^\\s]+)', line)
                 if m:
                     cat_log = os.path.join(m.group(1), "logs", "catalina.out")
                     if os.path.exists(cat_log): paths[cat_log] = "tomcat"
-                m2 = re.search(r'-classpath\s+([^\s]+)', line)
+                m2 = re.search(r'-classpath\\s+([^\\s]+)', line)
                 if m2:
                     nohup_dir = os.path.dirname(m2.group(1))
                     nohup_path = os.path.join(nohup_dir, "nohup.out")
@@ -2318,9 +2432,9 @@ def auto_discover_log_paths():
     except: pass
 
     # nohup.out discovery
-    nohup_candidates = ["/opt/nohup.out", "/home/ubuntu/nohup.out", "/root/nohup.out", "/opt/app/nohup.out"]
+    nohup_candidates = ["/opt/nohup.out", "/home/ubuntu/nohup.out", "/root/nohup.out", "/opt/app/nohup.out", "/var/log/nohup.out"]
     for path in nohup_candidates:
-        if os.path.exists(path) and os.access(path, os.R_OK):
+        if os.path.exists(path):
             paths[path] = "tomcat"
 
     # PostgreSQL log discovery (Ubuntu/Debian, RHEL/CentOS, Amazon Linux, Rocky/Alma)
@@ -2331,24 +2445,27 @@ def auto_discover_log_paths():
         "/var/lib/pgsql/*/data/pg_log/*.log",
         "/var/lib/pgsql/data/log/*.log",
         "/var/lib/pgsql/data/pg_log/*.log",
+        "/var/lib/postgresql/data/*.log",
+        "/var/lib/postgresql/data/log/*.log",
         "/var/lib/postgresql/*/main/pg_log/*.log",
         "/var/lib/postgresql/*/main/log/*.log",
-        "/var/lib/postgresql/data/*.log",
+        "/var/lib/postgresql/*/main/*.log",
         "/var/log/postgres*.log",
-        "/opt/postgresql*/logs/*.log"
+        "/opt/postgresql*/logs/*.log",
+        "/opt/pgsql*/logs/*.log"
     ]
     for candidate in pg_candidates:
         matched = glob.glob(candidate)
-        for path in sorted(matched, key=os.path.getmtime, reverse=True)[:3]:
-            if os.path.exists(path) and os.access(path, os.R_OK):
+        for path in sorted(matched, key=os.path.getmtime, reverse=True)[:4]:
+            if os.path.exists(path):
                 paths[path] = "postgres"
 
     # Find postgres log from running processes (any process with -D data directory)
     try:
         out = subprocess.check_output(["ps", "aux"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.split("\n"):
-            if 'postgres' in line.lower():
-                m = re.search(r'-D\s+([^\s]+)', line)
+        for line in out.split("\\n"):
+            if 'postgres' in line.lower() and ('-D' in line or 'cluster' in line):
+                m = re.search(r'-D\\s+([^\\s]+)', line)
                 if m:
                     data_dir = m.group(1).strip()
                     for sub in ['pg_log', 'log', '']:
@@ -2356,7 +2473,7 @@ def auto_discover_log_paths():
                         if os.path.exists(log_dir):
                             logs = sorted(glob.glob(os.path.join(log_dir, '*.log')), key=os.path.getmtime, reverse=True)
                             for lg in logs[:3]:
-                                if os.path.exists(lg) and os.access(lg, os.R_OK):
+                                if os.path.exists(lg):
                                     paths[lg] = "postgres"
     except: pass
 
@@ -2388,8 +2505,8 @@ auth_log_positions = {{}}
 def get_auth_failures():
     failures = []
     auth_pattern = re.compile(r'(Failed password|Invalid user|authentication failure|AUTH_FAIL|Failed publickey)', re.IGNORECASE)
-    ip_pattern = re.compile(r'from (\d+\.\d+\.\d+\.\d+)')
-    user_pattern = re.compile(r'(?:for invalid user|for user|invalid user)\s+(\S+)', re.IGNORECASE)
+    ip_pattern = re.compile(r'from (\\d+\\.\\d+\\.\\d+\\.\\d+)')
+    user_pattern = re.compile(r'(?:for invalid user|for user|invalid user)\\s+(\\S+)', re.IGNORECASE)
 
     for path, ltype in discovered_paths.items():
         if ltype != 'os': continue
@@ -2418,7 +2535,7 @@ sudo_log_positions = {{}}
 
 def get_sudo_events():
     events = []
-    sudo_pattern = re.compile(r'(sudo:|su:|COMMAND=|su\[)', re.IGNORECASE)
+    sudo_pattern = re.compile(r'(sudo:|su:|COMMAND=|su\\[)', re.IGNORECASE)
     for path, ltype in discovered_paths.items():
         if ltype != 'os': continue
         try:
@@ -2437,8 +2554,7 @@ def get_sudo_events():
 # Log tail positions per file
 log_positions = {{}}
 
-def get_new_log_lines(max_lines_per_file=100):
-    # Read new log lines from all discovered log files since last push.
+def get_new_log_lines(max_lines_per_file=50):
     result = []
     for path, ltype in discovered_paths.items():
         try:
@@ -2448,17 +2564,34 @@ def get_new_log_lines(max_lines_per_file=100):
             if size < pos: pos = 0
             with open(path, 'r', errors='ignore') as f:
                 f.seek(pos)
-                lines = f.readlines(max_lines_per_file)
+                raw_lines = f.readlines()[:max_lines_per_file]
                 log_positions[path] = f.tell()
-                for line in lines:
+                for line in raw_lines:
                     line = line.strip()
-                    if line:
-                        result.append({{"line": line, "source": path, "log_type": ltype}})
+                    if not line: continue
+                    lt = ltype
+                    lower_l = line.lower()
+                    if 'postgres' in lower_l or 'pgsql' in lower_l or 'fatal:  password authentication' in lower_l or 'no pg_hba.conf' in lower_l:
+                        lt = 'postgres'
+                    elif 'tomcat' in lower_l or 'catalina' in lower_l or 'nohup' in lower_l or 'org.apache.catalina' in lower_l:
+                        lt = 'tomcat'
+                    result.append({{"line": line, "source": path, "log_type": lt}})
         except: pass
+
+    # If no OS files discovered, read journalctl as fallback
+    if not any(lt == 'os' for lt in discovered_paths.values()):
+        try:
+            out = subprocess.check_output(["journalctl", "-n", "25", "--no-pager", "-o", "short-iso"], stderr=subprocess.DEVNULL, timeout=4).decode("utf-8", errors="ignore")
+            for line in out.strip().split("\\n"):
+                line = line.strip()
+                if line:
+                    result.append({{"line": line, "source": "systemd/journal", "log_type": "os"}})
+        except: pass
+
     return result
 
 # Main loop
-print(f"[SecurePulse Agent] Starting. SOC: {{SOC_URL}}, Node: {{TARGET_NAME}} ({{TARGET_IP}})")
+print(f"[SecurePulse Agent] Starting. SOC: {{SOC_URL}}, Node: {{TARGET_NAME}} ({{TARGET_IP}}), Server ID: {{ASSIGNED_SERVER_ID}}")
 print("[SecurePulse Agent] Discovering log paths...")
 discovered_paths = auto_discover_log_paths()
 print(f"[SecurePulse Agent] Found log paths: {{list(discovered_paths.keys())}}")
@@ -2469,6 +2602,7 @@ check_fim()
 push_count = 0
 while True:
     try:
+        sid = check_assigned_server_id()
         cpu = get_cpu_percent()
         mem = get_memory_percent()
         disk = get_disk_percent()
@@ -2480,6 +2614,7 @@ while True:
         file_changes = check_fim()
 
         payload = {{
+            "server_id": sid,
             "server_ip": TARGET_IP,
             "hostname": get_hostname(),
             "cpu_percent": cpu,
@@ -2506,7 +2641,9 @@ while True:
         # Also push structured logs
         if log_lines:
             log_payload = {{
+                "server_id": sid,
                 "server_ip": TARGET_IP,
+                "hostname": get_hostname(),
                 "lines": log_lines[:200]
             }}
             ldata = json.dumps(log_payload).encode("utf-8")
@@ -3094,20 +3231,67 @@ async def api_approval_request(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    hostname = body.get("hostname") or body.get("name") or "Target-Node"
-    ip = body.get("ip_address") or body.get("ip") or "172.31.2.38"
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    hostname = body.get("hostname") or body.get("name") or f"node-{client_ip}"
+    ip = (body.get("ip_address") or body.get("ip") or "").strip()
+    if not ip or ip in ("127.0.0.1", "0.0.0.0"):
+        ip = client_ip
     res = db.add_approval_request(hostname, ip)
     return {"ok": True, "id": res.get("id"), "token": res.get("token"), "status": res.get("status")}
 
 @app.get("/api/agent/status")
 async def api_agent_status(request: Request):
     token = request.query_params.get("token")
-    hostname = request.query_params.get("hostname")
-    ip = request.query_params.get("ip")
+    hostname = (request.query_params.get("hostname") or "").strip()
+    ip = (request.query_params.get("ip") or "").strip()
+    client_ip = request.client.host if request.client else None
+
     appr = db.get_approval_by_token(token, hostname=hostname, ip=ip)
+    status = "pending"
+    server_id = None
+
     if appr:
-        return {"status": appr.get("status", "pending")}
-    return {"status": "pending"}
+        status = appr.get("status", "pending")
+        # Lookup assigned server_id
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT id FROM servers 
+                        WHERE (ip = %s OR ip_address = %s) OR (LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s))
+                        ORDER BY id DESC LIMIT 1;
+                    """, (ip or appr.get('ip_address'), ip or appr.get('ip_address'), hostname or appr.get('hostname'), hostname or appr.get('hostname')))
+                    r = cur.fetchone()
+                    if r:
+                        server_id = r["id"] if isinstance(r, dict) else r[0]
+            except Exception: pass
+            finally: conn.close()
+
+    # Also check directly in servers if already exists and online
+    if not server_id and (ip or hostname or client_ip):
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    test_ips = [x for x in [ip, client_ip] if x and x not in ("127.0.0.1", "localhost")]
+                    for tip in test_ips:
+                        cur.execute("SELECT id, status FROM servers WHERE ip = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (tip, tip))
+                        r = cur.fetchone()
+                        if r:
+                            server_id = r["id"] if isinstance(r, dict) else r[0]
+                            status = "approved"
+                            break
+                    if not server_id and hostname and hostname.lower() not in ("localhost", "target-node"):
+                        cur.execute("SELECT id, status FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) ORDER BY id DESC LIMIT 1;", (hostname, hostname))
+                        r = cur.fetchone()
+                        if r:
+                            server_id = r["id"] if isinstance(r, dict) else r[0]
+                            status = "approved"
+            except Exception: pass
+            finally: conn.close()
+
+    return {"status": status, "server_id": server_id, "server_ip": ip or client_ip}
 
 @app.get("/api/approvals")
 async def api_get_approvals(request: Request):
@@ -3690,12 +3874,32 @@ async def api_push_agent_logs(request: Request):
         body = {}
     config_id = body.get("config_id")
     server_id = body.get("server_id")
-    server_ip = body.get("server_ip")
+    server_ip = (body.get("server_ip") or "").strip()
+    hostname = (body.get("hostname") or "").strip()
+    client_ip = request.client.host if request.client else None
     
-    if not server_id and server_ip:
+    if server_id:
+        srv = db.get_server_by_id(server_id)
+        if not srv: server_id = None
+
+    if not server_id and server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
         srv = db.get_server_by_ip(server_ip)
-        if srv:
-            server_id = srv.get("id")
+        if srv: server_id = srv.get("id")
+
+    if not server_id and client_ip and client_ip not in ("127.0.0.1", "localhost"):
+        srv = db.get_server_by_ip(client_ip)
+        if srv: server_id = srv.get("id")
+
+    if not server_id and hostname and hostname.lower() not in ("localhost", "target-node"):
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (hostname, hostname))
+                    r = cur.fetchone()
+                    if r: server_id = r["id"] if isinstance(r, dict) else r[0]
+            except Exception: pass
+            finally: conn.close()
 
     raw_lines = body.get("lines") or body.get("logs") or []
     if isinstance(raw_lines, str):

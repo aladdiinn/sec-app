@@ -5,3 +5,4 @@ app.log
 
 securepulse.db
 *.db
+scratch/

@@ -654,13 +654,9 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                     pass
 
             if not valid_server_id:
-                try:
-                    cur.execute("SELECT id FROM servers ORDER BY id ASC LIMIT 1;")
-                    f_row = cur.fetchone()
-                    if f_row:
-                        valid_server_id = f_row["id"] if isinstance(f_row, dict) else f_row[0]
-                except Exception:
-                    pass
+                # If explicit server_id was invalid or missing, do NOT default to Server 1
+                logger.debug(f"log_alert called with unresolvable server_id={server_id}. Skipping alert insertion to prevent misattribution.")
+                return
 
             # Strict Deduplication: Suppress identical alert within 15-second window
             try:
@@ -690,7 +686,7 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 cur.execute("""
                     INSERT INTO incidents (title, severity, description, status, assigned_to, server_id, created_at, updated_at)
                     VALUES (%s, %s, %s, 'open', 'Unassigned', %s, NOW(), NOW());
-                """, (title, severity, message, valid_server_id))
+                """, (final_title, severity, message, valid_server_id))
             except Exception as ex_inc:
                 logger.debug(f"Incident insert error: {ex_inc}")
     except Exception as e:
@@ -716,17 +712,22 @@ def save_agent_data(server_id: int, data: dict):
                 except Exception:
                     pass
 
+            # If not resolved by server_id, try resolving via IP or hostname in data
             if not valid_server_id:
-                try:
-                    cur.execute("SELECT id FROM servers ORDER BY id ASC LIMIT 1;")
-                    first_srv = cur.fetchone()
-                    if first_srv:
-                        valid_server_id = first_srv["id"] if isinstance(first_srv, dict) else first_srv[0]
-                except Exception:
-                    pass
+                s_ip = data.get("server_ip")
+                h_name = data.get("hostname")
+                if s_ip and s_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
+                    cur.execute("SELECT id FROM servers WHERE ip = %s OR ip_address = %s LIMIT 1;", (s_ip, s_ip))
+                    r = cur.fetchone()
+                    if r: valid_server_id = r["id"] if isinstance(r, dict) else r[0]
+                if not valid_server_id and h_name and h_name.lower() not in ("localhost", "target-node"):
+                    cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (h_name, h_name))
+                    r = cur.fetchone()
+                    if r: valid_server_id = r["id"] if isinstance(r, dict) else r[0]
 
             if not valid_server_id:
-                return True
+                logger.warning(f"save_agent_data: Unresolved server_id={server_id}, ip={data.get('server_ip')}, hostname={data.get('hostname')}. Skipping to prevent data contamination.")
+                return False
 
             server_id = valid_server_id
 
@@ -744,8 +745,22 @@ def save_agent_data(server_id: int, data: dict):
             mem_val = float(data.get("memory_percent") or (data.get("metrics") or {}).get("memory") or 0)
             disk_val = float(data.get("disk_percent") or (data.get("metrics") or {}).get("disk") or 0)
 
-            if data.get("processes"):
-                _SERVER_LATEST_PROCESSES[server_id] = data.get("processes")
+            procs_list = data.get("processes", [])
+            if procs_list:
+                _SERVER_LATEST_PROCESSES[server_id] = procs_list
+
+            procs_json_str = json.dumps(procs_list) if procs_list else None
+
+            # Persist open ports if provided
+            if data.get("open_ports"):
+                try:
+                    cur.execute("DELETE FROM open_ports WHERE server_id = %s;", (server_id,))
+                    for p in data.get("open_ports", []):
+                        pnum = p.get("port") if isinstance(p, dict) else p
+                        proc = p.get("process", "unknown") if isinstance(p, dict) else "unknown"
+                        cur.execute("INSERT INTO open_ports (server_id, port, service) VALUES (%s, %s, %s);", (server_id, int(pnum), proc))
+                except Exception as ex_ports:
+                    logger.debug(f"Open ports insert warning: {ex_ports}")
 
             if last_sudo_val:
                 cur.execute("""
@@ -1129,12 +1144,17 @@ def get_server_details(server_id: int):
     }
 
 def get_server_by_ip(ip: str):
+    if not ip: return None
+    clean_ip = str(ip).strip()
+    if clean_ip in ("127.0.0.1", "0.0.0.0", "localhost"):
+        # Localhost should not hijack other servers unless looking for local
+        pass
     conn = get_db_connection()
     if not conn:
         return None
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM servers WHERE ip_address = %s OR ip = %s LIMIT 1;", (ip, ip))
+            cur.execute("SELECT * FROM servers WHERE TRIM(ip_address) = %s OR TRIM(ip) = %s ORDER BY id ASC LIMIT 1;", (clean_ip, clean_ip))
             row = cur.fetchone()
             if not row:
                 return None
@@ -1342,14 +1362,22 @@ def approve_request(app_id: int):
             if not row:
                 return False
             app_data = dict(row)
-            hostname = app_data.get("hostname")
-            ip = app_data.get("ip_address") or "172.31.2.38"
+            hostname = (app_data.get("hostname") or "").strip()
+            ip = (app_data.get("ip_address") or "").strip()
             
             # Approve ALL approval requests for this hostname/IP so no pending duplicates remain
-            cur.execute("UPDATE approvals SET status = 'approved' WHERE id = %s OR LOWER(hostname) = LOWER(%s) OR ip_address = %s;", (app_id, hostname, ip))
+            cur.execute("UPDATE approvals SET status = 'approved' WHERE id = %s OR (LOWER(hostname) = LOWER(%s) AND hostname != '') OR (ip_address = %s AND ip_address != '');", (app_id, hostname, ip))
             
-            cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) OR ip = %s OR ip_address = %s LIMIT 1;", (hostname, hostname, ip, ip))
-            if not cur.fetchone():
+            # Check if server already exists - do NOT match on empty string or host IP if hostname differs!
+            existing_srv = None
+            if ip and ip not in ("127.0.0.1", "172.31.2.38"):
+                cur.execute("SELECT id FROM servers WHERE ip = %s OR ip_address = %s LIMIT 1;", (ip, ip))
+                existing_srv = cur.fetchone()
+            if not existing_srv and hostname:
+                cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (hostname, hostname))
+                existing_srv = cur.fetchone()
+
+            if not existing_srv:
                 token = app_data.get("agent_token") or f"sp-token-{int(time.time())}"
                 # Fetch default project ID if available
                 pid = 1
@@ -1360,12 +1388,15 @@ def approve_request(app_id: int):
                         pid = prow.get("id") if isinstance(prow, dict) else prow[0]
                 except Exception:
                     pass
+                srv_ip = ip or "127.0.0.1"
+                srv_host = hostname or f"node-{srv_ip}"
                 cur.execute("""
                     INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen, project_id)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s);
-                """, (hostname, hostname, ip, ip, "Linux (Ubuntu)", token, token, pid))
+                """, (srv_host, srv_host, srv_ip, srv_ip, "Linux (Ubuntu)", token, token, pid))
             else:
-                cur.execute("UPDATE servers SET status = 'online', last_seen = NOW() WHERE LOWER(hostname) = LOWER(%s) OR ip = %s OR ip_address = %s;", (hostname, ip, ip))
+                sid = existing_srv["id"] if isinstance(existing_srv, dict) else existing_srv[0]
+                cur.execute("UPDATE servers SET status = 'online', last_seen = NOW() WHERE id = %s;", (sid,))
             return True
     except Exception as e:
         logger.error(f"Error in approve_request: {e}")
@@ -2943,36 +2974,29 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                             cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
                         except Exception: pass
 
-                    # Real-Time Watchdog Anomaly & Incident Auto-Trigger
-                    lower_line = line_str.lower()
-                    target_sid = server_id or 1
+                    # Real-Time Watchdog Anomaly & Incident Auto-Trigger (Only if valid server_id)
+                    if server_id:
+                        lower_line = line_str.lower()
+                        # 1. Watchdog AI Anomaly Detection
+                        if any(kw.lower() in lower_line for kw in ["[WATCHDOG-AI]", "Outlier Anomaly", "Root Cause Analysis", "Traffic Anomaly Alert", "CPU usage spiked", "pool exhaustion"]) or (level == "ERROR" and "watchdog" in lower_line):
+                            try:
+                                log_alert(server_id, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {line_str}", severity="critical", title="Watchdog AI Anomaly")
+                            except Exception as ex_wd_inc:
+                                logger.debug(f"Watchdog incident creation error: {ex_wd_inc}")
 
-                    # 1. Watchdog AI Anomaly Detection
-                    if any(kw.lower() in lower_line for kw in ["[WATCHDOG-AI]", "Outlier Anomaly", "Root Cause Analysis", "Traffic Anomaly Alert", "CPU usage spiked", "pool exhaustion"]) or (level == "ERROR" and "watchdog" in lower_line):
-                        try:
-                            log_alert(target_sid, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {line_str}", severity="critical")
-                            inc_title = f"Watchdog AI Anomaly: {line_str[:50]}..." if len(line_str) > 50 else f"Watchdog AI: {line_str}"
-                            create_incident(inc_title, "critical", f"Watchdog AI Detection: {line_str}", "SOC Analyst", server_id=target_sid)
-                        except Exception as ex_wd_inc:
-                            logger.debug(f"Watchdog incident creation error: {ex_wd_inc}")
+                        # 2. SSH Authentication Failures & Security Anomalies
+                        elif any(kw.lower() in lower_line for kw in ["failed password", "invalid user", "authentication failure", "failed login"]):
+                            try:
+                                log_alert(server_id, "AUTH_FAILURE", f"Authentication Failure: {line_str}", severity="warning", title="Auth Fail Alert")
+                            except Exception as ex_auth_inc:
+                                logger.debug(f"Auth incident creation error: {ex_auth_inc}")
 
-                    # 2. SSH Authentication Failures & Security Anomalies
-                    elif any(kw.lower() in lower_line for kw in ["failed password", "invalid user", "authentication failure", "failed login"]):
-                        try:
-                            log_alert(target_sid, "AUTH_FAILURE", f"Authentication Failure: {line_str}", severity="warning")
-                            inc_title = f"Authentication Failure on Node #{target_sid}"
-                            create_incident(inc_title, "warning", f"Security Alert: {line_str}", "SOC Analyst", server_id=target_sid)
-                        except Exception as ex_auth_inc:
-                            logger.debug(f"Auth incident creation error: {ex_auth_inc}")
-
-                    # 3. Suspicious Commands & System Modifications
-                    elif any(kw in line_str for kw in ["chmod", "chown", "nc -e", "/dev/tcp", "xmrig", "crontab", "ufw disable", "iptables -F"]):
-                        try:
-                            log_alert(target_sid, "SUSPICIOUS_ACTIVITY", f"Suspicious Activity Detected: {line_str}", severity="high")
-                            inc_title = f"Suspicious Command Execution on Node #{target_sid}"
-                            create_incident(inc_title, "high", f"System Security Rule Match: {line_str}", "SOC Analyst", server_id=target_sid)
-                        except Exception as ex_susp_inc:
-                            logger.debug(f"Suspicious activity incident error: {ex_susp_inc}")
+                        # 3. Suspicious Commands & System Modifications
+                        elif any(kw in line_str for kw in ["chmod 777", "chown root", "nc -e", "/dev/tcp", "xmrig", "ufw disable", "iptables -F"]):
+                            try:
+                                log_alert(server_id, "SUSPICIOUS_ACTIVITY", f"Suspicious Activity Detected: {line_str}", severity="high", title="Suspicious Activity Alert")
+                            except Exception as ex_susp_inc:
+                                logger.debug(f"Suspicious activity incident error: {ex_susp_inc}")
                 
                 # Trim old logs to keep table lightweight (max 2000 per config)
                 if config_id:
