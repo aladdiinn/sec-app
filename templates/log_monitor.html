@@ -933,15 +933,6 @@ function zoomHistogramTime(timeStr) {
     showToast(`Zoomed log stream to window ${timeStr}`, "info");
 }
 
-function applyPresetFilter(term, btn) {
-    document.querySelectorAll('.preset-pill').forEach(b => b.classList.remove('active'));
-    if (btn) btn.classList.add('active');
-    
-    const searchInput = document.getElementById('log-search-input');
-    searchInput.value = term;
-    filterLogLines();
-}
-
 function exportLogs(format) {
     if (!allLogLines || !allLogLines.length) {
         showToast("No log entries to export", "warning");
@@ -996,7 +987,7 @@ async function fetchLogsNow() {
 
         if (res && res.lines) {
             allLogLines = res.lines;
-            renderLogLines(allLogLines);
+            filterLogLines();
 
             if (res.histogram) {
                 renderHistogram(res.histogram);
@@ -1030,10 +1021,21 @@ async function fetchLogsNow() {
         console.warn("Log fetch error", e);
     }
 
-    // Check active SOAR alerts for banner
+    // Check active SOAR alerts for banner (LOG-BASED ONLY, EXCLUDE SSH BRUTE FORCE / AUTH FAIL NOISE)
     try {
-        const alertsRes = await apiFetch('/api/alerts?limit=1&is_resolved=false');
-        const activeAlerts = (alertsRes && alertsRes.items) ? alertsRes.items : [];
+        const srvParam = selectedServerId ? `&server_id=${selectedServerId}` : '';
+        const alertsRes = await apiFetch(`/api/alerts?limit=50&is_resolved=false&log_only=true${srvParam}`);
+        const rawAlerts = (alertsRes && alertsRes.items) ? alertsRes.items : [];
+        const activeAlerts = rawAlerts.filter(a => {
+            const at = (a.alert_type || '').toLowerCase();
+            const t = (a.title || '').toLowerCase();
+            // Strictly exclude SSH brute force & login auth noise
+            if (at.includes('auth_fail') || at.includes('ssh_brute') || t.includes('brute force') || t.includes('auth fail')) {
+                return false;
+            }
+            return true;
+        });
+        window.activeLogThreatAlerts = activeAlerts;
         const banner = document.getElementById('live-soar-alerts-bar');
         const bannerText = document.getElementById('live-soar-alerts-text');
         if (banner && bannerText) {
@@ -1048,17 +1050,65 @@ async function fetchLogsNow() {
     } catch(ea) {}
 }
 
+function isLogSecurityThreat(msg, src) {
+    if (!msg) return false;
+    const str = String(msg).toLowerCase();
+    const source = String(src || '').toLowerCase();
+    // Exclude SSH brute force & login auth fail noise
+    if ((str.includes('auth_fail') || str.includes('ssh_brute') || str.includes('failed password') || str.includes('invalid user')) &&
+        !anyMatch(str, ['drop database', 'drop table', 'truncate', 'userdel', 'chmod 777', 'alter user', 'alter role', 'grant all'])) {
+        return false;
+    }
+    return /drop\s+database|drop\s+schema|drop\s+table|truncate|dropdb|dropuser|alter\s+user|alter\s+role|grant\s+all|with\s+superuser|createuser|userdel|deluser|usermod.*sudo|chmod\s+.*777|chmod\s+.*\+s|chown\s+.*root|\/etc\/shadow|\/etc\/sudoers|visudo|sudoedit|outofmemoryerror|stackoverflowerror|soar\s+detection/i.test(str) ||
+           (anyMatch(source, ['postgres', 'pgsql', 'audit']) && anyMatch(str, ['error', 'fatal', 'denied', 'drop', 'alter', 'grant', 'delete']));
+}
+
 let lastRenderedHash = '';
 function renderLogLines(lines) {
     const term = document.getElementById('log-terminal-output');
     if (!lines || !lines.length) {
-        term.innerHTML = '<div style="text-align:center; padding:30px; color:var(--text3)">No matching log entries found.</div>';
+        if (activePresetKey === 'soar') {
+            let alertsHtml = '';
+            if (window.activeLogThreatAlerts && window.activeLogThreatAlerts.length > 0) {
+                alertsHtml = `
+                <div style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:16px; margin:16px; text-align:left">
+                    <div style="font-weight:700; color:#ef4444; margin-bottom:10px; font-size:12px; font-family:var(--orbitron)">🚨 ACTIVE LOG-BASED SOAR DETECTIONS (SSH Brute Force Excluded)</div>
+                    ${window.activeLogThreatAlerts.map(a => `
+                        <div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:flex-start">
+                            <div>
+                                <span class="lvl-tag CRITICAL" style="background:#ef4444; color:#fff; font-size:9px">CRITICAL</span>
+                                <strong style="color:#f8fafc; margin-left:8px">${escapeHtml(a.title || a.alert_type)}</strong>
+                                <div style="color:#cbd5e1; font-size:11px; margin-top:4px">${escapeHtml(a.message || '')}</div>
+                            </div>
+                            <span style="color:var(--text3); font-size:9px; white-space:nowrap">${a.created_at_ago || 'recent'}</span>
+                        </div>
+                    `).join('')}
+                </div>`;
+            }
+            term.innerHTML = alertsHtml || '<div style="text-align:center; padding:40px; color:var(--text3)"><div style="font-size:24px; margin-bottom:8px">🛡️</div><div style="font-weight:600; color:#f8fafc">No Log-Based SOAR Threats Found in Current Stream Window</div><div style="font-size:11px; margin-top:4px">SSH Brute Force & login noise excluded. Monitored: PostgreSQL deletions/privileges, OS userdel, chmod 777, Tomcat errors.</div></div>';
+        } else {
+            term.innerHTML = '<div style="text-align:center; padding:30px; color:var(--text3)">No matching log entries found.</div>';
+        }
         lastRenderedHash = '';
         return;
     }
 
-    const htmlContent = lines.map((l, idx) => {
-        const isSoarThreat = /soar|drop\s+database|drop\s+table|truncate|userdel|deluser|usermod.*sudo|chmod.*777|alter\s+user|alter\s+role/i.test(l.msg || '');
+    let topAlertsNotice = '';
+    if (activePresetKey === 'soar' && window.activeLogThreatAlerts && window.activeLogThreatAlerts.length > 0) {
+        topAlertsNotice = `
+        <div style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:12px 16px; margin:10px 14px; text-align:left">
+            <div style="font-weight:700; color:#ef4444; margin-bottom:6px; font-size:11px; font-family:var(--orbitron)">🚨 ACTIVE LOG-BASED SOAR DETECTIONS (SSH Brute Force Excluded)</div>
+            ${window.activeLogThreatAlerts.map(a => `
+                <div style="font-size:11px; padding:4px 0; color:#f8fafc">
+                    <span class="lvl-tag CRITICAL" style="background:#ef4444; color:#fff; font-size:9px; padding:2px 5px">CRITICAL</span>
+                    <strong style="margin-left:6px">${escapeHtml(a.title || a.alert_type)}:</strong> ${escapeHtml(a.message || '')}
+                </div>
+            `).join('')}
+        </div>`;
+    }
+
+    const htmlContent = topAlertsNotice + lines.map((l, idx) => {
+        const isSoarThreat = isLogSecurityThreat(l.msg, l.source);
         const lvl = (l.level || 'INFO').toUpperCase();
         const displayLvl = isSoarThreat ? 'CRITICAL' : lvl;
         const lvlClass = isSoarThreat ? 'lvl-error' : (lvl === 'ERROR' ? 'lvl-error' : (lvl === 'WARN' ? 'lvl-warn' : (lvl === 'INFO' ? 'lvl-info' : '')));
@@ -1177,9 +1227,25 @@ async function triggerWatchdogTestSpike() {
 let activePresetKey = '';
 function applyPresetFilter(term, btn) {
     document.querySelectorAll('.preset-pill').forEach(b => b.classList.remove('active'));
-    if (btn) btn.classList.add('active');
-    activePresetKey = term;
+    if (btn) {
+        btn.classList.add('active');
+    } else {
+        const found = Array.from(document.querySelectorAll('.preset-pill')).find(b => {
+            const oc = b.getAttribute('onclick') || '';
+            return oc.includes(`'${term}'`);
+        });
+        if (found) found.classList.add('active');
+    }
+    activePresetKey = term || '';
+
+    // Clear search input text if preset clicked to avoid filter clash
+    if (term) {
+        const searchInput = document.getElementById('log-search-input');
+        if (searchInput && searchInput.value) searchInput.value = '';
+    }
+
     filterLogLines();
+    showToast(`Preset: ${term ? term.toUpperCase() : 'ALL STREAMS'}`, "info");
 }
 
 function filterByKv(key, val) {
@@ -1210,20 +1276,24 @@ function filterLogLines() {
         // Preset filter evaluation
         if (activePresetKey) {
             const pk = activePresetKey.toLowerCase();
-            if (pk === 'error') {
+            if (pk === 'soar') {
+                if (!isLogSecurityThreat(l.msg, l.source)) return false;
+            } else if (pk === 'postgres' || pk === 'psql') {
+                if (!anyMatch(msg, ['psql', 'postgres', 'select', 'insert', 'update', 'delete', 'query', 'sql', 'db', 'drop', 'alter', 'grant']) && !anyMatch(src, ['postgres', 'pgsql'])) return false;
+            } else if (pk === 'userdel' || pk === 'perm') {
+                if (!anyMatch(msg, ['userdel', 'deluser', 'useradd', 'adduser', 'usermod', 'chmod', 'chown', 'sudo', 'su:']) && !anyMatch(src, ['auth', 'secure', 'audit'])) return false;
+            } else if (pk === 'error') {
                 if (!['ERROR', 'CRITICAL', 'CRIT', 'HIGH', 'FATAL'].includes(lvl) && !anyMatch(msg, ['error', 'fail', 'exception', 'fatal', 'crit'])) return false;
             } else if (pk === 'warn') {
                 if (!['WARN', 'WARNING', 'MEDIUM'].includes(lvl) && !anyMatch(msg, ['warn', 'warning', 'medium'])) return false;
-            } else if (pk === 'apm') {
-                if (!anyMatch(msg, ['apm', 'trace', 'duration_ms', 'latency', 'cpu=', 'ram=', 'rum']) && !src.includes('apm')) return false;
-            } else if (pk === 'watchdog') {
-                if (!anyMatch(msg, ['watchdog', 'anomaly', 'outlier', 'root cause', 'alert-pacer']) && !src.includes('watchdog')) return false;
             } else if (pk === 'auth') {
                 if (!anyMatch(msg, ['auth', 'ssh', 'login', 'pass', 'perm', 'sec', 'token', 'user', 'chmod']) && !anyMatch(src, ['auth', 'sec'])) return false;
             } else if (pk === '500') {
                 if (!anyMatch(msg, ['500', '502', '503', '504', '5xx', 'internal server error', 'http/1.1 5', 'http/2.0 5'])) return false;
-            } else if (pk === 'psql') {
-                if (!anyMatch(msg, ['psql', 'postgres', 'select', 'insert', 'update', 'delete', 'query', 'sql', 'db'])) return false;
+            } else if (pk === 'apm') {
+                if (!anyMatch(msg, ['apm', 'trace', 'duration_ms', 'latency', 'cpu=', 'ram=', 'rum']) && !src.includes('apm')) return false;
+            } else if (pk === 'watchdog') {
+                if (!anyMatch(msg, ['watchdog', 'anomaly', 'outlier', 'root cause', 'alert-pacer']) && !src.includes('watchdog')) return false;
             }
         }
 

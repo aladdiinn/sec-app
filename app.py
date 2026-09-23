@@ -1725,7 +1725,7 @@ async def api_agent_push(request: Request):
     return {"status": "ok", "ok": True, "server_id": server_id, "message": "Agent telemetry ingested and analyzed"}
 
 @app.get("/api/alerts")
-async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None):
+async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False):
     conn = db.get_db_connection()
     if not conn: return {"items": [], "total": 0}
     try:
@@ -1735,6 +1735,11 @@ async def api_get_alerts(request: Request = None, limit: int = 100, severity: st
             if server_id:
                 query += " AND a.server_id = %s"
                 params.append(server_id)
+
+            # Support log_only: exclude SSH brute force & login auth fail noise
+            req_log_only = log_only or (request and request.query_params.get("log_only", "").lower() in ("true", "1", "yes"))
+            if req_log_only:
+                query += " AND a.alert_type NOT IN ('AUTH_FAIL', 'SSH_BRUTE_FORCE', 'AUTH_FAIL_THRESHOLD') AND a.title NOT ILIKE '%brute force%' AND a.title NOT ILIKE '%auth fail%'"
             
             # Support both is_resolved and status query params
             resolved_val = None

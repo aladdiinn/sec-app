@@ -262,6 +262,9 @@
 }
 .i3-log-cat-btn:hover { color: #f8fafc; }
 .i3-log-cat-btn.active { background: #38bdf8; color: #0f172a; font-weight: 700; }
+.i3-log-cat-btn.cat-soar { color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.35); }
+.i3-log-cat-btn.cat-soar:hover { background: rgba(239, 68, 68, 0.15); color: #fff; }
+.i3-log-cat-btn.cat-soar.active { background: #ef4444; color: #fff; border-color: #ef4444; }
 
 .i3-alert-item {
     background: #0b1320; border: 1px solid rgba(255,255,255,0.06);
@@ -527,32 +530,53 @@
             </div>
         </div>
 
-        <!-- TAB 4: LOG STREAMS (Tomcat, Postgres, OS) -->
+        <!-- TAB 4: LOG STREAMS (Tomcat, Postgres, OS, SOAR Detections) -->
         <div id="i3t-logs" style="display:none">
             <div class="i3-card">
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
-                    <div class="i3-card-title" style="margin:0">📑 Auto-Discovered Log Streams</div>
-                    
-                    <!-- 3 Category Options + All -->
-                    <div style="display:flex; gap:6px; background:#090f1d; padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08)">
-                        <button class="i3-log-cat-btn active" id="btn-cat-all" onclick="selectModalLogCategory('all')">⚡ All Streams</button>
-                        <button class="i3-log-cat-btn" id="btn-cat-os" onclick="selectModalLogCategory('os')">💻 OS Logs</button>
-                        <button class="i3-log-cat-btn" id="btn-cat-tomcat" onclick="selectModalLogCategory('tomcat')">☕ Tomcat</button>
-                        <button class="i3-log-cat-btn" id="btn-cat-postgres" onclick="selectModalLogCategory('postgres')">🐘 PostgreSQL</button>
+                <!-- Real-Time SOAR Detections Banner for This Server (Image 1 Style) -->
+                <div id="modal-soar-alerts-bar" style="display:none; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:7px 12px; font-size:11px; align-items:center; justify-content:space-between; margin-bottom:12px">
+                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden">
+                        <span class="lvl-tag CRITICAL" style="background:rgba(239,68,68,0.25); color:#ef4444; border:1px solid rgba(239,68,68,0.5); padding:2px 6px; border-radius:4px; font-weight:700; font-size:10px; flex-shrink:0">🚨 SOAR DETECTIONS</span>
+                        <span id="modal-soar-alerts-text" style="color:#f8fafc; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">Active Threat Alert</span>
+                    </div>
+                    <div style="display:flex; gap:6px; align-items:center; flex-shrink:0">
+                        <button class="btn btn-glass" onclick="selectModalLogCategory('soar')" style="font-size:9px; padding:2px 8px; color:#ef4444; border-color:rgba(239,68,68,0.4)">⚡ FILTER THREATS</button>
+                        <button class="btn btn-glass" onclick="switchI3Tab('incidents', document.querySelectorAll('.i3-tab')[1])" style="font-size:9px; padding:2px 8px; color:#38bdf8; border-color:rgba(56,189,248,0.4)">VIEW INCIDENTS</button>
                     </div>
                 </div>
 
-                <!-- Log Files Selector Bar -->
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
+                    <div class="i3-card-title" style="margin:0">📑 Auto-Discovered Log Streams</div>
+                    
+                    <!-- Presets & Category Options (Matching Image 1) -->
+                    <div style="display:flex; gap:6px; background:#090f1d; padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); flex-wrap:wrap">
+                        <button class="i3-log-cat-btn active" id="btn-cat-all" onclick="selectModalLogCategory('all')">⚡ All Streams</button>
+                        <button class="i3-log-cat-btn cat-soar" id="btn-cat-soar" onclick="selectModalLogCategory('soar')">🚨 SOAR Threats</button>
+                        <button class="i3-log-cat-btn" id="btn-cat-os" onclick="selectModalLogCategory('os')">💻 OS Logs</button>
+                        <button class="i3-log-cat-btn" id="btn-cat-tomcat" onclick="selectModalLogCategory('tomcat')">☕ Tomcat</button>
+                        <button class="i3-log-cat-btn" id="btn-cat-postgres" onclick="selectModalLogCategory('postgres')">🐘 PostgreSQL</button>
+                        <button class="i3-log-cat-btn" id="btn-cat-errors" onclick="selectModalLogCategory('errors')">🔥 Errors</button>
+                        <button class="i3-log-cat-btn" id="btn-cat-userdel" onclick="selectModalLogCategory('userdel')">👤 User & Perm</button>
+                    </div>
+                </div>
+
+                <!-- Log Files Selector & Export Bar (Matching Image 1 Export Options) -->
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; background:#090f1d; padding:8px 12px; border-radius:6px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.06)">
                     <div style="display:flex; align-items:center; gap:8px">
                         <span style="font-size:11px; font-weight:700; color:#38bdf8">LOG FILE:</span>
-                        <select id="modal-log-file-select" onchange="filterModalLogsByFile()" style="font-size:11px; background:#1e293b; border:1px solid rgba(255,255,255,0.12); color:#f8fafc; padding:4px 10px; border-radius:4px; max-width:320px; font-family:monospace">
+                        <select id="modal-log-file-select" onchange="filterModalLogsByFile()" style="font-size:11px; background:#1e293b; border:1px solid rgba(255,255,255,0.12); color:#f8fafc; padding:4px 10px; border-radius:4px; max-width:280px; font-family:monospace">
                             <option value="">-- All Discovered Files --</option>
                         </select>
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px">
-                        <input type="text" id="modal-log-search" placeholder="🔍 Filter lines..." oninput="renderModalLogs()" style="font-size:11px; background:#1e293b; border:1px solid rgba(255,255,255,0.12); color:#f8fafc; padding:4px 10px; border-radius:4px; width:180px; font-family:monospace">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+                        <input type="text" id="modal-log-search" placeholder="🔍 Filter lines..." oninput="renderModalLogs()" style="font-size:11px; background:#1e293b; border:1px solid rgba(255,255,255,0.12); color:#f8fafc; padding:4px 10px; border-radius:4px; width:150px; font-family:monospace">
                         <button class="btn btn-glass" style="font-size:10px; padding:4px 8px" onclick="refreshModalLogs()" title="Refresh Logs">🔄</button>
+                        
+                        <!-- Image 1 Export Options -->
+                        <span style="font-size:10px; color:#64748b; font-family:'Orbitron',monospace; margin-left:4px">EXPORT:</span>
+                        <button class="btn btn-glass" onclick="exportModalLogs('csv')" style="font-size:9px; padding:3px 7px; color:#10b981; border-color:rgba(16,185,129,0.3)">📄 CSV</button>
+                        <button class="btn btn-glass" onclick="exportModalLogs('json')" style="font-size:9px; padding:3px 7px; color:#38bdf8; border-color:rgba(56,189,248,0.3)">{ } JSON</button>
+                        <button class="btn btn-glass" onclick="exportModalLogs('raw')" style="font-size:9px; padding:3px 7px; color:#f59e0b; border-color:rgba(245,158,11,0.3)">📜 RAW</button>
                     </div>
                 </div>
 
@@ -824,6 +848,34 @@ async function openImage3Modal(serverId) {
             }).join('');
         }
 
+        // Modal Log SOAR Threat Banner (LOG-BASED ONLY, EXCLUDE SSH BRUTE FORCE / AUTH FAIL NOISE)
+        modalLogThreatAlerts = alerts.filter(a => {
+            const at = (a.alert_type || '').toLowerCase();
+            const t = (a.title || '').toLowerCase();
+            const msg = (a.message || '').toLowerCase();
+            // Strictly exclude SSH brute force & login auth fail
+            if (at.includes('auth_fail') || at.includes('ssh_brute') || t.includes('brute force') || t.includes('auth fail')) {
+                return false;
+            }
+            return at.includes('pg_') || at.includes('db_') || at.includes('privilege') || at.includes('user_deleted') ||
+                   at.includes('perm') || at.includes('tomcat') || at.includes('root') || at.includes('sudo') ||
+                   t.includes('postgres') || t.includes('privilege') || t.includes('deletion') || t.includes('tomcat') ||
+                   t.includes('escalation') || t.includes('user') || t.includes('permission') ||
+                   msg.includes('drop ') || msg.includes('userdel') || msg.includes('chmod') || msg.includes('tomcat');
+        });
+
+        const modalBanner = document.getElementById('modal-soar-alerts-bar');
+        const modalBannerText = document.getElementById('modal-soar-alerts-text');
+        if (modalBanner && modalBannerText) {
+            if (modalLogThreatAlerts.length > 0) {
+                const top = modalLogThreatAlerts[0];
+                modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:#94a3b8; font-size:9px">(${top.created_at_formatted || 'recent'})</span>`;
+                modalBanner.style.display = 'flex';
+            } else {
+                modalBanner.style.display = 'none';
+            }
+        }
+
         // Store logs and populate files
         try {
             const stream = await apiFetch(`/api/log-monitor/streams?server_id=${serverId}&limit=200`);
@@ -860,6 +912,7 @@ let currentModalLogs = [];
 let currentModalFiles = [];
 let modalActiveCategory = 'all';
 let modalActiveFile = '';
+let modalLogThreatAlerts = [];
 
 function selectModalLogCategory(cat) {
     modalActiveCategory = cat;
@@ -880,7 +933,7 @@ function updateModalFileSelector() {
     if (!sel) return;
 
     let available = currentModalFiles;
-    if (modalActiveCategory !== 'all') {
+    if (modalActiveCategory !== 'all' && modalActiveCategory !== 'soar' && modalActiveCategory !== 'errors' && modalActiveCategory !== 'userdel') {
         available = currentModalFiles.filter(f => {
             const ft = (f.log_type || '').toLowerCase();
             const src = (f.source || '').toLowerCase();
@@ -906,6 +959,19 @@ function filterModalLogsByFile() {
     renderModalLogs();
 }
 
+function isModalLogSecurityThreat(text, src) {
+    if (!text) return false;
+    const str = String(text).toLowerCase();
+    const source = String(src || '').toLowerCase();
+    // Exclude SSH brute force & login auth fail noise
+    if ((str.includes('auth_fail') || str.includes('ssh_brute') || str.includes('failed password') || str.includes('invalid user')) &&
+        !anyMatch(str, ['drop database', 'drop table', 'truncate', 'userdel', 'chmod 777', 'alter user', 'alter role', 'grant all'])) {
+        return false;
+    }
+    return /drop\s+database|drop\s+schema|drop\s+table|truncate|dropdb|dropuser|alter\s+user|alter\s+role|grant\s+all|with\s+superuser|createuser|userdel|deluser|usermod.*sudo|chmod\s+.*777|chmod\s+.*\+s|chown\s+.*root|\/etc\/shadow|\/etc\/sudoers|visudo|sudoedit|outofmemoryerror|stackoverflowerror|soar\s+detection/i.test(str) ||
+           (anyMatch(source, ['postgres', 'pgsql', 'audit']) && anyMatch(str, ['error', 'fatal', 'denied', 'drop', 'alter', 'grant', 'delete']));
+}
+
 function renderModalLogs() {
     const logBox = document.getElementById('i3-logs-box');
     if (!logBox) return;
@@ -918,12 +984,18 @@ function renderModalLogs() {
         const ltype = (l.log_type || '').toLowerCase();
 
         // Category filter
-        if (modalActiveCategory === 'os') {
+        if (modalActiveCategory === 'soar') {
+            if (!isModalLogSecurityThreat(line, src)) return false;
+        } else if (modalActiveCategory === 'os') {
             if (ltype !== 'os' && !anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern'])) return false;
         } else if (modalActiveCategory === 'tomcat') {
             if (ltype !== 'tomcat' && !anyMatch(src, ['tomcat', 'catalina', 'nohup']) && !anyMatch(line, ['tomcat', 'catalina'])) return false;
         } else if (modalActiveCategory === 'postgres') {
             if (ltype !== 'postgres' && !anyMatch(src, ['postgres', 'pgsql']) && !anyMatch(line, ['postgres'])) return false;
+        } else if (modalActiveCategory === 'errors') {
+            if (!anyMatch(line, ['error', 'fatal', 'crit', 'exception', 'severe', 'failed'])) return false;
+        } else if (modalActiveCategory === 'userdel') {
+            if (!anyMatch(line, ['userdel', 'deluser', 'useradd', 'adduser', 'usermod', 'chmod', 'chown', 'sudo', 'su:'])) return false;
         }
 
         // File filter
@@ -940,6 +1012,33 @@ function renderModalLogs() {
     });
 
     if (!filtered.length) {
+        if (modalActiveCategory === 'soar') {
+            let alertsHtml = '';
+            if (modalLogThreatAlerts && modalLogThreatAlerts.length > 0) {
+                alertsHtml = `
+                <div style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:16px; margin-bottom:12px; text-align:left">
+                    <div style="font-weight:700; color:#ef4444; margin-bottom:10px; font-size:12px; font-family:'Orbitron',monospace">🚨 ACTIVE LOG-BASED SOAR DETECTIONS (SSH Brute Force Excluded)</div>
+                    ${modalLogThreatAlerts.map(a => `
+                        <div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:flex-start">
+                            <div>
+                                <span style="background:#ef4444; color:#fff; font-size:9px; padding:2px 6px; border-radius:3px; font-weight:700">CRITICAL</span>
+                                <strong style="color:#f8fafc; margin-left:8px">${escapeHtml(a.title || a.alert_type)}</strong>
+                                <div style="color:#cbd5e1; font-size:11px; margin-top:4px">${escapeHtml(a.message || '')}</div>
+                            </div>
+                            <span style="color:#94a3b8; font-size:9px; white-space:nowrap">${a.created_at_formatted || 'recent'}</span>
+                        </div>
+                    `).join('')}
+                </div>`;
+            }
+            logBox.innerHTML = alertsHtml || `
+            <div style="color:#94a3b8; text-align:center; padding:35px">
+                <div style="font-size:24px; margin-bottom:8px">🛡️</div>
+                <div style="font-size:13px; font-weight:600; color:#e2e8f0; margin-bottom:4px">No Log-Based SOAR Threats Detected For This Node</div>
+                <div style="font-size:11px; color:#64748b">SSH Brute Force & login noise excluded. Monitored: PostgreSQL deletions/privileges, OS userdel, chmod 777, Tomcat errors.</div>
+            </div>`;
+            return;
+        }
+
         logBox.innerHTML = `
         <div style="color:#94a3b8; text-align:center; padding:35px">
             <div style="font-size:24px; margin-bottom:8px">📄</div>
@@ -950,19 +1049,35 @@ function renderModalLogs() {
         return;
     }
 
-    logBox.innerHTML = filtered.map(l => {
+    let topNotice = '';
+    if (modalActiveCategory === 'soar' && modalLogThreatAlerts && modalLogThreatAlerts.length > 0) {
+        topNotice = `
+        <div style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:12px; margin-bottom:12px; text-align:left">
+            <div style="font-weight:700; color:#ef4444; margin-bottom:6px; font-size:11px; font-family:'Orbitron',monospace">🚨 ACTIVE LOG-BASED SOAR DETECTIONS (SSH Brute Force Excluded)</div>
+            ${modalLogThreatAlerts.map(a => `
+                <div style="font-size:11px; padding:4px 0; color:#f8fafc">
+                    <span style="background:#ef4444; color:#fff; font-size:9px; padding:2px 5px; border-radius:3px">CRITICAL</span>
+                    <strong style="margin-left:6px">${escapeHtml(a.title || a.alert_type)}:</strong> ${escapeHtml(a.message || '')}
+                </div>
+            `).join('')}
+        </div>`;
+    }
+
+    logBox.innerHTML = topNotice + filtered.map(l => {
         const text = l.line || l.message || '';
+        const isThreat = isModalLogSecurityThreat(text, l.source || l.log_path);
         const lower = text.toLowerCase();
-        const isErr = lower.includes('fatal') || lower.includes('error') || lower.includes('auth_fail') || lower.includes('invalid user') || lower.includes('failed password') || lower.includes('critical');
+        const isErr = isThreat || lower.includes('fatal') || lower.includes('error') || lower.includes('auth_fail') || lower.includes('invalid user') || lower.includes('failed password') || lower.includes('critical');
         const isWarn = lower.includes('warn') || lower.includes('alert') || lower.includes('privilege');
 
-        const textColor = isErr ? '#ef4444' : (isWarn ? '#f59e0b' : '#f8fafc');
+        const textColor = isThreat ? '#f87171' : (isErr ? '#ef4444' : (isWarn ? '#f59e0b' : '#f8fafc'));
         const ts = l.created_at_formatted || (l.created_at ? new Date(l.created_at).toLocaleTimeString() : 'log');
         const sourcePath = l.source || l.log_path || '/var/log/syslog';
 
         return `
-        <div style="padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.03); display:flex; align-items:flex-start; gap:8px">
+        <div style="padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03); display:flex; align-items:flex-start; gap:8px">
             <span style="color:#38bdf8; flex-shrink:0">[${ts}]</span>
+            ${isThreat ? '<span style="background:#ef4444; color:#fff; font-size:8px; padding:1px 5px; border-radius:3px; font-weight:700; flex-shrink:0">🚨 SOAR</span>' : ''}
             <span style="color:#a855f7; flex-shrink:0; max-width:200px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">${escapeHtml(sourcePath)}:</span>
             <span style="color:${textColor}; word-break:break-all">${escapeHtml(text)}</span>
         </div>
@@ -970,6 +1085,42 @@ function renderModalLogs() {
     }).join('');
 
     logBox.scrollTop = logBox.scrollHeight;
+}
+
+function exportModalLogs(format) {
+    if (!currentModalLogs || !currentModalLogs.length) {
+        showToast("No log entries to export for this asset", "warning");
+        return;
+    }
+    let content = "";
+    let filename = `server_${activeModalServerId || 'asset'}_logs_${new Date().toISOString().slice(0,10)}`;
+    let mimeType = "text/plain";
+
+    if (format === 'csv') {
+        filename += ".csv";
+        mimeType = "text/csv";
+        content = "Timestamp,Source,LogType,Message\n" + currentModalLogs.map(l => 
+            `"${l.created_at_formatted || l.created_at || ''}","${l.source || ''}","${l.log_type || ''}","${(l.line || l.message || '').replace(/"/g, '""')}"`
+        ).join("\n");
+    } else if (format === 'json') {
+        filename += ".json";
+        mimeType = "application/json";
+        content = JSON.stringify(currentModalLogs, null, 2);
+    } else {
+        filename += ".log";
+        content = currentModalLogs.map(l => `[${l.created_at_formatted || l.created_at || ''}] [${l.source || l.log_type || 'LOG'}] ${l.line || l.message || ''}`).join("\n");
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${currentModalLogs.length} logs as ${format.toUpperCase()}`, "success");
 }
 
 function escapeHtml(text) {
