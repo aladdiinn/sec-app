@@ -1885,7 +1885,7 @@ import sys, urllib.request, json
 url = "'"$SOC_URL"'/api/agent/push-logs"
 ip = "'"$NODE_IP"'"
 for line in sys.stdin:
-    line = line.rstrip("\r\n")
+    line = line.strip()
     if not line: continue
     data = json.dumps({{"server_ip": ip, "line": line}}).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={{"Content-Type": "application/json"}})

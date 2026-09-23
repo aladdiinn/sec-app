@@ -978,10 +978,18 @@ def get_servers(project_id=None):
             if sql_clause:
                 where_parts.append(sql_clause[5:])
             where_parts.append("""
-                NOT EXISTS (
-                    SELECT 1 FROM approvals a 
-                    WHERE (LOWER(a.hostname) = LOWER(s.hostname) OR LOWER(a.hostname) = LOWER(s.name) OR a.ip_address = s.ip OR a.ip_address = s.ip_address) 
-                    AND a.status = 'pending'
+                (
+                    s.status = 'online' 
+                    OR EXISTS (
+                        SELECT 1 FROM approvals a2 
+                        WHERE (LOWER(a2.hostname) = LOWER(s.hostname) OR LOWER(a2.hostname) = LOWER(s.name) OR a2.ip_address = s.ip OR a2.ip_address = s.ip_address) 
+                        AND a2.status = 'approved'
+                    )
+                    OR NOT EXISTS (
+                        SELECT 1 FROM approvals a 
+                        WHERE (LOWER(a.hostname) = LOWER(s.hostname) OR LOWER(a.hostname) = LOWER(s.name) OR a.ip_address = s.ip OR a.ip_address = s.ip_address) 
+                        AND a.status = 'pending'
+                    )
                 )
             """)
             where_sql = "WHERE " + " AND ".join(where_parts)
@@ -1232,17 +1240,27 @@ def approve_request(app_id: int):
             hostname = app_data.get("hostname")
             ip = app_data.get("ip_address") or "172.31.2.38"
             
-            cur.execute("UPDATE approvals SET status = 'approved' WHERE id = %s;", (app_id,))
+            # Approve ALL approval requests for this hostname/IP so no pending duplicates remain
+            cur.execute("UPDATE approvals SET status = 'approved' WHERE id = %s OR LOWER(hostname) = LOWER(%s) OR ip_address = %s;", (app_id, hostname, ip))
             
-            cur.execute("SELECT id FROM servers WHERE hostname = %s OR name = %s OR ip = %s OR ip_address = %s LIMIT 1;", (hostname, hostname, ip, ip))
+            cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) OR ip = %s OR ip_address = %s LIMIT 1;", (hostname, hostname, ip, ip))
             if not cur.fetchone():
                 token = app_data.get("agent_token") or f"sp-token-{int(time.time())}"
+                # Fetch default project ID if available
+                pid = 1
+                try:
+                    cur.execute("SELECT id FROM projects ORDER BY id ASC LIMIT 1;")
+                    prow = cur.fetchone()
+                    if prow:
+                        pid = prow.get("id") if isinstance(prow, dict) else prow[0]
+                except Exception:
+                    pass
                 cur.execute("""
-                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW());
-                """, (hostname, hostname, ip, ip, "Linux (Ubuntu)", token, token))
+                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen, project_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s);
+                """, (hostname, hostname, ip, ip, "Linux (Ubuntu)", token, token, pid))
             else:
-                cur.execute("UPDATE servers SET status = 'online', last_seen = NOW() WHERE hostname = %s OR ip = %s OR ip_address = %s;", (hostname, ip, ip))
+                cur.execute("UPDATE servers SET status = 'online', last_seen = NOW() WHERE LOWER(hostname) = LOWER(%s) OR ip = %s OR ip_address = %s;", (hostname, ip, ip))
             return True
     except Exception as e:
         logger.error(f"Error in approve_request: {e}")
