@@ -1,220 +1,207 @@
 {% extends "base.html" %}
 {% set active = 'rules' %}
-{% block page_title %}Detection Rules{% endblock %}
-{% block page_sub %}Manage threat detection and alerting logic{% endblock %}
+{% block page_title %}DETECTION RULES{% endblock %}
+{% block page_sub %}SIEM / IDS / IPS — Real-time Threat Detection Engine{% endblock %}
+
+{% block extra_css %}
+<style>
+.det-cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)); gap: 20px; margin-bottom: 24px; }
+.det-cat-card { background: #0f172a; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; overflow: hidden; }
+.det-cat-header { padding: 16px 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.det-cat-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+.det-cat-title { font-size: 13px; font-weight: 700; color: #f8fafc; font-family: 'Orbitron', monospace; letter-spacing: 0.5px; }
+.det-cat-sub { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+.det-cat-badge { margin-left: auto; background: rgba(239,68,68,0.2); color: #ef4444; border: 1px solid rgba(239,68,68,0.4); font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 700; white-space: nowrap; }
+.det-cat-badge.ok { background: rgba(16,185,129,0.2); color: #10b981; border-color: rgba(16,185,129,0.4); }
+.det-rule-list { padding: 8px 0; }
+.det-rule-item { padding: 10px 20px; display: flex; align-items: flex-start; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.15s; }
+.det-rule-item:hover { background: rgba(255,255,255,0.02); }
+.det-rule-item:last-child { border-bottom: none; }
+.det-rule-name { font-size: 12px; font-weight: 600; color: #f8fafc; }
+.det-rule-desc { font-size: 10px; color: #64748b; margin-top: 2px; }
+.det-rule-sev { font-size: 9px; padding: 2px 6px; border-radius: 3px; font-weight: 700; text-transform: uppercase; font-family: monospace; white-space: nowrap; }
+.sev-critical { background: rgba(239,68,68,0.2); color: #ef4444; border: 1px solid rgba(239,68,68,0.4); }
+.sev-warning { background: rgba(245,158,11,0.2); color: #f59e0b; border: 1px solid rgba(245,158,11,0.4); }
+.sev-info { background: rgba(56,189,248,0.2); color: #38bdf8; border: 1px solid rgba(56,189,248,0.4); }
+.det-toggle { position: relative; width: 36px; height: 20px; cursor: pointer; flex-shrink: 0; }
+.det-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.det-toggle-slider { position: absolute; inset: 0; background: #1e293b; border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; transition: all 0.3s; }
+.det-toggle-slider:before { content: ''; position: absolute; width: 14px; height: 14px; left: 2px; bottom: 2px; background: #64748b; border-radius: 50%; transition: all 0.3s; }
+.det-toggle input:checked + .det-toggle-slider { background: rgba(16,185,129,0.3); border-color: #10b981; }
+.det-toggle input:checked + .det-toggle-slider:before { transform: translateX(16px); background: #10b981; }
+.det-threshold { display: flex; align-items: center; gap: 6px; font-size: 10px; color: #94a3b8; margin-top: 6px; }
+.det-threshold input[type=number] { width: 50px; background: #1e293b; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 6px; color: #f8fafc; font-size: 11px; text-align: center; }
+.stats-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.stat-box { background: #0f172a; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 16px; text-align: center; }
+.stat-box-val { font-size: 28px; font-weight: 800; font-family: 'Orbitron', monospace; margin-bottom: 4px; }
+.stat-box-label { font-size: 9px; font-weight: 700; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase; }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="fade-in">
-    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:20px; margin-bottom:24px">
-        <div class="card glass" style="padding:20px">
-            <div class="text-meta">TOTAL RULES</div>
-            <div id="stat-total" style="font-size:32px; color:var(--cyan); margin-top:8px">0</div>
+    <div class="stats-bar">
+        <div class="stat-box">
+            <div class="stat-box-val" id="stat-total-rules" style="color:#38bdf8">0</div>
+            <div class="stat-box-label">TOTAL RULES</div>
         </div>
-        <div class="card glass" style="padding:20px">
-            <div class="text-meta">CRITICAL RULES</div>
-            <div id="stat-critical" style="font-size:32px; color:var(--red); margin-top:8px">0</div>
+        <div class="stat-box">
+            <div class="stat-box-val" id="stat-active-rules" style="color:#10b981">0</div>
+            <div class="stat-box-label">ACTIVE</div>
         </div>
-        <div class="card glass" style="padding:20px">
-            <div class="text-meta">MITRE MAPPED</div>
-            <div id="stat-mitre" style="font-size:32px; color:var(--green); margin-top:8px">0</div>
+        <div class="stat-box">
+            <div class="stat-box-val" id="stat-triggered-today" style="color:#ef4444">0</div>
+            <div class="stat-box-label">TRIGGERED TODAY</div>
         </div>
-    </div>
-
-    <div style="display:flex; justify-content:space-between; margin-bottom:16px">
-        <h2 class="card-title">Detection Engine Rules</h2>
-        <div style="display:flex; gap:10px">
-            <button class="btn btn-glass" onclick="hotReload(this)">Hot Reload</button>
-            <button class="btn btn-primary" onclick="openAddModal()">Add Rule</button>
+        <div class="stat-box">
+            <div class="stat-box-val" id="stat-open-alerts" style="color:#f59e0b">0</div>
+            <div class="stat-box-label">OPEN ALERTS</div>
         </div>
     </div>
-
-    <div class="card glass" style="overflow-x:auto">
-        <table style="width:100%; border-collapse:collapse; text-align:left">
-            <thead>
-                <tr style="border-bottom:1px solid var(--border)">
-                    <th style="padding:12px; color:var(--text-meta)">ID</th>
-                    <th style="padding:12px; color:var(--text-meta)">NAME</th>
-                    <th style="padding:12px; color:var(--text-meta)">EVENT TYPE</th>
-                    <th style="padding:12px; color:var(--text-meta)">SEVERITY</th>
-                    <th style="padding:12px; color:var(--text-meta)">PATTERN</th>
-                    <th style="padding:12px; color:var(--text-meta)">MITRE</th>
-                    <th style="padding:12px; color:var(--text-meta)">ENABLED</th>
-                    <th style="padding:12px; text-align:right">ACTIONS</th>
-                </tr>
-            </thead>
-            <tbody id="rules-table-body">
-                <tr><td colspan="8" style="padding:20px; text-align:center">Loading...</td></tr>
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<!-- Modal -->
-<div id="add-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:30px; z-index:100; border-radius:8px; width:450px; box-shadow:0 10px 40px rgba(0,0,0,0.5)">
-    <h3 class="card-title" style="margin-bottom:16px">Add New Rule</h3>
-    <form id="add-form" onsubmit="submitForm(event)">
-        <div style="margin-bottom:12px">
-            <label class="text-meta">Rule Name</label>
-            <input id="name" type="text" class="glass" style="width:100%; padding:8px" required>
-        </div>
-        <div style="margin-bottom:12px">
-            <label class="text-meta">Event Type</label>
-            <select id="event_type" class="glass" style="width:100%; padding:8px" required>
-                <option value="command">Command</option>
-                <option value="login">Login</option>
-                <option value="file">File Access</option>
-            </select>
-        </div>
-        <div style="margin-bottom:12px">
-            <label class="text-meta">Severity</label>
-            <select id="severity" class="glass" style="width:100%; padding:8px" required>
-                <option value="info">Info</option>
-                <option value="warning">Warning</option>
-                <option value="critical">Critical</option>
-            </select>
-        </div>
-        <div style="margin-bottom:12px">
-            <label class="text-meta">Condition (Pattern/Regex)</label>
-            <input id="pattern" type="text" class="glass" style="width:100%; padding:8px" required>
-        </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px">
-            <div>
-                <label class="text-meta">MITRE Tactic</label>
-                <input id="mitre_tactic" type="text" class="glass" style="width:100%; padding:8px">
-            </div>
-            <div>
-                <label class="text-meta">MITRE Technique</label>
-                <input id="mitre_technique" type="text" class="glass" style="width:100%; padding:8px">
-            </div>
-        </div>
-        <div style="margin-bottom:20px">
-            <label class="text-meta">Alert Message</label>
-            <textarea id="message" class="glass" style="width:100%; padding:8px; height:50px" required></textarea>
-        </div>
-        <div style="display:flex; justify-content:flex-end; gap:10px">
-            <button type="button" class="btn btn-glass" onclick="closeAddModal()">Cancel</button>
-            <button type="submit" class="btn btn-primary" id="btn-submit">Save Rule</button>
-        </div>
-    </form>
+    <div class="det-cat-grid" id="det-categories-grid"></div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
+const BUILTIN_RULES = {
+    identity: {
+        icon: '🔐', color: '#ef4444', bg: 'rgba(239,68,68,0.15)',
+        title: 'IDENTITY & ACCESS', sub: 'Failed logins, brute force, privilege escalation',
+        rules: [
+            { id: 'failed_login', name: 'Failed Login Threshold', sev: 'warning', desc: 'SSH/VPN/App login failures >= 5 in 10 minutes from same IP', threshold_label: 'Threshold (failures)', threshold_key: 'failed_login_threshold', default: 5 },
+            { id: 'brute_force', name: 'SSH Brute Force Detection', sev: 'critical', desc: 'Rapid SSH failures >= 10 in 5 minutes = active brute force attack', threshold_label: 'Threshold (in 5 min)', threshold_key: 'brute_force_threshold', default: 10 },
+            { id: 'sudo_misuse', name: 'Admin Privilege Misuse (sudo/su)', sev: 'critical', desc: 'Detect sudo/su escalation, suspicious COMMAND patterns in auth logs', threshold_label: null },
+            { id: 'shadow_dump', name: 'Shadow File Dumping', sev: 'critical', desc: 'cat /etc/shadow or /etc/passwd detected — credential access attempt', threshold_label: null },
+            { id: 'new_user', name: 'New User Account Created', sev: 'warning', desc: 'useradd/adduser detected — possible persistence mechanism', threshold_label: null },
+            { id: 'sudo_group', name: 'User Added to sudo Group', sev: 'critical', desc: 'usermod -aG sudo detected — privilege escalation attempt', threshold_label: null },
+        ]
+    },
+    file_integrity: {
+        icon: '📁', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)',
+        title: 'OS FILE INTEGRITY (FIM)', sub: 'Critical system file modification monitoring',
+        rules: [
+            { id: 'fim_passwd', name: '/etc/passwd Modification', sev: 'critical', desc: 'File integrity change detected on /etc/passwd (user accounts)', threshold_label: null },
+            { id: 'fim_shadow', name: '/etc/shadow Modification', sev: 'critical', desc: 'File integrity change detected on /etc/shadow (password hashes)', threshold_label: null },
+            { id: 'fim_sudoers', name: '/etc/sudoers Modification', sev: 'critical', desc: 'File integrity change detected on /etc/sudoers', threshold_label: null },
+            { id: 'fim_sshd', name: 'sshd_config Modification', sev: 'critical', desc: 'SSH daemon config changed — possible backdoor or port change', threshold_label: null },
+            { id: 'fim_crontab', name: '/etc/crontab Modification', sev: 'warning', desc: 'Crontab modification — possible persistence mechanism', threshold_label: null },
+            { id: 'chmod_critical', name: 'Critical Path chmod/chown', sev: 'warning', desc: 'chmod/chown commands on /etc, /bin, /sbin critical paths', threshold_label: null },
+        ]
+    },
+    network: {
+        icon: '🌐', color: '#38bdf8', bg: 'rgba(56,189,248,0.15)',
+        title: 'NETWORK & HOST', sub: 'Port scan, traffic anomalies, CPU/RAM monitoring',
+        rules: [
+            { id: 'port_scan', name: 'New Open Port Detected', sev: 'warning', desc: 'Unexpected port opened — possible unauthorized service or backdoor', threshold_label: null },
+            { id: 'high_cpu_proc', name: 'High CPU Process (>85%)', sev: 'warning', desc: 'Per-process CPU exceeds 85% — possible crypto-mining or runaway process', threshold_label: 'CPU Threshold %', threshold_key: 'cpu_threshold', default: 85 },
+            { id: 'high_mem_proc', name: 'High Memory Process (>85%)', sev: 'warning', desc: 'Per-process RAM exceeds 85% — possible memory exhaustion', threshold_label: 'RAM Threshold %', threshold_key: 'mem_threshold', default: 85 },
+            { id: 'firewall_disable', name: 'Firewall Disabled (iptables/ufw)', sev: 'critical', desc: 'iptables -F or ufw disable command detected', threshold_label: null },
+            { id: 'cron_persist', name: 'Cron Persistence Attempt', sev: 'warning', desc: 'crontab -e/r or /etc/cron write detected in logs', threshold_label: null },
+        ]
+    },
+    log_analysis: {
+        icon: '📋', color: '#a855f7', bg: 'rgba(168,85,247,0.15)',
+        title: 'APPLICATION & DB LOGS', sub: 'Tomcat, PostgreSQL, OS log pattern analysis',
+        rules: [
+            { id: 'pg_auth_fail', name: 'PostgreSQL Auth Failure', sev: 'warning', desc: 'FATAL: password authentication failed — database login attack', threshold_label: null },
+            { id: 'pg_destructive', name: 'Destructive DB Query', sev: 'critical', desc: 'DROP TABLE / DROP DATABASE / TRUNCATE detected in PostgreSQL logs', threshold_label: null },
+            { id: 'pg_priv_change', name: 'PostgreSQL Privilege Change', sev: 'warning', desc: 'GRANT/REVOKE privilege changes in PostgreSQL logs', threshold_label: null },
+            { id: 'tomcat_500', name: 'Tomcat HTTP 500 Errors', sev: 'warning', desc: 'Internal Server Error in Tomcat/catalina.out logs', threshold_label: null },
+            { id: 'tomcat_oom', name: 'Tomcat OutOfMemoryError', sev: 'critical', desc: 'Java OutOfMemoryError or StackOverflow in application logs', threshold_label: null },
+            { id: 'os_kernel_err', name: 'OS Kernel / Audit Errors', sev: 'warning', desc: 'Kernel panic, AVC denied, audit failures in OS logs', threshold_label: null },
+        ]
+    }
+};
+
+let ruleStates = {};
+let alertSummary = {};
+
 async function loadData() {
     try {
-        const data = await apiFetch('/api/detection/rules');
-        let total = 0, crit = 0, mitre = 0;
-        const tbody = document.getElementById('rules-table-body');
-        if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" style="padding:20px; text-align:center">No rules found.</td></tr>';
+        const summary = await apiFetch('/api/detections/summary');
+        alertSummary = summary || {};
+        document.getElementById('stat-open-alerts').innerText = summary.total_active || 0;
+    } catch(e) {}
+    try {
+        const rules = await apiFetch('/api/detection/rules');
+        (Array.isArray(rules) ? rules : []).forEach(r => { ruleStates[r.name] = r; ruleStates[r.event_type] = r; });
+    } catch(e) {}
+    try {
+        const alerts = await apiFetch('/api/alerts?limit=500');
+        const items = alerts.items || alerts || [];
+        const today = new Date().toDateString();
+        const todayCount = items.filter(a => new Date(a.created_at).toDateString() === today).length;
+        document.getElementById('stat-triggered-today').innerText = todayCount;
+    } catch(e) {}
+    renderCategories();
+}
+
+function renderCategories() {
+    const grid = document.getElementById('det-categories-grid');
+    let totalRules = 0, activeRules = 0;
+    const catAlertMap = {
+        identity: (alertSummary.identity_access || 0) + (alertSummary.privilege_misuse || 0),
+        file_integrity: alertSummary.file_integrity || 0,
+        network: alertSummary.network_host || 0,
+        log_analysis: (alertSummary.db_alerts || 0) + (alertSummary.app_alerts || 0)
+    };
+    grid.innerHTML = Object.entries(BUILTIN_RULES).map(([catKey, cat]) => {
+        const catAlerts = catAlertMap[catKey] || 0;
+        const rulesHtml = cat.rules.map(rule => {
+            totalRules++;
+            const state = ruleStates[rule.id] || ruleStates[rule.name] || {};
+            const enabled = state.enabled !== false;
+            if (enabled) activeRules++;
+            const thresholdHtml = rule.threshold_label ? `<div class="det-threshold"><span>${rule.threshold_label}:</span><input type="number" value="${state.threshold || rule.default}" min="1" max="1000" onchange="saveThreshold('${rule.id}', this.value)"></div>` : '';
+            return `<div class="det-rule-item">
+                <div style="flex:1">
+                    <div class="det-rule-name">${rule.name}</div>
+                    <div class="det-rule-desc">${rule.desc}</div>
+                    ${thresholdHtml}
+                </div>
+                <span class="det-rule-sev sev-${rule.sev}">${rule.sev.toUpperCase()}</span>
+                <label class="det-toggle" title="${enabled?'Enabled — click to disable':'Disabled — click to enable'}">
+                    <input type="checkbox" ${enabled?'checked':''} onchange="toggleRule('${rule.id}','${rule.name}',this.checked)">
+                    <span class="det-toggle-slider"></span>
+                </label>
+            </div>`;
+        }).join('');
+        return `<div class="det-cat-card">
+            <div class="det-cat-header">
+                <div class="det-cat-icon" style="background:${cat.bg}">${cat.icon}</div>
+                <div>
+                    <div class="det-cat-title">${cat.title}</div>
+                    <div class="det-cat-sub">${cat.sub}</div>
+                </div>
+                <span class="det-cat-badge ${catAlerts===0?'ok':''}">${catAlerts>0?catAlerts+' ACTIVE':'OK'}</span>
+            </div>
+            <div class="det-rule-list">${rulesHtml}</div>
+        </div>`;
+    }).join('');
+    document.getElementById('stat-total-rules').innerText = totalRules;
+    document.getElementById('stat-active-rules').innerText = activeRules;
+}
+
+async function toggleRule(ruleId, ruleName, enabled) {
+    try {
+        const existing = ruleStates[ruleId] || ruleStates[ruleName];
+        if (existing && existing.id) {
+            await apiFetch(`/api/detection/rules/${existing.id}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
         } else {
-            tbody.innerHTML = data.map(rule => {
-                total++;
-                if (rule.severity === 'critical') crit++;
-                if (rule.mitre_tactic || rule.mitre_technique) mitre++;
-                return `
-                    <tr style="border-bottom:1px solid var(--border)">
-                        <td style="padding:12px">#${rule.id}</td>
-                        <td style="padding:12px"><strong>${rule.name}</strong></td>
-                        <td style="padding:12px">${rule.event_type}</td>
-                        <td style="padding:12px"><span class="badge badge-${rule.severity === 'critical' ? 'critical' : (rule.severity === 'warning' ? 'warning' : 'success')}">${rule.severity.toUpperCase()}</span></td>
-                        <td style="padding:12px"><code style="background:var(--bg-deep); padding:2px 6px">${rule.pattern || rule.condition || '-'}</code></td>
-                        <td style="padding:12px">${rule.mitre_tactic || '-'}/${rule.mitre_technique || '-'}</td>
-                        <td style="padding:12px">
-                            <input type="checkbox" ${rule.enabled ? 'checked' : ''} onchange="toggleRule(${rule.id}, this)">
-                        </td>
-                        <td style="padding:12px; text-align:right">
-                            <button class="btn btn-glass" style="color:var(--red); padding:4px 8px; font-size:12px" onclick="deleteRule(${rule.id}, this)">Delete</button>
-                        </td>
-                    </tr>
-                `;
-            }).join('');
+            const res = await apiFetch('/api/detection/rules', { method: 'POST', body: JSON.stringify({ name: ruleName, event_type: ruleId, severity: 'warning', pattern: ruleId, enabled }) });
+            if (res && res.id) ruleStates[ruleId] = { ...ruleStates[ruleId], id: res.id, enabled };
         }
-        document.getElementById('stat-total').innerText = total;
-        document.getElementById('stat-critical').innerText = crit;
-        document.getElementById('stat-mitre').innerText = mitre;
-    } catch (err) {
-        showToast('Failed to load rules', 'error');
-    }
+        ruleStates[ruleId] = { ...ruleStates[ruleId], enabled };
+        showToast(`Rule ${enabled ? 'enabled' : 'disabled'}: ${ruleName}`, enabled ? 'success' : 'info');
+    } catch(e) { showToast('Failed to update rule', 'error'); }
 }
 
-async function hotReload(btn) {
-    btn.disabled = true;
-    btn.innerText = 'Reloading...';
-    try {
-        await apiFetch('/api/rules/reload', { method: 'POST' });
-        showToast('Rules reloaded successfully', 'success');
-    } catch (err) {
-        showToast('Failed to reload rules', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.innerText = 'Hot Reload';
-    }
+function saveThreshold(ruleId, value) {
+    ruleStates[ruleId] = { ...ruleStates[ruleId], threshold: parseInt(value) };
+    showToast(`Threshold updated to ${value}`, 'success');
 }
 
-function openAddModal() {
-    document.getElementById('add-form').reset();
-    document.getElementById('add-modal').style.display = 'block';
-}
-
-function closeAddModal() {
-    document.getElementById('add-modal').style.display = 'none';
-}
-
-async function submitForm(e) {
-    e.preventDefault();
-    const btn = document.getElementById('btn-submit');
-    btn.disabled = true;
-    btn.innerText = 'Loading...';
-    try {
-        const payload = {
-            name: document.getElementById('name').value,
-            event_type: document.getElementById('event_type').value,
-            severity: document.getElementById('severity').value,
-            pattern: document.getElementById('pattern').value,
-            mitre_tactic: document.getElementById('mitre_tactic').value,
-            mitre_technique: document.getElementById('mitre_technique').value,
-            message: document.getElementById('message').value,
-            enabled: true
-        };
-        await apiFetch('/api/detection/rules', { method: 'POST', body: JSON.stringify(payload) });
-        showToast('Rule added successfully', 'success');
-        closeAddModal();
-        loadData();
-    } catch (err) {
-        showToast(err.message || 'Failed to add rule', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.innerText = 'Save Rule';
-    }
-}
-
-async function toggleRule(id, checkbox) {
-    try {
-        await apiFetch(`/api/detection/rules/${id}`, { method: 'PUT', body: JSON.stringify({ enabled: checkbox.checked }) });
-        showToast(`Rule ${checkbox.checked ? 'enabled' : 'disabled'}`, 'success');
-    } catch (err) {
-        showToast('Failed to update rule', 'error');
-        checkbox.checked = !checkbox.checked;
-    }
-}
-
-async function deleteRule(id, btn) {
-    if (!confirm('Are you sure you want to delete this rule?')) return;
-    btn.disabled = true;
-    btn.innerText = '...';
-    try {
-        await apiFetch(`/api/detection/rules/${id}`, { method: 'DELETE' });
-        showToast('Rule deleted', 'success');
-        loadData();
-    } catch (err) {
-        showToast('Delete failed', 'error');
-        btn.disabled = false;
-        btn.innerText = 'Delete';
-    }
-}
-
-window.addEventListener('load', loadData);
+window.addEventListener('DOMContentLoaded', () => { loadData(); setInterval(loadData, 30000); });
 </script>
 {% endblock %}

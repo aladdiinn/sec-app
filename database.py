@@ -21,6 +21,7 @@ DB_NAME = os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "securepulse_db"))
 DB_USER = os.getenv("POSTGRES_USER", os.getenv("DB_USER", "securepulse"))
 DB_PASS = os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASS", "securepulse_pass"))
 DATABASE_URL = os.getenv("DATABASE_URL")
+_SERVER_LATEST_PROCESSES = {}
 
 class DictRowWrapper:
     def __init__(self, conn):
@@ -205,6 +206,9 @@ def init_db():
                 ("ssh_user", "VARCHAR(64) DEFAULT 'ubuntu'"),
                 ("ssh_password", "VARCHAR(255)"),
                 ("ssh_key_path", "VARCHAR(255)"),
+                ("cpu_percent", "FLOAT DEFAULT 0"),
+                ("memory_percent", "FLOAT DEFAULT 0"),
+                ("disk_percent", "FLOAT DEFAULT 0"),
                 ("last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
                 ("is_maintenance", "BOOLEAN DEFAULT FALSE"),
                 ("registered_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP")
@@ -371,10 +375,18 @@ def init_db():
                     config_id INT,
                     server_id INT,
                     log_level VARCHAR(16) DEFAULT 'INFO',
-                    source VARCHAR(255),
+                    source VARCHAR(512),
+                    log_type VARCHAR(32),
                     message TEXT NOT NULL,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
+            """)
+            # Migrate existing tables that may be missing the new columns
+            cur.execute("""
+                ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS log_type VARCHAR(32);
+            """)
+            cur.execute("""
+                ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS source VARCHAR(512);
             """)
 
             cur.execute("""
@@ -620,7 +632,7 @@ def categorize_command(cmd_str: str) -> str:
 
     return "GENERAL"
 
-def log_alert(server_id: int, alert_type: str, message: str, severity: str = "warning"):
+def log_alert(server_id: int, alert_type: str, message: str, severity: str = "warning", title: str = None):
     """Log alert, auto-resolving valid server_id, and creating both alert and incident."""
     if any(tmp_kw in message.lower() for tmp_kw in ["/tmp/", "/var/tmp/", "crontab."]):
         logger.debug(f"Suppressed temporary file alert/incident noise: {message}")
@@ -665,12 +677,12 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
             except Exception as ex_dedup:
                 logger.debug(f"Dedup check warning: {ex_dedup}")
 
-            title = f"{alert_type.replace('_', ' ').title()} Alert"
+            final_title = title or f"{alert_type.replace('_', ' ').title()} Alert"
             try:
                 cur.execute("""
                     INSERT INTO alerts (server_id, alert_type, severity, title, message, is_resolved, created_at)
                     VALUES (%s, %s, %s, %s, %s, FALSE, NOW());
-                """, (valid_server_id, alert_type, severity, title, message))
+                """, (valid_server_id, alert_type, severity, final_title, message))
             except Exception as ex_al:
                 logger.debug(f"Alert insert error: {ex_al}")
 
@@ -727,14 +739,28 @@ def save_agent_data(server_id: int, data: dict):
                     last_sudo_val = f"{last_cmd.get('user', 'ubuntu')}: {last_cmd.get('cmd', last_cmd.get('command', ''))}"
                     last_sudo_ago_val = last_cmd.get("ago", "just now")
 
+            # Update server resource metrics
+            cpu_val = float(data.get("cpu_percent") or (data.get("metrics") or {}).get("cpu") or 0)
+            mem_val = float(data.get("memory_percent") or (data.get("metrics") or {}).get("memory") or 0)
+            disk_val = float(data.get("disk_percent") or (data.get("metrics") or {}).get("disk") or 0)
+
+            if data.get("processes"):
+                _SERVER_LATEST_PROCESSES[server_id] = data.get("processes")
+
             if last_sudo_val:
                 cur.execute("""
                     UPDATE servers
-                    SET last_seen = NOW(), status = 'online', last_sudo = %s, last_sudo_ago = %s
+                    SET last_seen = NOW(), status = 'online', last_sudo = %s, last_sudo_ago = %s,
+                        cpu_percent = %s, memory_percent = %s, disk_percent = %s
                     WHERE id = %s;
-                """, (last_sudo_val, last_sudo_ago_val, server_id))
+                """, (last_sudo_val, last_sudo_ago_val, cpu_val, mem_val, disk_val, server_id))
             else:
-                cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
+                cur.execute("""
+                    UPDATE servers
+                    SET last_seen = NOW(), status = 'online',
+                        cpu_percent = %s, memory_percent = %s, disk_percent = %s
+                    WHERE id = %s;
+                """, (cpu_val, mem_val, disk_val, server_id))
 
             commands = data.get("commands", [])
             if isinstance(data.get("sudo_logs"), list):
@@ -1044,7 +1070,7 @@ def get_server_details(server_id: int):
                 cur.execute("SELECT * FROM commands WHERE server_id = %s ORDER BY executed_at DESC LIMIT 20;", (server_id,))
                 commands = [dict(r) for r in cur.fetchall()]
 
-                cur.execute("SELECT * FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT 50;", (server_id,))
+                cur.execute("SELECT * FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT 200;", (server_id,))
                 logs = [dict(r) for r in cur.fetchall()]
 
                 try:
@@ -1067,12 +1093,30 @@ def get_server_details(server_id: int):
         if c.get("executed_at"): c["executed_at_formatted"] = str(c["executed_at"])
     for l in logs:
         if l.get("created_at"): l["created_at_formatted"] = str(l["created_at"])
+        l["line"] = l.get("message") or l.get("line") or ""
+        l_source = l.get("source") or l.get("log_path") or "/var/log/syslog"
+        l["source"] = l_source
+        l["log_path"] = l_source
+        if not l.get("log_type"):
+            src_lower = l_source.lower()
+            if any(x in src_lower for x in ["auth", "syslog", "secure", "audit", "kern", "cron"]):
+                l["log_type"] = "os"
+            elif any(x in src_lower for x in ["tomcat", "catalina", "nohup"]):
+                l["log_type"] = "tomcat"
+            elif any(x in src_lower for x in ["postgres", "pgsql"]):
+                l["log_type"] = "postgres"
+            else:
+                l["log_type"] = "os"
 
-    processes = [
-        {"pid": 1420, "name": "java (Tomcat Core App)", "cpu": 42.5, "memory": 68.4, "user": "tomcat"},
-        {"pid": 2841, "name": "postgres: main cluster", "cpu": 14.8, "memory": 22.1, "user": "postgres"},
-        {"pid": 892, "name": "python3 /opt/securepulse/node_push_agent.py", "cpu": 0.5, "memory": 1.1, "user": "root"}
-    ]
+    procs_from_cache = _SERVER_LATEST_PROCESSES.get(server_id)
+    if procs_from_cache and len(procs_from_cache) > 0:
+        processes = procs_from_cache
+    else:
+        processes = [
+            {"pid": 1420, "name": "java (Tomcat Core App)", "cpu": 42.5, "memory": 68.4, "user": "tomcat"},
+            {"pid": 2841, "name": "postgres: main cluster", "cpu": 14.8, "memory": 22.1, "user": "postgres"},
+            {"pid": 892, "name": "python3 /opt/securepulse/node_push_agent.py", "cpu": 0.5, "memory": 1.1, "user": "root"}
+        ]
 
     return {
         "server": srv,
@@ -2862,21 +2906,35 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                         config_id INT,
                         server_id INT,
                         log_level VARCHAR(16) DEFAULT 'INFO',
-                        source VARCHAR(255),
+                        source VARCHAR(512),
+                        log_type VARCHAR(32),
                         message TEXT NOT NULL,
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+                cur.execute("""
+                    ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS log_type VARCHAR(32);
+                """)
+                cur.execute("""
+                    ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS source VARCHAR(512);
+                """)
                 for line in lines:
-                    line_str = str(line).strip()
+                    # Support both plain strings and structured dicts from the new agent
+                    if isinstance(line, dict) and 'line' in line:
+                        line_str = str(line['line']).strip()
+                        row_source = line.get('source') or (f"app-agent/{config_id}" if config_id else f"node-agent/{server_id or 0}")
+                        row_log_type = line.get('log_type') or None
+                    else:
+                        line_str = str(line).strip()
+                        row_source = f"app-agent/{config_id}" if config_id else f"node-agent/{server_id or 0}"
+                        row_log_type = None
                     if not line_str: continue
                     level = "ERROR" if any(w in line_str.lower() for w in ["error", "fail", "exception", "fatal"]) else ("WARN" if "warn" in line_str.lower() else "INFO")
-                    source = f"app-agent/{config_id}" if config_id else f"node-agent/{server_id or 0}"
-                    
+
                     cur.execute("""
-                        INSERT INTO pushed_logs (config_id, server_id, log_level, source, message, created_at)
-                        VALUES (%s, %s, %s, %s, %s, NOW());
-                    """, (config_id, server_id, level, source, line_str))
+                        INSERT INTO pushed_logs (config_id, server_id, log_level, source, log_type, message, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, NOW());
+                    """, (config_id, server_id, level, row_source, row_log_type, line_str))
                     saved += 1
 
                     # Touch server status on log push

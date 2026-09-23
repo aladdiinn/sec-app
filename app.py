@@ -1272,6 +1272,266 @@ async def api_block_ip(server_id: int, request: Request):
     db.log_alert(server_id, "FIREWALL_BLOCK", f"Blocked IP address {ip}", severity="critical")
     return {"ok": True, "message": f"IP address {ip} blocked successfully"}
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SIEM / IDS / IPS DETECTION ENGINE — Real-time Detection Logic
+# ══════════════════════════════════════════════════════════════════════════════
+
+_recent_auth_failures = {}   # {server_id: [(timestamp, ip, user, line), ...]}
+_known_server_ports = {}     # {server_id: set(ports)}
+_dedup_alerts_cache = {}     # {(server_id, alert_type): last_timestamp}
+
+def _create_alert_dedup(server_id, alert_type, severity, title, message):
+    """Create alert only if similar alert not created within last 2 minutes."""
+    cache_key = (server_id, alert_type)
+    now = time.time()
+    last_time = _dedup_alerts_cache.get(cache_key, 0)
+    if now - last_time < 120:
+        return
+    _dedup_alerts_cache[cache_key] = now
+    try:
+        db.log_alert(server_id, alert_type, message, severity=severity, title=title)
+    except Exception as e:
+        logger.error(f"Error in _create_alert_dedup: {e}")
+
+def _check_failed_logins(server_id, data):
+    """Detection: SSH/VPN/App failed login threshold and brute force detection."""
+    auth_failures = data.get("auth_failures", [])
+    log_lines = data.get("log_lines", []) or data.get("logs", [])
+
+    fail_events = []
+    for af in auth_failures:
+        if isinstance(af, dict):
+            fail_events.append((time.time(), af.get("ip", "unknown"), af.get("user", "unknown"), af.get("line", "")))
+
+    if log_lines:
+        auth_patterns = re.compile(r'(Failed password|Invalid user|authentication failure|AUTH_FAIL|Failed publickey)', re.IGNORECASE)
+        ip_pattern = re.compile(r'from (\d+\.\d+\.\d+\.\d+)')
+        user_pattern = re.compile(r'(?:for invalid user|for user|invalid user)\s+(\S+)', re.IGNORECASE)
+        for item in log_lines:
+            line = item.get("line", "") if isinstance(item, dict) else str(item)
+            if auth_patterns.search(line):
+                ip_m = ip_pattern.search(line)
+                usr_m = user_pattern.search(line)
+                fail_events.append((time.time(), ip_m.group(1) if ip_m else "unknown", usr_m.group(1) if usr_m else "unknown", line[:250]))
+
+    if not fail_events:
+        return
+
+    now = time.time()
+    if server_id not in _recent_auth_failures:
+        _recent_auth_failures[server_id] = []
+
+    _recent_auth_failures[server_id].extend(fail_events)
+    # Retain only last 15 minutes
+    _recent_auth_failures[server_id] = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 900]
+
+    recent_5min = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 300]
+    recent_10min = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 600]
+
+    last_line = fail_events[-1][3] if fail_events else ""
+
+    if len(recent_5min) >= 10:
+        ips = list(set(ev[1] for ev in recent_5min if ev[1] != "unknown"))
+        ip_str = ", ".join(ips[:3]) if ips else "external host"
+        _create_alert_dedup(
+            server_id, 'SSH_BRUTE_FORCE', 'critical',
+            'Auth Fail Alert',
+            f'Detection Rule [SSH Brute Force Attempt]: {len(recent_5min)} failed attempts in 5m from {ip_str}. {last_line}'
+        )
+    elif len(recent_10min) >= 5:
+        ips = list(set(ev[1] for ev in recent_10min if ev[1] != "unknown"))
+        ip_str = ", ".join(ips[:3]) if ips else "external host"
+        _create_alert_dedup(
+            server_id, 'AUTH_FAIL_THRESHOLD', 'warning',
+            'Auth Fail Alert',
+            f'Detection Rule [SSH Brute Force Attempt]: {len(recent_10min)} failed logins from {ip_str}. {last_line}'
+        )
+
+def _check_sudo_misuse(server_id, data):
+    """Detection: Admin privilege misuse (sudo/su, role escalation anomalies)."""
+    sudo_events = data.get("sudo_events", [])
+    commands = data.get("commands", [])
+    log_lines = data.get("log_lines", []) or data.get("logs", [])
+
+    suspicious_patterns = [
+        (re.compile(r'cat\s+/etc/shadow', re.IGNORECASE), 'Shadow File Dumping', 'critical', 'Credential Access Alert'),
+        (re.compile(r'cat\s+/etc/passwd', re.IGNORECASE), 'Passwd File Access', 'warning', 'Credential Access Alert'),
+        (re.compile(r'(visudo|sudoedit|tee.*sudoers|>>.*sudoers)', re.IGNORECASE), 'Sudoers Modification', 'critical', 'Privilege Escalation Alert'),
+        (re.compile(r'usermod\s+-aG\s+sudo', re.IGNORECASE), 'User Added to Sudo Group', 'critical', 'Privilege Escalation Alert'),
+        (re.compile(r'(useradd|adduser)\s+', re.IGNORECASE), 'New User Account Created', 'warning', 'Identity Management Alert'),
+        (re.compile(r'su\s+-\s+root|sudo\s+su', re.IGNORECASE), 'Root Escalation via su', 'warning', 'Privilege Escalation Alert'),
+        (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'warning', 'Host Anomaly Alert'),
+        (re.compile(r'iptables\s+-F|ufw\s+disable', re.IGNORECASE), 'Firewall Disabled', 'critical', 'Network Security Alert'),
+        (re.compile(r'crontab\s+-[er]', re.IGNORECASE), 'Cron Persistence Attempt', 'warning', 'Persistence Alert'),
+    ]
+
+    candidates = []
+    for se in sudo_events:
+        candidates.append(se.get("line", "") if isinstance(se, dict) else str(se))
+    for c in commands:
+        candidates.append(c.get("command", "") if isinstance(c, dict) else str(c))
+    for item in log_lines:
+        line = item.get("line", "") if isinstance(item, dict) else str(item)
+        if any(w in line.lower() for w in ["sudo", "su:", "command="]):
+            candidates.append(line)
+
+    for text in candidates:
+        for pat, rule_name, sev, title in suspicious_patterns:
+            if pat.search(text):
+                _create_alert_dedup(
+                    server_id, f'SUDO_{rule_name.upper().replace(" ", "_")}', sev,
+                    title,
+                    f'Detection Rule [{rule_name}]: {text[:250]}'
+                )
+                break
+
+def _check_file_modifications(server_id, data):
+    """Detection: OS file modifications & critical system file changes (FIM)."""
+    file_changes = data.get("file_changes", [])
+    critical_paths = ['/etc/passwd', '/etc/shadow', '/etc/sudoers', '/etc/ssh/sshd_config', '/etc/crontab']
+
+    for fc in file_changes:
+        path = fc.get("path", "") if isinstance(fc, dict) else str(fc)
+        change_type = fc.get("type", "modified") if isinstance(fc, dict) else "modified"
+        if any(cp in path for cp in critical_paths):
+            _create_alert_dedup(
+                server_id, f'FIM_{path.replace("/", "_")}', 'critical',
+                'OS File Modification Alert',
+                f'Detection Rule [File Integrity Monitor]: Critical system file {change_type}: {path}'
+            )
+
+    log_lines = data.get("log_lines", []) or data.get("logs", [])
+    fim_cmd_pat = re.compile(r'(chmod\s+[0-7]{3,4}\s+/(?:etc|bin|sbin|usr)|chown\s+\S+\s+/(?:etc|bin|sbin))', re.IGNORECASE)
+    for item in log_lines:
+        line = item.get("line", "") if isinstance(item, dict) else str(item)
+        if fim_cmd_pat.search(line):
+            _create_alert_dedup(
+                server_id, 'FIM_COMMAND', 'warning',
+                'OS File Modification Alert',
+                f'Detection Rule [File Permission Modification]: {line[:250]}'
+            )
+
+def _check_port_scan(server_id, data):
+    """Detection: Port scan detection & unexpected open ports."""
+    open_ports = data.get("open_ports", [])
+    if not open_ports:
+        return
+
+    current_ports = set()
+    for p in open_ports:
+        port_num = p.get("port") if isinstance(p, dict) else p
+        try:
+            current_ports.add(int(port_num))
+        except Exception:
+            pass
+
+    if server_id not in _known_server_ports:
+        _known_server_ports[server_id] = current_ports
+        return
+
+    known = _known_server_ports[server_id]
+    new_ports = current_ports - known
+    suspicious_ports = [p for p in new_ports if p not in [22, 80, 443, 8080, 8443, 5432, 3306, 6379, 27017, 8000, 5000]]
+    if suspicious_ports:
+        _create_alert_dedup(
+            server_id, 'PORT_SCAN_DETECTED', 'warning',
+            'Port Scan Detection Alert',
+            f'Detection Rule [Port Scan Detection]: Unexpected open port(s) detected: {suspicious_ports}. Possible backdoor or port scan.'
+        )
+
+    _known_server_ports[server_id] = current_ports
+
+def _check_high_resource_processes(server_id, data):
+    """Detection: Traffic & Resource anomalies (processes exceeding 85% CPU or RAM)."""
+    processes = data.get("processes", [])
+    for proc in processes:
+        if not isinstance(proc, dict): continue
+        cpu = float(proc.get("cpu", 0) or 0)
+        mem = float(proc.get("memory", 0) or 0)
+        pname = proc.get("name", "unknown")
+        pid = proc.get("pid", "?")
+
+        if cpu > 85.0:
+            _create_alert_dedup(
+                server_id, f'HIGH_CPU_{pid}', 'warning',
+                'Traffic Anomaly Alert',
+                f'Detection Rule [High Resource Anomaly]: Process {pname} (PID: {pid}) CPU at {cpu:.1f}% (>85% threshold).'
+            )
+        if mem > 85.0:
+            _create_alert_dedup(
+                server_id, f'HIGH_MEM_{pid}', 'warning',
+                'Traffic Anomaly Alert',
+                f'Detection Rule [High Resource Anomaly]: Process {pname} (PID: {pid}) RAM at {mem:.1f}% (>85% threshold).'
+            )
+
+def _analyze_application_and_db_logs(server_id, data):
+    """Detection: Application (Tomcat, nohup) & Database (PostgreSQL) log anomalies."""
+    logs = data.get("logs", [])
+    for item in logs:
+        if not isinstance(item, dict): continue
+        line = item.get("line", "")
+        log_type = item.get("log_type", "")
+        source = (item.get("source") or "").lower()
+
+        is_pg = log_type == "postgres" or "postgres" in source or "pgsql" in source
+        is_tomcat = log_type == "tomcat" or "tomcat" in source or "catalina" in source or "nohup" in source
+
+        if is_pg:
+            if any(w in line.lower() for w in ["fatal:  password authentication failed", "fatal:  no pg_hba.conf entry"]):
+                _create_alert_dedup(
+                    server_id, 'PG_AUTH_FAILURE', 'warning',
+                    'PostgreSQL Auth Failure Alert',
+                    f'Detection Rule [PostgreSQL Auth Failure]: {line[:250]}'
+                )
+            elif any(w in line.upper() for w in ["DROP TABLE", "DROP DATABASE", "TRUNCATE", "ALTER USER", "GRANT ALL"]):
+                _create_alert_dedup(
+                    server_id, 'PG_PRIVILEGE_CHANGE', 'critical',
+                    'PostgreSQL Security Alert',
+                    f'Detection Rule [PostgreSQL Privilege/DDL Anomaly]: {line[:250]}'
+                )
+        elif is_tomcat:
+            if any(w in line.upper() for w in ["OUTOFMEMORYERROR", "STACKOVERFLOWERROR", "SEVERE:"]):
+                _create_alert_dedup(
+                    server_id, 'TOMCAT_CRITICAL_ERROR', 'warning',
+                    'Application Log Alert',
+                    f'Detection Rule [Tomcat Application Error]: {line[:250]}'
+                )
+
+def run_detection_engine(server_id: int, data: dict):
+    """Execute all active SIEM/IDS/IPS detection use cases on inbound agent telemetry."""
+    if not server_id:
+        return
+    try:
+        _check_failed_logins(server_id, data)
+    except Exception as e:
+        logger.debug(f"Error in _check_failed_logins: {e}")
+
+    try:
+        _check_sudo_misuse(server_id, data)
+    except Exception as e:
+        logger.debug(f"Error in _check_sudo_misuse: {e}")
+
+    try:
+        _check_file_modifications(server_id, data)
+    except Exception as e:
+        logger.debug(f"Error in _check_file_modifications: {e}")
+
+    try:
+        _check_port_scan(server_id, data)
+    except Exception as e:
+        logger.debug(f"Error in _check_port_scan: {e}")
+
+    try:
+        _check_high_resource_processes(server_id, data)
+    except Exception as e:
+        logger.debug(f"Error in _check_high_resource_processes: {e}")
+
+    try:
+        _analyze_application_and_db_logs(server_id, data)
+    except Exception as e:
+        logger.debug(f"Error in _analyze_application_and_db_logs: {e}")
+
+
 @app.post("/api/agent/push")
 @app.post("/api/events")
 @app.post("/api/agent/event")
@@ -1320,7 +1580,13 @@ async def api_agent_push(request: Request):
     if logs:
         db.push_log_entries(server_id=server_id, lines=logs)
 
-    return {"status": "ok", "ok": True, "message": "Agent telemetry ingested"}
+    # Run real-time SIEM / IDS / IPS Detection Engine
+    try:
+        run_detection_engine(server_id, data)
+    except Exception as ex_det:
+        logger.error(f"Detection engine execution error: {ex_det}")
+
+    return {"status": "ok", "ok": True, "message": "Agent telemetry ingested and analyzed"}
 
 @app.get("/api/alerts")
 async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None):
@@ -1926,106 +2192,335 @@ echo "============================================================"
 mkdir -p /opt/securepulse
 
 cat << 'PY_EOF' > /opt/securepulse/node_push_agent.py
-import os, sys, time, json, urllib.request, glob
+import os, sys, time, json, socket, subprocess, glob, re, hashlib
+import urllib.request, urllib.error
+from datetime import datetime
 
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "{target_ip}"
 TARGET_NAME = "{target_node_name}"
-LOG_PATH = "{target_log_path}"
+PUSH_INTERVAL = 30  # seconds
 
-def get_metrics():
-    cpu = 0.0
-    mem = 0.0
-    disk = 0.0
+def get_hostname():
+    try: return socket.gethostname()
+    except: return TARGET_NAME
+
+def get_cpu_percent():
     try:
-        with open("/proc/loadavg", "r") as f:
-            cpu = float(f.read().split()[0]) * 10
-    except Exception: pass
+        with open("/proc/stat") as f: t1 = f.readline().split()
+        time.sleep(0.3)
+        with open("/proc/stat") as f: t2 = f.readline().split()
+        idle1, total1 = int(t1[4]), sum(int(x) for x in t1[1:])
+        idle2, total2 = int(t2[4]), sum(int(x) for x in t2[1:])
+        dt = total2 - total1
+        di = idle2 - idle1
+        return round((1 - di/dt) * 100, 1) if dt else 0
+    except: return 0
+
+def get_memory_percent():
     try:
-        with open("/proc/meminfo", "r") as f:
-            lines = f.readlines()
-            total = int([l for l in lines if "MemTotal" in l][0].split()[1])
-            free = int([l for l in lines if "MemAvailable" in l][0].split()[1])
-            mem = round(((total - free) / total) * 100, 1)
-    except Exception: pass
+        info = {{}}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                k, v = line.split(":", 1)
+                info[k.strip()] = int(v.split()[0])
+        total = info.get("MemTotal", 1)
+        avail = info.get("MemAvailable", info.get("MemFree", 0))
+        return round((total - avail) / total * 100, 1)
+    except: return 0
+
+def get_disk_percent():
     try:
         st = os.statvfs("/")
-        disk = round(((st.f_blocks - st.f_bavail) / st.f_blocks) * 100, 1)
-    except Exception: pass
-    return {{"cpu": cpu, "memory": mem, "disk": disk}}
+        return round((st.f_blocks - st.f_bavail) / st.f_blocks * 100, 1)
+    except: return 0
 
-log_pos = {{}}
-hist_pos = {{}}
-
-def poll_and_push():
-    log_files = set(["/var/log/syslog", "/var/log/auth.log", LOG_PATH])
-    new_lines = []
-    for lf in log_files:
-        if not lf or not os.path.exists(lf): continue
-        try:
-            sz = os.path.getsize(lf)
-            curr_pos = log_pos.get(lf, 0)
-            if curr_pos == 0 and sz > 15000:
-                curr_pos = sz - 5000
-            if sz < curr_pos:
-                curr_pos = 0
-            with open(lf, "r", errors="ignore") as f:
-                f.seek(curr_pos)
-                lines = f.readlines()
-                log_pos[lf] = f.tell()
-                for l in lines:
-                    s = l.strip()
-                    if s: new_lines.append(s)
-        except Exception: pass
-
-    new_cmds = []
-    hist_files = glob.glob("/root/.bash_history") + glob.glob("/home/*/.bash_history")
-    for hf in hist_files:
-        if not os.path.exists(hf): continue
-        user = "root" if "/root/" in hf else hf.split("/")[2]
-        try:
-            sz = os.path.getsize(hf)
-            curr_pos = hist_pos.get(hf, 0)
-            if curr_pos == 0 and sz > 5000:
-                curr_pos = sz - 2000
-            with open(hf, "r", errors="ignore") as f:
-                f.seek(curr_pos)
-                lines = f.readlines()
-                hist_pos[hf] = f.tell()
-                for l in lines:
-                    c = l.strip()
-                    if c and not c.startswith("#"):
-                        new_cmds.append({{"user": user, "command": c}})
-        except Exception: pass
-
-    payload = {{
-        "server_ip": TARGET_IP,
-        "hostname": TARGET_NAME,
-        "metrics": get_metrics(),
-        "commands": new_cmds,
-        "logs": new_lines[-50:] if len(new_lines) > 50 else new_lines
-    }}
-
+def get_processes():
+    procs = []
     try:
+        out = subprocess.check_output(["ps", "aux", "--no-headers"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
+        for line in out.strip().split("\n")[:50]:
+            parts = line.split(None, 10)
+            if len(parts) < 11: continue
+            try:
+                cpu = float(parts[2])
+                mem = float(parts[3])
+                procs.append({{"user": parts[0], "pid": parts[1], "cpu": cpu, "memory": mem, "name": parts[10][:80]}})
+            except: pass
+        procs.sort(key=lambda x: x["cpu"] + x["memory"], reverse=True)
+    except: pass
+    return procs[:30]
+
+def get_open_ports():
+    ports = []
+    try:
+        out = subprocess.check_output(["ss", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
+        for line in out.strip().split("\n")[1:]:
+            m = re.search(r':(\d+)\s+', line)
+            if m:
+                port = int(m.group(1))
+                proc = re.search(r'users:\(\("([^"]+)"', line)
+                ports.append({{"port": port, "process": proc.group(1) if proc else "unknown"}})
+    except:
+        try:
+            out = subprocess.check_output(["netstat", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
+            for line in out.strip().split("\n"):
+                m = re.search(r':(\d+)\s+', line)
+                if m: ports.append({{"port": int(m.group(1)), "process": "unknown"}})
+        except: pass
+    return ports
+
+def auto_discover_log_paths():
+    # Auto-discover log file paths by OS type, running processes, and common locations.
+    paths = {{}}
+
+    # OS Log Discovery (Ubuntu/Debian vs RHEL/CentOS)
+    os_log_candidates = [
+        ("/var/log/auth.log", "os"),       # Ubuntu/Debian SSH auth
+        ("/var/log/secure", "os"),          # RHEL/CentOS SSH auth
+        ("/var/log/syslog", "os"),          # Ubuntu/Debian syslog
+        ("/var/log/messages", "os"),        # RHEL/CentOS syslog
+        ("/var/log/audit/audit.log", "os"), # Audit daemon
+        ("/var/log/kern.log", "os"),        # Kernel log
+        ("/var/log/sudo.log", "os"),        # Sudo log (if configured)
+    ]
+    for path, ltype in os_log_candidates:
+        if os.path.exists(path) and os.access(path, os.R_OK):
+            paths[path] = ltype
+
+    # Tomcat / nohup log discovery
+    tomcat_candidates = [
+        "/opt/tomcat/logs/catalina.out",
+        "/var/log/tomcat*/catalina.out",
+        "/usr/local/tomcat/logs/catalina.out",
+        "/opt/apache-tomcat*/logs/catalina.out",
+    ]
+    for candidate in tomcat_candidates:
+        matched = glob.glob(candidate)
+        for path in matched:
+            if os.path.exists(path) and os.access(path, os.R_OK):
+                paths[path] = "tomcat"
+
+    # Find tomcat from running processes
+    try:
+        out = subprocess.check_output(["ps", "aux"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
+        for line in out.split("\n"):
+            if "catalina" in line.lower() or "tomcat" in line.lower():
+                m = re.search(r'-Dcatalina\.home=([^\s]+)', line)
+                if m:
+                    cat_log = os.path.join(m.group(1), "logs", "catalina.out")
+                    if os.path.exists(cat_log): paths[cat_log] = "tomcat"
+                m2 = re.search(r'-classpath\s+([^\s]+)', line)
+                if m2:
+                    nohup_dir = os.path.dirname(m2.group(1))
+                    nohup_path = os.path.join(nohup_dir, "nohup.out")
+                    if os.path.exists(nohup_path): paths[nohup_path] = "tomcat"
+    except: pass
+
+    # nohup.out discovery
+    nohup_candidates = ["/opt/nohup.out", "/home/ubuntu/nohup.out", "/root/nohup.out", "/opt/app/nohup.out"]
+    for path in nohup_candidates:
+        if os.path.exists(path) and os.access(path, os.R_OK):
+            paths[path] = "tomcat"
+
+    # PostgreSQL log discovery
+    pg_candidates = [
+        "/var/log/postgresql/*.log",
+        "/var/lib/pgsql/*/data/pg_log/*.log",
+        "/var/lib/pgsql/data/pg_log/*.log",
+        "/var/lib/postgresql/*/main/pg_log/*.log",
+        "/var/lib/postgresql/*/main/log/*.log",
+    ]
+    for candidate in pg_candidates:
+        matched = glob.glob(candidate)
+        for path in sorted(matched, key=os.path.getmtime, reverse=True)[:2]:
+            if os.path.exists(path) and os.access(path, os.R_OK):
+                paths[path] = "postgres"
+
+    # Find postgres log from running process
+    try:
+        out = subprocess.check_output(["ps", "aux"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
+        for line in out.split("\n"):
+            if 'postgres' in line.lower() and 'logger' in line.lower():
+                m = re.search(r'-D\s+([^\s]+)', line)
+                if m:
+                    data_dir = m.group(1)
+                    for sub in ['pg_log', 'log']:
+                        log_dir = os.path.join(data_dir, sub)
+                        if os.path.exists(log_dir):
+                            logs = sorted(glob.glob(os.path.join(log_dir, '*.log')), key=os.path.getmtime, reverse=True)
+                            if logs: paths[logs[0]] = "postgres"
+    except: pass
+
+    return paths
+
+# FIM (File Integrity Monitor) state
+fim_hashes = {{}}
+fim_paths = [
+    "/etc/passwd", "/etc/shadow", "/etc/sudoers",
+    "/etc/ssh/sshd_config", "/etc/crontab", "/etc/hosts"
+]
+
+def check_fim():
+    changes = []
+    for path in fim_paths:
+        if not os.path.exists(path): continue
+        try:
+            with open(path, "rb") as f: content = f.read()
+            h = hashlib.md5(content).hexdigest()
+            if path in fim_hashes and fim_hashes[path] != h:
+                changes.append({{"path": path, "type": "modified"}})
+            fim_hashes[path] = h
+        except: pass
+    return changes
+
+# Auth failure tracking
+auth_log_positions = {{}}
+
+def get_auth_failures():
+    failures = []
+    auth_pattern = re.compile(r'(Failed password|Invalid user|authentication failure|AUTH_FAIL|Failed publickey)', re.IGNORECASE)
+    ip_pattern = re.compile(r'from (\d+\.\d+\.\d+\.\d+)')
+    user_pattern = re.compile(r'(?:for invalid user|for user|invalid user)\s+(\S+)', re.IGNORECASE)
+
+    for path, ltype in discovered_paths.items():
+        if ltype != 'os': continue
+        if 'auth' not in path and 'secure' not in path and 'syslog' not in path: continue
+        try:
+            size = os.path.getsize(path)
+            pos = auth_log_positions.get(path, max(0, size - 8000))
+            if size < pos: pos = 0
+            with open(path, 'r', errors='ignore') as f:
+                f.seek(pos)
+                for line in f:
+                    if auth_pattern.search(line):
+                        ip_m = ip_pattern.search(line)
+                        usr_m = user_pattern.search(line)
+                        failures.append({{
+                            "ip": ip_m.group(1) if ip_m else "unknown",
+                            "user": usr_m.group(1) if usr_m else "unknown",
+                            "line": line.strip()[:300]
+                        }})
+                auth_log_positions[path] = f.tell()
+        except: pass
+    return failures[-50:] if len(failures) > 50 else failures
+
+# Sudo event tracking
+sudo_log_positions = {{}}
+
+def get_sudo_events():
+    events = []
+    sudo_pattern = re.compile(r'(sudo:|su:|COMMAND=|su\[)', re.IGNORECASE)
+    for path, ltype in discovered_paths.items():
+        if ltype != 'os': continue
+        try:
+            size = os.path.getsize(path)
+            pos = sudo_log_positions.get(path, max(0, size - 4000))
+            if size < pos: pos = 0
+            with open(path, 'r', errors='ignore') as f:
+                f.seek(pos)
+                for line in f:
+                    if sudo_pattern.search(line):
+                        events.append({{"line": line.strip()[:300], "path": path}})
+                sudo_log_positions[path] = f.tell()
+        except: pass
+    return events[-30:]
+
+# Log tail positions per file
+log_positions = {{}}
+
+def get_new_log_lines(max_lines_per_file=100):
+    # Read new log lines from all discovered log files since last push.
+    result = []
+    for path, ltype in discovered_paths.items():
+        try:
+            if not os.path.exists(path): continue
+            size = os.path.getsize(path)
+            pos = log_positions.get(path, max(0, size - 10000))
+            if size < pos: pos = 0
+            with open(path, 'r', errors='ignore') as f:
+                f.seek(pos)
+                lines = f.readlines(max_lines_per_file)
+                log_positions[path] = f.tell()
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        result.append({{"line": line, "source": path, "log_type": ltype}})
+        except: pass
+    return result
+
+# Main loop
+print(f"[SecurePulse Agent] Starting. SOC: {{SOC_URL}}, Node: {{TARGET_NAME}} ({{TARGET_IP}})")
+print("[SecurePulse Agent] Discovering log paths...")
+discovered_paths = auto_discover_log_paths()
+print(f"[SecurePulse Agent] Found log paths: {{list(discovered_paths.keys())}}")
+
+# Initialize FIM baseline
+check_fim()
+
+push_count = 0
+while True:
+    try:
+        cpu = get_cpu_percent()
+        mem = get_memory_percent()
+        disk = get_disk_percent()
+        procs = get_processes()
+        ports = get_open_ports()
+        log_lines = get_new_log_lines()
+        auth_failures = get_auth_failures()
+        sudo_events = get_sudo_events()
+        file_changes = check_fim()
+
+        payload = {{
+            "server_ip": TARGET_IP,
+            "hostname": get_hostname(),
+            "cpu_percent": cpu,
+            "memory_percent": mem,
+            "disk_percent": disk,
+            "processes": procs,
+            "open_ports": ports,
+            "log_lines": [x["line"] for x in log_lines[:100]],
+            "logs": [{{"line": x["line"], "source": x["source"], "log_type": x["log_type"]}} for x in log_lines[:100]],
+            "auth_failures": auth_failures,
+            "sudo_events": sudo_events,
+            "file_changes": file_changes,
+            "discovered_log_paths": list(discovered_paths.keys())
+        }}
+
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(SOC_URL + "/api/agent/push", data=data, headers={{"Content-Type": "application/json"}})
-        urllib.request.urlopen(req, timeout=5)
-    except Exception: pass
+        req = urllib.request.Request(
+            SOC_URL + "/api/agent/push",
+            data=data,
+            headers={{"Content-Type": "application/json"}}
+        )
+        urllib.request.urlopen(req, timeout=10)
 
-    if new_lines:
-        try:
-            log_payload = {{"server_ip": TARGET_IP, "lines": new_lines[-100:]}}
-            data = json.dumps(log_payload).encode("utf-8")
-            req = urllib.request.Request(SOC_URL + "/api/agent/push-logs", data=data, headers={{"Content-Type": "application/json"}})
-            urllib.request.urlopen(req, timeout=5)
-        except Exception: pass
+        # Also push structured logs
+        if log_lines:
+            log_payload = {{
+                "server_ip": TARGET_IP,
+                "lines": log_lines[:200]
+            }}
+            ldata = json.dumps(log_payload).encode("utf-8")
+            lreq = urllib.request.Request(
+                SOC_URL + "/api/agent/push-logs",
+                data=ldata,
+                headers={{"Content-Type": "application/json"}}
+            )
+            try: urllib.request.urlopen(lreq, timeout=10)
+            except: pass
 
-if __name__ == "__main__":
-    while True:
-        try:
-            poll_and_push()
-        except Exception: pass
-        time.sleep(3)
+        push_count += 1
+        if push_count % 10 == 0:
+            # Re-discover log paths periodically
+            discovered_paths = auto_discover_log_paths()
+
+    except urllib.error.URLError as e:
+        print(f"[SecurePulse Agent] Connection error: {{e}}")
+    except Exception as e:
+        print(f"[SecurePulse Agent] Error: {{e}}")
+
+    time.sleep(PUSH_INTERVAL)
 PY_EOF
 
 chmod +x /opt/securepulse/node_push_agent.py
@@ -3243,14 +3738,16 @@ async def api_fetch_log_lines(request: Request):
         for pl in pushed:
             msg = pl.get("msg", "")
             src = pl.get("source", "")
-            if search and search not in msg.lower() and search not in src.lower(): continue
-            if log_type:
+            if log_path and log_path.strip() and src != log_path.strip() and not src.endswith(log_path.strip()):
+                continue
+            if log_type and log_type.lower() != 'all':
                 lt = log_type.lower()
-                if lt == "tomcat" and "tomcat" not in src.lower() and "tomcat" not in msg.lower(): continue
-                elif lt == "nginx" and "nginx" not in src.lower() and "nginx" not in msg.lower(): continue
-                elif lt == "haproxy" and "haproxy" not in src.lower() and "haproxy" not in msg.lower(): continue
-                elif lt in ["syslog", "sys"] and "syslog" not in src.lower() and "kernel" not in msg.lower() and "sys" not in src.lower(): continue
-                elif lt == "auth" and not any(k in src.lower() or k in msg.lower() for k in ["auth", "ssh", "login", "perm"]): continue
+                if lt == "os" and not any(k in src.lower() or k in msg.lower() for k in ["auth", "syslog", "secure", "audit", "kern", "sudo", "systemd"]):
+                    continue
+                elif lt == "tomcat" and not any(k in src.lower() or k in msg.lower() for k in ["tomcat", "catalina", "nohup", "java"]):
+                    continue
+                elif lt in ["postgres", "pgsql"] and not any(k in src.lower() or k in msg.lower() for k in ["postgres", "pgsql"]):
+                    continue
             lines.append(pl)
 
     # 2. Second priority: Try reading local files directly for all matching log sources
@@ -3633,3 +4130,147 @@ async def api_watchdog_push(request: Request):
     iid = db.create_incident(inc_title, "critical", f"Watchdog AI Detection: {msg}", "SOC Analyst", server_id=sid)
     
     return {"ok": True, "incident_id": iid, "message": "Watchdog anomaly pushed successfully & Incident created!"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REAL-TIME LOG STREAMS & DISCOVERED LOG FILES API
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/log-monitor/streams")
+async def api_log_streams(
+    server_id: Optional[int] = None,
+    log_type: Optional[str] = None,
+    source: Optional[str] = None,
+    limit: int = 200
+):
+    """Fetch live streamed logs with type filtering (os, tomcat, postgres) and file path selection."""
+    conn = db.get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            query = """
+                SELECT pl.id, pl.server_id, pl.message, pl.source, pl.log_type, pl.log_level,
+                       pl.created_at, s.hostname
+                FROM pushed_logs pl
+                LEFT JOIN servers s ON pl.server_id = s.id
+                WHERE 1=1
+            """
+            params = []
+            if server_id:
+                query += " AND pl.server_id = %s"
+                params.append(server_id)
+
+            if source and source.strip():
+                query += " AND pl.source = %s"
+                params.append(source.strip())
+
+            if log_type and log_type.lower() != 'all':
+                lt = log_type.lower()
+                if lt == 'os':
+                    query += " AND (pl.log_type IN ('os', 'auth', 'syslog', 'kernel', 'audit') OR pl.source ILIKE '%auth%' OR pl.source ILIKE '%syslog%' OR pl.source ILIKE '%secure%' OR pl.source ILIKE '%audit%')"
+                elif lt == 'tomcat':
+                    query += " AND (pl.log_type = 'tomcat' OR pl.source ILIKE '%tomcat%' OR pl.source ILIKE '%catalina%' OR pl.source ILIKE '%nohup%' OR pl.message ILIKE '%catalina%')"
+                elif lt == 'postgres':
+                    query += " AND (pl.log_type = 'postgres' OR pl.source ILIKE '%postgres%' OR pl.source ILIKE '%pgsql%' OR pl.message ILIKE '%postgres%')"
+
+            query += " ORDER BY pl.id DESC LIMIT %s"
+            params.append(min(limit, 500))
+
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            result = []
+            for r in rows:
+                item = dict(r)
+                item["line"] = item.get("message") or ""
+                item["log_path"] = item.get("source") or "/var/log/syslog"
+                if item.get("created_at"):
+                    item["created_at_formatted"] = str(item["created_at"])[:19]
+                result.append(item)
+            return result
+    except Exception as e:
+        logger.error(f"Error in api_log_streams: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+@app.get("/api/servers/{server_id}/log-files")
+async def api_server_log_files(server_id: int):
+    """Returns all auto-discovered log file paths pushed for a server."""
+    conn = db.get_db_connection()
+    if not conn:
+        return {"files": []}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
+                FROM pushed_logs
+                WHERE server_id = %s AND source IS NOT NULL AND source != ''
+                GROUP BY source, log_type
+                ORDER BY count DESC
+                LIMIT 50;
+            """, (server_id,))
+            files = [dict(r) for r in cur.fetchall()]
+            return {"files": files}
+    except Exception as e:
+        logger.error(f"Error in api_server_log_files: {e}")
+        return {"files": []}
+    finally:
+        conn.close()
+
+
+@app.get("/api/detections/summary")
+async def api_detections_summary():
+    """Summary counts of active alerts categorized by SIEM use cases."""
+    conn = db.get_db_connection()
+    if not conn:
+        return {
+            "identity_access": 0, "privilege_misuse": 0, "file_integrity": 0,
+            "network_host": 0, "app_alerts": 0, "db_alerts": 0, "total_active": 0
+        }
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT alert_type, severity, COUNT(*) as cnt
+                FROM alerts
+                WHERE is_resolved = FALSE
+                GROUP BY alert_type, severity;
+            """)
+            rows = cur.fetchall()
+            summary = {
+                "identity_access": 0,
+                "privilege_misuse": 0,
+                "file_integrity": 0,
+                "network_host": 0,
+                "app_alerts": 0,
+                "db_alerts": 0,
+                "total_active": 0
+            }
+            for r in rows:
+                at = (r.get("alert_type") or "").upper()
+                c = int(r.get("cnt") or 0)
+                summary["total_active"] += c
+                if any(k in at for k in ["AUTH", "LOGIN", "BRUTE"]):
+                    summary["identity_access"] += c
+                elif any(k in at for k in ["SUDO", "SU_", "PRIVILEGE", "USERADD"]):
+                    summary["privilege_misuse"] += c
+                elif any(k in at for k in ["FIM", "FILE", "CHMOD", "CHOWN"]):
+                    summary["file_integrity"] += c
+                elif any(k in at for k in ["PORT", "CPU", "MEM", "TRAFFIC", "FIREWALL"]):
+                    summary["network_host"] += c
+                elif any(k in at for k in ["TOMCAT", "CATALINA", "APP"]):
+                    summary["app_alerts"] += c
+                elif any(k in at for k in ["PG_", "POSTGRES", "DATABASE", "DB_"]):
+                    summary["db_alerts"] += c
+                else:
+                    summary["identity_access"] += c
+            return summary
+    except Exception as e:
+        logger.error(f"Error in api_detections_summary: {e}")
+        return {
+            "identity_access": 0, "privilege_misuse": 0, "file_integrity": 0,
+            "network_host": 0, "app_alerts": 0, "db_alerts": 0, "total_active": 0
+        }
+    finally:
+        conn.close()

@@ -278,29 +278,26 @@
 
     <!-- RIGHT PANEL: Service Tabs & Live Log Output -->
     <div class="log-panel-right">
-        <!-- Service Tabs -->
+        <!-- Service Tabs: OS, Tomcat, PostgreSQL -->
         <div class="log-tab-bar" id="service-tabs">
             <button class="log-tab-btn active" onclick="switchServiceTab('', this)">
-                ⚡ ALL SERVICES <span class="log-tab-badge" id="badge-tab-all">0</span>
+                ⚡ ALL LOGS <span class="log-tab-badge" id="badge-tab-all">0</span>
+            </button>
+            <button class="log-tab-btn" onclick="switchServiceTab('os', this)">
+                💻 OS LOGS <span class="log-tab-badge" id="badge-tab-os">0</span>
             </button>
             <button class="log-tab-btn" onclick="switchServiceTab('tomcat', this)">
-                ☕ TOMCAT <span class="log-tab-badge" id="badge-tab-tomcat">0</span>
+                ☕ TOMCAT & NOHUP <span class="log-tab-badge" id="badge-tab-tomcat">0</span>
             </button>
-            <button class="log-tab-btn" onclick="switchServiceTab('nginx', this)">
-                🌐 NGINX <span class="log-tab-badge" id="badge-tab-nginx">0</span>
+            <button class="log-tab-btn" onclick="switchServiceTab('postgres', this)">
+                🐘 POSTGRESQL <span class="log-tab-badge" id="badge-tab-postgres">0</span>
             </button>
-            <button class="log-tab-btn" onclick="switchServiceTab('haproxy', this)">
-                🔀 HAPROXY <span class="log-tab-badge" id="badge-tab-haproxy">0</span>
-            </button>
-            <button class="log-tab-btn" onclick="switchServiceTab('syslog', this)">
-                💻 SYSLOG <span class="log-tab-badge" id="badge-tab-syslog">0</span>
-            </button>
-            <button class="log-tab-btn" onclick="switchServiceTab('auth', this)">
-                🔑 AUTH <span class="log-tab-badge" id="badge-tab-auth">0</span>
-            </button>
-            <button class="log-tab-btn" onclick="switchServiceTab('other', this)">
-                🧩 OTHER APPS <span class="log-tab-badge" id="badge-tab-other">0</span>
-            </button>
+            <div id="log-file-selector-wrap" style="display:flex; align-items:center; gap:6px; padding:4px 12px; margin-left:auto">
+                <span style="font-size:9px; color:var(--text3); font-family:var(--orbitron)">LOG FILE:</span>
+                <select id="log-file-selector" onchange="onLogFileSelected()" style="font-size:10px; background:var(--bg2); border:1px solid var(--border); color:var(--cyan); padding:4px 8px; border-radius:4px; max-width:260px; font-family:var(--mono)">
+                    <option value="">-- All Discovered Files --</option>
+                </select>
+            </div>
         </div>
 
         <!-- Log Telemetry & File Health Bar -->
@@ -838,7 +835,31 @@ function selectServerFilter(srvId, el) {
     selectedAppConfigId = null;
     selectedLogFilePath = null;
 
+    updateLogFileSelectorForServer(srvId);
     fetchLogsNow();
+}
+
+function onLogFileSelected() {
+    const sel = document.getElementById('log-file-selector');
+    selectedLogFilePath = sel && sel.value ? sel.value : null;
+    fetchLogsNow();
+}
+
+async function updateLogFileSelectorForServer(serverId) {
+    const sel = document.getElementById('log-file-selector');
+    if (!sel) return;
+    if (!serverId) {
+        sel.innerHTML = '<option value="">-- All Discovered Files --</option>';
+        return;
+    }
+    try {
+        const res = await apiFetch(`/api/servers/${serverId}/log-files`);
+        const files = (res && res.files) ? res.files : [];
+        sel.innerHTML = '<option value="">-- All Discovered Files --</option>' +
+            files.map(f => `<option value="${f.source}">${f.source} (${f.count || 0} lines)</option>`).join('');
+    } catch(e) {
+        sel.innerHTML = '<option value="">-- All Discovered Files --</option>';
+    }
 }
 
 function switchServiceTab(type, el) {
