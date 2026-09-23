@@ -1267,8 +1267,45 @@ async def api_agent_push(request: Request):
     except Exception:
         data = {}
     
-    server_id = data.get("server_id", 1)
+    server_id = data.get("server_id")
+    server_ip = data.get("server_ip")
+    hostname = data.get("hostname")
+
+    if not server_id and (server_ip or hostname):
+        srv = None
+        if server_ip: srv = db.get_server_by_ip(server_ip)
+        if not srv and hostname:
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT * FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (hostname, hostname))
+                        r = cur.fetchone()
+                        if r: srv = dict(r)
+                except Exception: pass
+                finally: conn.close()
+        if srv:
+            server_id = srv.get("id")
+
+    if not server_id:
+        server_id = 1
+
     db.save_agent_data(server_id, data)
+
+    # Touch server status on telemetry push
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
+        except Exception: pass
+        finally: conn.close()
+
+    # Also process logs included in telemetry payload
+    logs = data.get("logs", [])
+    if logs:
+        db.push_log_entries(server_id=server_id, lines=logs)
+
     return {"status": "ok", "ok": True, "message": "Agent telemetry ingested"}
 
 @app.get("/api/alerts")
@@ -1871,44 +1908,118 @@ echo " [SUCCESS] Approval Granted by SOC Administrator!"
 echo " Asset Node {target_node_name} ({target_ip}) Onboarded & Active!"
 echo "============================================================"
 
-# 2. Setup background log push agent
+# 2. Setup background Python Push Agent Daemon
 mkdir -p /opt/securepulse
-cat << 'EOF' > /opt/securepulse/node_push_agent.sh
-#!/bin/bash
-export SOC_URL="{base_url}"
-export LOG_PATH="{target_log_path}"
-export NODE_IP="{target_ip}"
 
-LOG_FILES=""
-for f in "/var/log/syslog" "/var/log/auth.log" "$LOG_PATH"; do
-    if [ -n "$f" ] && [ -f "$f" ]; then
-        LOG_FILES="$LOG_FILES $f"
-    fi
-done
+cat << 'PY_EOF' > /opt/securepulse/node_push_agent.py
+import os, sys, time, json, urllib.request, glob
 
-if [ -n "$LOG_FILES" ]; then
-    tail -F -n 100 $LOG_FILES | python3 -c '
-import os, sys, urllib.request, json
-url = os.environ.get("SOC_URL", "").rstrip("/") + "/api/agent/push-logs"
-ip = os.environ.get("NODE_IP", "127.0.0.1")
-for line in sys.stdin:
-    line = line.strip()
-    if not line: continue
-    data = json.dumps({{"server_ip": ip, "line": line}}).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={{"Content-Type": "application/json"}})
+SOC_URL = "{base_url}".rstrip("/")
+TARGET_IP = "{target_ip}"
+TARGET_NAME = "{target_node_name}"
+LOG_PATH = "{target_log_path}"
+
+def get_metrics():
+    cpu = 0.0
+    mem = 0.0
+    disk = 0.0
     try:
-        urllib.request.urlopen(req, timeout=3)
-    except Exception:
-        pass
-'
-fi
-EOF
+        with open("/proc/loadavg", "r") as f:
+            cpu = float(f.read().split()[0]) * 10
+    except Exception: pass
+    try:
+        with open("/proc/meminfo", "r") as f:
+            lines = f.readlines()
+            total = int([l for l in lines if "MemTotal" in l][0].split()[1])
+            free = int([l for l in lines if "MemAvailable" in l][0].split()[1])
+            mem = round(((total - free) / total) * 100, 1)
+    except Exception: pass
+    try:
+        st = os.statvfs("/")
+        disk = round(((st.f_blocks - st.f_bavail) / st.f_blocks) * 100, 1)
+    except Exception: pass
+    return {{"cpu": cpu, "memory": mem, "disk": disk}}
 
-chmod +x /opt/securepulse/node_push_agent.sh
+log_pos = {{}}
+hist_pos = {{}}
+
+def poll_and_push():
+    log_files = set(["/var/log/syslog", "/var/log/auth.log", LOG_PATH])
+    new_lines = []
+    for lf in log_files:
+        if not lf or not os.path.exists(lf): continue
+        try:
+            sz = os.path.getsize(lf)
+            curr_pos = log_pos.get(lf, 0)
+            if curr_pos == 0 and sz > 15000:
+                curr_pos = sz - 5000
+            if sz < curr_pos:
+                curr_pos = 0
+            with open(lf, "r", errors="ignore") as f:
+                f.seek(curr_pos)
+                lines = f.readlines()
+                log_pos[lf] = f.tell()
+                for l in lines:
+                    s = l.strip()
+                    if s: new_lines.append(s)
+        except Exception: pass
+
+    new_cmds = []
+    hist_files = glob.glob("/root/.bash_history") + glob.glob("/home/*/.bash_history")
+    for hf in hist_files:
+        if not os.path.exists(hf): continue
+        user = "root" if "/root/" in hf else hf.split("/")[2]
+        try:
+            sz = os.path.getsize(hf)
+            curr_pos = hist_pos.get(hf, 0)
+            if curr_pos == 0 and sz > 5000:
+                curr_pos = sz - 2000
+            with open(hf, "r", errors="ignore") as f:
+                f.seek(curr_pos)
+                lines = f.readlines()
+                hist_pos[hf] = f.tell()
+                for l in lines:
+                    c = l.strip()
+                    if c and not c.startswith("#"):
+                        new_cmds.append({{"user": user, "command": c}})
+        except Exception: pass
+
+    payload = {{
+        "server_ip": TARGET_IP,
+        "hostname": TARGET_NAME,
+        "metrics": get_metrics(),
+        "commands": new_cmds,
+        "logs": new_lines[-50:] if len(new_lines) > 50 else new_lines
+    }}
+
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(SOC_URL + "/api/agent/push", data=data, headers={{"Content-Type": "application/json"}})
+        urllib.request.urlopen(req, timeout=5)
+    except Exception: pass
+
+    if new_lines:
+        try:
+            log_payload = {{"server_ip": TARGET_IP, "lines": new_lines[-100:]}}
+            data = json.dumps(log_payload).encode("utf-8")
+            req = urllib.request.Request(SOC_URL + "/api/agent/push-logs", data=data, headers={{"Content-Type": "application/json"}})
+            urllib.request.urlopen(req, timeout=5)
+        except Exception: pass
+
+if __name__ == "__main__":
+    while True:
+        try:
+            poll_and_push()
+        except Exception: pass
+        time.sleep(3)
+PY_EOF
+
+chmod +x /opt/securepulse/node_push_agent.py
+pkill -f node_push_agent.py 2>/dev/null || true
 pkill -f node_push_agent.sh 2>/dev/null || true
-nohup /opt/securepulse/node_push_agent.sh >/dev/null 2>&1 &
+nohup python3 /opt/securepulse/node_push_agent.py >/dev/null 2>&1 &
 
-echo "[SUCCESS] Log Streaming Push Agent is active (Zero SSH Credentials Used)!"
+echo "[SUCCESS] SecurePulse Agent Daemon is active & streaming telemetry!"
 """
     return Response(content=script, media_type="text/x-shellscript")
 
