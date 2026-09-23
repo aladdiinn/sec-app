@@ -67,24 +67,26 @@
 const BUILTIN_RULES = {
     identity: {
         icon: '🔐', color: '#ef4444', bg: 'rgba(239,68,68,0.15)',
-        title: 'IDENTITY & ACCESS', sub: 'Failed logins, brute force, privilege escalation',
+        title: 'IDENTITY & ACCESS', sub: 'Failed logins, brute force, userdel, privilege escalation',
         rules: [
             { id: 'failed_login', name: 'Failed Login Threshold', sev: 'warning', desc: 'SSH/VPN/App login failures >= 5 in 10 minutes from same IP', threshold_label: 'Threshold (failures)', threshold_key: 'failed_login_threshold', default: 5 },
             { id: 'brute_force', name: 'SSH Brute Force Detection', sev: 'critical', desc: 'Rapid SSH failures >= 10 in 5 minutes = active brute force attack', threshold_label: 'Threshold (in 5 min)', threshold_key: 'brute_force_threshold', default: 10 },
+            { id: 'user_deleted', name: 'User Account Deletion (userdel)', sev: 'critical', desc: 'userdel/deluser command detected — critical user account removed', threshold_label: null },
             { id: 'sudo_misuse', name: 'Admin Privilege Misuse (sudo/su)', sev: 'critical', desc: 'Detect sudo/su escalation, suspicious COMMAND patterns in auth logs', threshold_label: null },
             { id: 'shadow_dump', name: 'Shadow File Dumping', sev: 'critical', desc: 'cat /etc/shadow or /etc/passwd detected — credential access attempt', threshold_label: null },
             { id: 'new_user', name: 'New User Account Created', sev: 'warning', desc: 'useradd/adduser detected — possible persistence mechanism', threshold_label: null },
-            { id: 'sudo_group', name: 'User Added to sudo Group', sev: 'critical', desc: 'usermod -aG sudo detected — privilege escalation attempt', threshold_label: null },
+            { id: 'sudo_group', name: 'User Added to sudo/wheel Group', sev: 'critical', desc: 'usermod -aG sudo detected — privilege escalation attempt', threshold_label: null },
         ]
     },
     file_integrity: {
         icon: '📁', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)',
-        title: 'OS FILE INTEGRITY (FIM)', sub: 'Critical system file modification monitoring',
+        title: 'OS FILE INTEGRITY & PERMISSIONS (FIM)', sub: 'Critical system file modification and permission monitoring',
         rules: [
             { id: 'fim_passwd', name: '/etc/passwd Modification', sev: 'critical', desc: 'File integrity change detected on /etc/passwd (user accounts)', threshold_label: null },
             { id: 'fim_shadow', name: '/etc/shadow Modification', sev: 'critical', desc: 'File integrity change detected on /etc/shadow (password hashes)', threshold_label: null },
             { id: 'fim_sudoers', name: '/etc/sudoers Modification', sev: 'critical', desc: 'File integrity change detected on /etc/sudoers', threshold_label: null },
             { id: 'fim_sshd', name: 'sshd_config Modification', sev: 'critical', desc: 'SSH daemon config changed — possible backdoor or port change', threshold_label: null },
+            { id: 'chmod_insecure', name: 'Insecure Permission Grant (chmod 777 / SUID)', sev: 'critical', desc: 'chmod 777 or SUID (+s) execution detected on host', threshold_label: null },
             { id: 'fim_crontab', name: '/etc/crontab Modification', sev: 'warning', desc: 'Crontab modification — possible persistence mechanism', threshold_label: null },
             { id: 'chmod_critical', name: 'Critical Path chmod/chown', sev: 'warning', desc: 'chmod/chown commands on /etc, /bin, /sbin critical paths', threshold_label: null },
         ]
@@ -102,13 +104,14 @@ const BUILTIN_RULES = {
     },
     log_analysis: {
         icon: '📋', color: '#a855f7', bg: 'rgba(168,85,247,0.15)',
-        title: 'APPLICATION & DB LOGS', sub: 'Tomcat, PostgreSQL, OS log pattern analysis',
+        title: 'APPLICATION & DB LOGS', sub: 'Tomcat, PostgreSQL, OS log pattern analysis & SOAR',
         rules: [
+            { id: 'pg_destructive', name: 'PostgreSQL Database Deletion (DROP/TRUNCATE)', sev: 'critical', desc: 'DROP DATABASE / DROP SCHEMA / DROP TABLE / TRUNCATE detected in PostgreSQL logs or CLI', threshold_label: null },
+            { id: 'pg_priv_change', name: 'PostgreSQL Privilege Escalation', sev: 'critical', desc: 'ALTER USER / ROLE / GRANT / REVOKE / SUPERUSER detected in PostgreSQL logs', threshold_label: null },
+            { id: 'pg_access_denied', name: 'PostgreSQL Permission Denied', sev: 'warning', desc: 'Permission denied / must be superuser errors in PostgreSQL logs', threshold_label: null },
             { id: 'pg_auth_fail', name: 'PostgreSQL Auth Failure', sev: 'warning', desc: 'FATAL: password authentication failed — database login attack', threshold_label: null },
-            { id: 'pg_destructive', name: 'Destructive DB Query', sev: 'critical', desc: 'DROP TABLE / DROP DATABASE / TRUNCATE detected in PostgreSQL logs', threshold_label: null },
-            { id: 'pg_priv_change', name: 'PostgreSQL Privilege Change', sev: 'warning', desc: 'GRANT/REVOKE privilege changes in PostgreSQL logs', threshold_label: null },
-            { id: 'tomcat_500', name: 'Tomcat HTTP 500 Errors', sev: 'warning', desc: 'Internal Server Error in Tomcat/catalina.out logs', threshold_label: null },
             { id: 'tomcat_oom', name: 'Tomcat OutOfMemoryError', sev: 'critical', desc: 'Java OutOfMemoryError or StackOverflow in application logs', threshold_label: null },
+            { id: 'tomcat_500', name: 'Tomcat Application Errors', sev: 'warning', desc: 'Internal Server Error or SEVERE in Tomcat/catalina.out logs', threshold_label: null },
             { id: 'os_kernel_err', name: 'OS Kernel / Audit Errors', sev: 'warning', desc: 'Kernel panic, AVC denied, audit failures in OS logs', threshold_label: null },
         ]
     }

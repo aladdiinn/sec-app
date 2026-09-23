@@ -427,6 +427,13 @@ def init_db():
             ]:
                 try: cur.execute(f"ALTER TABLE alerts ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass
+            try: cur.execute("""
+                ALTER TABLE alerts ALTER COLUMN score DROP NOT NULL;
+                ALTER TABLE alerts ALTER COLUMN score SET DEFAULT 0;
+                ALTER TABLE alerts ALTER COLUMN auto_promoted DROP NOT NULL;
+                ALTER TABLE alerts ALTER COLUMN auto_promoted SET DEFAULT FALSE;
+            """)
+            except: pass
             
             # Audit Logs Alter
             for col, col_type in [
@@ -676,11 +683,11 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
             final_title = title or f"{alert_type.replace('_', ' ').title()} Alert"
             try:
                 cur.execute("""
-                    INSERT INTO alerts (server_id, alert_type, severity, title, message, is_resolved, created_at)
-                    VALUES (%s, %s, %s, %s, %s, FALSE, NOW());
+                    INSERT INTO alerts (server_id, alert_type, severity, title, message, is_resolved, score, auto_promoted, created_at)
+                    VALUES (%s, %s, %s, %s, %s, FALSE, 0, FALSE, NOW());
                 """, (valid_server_id, alert_type, severity, final_title, message))
             except Exception as ex_al:
-                logger.debug(f"Alert insert error: {ex_al}")
+                logger.error(f"Alert insert error: {ex_al}")
 
             try:
                 cur.execute("""
@@ -1757,8 +1764,11 @@ def get_detection_rules():
                     ('Curl Pipe to Shell', r'curl.*\|\s*(bash|sh)|wget.*\|\s*(bash|sh)', 'critical', 'EXECUTION', 'Execution', 'T1059'),
                     ('Crontab Persistence', 'crontab -e|crontab -r', 'warning', 'PERSISTENCE', 'Persistence', 'T1053.003'),
                     ('Mass Process Kill', 'killall -9|pkill -9', 'warning', 'PROCESS_KILL', 'Impact', 'T1489'),
-                    ('Cryptomining Signature', r'xmrig|minerd|stratum\+tcp', 'critical', 'MALWARE', 'Impact', 'T1496'),
-                    ('SSH Key Injection', 'authorized_keys', 'warning', 'PERSISTENCE', 'Persistence', 'T1098.004')
+                    ('SSH Key Injection', 'authorized_keys', 'warning', 'PERSISTENCE', 'Persistence', 'T1098.004'),
+                    ('User Account Deletion (userdel)', r'userdel|deluser', 'critical', 'USER_DELETED', 'Impact', 'T1531'),
+                    ('PostgreSQL Database Deletion', r'DROP DATABASE|DROP SCHEMA|DROP TABLE|TRUNCATE', 'critical', 'PG_DB_DELETED', 'Impact', 'T1485'),
+                    ('PostgreSQL Privilege Escalation', r'ALTER USER|ALTER ROLE|GRANT ALL|WITH SUPERUSER', 'critical', 'PG_PRIVILEGE_CHANGE', 'Privilege Escalation', 'T1078'),
+                    ('Insecure Permission Modification', r'chmod\s+([0-7]*777|\+s|u\+s)', 'critical', 'PERM_CHANGE', 'Defense Evasion', 'T1222.002')
                 ]
                 for r_name, r_pat, r_sev, r_type, r_tac, r_tech in default_rules:
                     try:
@@ -3044,17 +3054,17 @@ def get_pushed_logs(config_id=None, server_id=None, limit=100):
             
             if config_id:
                 cur.execute("""
-                    SELECT id, config_id, server_id, log_level as level, source, message as msg, created_at
+                    SELECT id, config_id, server_id, log_level as level, source, COALESCE(log_type, '') as log_type, message as msg, created_at
                     FROM pushed_logs WHERE config_id = %s ORDER BY id DESC LIMIT %s;
                 """, (config_id, limit))
             elif server_id:
                 cur.execute("""
-                    SELECT id, config_id, server_id, log_level as level, source, message as msg, created_at
+                    SELECT id, config_id, server_id, log_level as level, source, COALESCE(log_type, '') as log_type, message as msg, created_at
                     FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT %s;
                 """, (server_id, limit))
             else:
                 cur.execute("""
-                    SELECT id, config_id, server_id, log_level as level, source, message as msg, created_at
+                    SELECT id, config_id, server_id, log_level as level, source, COALESCE(log_type, '') as log_type, message as msg, created_at
                     FROM pushed_logs ORDER BY id DESC LIMIT %s;
                 """, (limit,))
             
@@ -3068,6 +3078,7 @@ def get_pushed_logs(config_id=None, server_id=None, limit=100):
                     "time": time_str,
                     "level": r.get("level") or "INFO",
                     "source": r.get("source") or "app-agent",
+                    "log_type": r.get("log_type") or "",
                     "msg": r.get("msg") or ""
                 })
             return result

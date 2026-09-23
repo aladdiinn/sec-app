@@ -388,18 +388,31 @@
             </div>
         </div>
 
+        <!-- Real-Time SOAR Detections & Alerts Banner -->
+        <div id="live-soar-alerts-bar" style="display:none; background:rgba(239,68,68,0.12); border-bottom:1px solid rgba(239,68,68,0.4); padding:7px 14px; font-size:11px; align-items:center; justify-content:space-between">
+            <div style="display:flex; align-items:center; gap:10px; overflow:hidden">
+                <span class="lvl-tag CRITICAL" style="flex-shrink:0">🚨 SOAR DETECTIONS</span>
+                <span id="live-soar-alerts-text" style="color:#f8fafc; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">Active Threat Alert</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-shrink:0">
+                <button class="btn btn-glass" onclick="applyPresetFilter('soar', this)" style="font-size:9px; padding:2px 8px; color:var(--red); border-color:rgba(239,68,68,0.4)">⚡ FILTER THREATS</button>
+                <a href="/incidents" class="btn btn-glass" style="font-size:9px; padding:2px 8px; color:var(--cyan); border-color:rgba(0,212,255,0.4); text-decoration:none">VIEW INCIDENTS</a>
+            </div>
+        </div>
+
         <!-- Quick Filter Preset Pills & Export Bar -->
         <div style="background:var(--bg3); border-bottom:1px solid var(--border); padding:6px 14px; display:flex; justify-content:space-between; align-items:center">
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
                 <span style="font-size:9px; color:var(--text3); font-family:var(--orbitron); margin-right:4px">PRESETS:</span>
                 <button class="preset-pill active" onclick="applyPresetFilter('', this)">ALL</button>
+                <button class="preset-pill pill-err" onclick="applyPresetFilter('soar', this)">🚨 SOAR THREATS</button>
                 <button class="preset-pill pill-err" onclick="applyPresetFilter('error', this)">🔥 ERRORS</button>
                 <button class="preset-pill pill-warn" onclick="applyPresetFilter('warn', this)">⚠️ WARNS</button>
-                <button class="preset-pill pill-sec" onclick="applyPresetFilter('apm', this)">⚡ APM TRACES</button>
-                <button class="preset-pill pill-warn" onclick="applyPresetFilter('watchdog', this)">🤖 WATCHDOG AI</button>
+                <button class="preset-pill pill-sec" onclick="applyPresetFilter('postgres', this)">🐘 POSTGRESQL</button>
+                <button class="preset-pill pill-warn" onclick="applyPresetFilter('userdel', this)">👤 USER & PERM</button>
                 <button class="preset-pill pill-sec" onclick="applyPresetFilter('auth', this)">🔒 AUTH & SEC</button>
                 <button class="preset-pill pill-sec" onclick="applyPresetFilter('500', this)">🌐 5xx HTTP</button>
-                <button class="preset-pill pill-sec" onclick="applyPresetFilter('psql', this)">💾 DB QUERIES</button>
+                <button class="preset-pill pill-sec" onclick="applyPresetFilter('apm', this)">⚡ APM TRACES</button>
             </div>
 
             <!-- Export Buttons -->
@@ -1016,6 +1029,23 @@ async function fetchLogsNow() {
     } catch (e) {
         console.warn("Log fetch error", e);
     }
+
+    // Check active SOAR alerts for banner
+    try {
+        const alertsRes = await apiFetch('/api/alerts?limit=1&is_resolved=false');
+        const activeAlerts = (alertsRes && alertsRes.items) ? alertsRes.items : [];
+        const banner = document.getElementById('live-soar-alerts-bar');
+        const bannerText = document.getElementById('live-soar-alerts-text');
+        if (banner && bannerText) {
+            if (activeAlerts.length > 0) {
+                const topAlert = activeAlerts[0];
+                bannerText.innerHTML = `<strong>${escapeHtml(topAlert.title || topAlert.alert_type)}</strong>: ${escapeHtml(topAlert.message || '')} <span style="color:var(--text3); font-size:9px">(${topAlert.created_at_ago || 'recent'})</span>`;
+                banner.style.display = 'flex';
+            } else {
+                banner.style.display = 'none';
+            }
+        }
+    } catch(ea) {}
 }
 
 let lastRenderedHash = '';
@@ -1028,8 +1058,10 @@ function renderLogLines(lines) {
     }
 
     const htmlContent = lines.map((l, idx) => {
+        const isSoarThreat = /soar|drop\s+database|drop\s+table|truncate|userdel|deluser|usermod.*sudo|chmod.*777|alter\s+user|alter\s+role/i.test(l.msg || '');
         const lvl = (l.level || 'INFO').toUpperCase();
-        const lvlClass = lvl === 'ERROR' ? 'lvl-error' : (lvl === 'WARN' ? 'lvl-warn' : (lvl === 'INFO' ? 'lvl-info' : ''));
+        const displayLvl = isSoarThreat ? 'CRITICAL' : lvl;
+        const lvlClass = isSoarThreat ? 'lvl-error' : (lvl === 'ERROR' ? 'lvl-error' : (lvl === 'WARN' ? 'lvl-warn' : (lvl === 'INFO' ? 'lvl-info' : '')));
         const isExpanded = expandedLogIndices.has(idx);
 
         const parsedKv = parseLogFields(l.msg);
@@ -1049,7 +1081,7 @@ function renderLogLines(lines) {
                     <span style="font-size:8px; color:var(--cyan); transition:transform 0.2s; transform:${isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'}">▶</span>
                     ${l.time}
                 </div>
-                <div><span class="lvl-tag ${lvl}">${lvl}</span></div>
+                <div><span class="lvl-tag ${displayLvl}">${isSoarThreat ? '🚨 SOAR' : displayLvl}</span></div>
                 <div style="color:var(--cyan); text-overflow:ellipsis; overflow:hidden">${l.source}</div>
                 <div style="color:var(--text); word-break:break-all">${escapeHtml(l.msg)}</div>
             </div>

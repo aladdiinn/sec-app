@@ -1281,7 +1281,7 @@ _known_server_ports = {}     # {server_id: set(ports)}
 _dedup_alerts_cache = {}     # {(server_id, alert_type): last_timestamp}
 
 def _create_alert_dedup(server_id, alert_type, severity, title, message):
-    """Create alert only if similar alert not created within last 2 minutes."""
+    """Create alert only if similar alert not created within last 2 minutes, and trigger SOAR audit."""
     cache_key = (server_id, alert_type)
     now = time.time()
     last_time = _dedup_alerts_cache.get(cache_key, 0)
@@ -1290,6 +1290,13 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
     _dedup_alerts_cache[cache_key] = now
     try:
         db.log_alert(server_id, alert_type, message, severity=severity, title=title)
+        
+        # SOAR Auto-Triage: Log security audit record for critical detections
+        if severity == 'critical':
+            srv = db.get_server_by_id(server_id)
+            hname = srv.get("hostname") if srv else f"Node-{server_id}"
+            db.log_audit('SOAR-Engine', 'AUTO_INCIDENT_TRIAGE', 'incident', server_id,
+                         f"SOAR Auto-Response triggered for critical detection [{alert_type}] on {hname}: {title}")
     except Exception as e:
         logger.error(f"Error in _create_alert_dedup: {e}")
 
@@ -1348,21 +1355,36 @@ def _check_failed_logins(server_id, data):
         )
 
 def _check_sudo_misuse(server_id, data):
-    """Detection: Admin privilege misuse (sudo/su, role escalation anomalies)."""
+    """Detection: Admin privilege misuse (sudo/su, userdel, role escalation, permission tampering)."""
     sudo_events = data.get("sudo_events", [])
     commands = data.get("commands", [])
     log_lines = data.get("log_lines", []) or data.get("logs", [])
 
     suspicious_patterns = [
-        (re.compile(r'cat\s+/etc/shadow', re.IGNORECASE), 'Shadow File Dumping', 'critical', 'Credential Access Alert'),
-        (re.compile(r'cat\s+/etc/passwd', re.IGNORECASE), 'Passwd File Access', 'warning', 'Credential Access Alert'),
-        (re.compile(r'(visudo|sudoedit|tee.*sudoers|>>.*sudoers)', re.IGNORECASE), 'Sudoers Modification', 'critical', 'Privilege Escalation Alert'),
-        (re.compile(r'usermod\s+-aG\s+sudo', re.IGNORECASE), 'User Added to Sudo Group', 'critical', 'Privilege Escalation Alert'),
-        (re.compile(r'(useradd|adduser)\s+', re.IGNORECASE), 'New User Account Created', 'warning', 'Identity Management Alert'),
-        (re.compile(r'su\s+-\s+root|sudo\s+su', re.IGNORECASE), 'Root Escalation via su', 'warning', 'Privilege Escalation Alert'),
-        (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'warning', 'Host Anomaly Alert'),
-        (re.compile(r'iptables\s+-F|ufw\s+disable', re.IGNORECASE), 'Firewall Disabled', 'critical', 'Network Security Alert'),
-        (re.compile(r'crontab\s+-[er]', re.IGNORECASE), 'Cron Persistence Attempt', 'warning', 'Persistence Alert'),
+        # OS User Deletion (Critical)
+        (re.compile(r'\b(userdel|deluser)\b', re.IGNORECASE), 'User Account Deletion', 'critical', 'User Account Deletion Alert (userdel)', 'USER_DELETED'),
+        # Privilege Escalation via usermod / group modification (Critical)
+        (re.compile(r'usermod\s+.*(?:-G|-aG|--groups|\+G)\s+.*(?:sudo|wheel|root|docker|adm|shadow)\b', re.IGNORECASE), 'User Added to Privileged Group', 'critical', 'Privilege Escalation Alert (usermod)', 'SUDO_PRIVILEGE_ESCALATION'),
+        # Insecure Permissions / SUID (Critical)
+        (re.compile(r'chmod\s+([0-7]*777|[0-7]*[4-7][0-7]{3}|\+s|u\+s)\b', re.IGNORECASE), 'Insecure Permission Grant', 'critical', 'Insecure Permission Grant (chmod 777 / SUID)', 'INSECURE_PERM_CHANGE'),
+        # Ownership changed to root (Warning)
+        (re.compile(r'chown\s+.*root\b', re.IGNORECASE), 'Ownership Changed to Root', 'warning', 'File Ownership Transferred to Root', 'CHOWN_ROOT'),
+        # Passwd dumping / tampering
+        (re.compile(r'cat\s+/etc/shadow', re.IGNORECASE), 'Shadow File Dumping', 'critical', 'Credential Access Alert', 'SUDO_SHADOW_FILE_DUMPING'),
+        (re.compile(r'cat\s+/etc/passwd', re.IGNORECASE), 'Passwd File Access', 'warning', 'Credential Access Alert', 'SUDO_PASSWD_FILE_ACCESS'),
+        (re.compile(r'(visudo|sudoedit|tee.*sudoers|>>.*sudoers)', re.IGNORECASE), 'Sudoers Modification', 'critical', 'Privilege Escalation Alert', 'SUDO_SUDOERS_MODIFICATION'),
+        # PostgreSQL CLI Deletions and Privilege grants via command line
+        (re.compile(r'\b(dropdb|dropuser)\b', re.IGNORECASE), 'PostgreSQL CLI Deletion', 'critical', 'PostgreSQL Database Deletion Alert', 'PG_DB_DELETED'),
+        (re.compile(r'\b(createuser\s+.*(?:-s|--superuser))\b', re.IGNORECASE), 'PostgreSQL Superuser Creation', 'critical', 'PostgreSQL Privilege Escalation Alert', 'PG_PRIVILEGE_CHANGE'),
+        (re.compile(r'psql\s+.*-(?:c|command)\s+.*(drop\s+database|drop\s+schema|drop\s+table|truncate)', re.IGNORECASE), 'PostgreSQL CLI Data Deletion', 'critical', 'PostgreSQL Database Deletion Alert', 'PG_DB_DELETED'),
+        (re.compile(r'psql\s+.*-(?:c|command)\s+.*(alter\s+user|alter\s+role|grant\s+all|with\s+superuser)', re.IGNORECASE), 'PostgreSQL CLI Privilege Escalation', 'critical', 'PostgreSQL Privilege Escalation Alert', 'PG_PRIVILEGE_CHANGE'),
+        # Account creation / management
+        (re.compile(r'\b(useradd|adduser)\s+', re.IGNORECASE), 'New User Account Created', 'warning', 'Identity Management Alert', 'USER_CREATED'),
+        (re.compile(r'passwd\s+(?:root|\S+)', re.IGNORECASE), 'User Password Modified', 'warning', 'Credential Modification Alert', 'PASSWD_CHANGED'),
+        (re.compile(r'su\s+-\s+root|sudo\s+su', re.IGNORECASE), 'Root Escalation via su', 'warning', 'Privilege Escalation Alert', 'SUDO_ROOT_ESCALATION'),
+        (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'warning', 'Host Anomaly Alert', 'MASS_PROCESS_KILL'),
+        (re.compile(r'iptables\s+-F|ufw\s+disable', re.IGNORECASE), 'Firewall Disabled', 'critical', 'Network Security Alert', 'FIREWALL_DISABLED'),
+        (re.compile(r'crontab\s+-[er]', re.IGNORECASE), 'Cron Persistence Attempt', 'warning', 'Persistence Alert', 'CRON_PERSISTENCE'),
     ]
 
     candidates = []
@@ -1372,16 +1394,20 @@ def _check_sudo_misuse(server_id, data):
         candidates.append(c.get("command", "") if isinstance(c, dict) else str(c))
     for item in log_lines:
         line = item.get("line", "") if isinstance(item, dict) else str(item)
-        if any(w in line.lower() for w in ["sudo", "su:", "command="]):
+        line_low = line.lower()
+        if any(w in line_low for w in [
+            "sudo", "su:", "command=", "userdel", "deluser", "usermod",
+            "chmod", "chown", "dropdb", "dropuser", "createuser", "passwd", "useradd", "adduser", "psql"
+        ]):
             candidates.append(line)
 
     for text in candidates:
-        for pat, rule_name, sev, title in suspicious_patterns:
+        for pat, rule_name, sev, title, atype in suspicious_patterns:
             if pat.search(text):
                 _create_alert_dedup(
-                    server_id, f'SUDO_{rule_name.upper().replace(" ", "_")}', sev,
+                    server_id, atype, sev,
                     title,
-                    f'Detection Rule [{rule_name}]: {text[:250]}'
+                    f'SOAR Detections [{rule_name}]: {text[:250]}'
                 )
                 break
 
@@ -1465,34 +1491,82 @@ def _check_high_resource_processes(server_id, data):
             )
 
 def _analyze_application_and_db_logs(server_id, data):
-    """Detection: Application (Tomcat, nohup) & Database (PostgreSQL) log anomalies."""
-    logs = data.get("logs", [])
-    for item in logs:
-        if not isinstance(item, dict): continue
+    """Detection: Application (Tomcat, nohup) & Database (PostgreSQL) log anomalies with SOAR response."""
+    raw_logs = data.get("logs", []) or []
+    raw_lines = data.get("log_lines", []) or []
+
+    all_items = []
+    for item in raw_logs:
+        if isinstance(item, dict):
+            all_items.append(item)
+        elif isinstance(item, str):
+            all_items.append({"line": item, "source": "", "log_type": ""})
+    for l in raw_lines:
+        if isinstance(l, str):
+            all_items.append({"line": l, "source": "", "log_type": ""})
+
+    # PostgreSQL regex patterns
+    pg_drop_pat = re.compile(r'\b(DROP\s+DATABASE|DROP\s+SCHEMA|DROP\s+TABLE|TRUNCATE(?:\s+TABLE)?|ALTER\s+DATABASE\s+.*\s+RENAME|DROP\s+EXTENSION)\b', re.IGNORECASE)
+    pg_priv_pat = re.compile(r'\b(ALTER\s+USER|ALTER\s+ROLE|GRANT\s+(?:ALL|SELECT|INSERT|UPDATE|DELETE|SUPERUSER|CREATEDB|CREATEROLE)|REVOKE\s+|CREATE\s+ROLE|CREATE\s+USER|DROP\s+ROLE|DROP\s+USER|WITH\s+SUPERUSER|WITH\s+CREATEROLE)\b', re.IGNORECASE)
+    pg_denied_pat = re.compile(r'\b(permission\s+denied\s+for\s+(?:database|table|schema|relation|sequence)|must\s+be\s+superuser)\b', re.IGNORECASE)
+    pg_auth_pat = re.compile(r'(fatal:\s+password\s+authentication\s+failed|fatal:\s+no\s+pg_hba\.conf\s+entry)', re.IGNORECASE)
+
+    for item in all_items:
         line = item.get("line", "")
-        log_type = item.get("log_type", "")
+        if not line: continue
+        log_type = (item.get("log_type") or "").lower()
         source = (item.get("source") or "").lower()
 
-        is_pg = log_type == "postgres" or "postgres" in source or "pgsql" in source
-        is_tomcat = log_type == "tomcat" or "tomcat" in source or "catalina" in source or "nohup" in source
+        is_pg = (log_type in ["postgres", "pgsql"] or 
+                 any(k in source for k in ["postgres", "pgsql"]) or 
+                 any(k in line.lower() for k in ["postgres", "pgsql", "pg_hba", "fatal:  password authentication", "permission denied for database", "must be superuser"]))
+        
+        is_tomcat = (log_type in ["tomcat", "catalina"] or 
+                     any(k in source for k in ["tomcat", "catalina", "nohup"]) or 
+                     any(k in line.lower() for k in ["catalina", "org.apache.catalina", "tomcat"]))
 
-        if is_pg:
-            if any(w in line.lower() for w in ["fatal:  password authentication failed", "fatal:  no pg_hba.conf entry"]):
+        # 1. PostgreSQL Threat Detections
+        if is_pg or pg_drop_pat.search(line) or pg_priv_pat.search(line):
+            # A. Destructive Database / Table / Schema Deletion (Critical)
+            if pg_drop_pat.search(line):
+                _create_alert_dedup(
+                    server_id, 'PG_DB_DELETED', 'critical',
+                    'PostgreSQL Database Deletion Alert',
+                    f'SOAR Detections [PostgreSQL Data Deletion]: Destructive database query detected in logs: {line[:250]}'
+                )
+            # B. Privilege Escalation / User Role Tampering (Critical)
+            elif pg_priv_pat.search(line):
+                _create_alert_dedup(
+                    server_id, 'PG_PRIVILEGE_CHANGE', 'critical',
+                    'PostgreSQL Privilege Escalation Alert',
+                    f'SOAR Detections [PostgreSQL Privilege Modification]: Database role or permission modification detected in logs: {line[:250]}'
+                )
+            # C. Access Denied / Superuser Violation (Warning)
+            elif pg_denied_pat.search(line):
+                _create_alert_dedup(
+                    server_id, 'PG_ACCESS_DENIED', 'warning',
+                    'PostgreSQL Access Violation Alert',
+                    f'SOAR Detections [PostgreSQL Access Denied]: Unauthorized database operation attempted: {line[:250]}'
+                )
+            # D. Authentication Failures (Warning)
+            elif pg_auth_pat.search(line):
                 _create_alert_dedup(
                     server_id, 'PG_AUTH_FAILURE', 'warning',
                     'PostgreSQL Auth Failure Alert',
-                    f'Detection Rule [PostgreSQL Auth Failure]: {line[:250]}'
+                    f'SOAR Detections [PostgreSQL Auth Failure]: Database login authentication failure: {line[:250]}'
                 )
-            elif any(w in line.upper() for w in ["DROP TABLE", "DROP DATABASE", "TRUNCATE", "ALTER USER", "GRANT ALL"]):
+
+        # 2. Tomcat / Application Detections
+        if is_tomcat:
+            if any(w in line.upper() for w in ["OUTOFMEMORYERROR", "STACKOVERFLOWERROR"]):
                 _create_alert_dedup(
-                    server_id, 'PG_PRIVILEGE_CHANGE', 'critical',
-                    'PostgreSQL Security Alert',
-                    f'Detection Rule [PostgreSQL Privilege/DDL Anomaly]: {line[:250]}'
+                    server_id, 'TOMCAT_CRITICAL_ERROR', 'critical',
+                    'Application Fatal Error Alert',
+                    f'Detection Rule [Tomcat OutOfMemory]: Fatal Java exception: {line[:250]}'
                 )
-        elif is_tomcat:
-            if any(w in line.upper() for w in ["OUTOFMEMORYERROR", "STACKOVERFLOWERROR", "SEVERE:"]):
+            elif any(w in line.upper() for w in ["SEVERE:", "INTERNAL SERVER ERROR", "HTTP 500"]):
                 _create_alert_dedup(
-                    server_id, 'TOMCAT_CRITICAL_ERROR', 'warning',
+                    server_id, 'TOMCAT_APP_ERROR', 'warning',
                     'Application Log Alert',
                     f'Detection Rule [Tomcat Application Error]: {line[:250]}'
                 )
@@ -2280,8 +2354,8 @@ echo "============================================================"
 
 # Ensure readable permissions for log files
 chmod +r /var/log/auth.log /var/log/secure /var/log/syslog /var/log/messages 2>/dev/null || true
-chmod -R +r /var/log/postgresql 2>/dev/null || true
-chmod -R +r /var/log/tomcat* 2>/dev/null || true
+chmod -R +r /var/log/postgresql /var/lib/pgsql /var/lib/postgresql /opt/postgresql* /opt/pgsql* 2>/dev/null || true
+chmod -R +r /var/log/tomcat* /opt/tomcat* 2>/dev/null || true
 
 # 2. Setup background Python Push Agent Daemon
 mkdir -p /opt/securepulse
@@ -2551,6 +2625,28 @@ def get_sudo_events():
         except: pass
     return events[-30:]
 
+# Track bash history commands
+bash_positions = {{}}
+def get_bash_commands():
+    cmds = []
+    hist_files = ["/root/.bash_history"] + glob.glob("/home/*/.bash_history")
+    for hp in hist_files:
+        if not os.path.exists(hp): continue
+        try:
+            size = os.path.getsize(hp)
+            pos = bash_positions.get(hp, max(0, size - 3000))
+            if size < pos: pos = 0
+            with open(hp, "r", errors="ignore") as f:
+                f.seek(pos)
+                for line in f:
+                    c = line.strip()
+                    if c and not c.startswith("#"):
+                        u = "root" if "root" in hp else hp.split("/")[2]
+                        cmds.append({{"user": u, "command": c}})
+                bash_positions[hp] = f.tell()
+        except: pass
+    return cmds[-30:]
+
 # Log tail positions per file
 log_positions = {{}}
 
@@ -2571,7 +2667,7 @@ def get_new_log_lines(max_lines_per_file=50):
                     if not line: continue
                     lt = ltype
                     lower_l = line.lower()
-                    if 'postgres' in lower_l or 'pgsql' in lower_l or 'fatal:  password authentication' in lower_l or 'no pg_hba.conf' in lower_l:
+                    if any(k in lower_l for k in ['postgres', 'pgsql', 'fatal:  password authentication', 'no pg_hba.conf', 'drop database', 'drop table', 'alter user', 'alter role', 'grant all', 'drop schema']):
                         lt = 'postgres'
                     elif 'tomcat' in lower_l or 'catalina' in lower_l or 'nohup' in lower_l or 'org.apache.catalina' in lower_l:
                         lt = 'tomcat'
@@ -2608,6 +2704,7 @@ while True:
         disk = get_disk_percent()
         procs = get_processes()
         ports = get_open_ports()
+        bash_cmds = get_bash_commands()
         log_lines = get_new_log_lines()
         auth_failures = get_auth_failures()
         sudo_events = get_sudo_events()
@@ -2622,6 +2719,7 @@ while True:
             "disk_percent": disk,
             "processes": procs,
             "open_ports": ports,
+            "commands": bash_cmds,
             "log_lines": [x["line"] for x in log_lines[:100]],
             "logs": [{{"line": x["line"], "source": x["source"], "log_type": x["log_type"]}} for x in log_lines[:100]],
             "auth_failures": auth_failures,
@@ -2817,6 +2915,20 @@ PLAYBOOKS_DB = [
         "trigger_condition": "Auto-trigger on matched threat events",
         "steps": "1. Run system health check; 2. Post alert to Slack; 3. Promote to case",
         "actions": [{"type": "run_health_check"}, {"type": "notify_slack"}, {"type": "promote_to_case"}]
+    },
+    {
+        "id": 9,
+        "name": "Database Threat & Deletion Response",
+        "trigger_condition": "Auto-trigger on matched threat events",
+        "steps": "1. Isolate target host; 2. Post alert to Slack; 3. Promote incident to Case",
+        "actions": [{"type": "isolate_host"}, {"type": "notify_slack"}, {"type": "promote_to_case"}]
+    },
+    {
+        "id": 10,
+        "name": "User Account Deletion Response (userdel)",
+        "trigger_condition": "Auto-trigger on matched threat events",
+        "steps": "1. Run system health check; 2. Post urgent Slack alert; 3. Promote to case",
+        "actions": [{"type": "run_health_check"}, {"type": "notify_slack"}, {"type": "promote_to_case"}]
     }
 ]
 
@@ -2860,6 +2972,36 @@ RULES_DB = [
         "condition": {"field": "failed_count", "operator": "greater_than", "value": "5"},
         "mitre_tactic": "TA0006 (Credential Access)",
         "mitre_technique": "T1110 (Brute Force)"
+    },
+    {
+        "id": 5,
+        "name": "User Account Deletion (userdel)",
+        "message": "Detects unauthorized system user deletion commands (userdel/deluser)",
+        "event_type": "USER_DELETED",
+        "severity": "critical",
+        "condition": {"field": "command", "operator": "contains", "value": "userdel"},
+        "mitre_tactic": "TA0040 (Impact)",
+        "mitre_technique": "T1531 (Account Access Removal)"
+    },
+    {
+        "id": 6,
+        "name": "PostgreSQL Database / Table Deletion",
+        "message": "Detects DROP DATABASE / DROP TABLE / TRUNCATE destructive statements",
+        "event_type": "PG_DB_DELETED",
+        "severity": "critical",
+        "condition": {"field": "log", "operator": "regex", "value": "DROP DATABASE|DROP TABLE|TRUNCATE"},
+        "mitre_tactic": "TA0040 (Impact)",
+        "mitre_technique": "T1485 (Data Destruction)"
+    },
+    {
+        "id": 7,
+        "name": "PostgreSQL Privilege Escalation",
+        "message": "Detects ALTER USER / ALTER ROLE / GRANT ALL / WITH SUPERUSER commands",
+        "event_type": "PG_PRIVILEGE_CHANGE",
+        "severity": "critical",
+        "condition": {"field": "log", "operator": "regex", "value": "ALTER USER|GRANT ALL|WITH SUPERUSER"},
+        "mitre_tactic": "TA0004 (Privilege Escalation)",
+        "mitre_technique": "T1078 (Valid Accounts)"
     }
 ]
 
@@ -3912,6 +4054,31 @@ async def api_push_agent_logs(request: Request):
         return {"ok": True, "count": 0}
 
     saved_count = db.push_log_entries(config_id=config_id, server_id=server_id, lines=raw_lines)
+
+    # Run real-time SIEM / IDS / IPS Detection Engine on inbound pushed logs
+    if server_id:
+        try:
+            det_logs = []
+            det_lines = []
+            for item in raw_lines:
+                if isinstance(item, dict):
+                    det_logs.append(item)
+                    det_lines.append(item.get("line") or item.get("message") or "")
+                else:
+                    det_logs.append({"line": str(item), "source": f"push-log/{config_id or server_id}", "log_type": ""})
+                    det_lines.append(str(item))
+
+            det_payload = {
+                "server_id": server_id,
+                "server_ip": server_ip,
+                "hostname": hostname,
+                "logs": det_logs,
+                "log_lines": det_lines
+            }
+            run_detection_engine(server_id, det_payload)
+        except Exception as ex_det:
+            logger.error(f"Error running detection engine on pushed logs: {ex_det}")
+
     return {"ok": True, "count": saved_count}
 
 
@@ -3952,13 +4119,16 @@ async def api_fetch_log_lines(request: Request):
             src = pl.get("source", "")
             if log_path and log_path.strip() and src != log_path.strip() and not src.endswith(log_path.strip()):
                 continue
+            if search and search.strip() and search.lower() not in msg.lower() and search.lower() not in src.lower():
+                continue
             if log_type and log_type.lower() != 'all':
                 lt = log_type.lower()
-                if lt == "os" and not any(k in src.lower() or k in msg.lower() for k in ["auth", "syslog", "secure", "audit", "kern", "sudo", "systemd"]):
+                row_lt = (pl.get("log_type") or "").lower()
+                if lt == "os" and row_lt != "os" and not any(k in src.lower() or k in msg.lower() for k in ["auth", "syslog", "secure", "audit", "kern", "sudo", "systemd"]):
                     continue
-                elif lt == "tomcat" and not any(k in src.lower() or k in msg.lower() for k in ["tomcat", "catalina", "nohup", "java"]):
+                elif lt == "tomcat" and row_lt != "tomcat" and not any(k in src.lower() or k in msg.lower() for k in ["tomcat", "catalina", "nohup", "java"]):
                     continue
-                elif lt in ["postgres", "pgsql"] and not any(k in src.lower() or k in msg.lower() for k in ["postgres", "pgsql"]):
+                elif lt in ["postgres", "pgsql"] and row_lt not in ["postgres", "pgsql"] and not any(k in src.lower() or k in msg.lower() for k in ["postgres", "pgsql", "pg_", "drop database", "drop table", "alter user", "grant all"]):
                     continue
             lines.append(pl)
 
@@ -4463,18 +4633,18 @@ async def api_detections_summary():
                 at = (r.get("alert_type") or "").upper()
                 c = int(r.get("cnt") or 0)
                 summary["total_active"] += c
-                if any(k in at for k in ["AUTH", "LOGIN", "BRUTE"]):
+                if any(k in at for k in ["PG_", "POSTGRES", "DATABASE", "DB_"]):
+                    summary["db_alerts"] += c
+                elif any(k in at for k in ["TOMCAT", "CATALINA", "APP"]):
+                    summary["app_alerts"] += c
+                elif any(k in at for k in ["AUTH", "LOGIN", "BRUTE", "USER_DELETED", "USER_CREATED", "PASSWD"]):
                     summary["identity_access"] += c
-                elif any(k in at for k in ["SUDO", "SU_", "PRIVILEGE", "USERADD"]):
+                elif any(k in at for k in ["SUDO", "SU_", "PRIVILEGE", "USERADD", "USERMOD", "INSECURE"]):
                     summary["privilege_misuse"] += c
                 elif any(k in at for k in ["FIM", "FILE", "CHMOD", "CHOWN"]):
                     summary["file_integrity"] += c
                 elif any(k in at for k in ["PORT", "CPU", "MEM", "TRAFFIC", "FIREWALL"]):
                     summary["network_host"] += c
-                elif any(k in at for k in ["TOMCAT", "CATALINA", "APP"]):
-                    summary["app_alerts"] += c
-                elif any(k in at for k in ["PG_", "POSTGRES", "DATABASE", "DB_"]):
-                    summary["db_alerts"] += c
                 else:
                     summary["identity_access"] += c
             return summary
