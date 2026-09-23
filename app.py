@@ -1875,15 +1875,22 @@ echo "============================================================"
 mkdir -p /opt/securepulse
 cat << 'EOF' > /opt/securepulse/node_push_agent.sh
 #!/bin/bash
-SOC_URL="{base_url}"
-LOG_PATH="{target_log_path}"
-NODE_IP="{target_ip}"
+export SOC_URL="{base_url}"
+export LOG_PATH="{target_log_path}"
+export NODE_IP="{target_ip}"
 
-if [ -n "$LOG_PATH" ] && [ -f "$LOG_PATH" ]; then
-    tail -F -n 100 "$LOG_PATH" | python3 -c '
-import sys, urllib.request, json
-url = "'"$SOC_URL"'/api/agent/push-logs"
-ip = "'"$NODE_IP"'"
+LOG_FILES=""
+for f in "/var/log/syslog" "/var/log/auth.log" "$LOG_PATH"; do
+    if [ -n "$f" ] && [ -f "$f" ]; then
+        LOG_FILES="$LOG_FILES $f"
+    fi
+done
+
+if [ -n "$LOG_FILES" ]; then
+    tail -F -n 100 $LOG_FILES | python3 -c '
+import os, sys, urllib.request, json
+url = os.environ.get("SOC_URL", "").rstrip("/") + "/api/agent/push-logs"
+ip = os.environ.get("NODE_IP", "127.0.0.1")
 for line in sys.stdin:
     line = line.strip()
     if not line: continue

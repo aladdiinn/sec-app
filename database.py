@@ -2806,14 +2806,42 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                     """, (config_id, server_id, level, source, line_str))
                     saved += 1
 
-                    # Real-Time Watchdog Anomaly & Incident Auto-Trigger
-                    if any(kw in line_str for kw in ["[WATCHDOG-AI]", "Outlier Anomaly", "Root Cause Analysis", "Traffic Anomaly Alert", "CPU usage spiked"]) or (level == "ERROR" and "watchdog" in line_str.lower()):
+                    # Touch server status on log push
+                    if server_id:
                         try:
-                            log_alert(server_id or 1, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {line_str}", severity="critical")
+                            cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
+                        except Exception: pass
+
+                    # Real-Time Watchdog Anomaly & Incident Auto-Trigger
+                    lower_line = line_str.lower()
+                    target_sid = server_id or 1
+
+                    # 1. Watchdog AI Anomaly Detection
+                    if any(kw.lower() in lower_line for kw in ["[WATCHDOG-AI]", "Outlier Anomaly", "Root Cause Analysis", "Traffic Anomaly Alert", "CPU usage spiked", "pool exhaustion"]) or (level == "ERROR" and "watchdog" in lower_line):
+                        try:
+                            log_alert(target_sid, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {line_str}", severity="critical")
                             inc_title = f"Watchdog AI Anomaly: {line_str[:50]}..." if len(line_str) > 50 else f"Watchdog AI: {line_str}"
-                            create_incident(inc_title, "critical", f"Watchdog AI Detection: {line_str}", "SOC Analyst", server_id=server_id or 1)
+                            create_incident(inc_title, "critical", f"Watchdog AI Detection: {line_str}", "SOC Analyst", server_id=target_sid)
                         except Exception as ex_wd_inc:
                             logger.debug(f"Watchdog incident creation error: {ex_wd_inc}")
+
+                    # 2. SSH Authentication Failures & Security Anomalies
+                    elif any(kw.lower() in lower_line for kw in ["failed password", "invalid user", "authentication failure", "failed login"]):
+                        try:
+                            log_alert(target_sid, "AUTH_FAILURE", f"Authentication Failure: {line_str}", severity="warning")
+                            inc_title = f"Authentication Failure on Node #{target_sid}"
+                            create_incident(inc_title, "warning", f"Security Alert: {line_str}", "SOC Analyst", server_id=target_sid)
+                        except Exception as ex_auth_inc:
+                            logger.debug(f"Auth incident creation error: {ex_auth_inc}")
+
+                    # 3. Suspicious Commands & System Modifications
+                    elif any(kw in line_str for kw in ["chmod", "chown", "nc -e", "/dev/tcp", "xmrig", "crontab", "ufw disable", "iptables -F"]):
+                        try:
+                            log_alert(target_sid, "SUSPICIOUS_ACTIVITY", f"Suspicious Activity Detected: {line_str}", severity="high")
+                            inc_title = f"Suspicious Command Execution on Node #{target_sid}"
+                            create_incident(inc_title, "high", f"System Security Rule Match: {line_str}", "SOC Analyst", server_id=target_sid)
+                        except Exception as ex_susp_inc:
+                            logger.debug(f"Suspicious activity incident error: {ex_susp_inc}")
                 
                 # Trim old logs to keep table lightweight (max 2000 per config)
                 if config_id:
