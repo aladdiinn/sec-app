@@ -115,6 +115,111 @@
     <div style="display:flex; justify-content:space-between; align-items:center">
         <a href="/log-monitor" class="btn btn-ghost" style="font-size:10px; color:var(--cyan)">View In Log Monitor ➔</a>
         <button class="btn btn-glass" onclick="closeServerLogConfigModal()">Done</button>
+<!-- IMAGE 3 POPUP MODAL WINDOW FOR SERVER / DATABASE DETAILS -->
+<div id="i3-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9998; display:none; backdrop-filter:blur(6px)" onclick="closeImage3Modal()"></div>
+<div id="i3-modal" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:900px; max-width:95vw; max-height:90vh; display:none; flex-direction:column; z-index:9999; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:10px; box-shadow:0 30px 90px rgba(0,0,0,0.9); overflow:hidden; font-family:system-ui,-apple-system,sans-serif">
+    <!-- Header -->
+    <div style="padding:16px 24px; background:#0b1320; border-bottom:1px solid rgba(255,255,255,0.1); display:flex; justify-content:space-between; align-items:center">
+        <div style="display:flex; align-items:center; gap:12px">
+            <span style="font-size:22px">🗄️</span>
+            <div>
+                <div style="display:flex; align-items:center; gap:10px">
+                    <h2 id="i3-srv-name" style="margin:0; font-size:18px; font-weight:700; color:#f8fafc">PVVNL-Hes-Maindb-01-DR</h2>
+                    <span id="i3-srv-status-badge" style="background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; text-transform:uppercase">CRITICAL</span>
+                </div>
+                <div id="i3-srv-sub" style="font-size:12px; color:#94a3b8; margin-top:2px">
+                    Host: 172.23.60.177 · Type: postgresql / linux node
+                </div>
+            </div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center">
+            <button class="btn btn-glass" onclick="toggleMaintInModal()" style="font-size:11px; color:#f59e0b">⚡ Toggle Maintenance</button>
+            <button style="background:none; border:none; color:#94a3b8; font-size:20px; cursor:pointer" onclick="closeImage3Modal()">✕</button>
+        </div>
+    </div>
+
+    <!-- Tabs Header -->
+    <div style="display:flex; background:#090f1d; border-bottom:1px solid rgba(255,255,255,0.1); padding:0 16px">
+        <div class="i3-tab active" onclick="switchI3Tab('overview', this)" style="padding:12px 20px; font-size:13px; font-weight:600; color:#38bdf8; cursor:pointer; border-bottom:2px solid #38bdf8">Overview</div>
+        <div class="i3-tab" onclick="switchI3Tab('incidents', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Incidents / Outages</div>
+        <div class="i3-tab" onclick="switchI3Tab('resources', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Resource Usage (>85%)</div>
+        <div class="i3-tab" onclick="switchI3Tab('logs', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Log Streams</div>
+        <div class="i3-tab" onclick="switchI3Tab('settings', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Settings</div>
+    </div>
+
+    <!-- Body -->
+    <div style="padding:24px; overflow-y:auto; max-height:calc(90vh - 120px); background:#0b1320; color:#e2e8f0">
+        <!-- TAB 1: OVERVIEW -->
+        <div id="i3t-overview">
+            <div style="background:#1e293b; border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:20px; margin-bottom:20px">
+                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:16px">Database / Server Information</div>
+                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; font-size:13px">
+                    <div><span style="color:#94a3b8">Name:</span> <strong id="i3-info-name" style="color:#f8fafc">172.23.60.177</strong></div>
+                    <div><span style="color:#94a3b8">Type:</span> <strong id="i3-info-type" style="color:#38bdf8">postgresql / linux</strong></div>
+                    <div><span style="color:#94a3b8">Host:</span> <strong id="i3-info-host" style="color:#f8fafc">172.23.60.177:5432</strong></div>
+                    <div><span style="color:#94a3b8">Database / App:</span> <strong id="i3-info-db" style="color:#f8fafc">sikkim_tnd_hes</strong></div>
+                    <div><span style="color:#94a3b8">Status:</span> <span id="i3-info-status" style="color:#ef4444; font-weight:700">CRITICAL</span></div>
+                    <div><span style="color:#94a3b8">Agent Status:</span> <strong id="i3-info-agent" style="color:#10b981">Agent Alive</strong></div>
+                </div>
+            </div>
+
+            <div style="background:#1e293b; border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:20px">
+                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:16px">🗄️ Database & System Metrics</div>
+                <div style="margin-bottom:20px">
+                    <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px">
+                        <span style="color:#94a3b8">Connection Usage</span><strong id="i3-conn-pct" style="color:#38bdf8">5.5%</strong>
+                    </div>
+                    <div style="width:100%; height:10px; background:#0f172a; border-radius:5px; overflow:hidden">
+                        <div id="i3-conn-bar" style="width:5.5%; height:100%; background:#38bdf8"></div>
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px">
+                    <div style="background:#0f172a; padding:16px; border-radius:6px">
+                        <div style="font-size:11px; color:#94a3b8">Database Size</div>
+                        <div id="i3-m-size" style="font-size:22px; font-weight:700; color:#f8fafc; margin:4px 0">791.11 GB</div>
+                    </div>
+                    <div style="background:#0f172a; padding:16px; border-radius:6px">
+                        <div style="font-size:11px; color:#94a3b8">Long Running Queries</div>
+                        <div id="i3-m-queries" style="font-size:22px; font-weight:700; color:#10b981; margin:4px 0">0</div>
+                    </div>
+                    <div style="background:#0f172a; padding:16px; border-radius:6px">
+                        <div style="font-size:11px; color:#94a3b8">High Resource Queries</div>
+                        <div id="i3-m-resource" style="font-size:22px; font-weight:700; color:#10b981; margin:4px 0">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="i3t-incidents" style="display:none">
+            <div style="background:#1e293b; padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">🚨 Incidents Logged For This Asset</div>
+                <div id="i3-incidents-list"><div style="text-align:center; padding:20px; color:#94a3b8">Loading incidents...</div></div>
+            </div>
+        </div>
+
+        <div id="i3t-resources" style="display:none">
+            <div style="background:#1e293b; padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">⚡ Resource Utilization (>85%)</div>
+                <table style="width:100%; border-collapse:collapse; text-align:left; font-size:12px">
+                    <thead><tr style="border-bottom:1px solid rgba(255,255,255,0.1); color:#94a3b8"><th style="padding:8px">PID</th><th style="padding:8px">PROCESS</th><th style="padding:8px">CPU %</th><th style="padding:8px">RAM %</th><th style="padding:8px">USER</th></tr></thead>
+                    <tbody id="i3-procs-body"><tr><td colspan="5" style="text-align:center; padding:15px; color:#94a3b8">Loading...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="i3t-logs" style="display:none">
+            <div style="background:#1e293b; padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">📑 Log Streams (Tomcat, Postgres, OS)</div>
+                <div id="i3-logs-box" style="background:#050811; padding:12px; border-radius:6px; height:260px; overflow-y:auto; font-family:monospace; font-size:11px"><div style="color:#94a3b8; text-align:center; padding:30px">Loading logs...</div></div>
+            </div>
+        </div>
+
+        <div id="i3t-settings" style="display:none">
+            <div style="background:#1e293b; padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">⚙️ Asset Maintenance</div>
+                <button class="btn btn-primary" onclick="toggleMaintInModal()">Toggle Maintenance Mode</button>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -172,7 +277,7 @@
                     </div>
                     ` : ''}
 
-                    <div style="cursor:pointer; flex:1; margin-top:20px" onclick="window.location.href='/servers/${id}'">
+                    <div style="cursor:pointer; flex:1; margin-top:20px" onclick="openImage3Modal(${id})">
                         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px">
                             <div class="stat-icon ${statIconColor}" style="width:48px; height:48px">
                                 <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
