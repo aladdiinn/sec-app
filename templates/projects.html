@@ -90,6 +90,29 @@
         </div>
     </div>
 </div>
+
+<!-- ── MANAGE GROUPS & USERS MODAL FOR PROJECT ── -->
+<div id="manage-groups-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px; z-index:1000; border-radius:var(--radius-lg, 8px); width:540px; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--amber)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <div>
+            <h3 class="card-title" style="font-size:16px; font-family:var(--orbitron,monospace); color:var(--amber); letter-spacing:1.5px" id="manage-groups-title">MANAGE GROUPS & USER ACCESS</h3>
+            <p class="text-sub" style="font-size:11px; margin-top:2px">Check Project Groups to grant project access to their members</p>
+        </div>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeManageGroupsModal()">✕</button>
+    </div>
+
+    <div id="manage-groups-list" style="max-height:220px; overflow-y:auto; background:rgba(8,12,24,0.8); border:1px solid var(--border); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px; margin-bottom:20px">
+        <!-- Loaded by JS -->
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center">
+        <a href="/user-management" style="font-size:11px; color:var(--cyan); text-decoration:none">+ Create / Edit Groups in User Mgmt</a>
+        <div style="display:flex; gap:10px">
+            <button class="btn btn-glass" onclick="closeManageGroupsModal()">Cancel</button>
+            <button class="btn btn-primary" id="btn-save-groups" onclick="saveProjectGroups()">Save Group Access</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -97,6 +120,7 @@
 let currentProjects = [];
 let allAvailableServers = [];
 let activeManagingProjectId = null;
+let activeManagingGroupsProjectId = null;
 
 async function loadData() {
     try {
@@ -119,7 +143,8 @@ function renderProjects() {
         const name = String(p.name || 'Unnamed Project').replace(/'/g, "\\'");
         const desc = p.description || 'No description provided';
         const serverCount = p.server_count || 0;
-        const critCount = p.critical_count || 0;
+        const groupCount = (p.assigned_groups || []).length;
+        const userCount = p.user_count || 0;
 
         return `
         <div class="card glass glass-hover fade-in" id="proj-${id}" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:20px">
@@ -132,20 +157,28 @@ function renderProjects() {
                         DEL
                     </button>
                 </div>
-                <p class="text-meta" style="margin-bottom:18px; line-height:1.5; height:36px; overflow:hidden">${desc}</p>
+                <p class="text-meta" style="margin-bottom:14px; line-height:1.5; height:36px; overflow:hidden">${desc}</p>
             </div>
 
             <div>
-                <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:12px; margin-bottom:16px">
+                <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:8px; margin-bottom:6px">
                     <span class="text-meta">SERVERS ASSIGNED</span>
                     <span class="badge ${serverCount > 0 ? 'badge-info' : 'badge-secondary'}">${serverCount} assets</span>
                 </div>
 
-                <div style="display:flex; gap:8px">
-                    <button class="btn btn-glass" style="flex:1; font-size:10px; padding:8px; border-color:var(--cyan); color:var(--cyan)" onclick="openManageAssetsModal(${id}, '${name}')">
-                        ⚙ MANAGE ASSETS
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px">
+                    <span class="text-meta">GROUPS & USERS</span>
+                    <span class="badge badge-purple" style="font-size:10px">${groupCount} groups (${userCount} users)</span>
+                </div>
+
+                <div style="display:flex; gap:6px; flex-wrap:wrap">
+                    <button class="btn btn-glass" style="flex:1; font-size:9px; padding:6px 8px; border-color:var(--cyan); color:var(--cyan)" onclick="openManageAssetsModal(${id}, '${name}')">
+                        ⚙ ASSETS
                     </button>
-                    <button class="btn btn-primary" style="font-size:10px; padding:8px 12px" onclick="enterProjectView(${id})">
+                    <button class="btn btn-glass" style="flex:1; font-size:9px; padding:6px 8px; border-color:var(--amber); color:var(--amber)" onclick="openManageGroupsModal(${id}, '${name}')">
+                        👥 GROUPS
+                    </button>
+                    <button class="btn btn-primary" style="font-size:10px; padding:6px 10px" onclick="enterProjectView(${id})">
                         ENTER ›
                     </button>
                 </div>
@@ -154,6 +187,7 @@ function renderProjects() {
         `;
     }).join('');
 }
+
 
 /* ── Enter project mode ───────────────────────────────────── */
 async function enterProjectView(projectId) {
@@ -334,6 +368,73 @@ async function deleteProject(id, name, btn) {
         showToast('Delete failed', 'error');
         btn.disabled = false;
         btn.innerText = 'DEL';
+    }
+}
+
+/* ── Manage groups for project ────────────────────────────── */
+async function openManageGroupsModal(projectId, projectName) {
+    activeManagingGroupsProjectId = projectId;
+    document.getElementById('manage-groups-title').textContent = `MANAGE GROUPS: ${projectName.toUpperCase()}`;
+    document.getElementById('manage-groups-modal').style.display = 'block';
+    
+    const listEl = document.getElementById('manage-groups-list');
+    listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">Loading groups...</div>';
+
+    try {
+        const res = await apiFetch(`/api/projects/${projectId}/groups`);
+        const groups = res.groups || [];
+        if (groups.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">No Project Groups created yet. <a href="/user-management" style="color:var(--cyan)">Create one in User Mgmt</a></div>';
+            return;
+        }
+        listEl.innerHTML = groups.map(g => {
+            const isChecked = g.assigned ? 'checked' : '';
+            return `
+            <label style="display:flex; align-items:center; justify-content:space-between; font-size:12px; cursor:pointer; padding:8px 10px; border-radius:4px; background:rgba(255,255,255,0.02)" class="glass-hover">
+                <div style="display:flex; align-items:center; gap:10px">
+                    <input type="checkbox" class="manage-group-chk" value="${g.id}" ${isChecked} style="accent-color:var(--amber); width:15px; height:15px">
+                    <div>
+                        <div style="font-family:var(--mono); color:var(--text); font-weight:600">${g.name}</div>
+                        <div style="font-size:10px; color:var(--text-sub)">${g.member_count || 0} members linked</div>
+                    </div>
+                </div>
+                <span class="badge ${g.assigned ? 'badge-warning' : 'badge-secondary'}" style="font-size:9px">
+                    ${g.assigned ? 'LINKED' : 'UNLINKED'}
+                </span>
+            </label>
+            `;
+        }).join('');
+    } catch (e) {
+        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--red); font-size:11px">Failed to load project groups</div>';
+    }
+}
+
+function closeManageGroupsModal() {
+    document.getElementById('manage-groups-modal').style.display = 'none';
+    activeManagingGroupsProjectId = null;
+}
+
+async function saveProjectGroups() {
+    if (!activeManagingGroupsProjectId) return;
+    const btn = document.getElementById('btn-save-groups');
+    btn.disabled = true;
+    btn.innerText = 'Saving...';
+
+    const selectedIds = Array.from(document.querySelectorAll('.manage-group-chk:checked')).map(c => parseInt(c.value));
+
+    try {
+        await apiFetch(`/api/projects/${activeManagingGroupsProjectId}/groups`, {
+            method: 'POST',
+            body: JSON.stringify({ group_ids: selectedIds })
+        });
+        showToast('Project group access updated successfully', 'success');
+        closeManageGroupsModal();
+        loadData();
+    } catch(e) {
+        showToast('Failed to update project groups', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Save Group Access';
     }
 }
 

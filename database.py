@@ -951,13 +951,32 @@ def get_server_counts():
     finally:
         conn.close()
 
+def _build_pid_filter(field_name: str, project_id):
+    """Build SQL WHERE clause fragment and parameter list for single or multiple project_ids."""
+    if project_id is None or project_id == "":
+        return "", []
+    if isinstance(project_id, (list, tuple, set)):
+        pids = [int(p) for p in project_id if str(p).isdigit()]
+        if not pids:
+            return f" AND {field_name} = -9999 ", []
+        if len(pids) == 1:
+            return f" AND {field_name} = %s ", [pids[0]]
+        placeholders = ", ".join(["%s"] * len(pids))
+        return f" AND {field_name} IN ({placeholders}) ", pids
+    try:
+        return f" AND {field_name} = %s ", [int(project_id)]
+    except Exception:
+        return "", []
+
 def get_servers(project_id=None):
     conn = get_db_connection()
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            if project_id:
-                cur.execute("SELECT * FROM servers WHERE project_id = %s ORDER BY id ASC;", (project_id,))
+            sql_clause, params = _build_pid_filter("project_id", project_id)
+            if sql_clause:
+                where_sql = "WHERE " + sql_clause[5:]
+                cur.execute(f"SELECT * FROM servers {where_sql} ORDER BY id ASC;", params)
             else:
                 cur.execute("SELECT * FROM servers ORDER BY id ASC;")
             return cur.fetchall()
@@ -966,6 +985,7 @@ def get_servers(project_id=None):
         return []
     finally:
         conn.close()
+
 
 def get_server_by_id(server_id: int):
     conn = get_db_connection()
@@ -1274,14 +1294,17 @@ def get_alerts(limit=100, project_id=None):
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            if project_id:
-                cur.execute("""
+            sql_clause, params = _build_pid_filter("s.project_id", project_id)
+            if sql_clause:
+                where_sql = "WHERE " + sql_clause[5:]
+                params.append(limit)
+                cur.execute(f"""
                     SELECT a.*, s.hostname, s.ip, s.project_id
                     FROM alerts a
                     JOIN servers s ON a.server_id = s.id
-                    WHERE s.project_id = %s
+                    {where_sql}
                     ORDER BY a.created_at DESC LIMIT %s;
-                """, (project_id, limit))
+                """, tuple(params))
             else:
                 cur.execute("""
                     SELECT a.*, s.hostname, s.ip, s.project_id
@@ -1293,6 +1316,7 @@ def get_alerts(limit=100, project_id=None):
     except Exception as e:
         logger.error(f"Error in get_alerts: {e}")
         return []
+
     finally:
         conn.close()
 
@@ -1376,9 +1400,10 @@ def get_incidents(status=None, severity=None, limit=100, project_id=None):
         with conn.cursor() as cur:
             query = "SELECT i.*, COALESCE(s.hostname, s.name) as hostname FROM incidents i LEFT JOIN servers s ON i.server_id = s.id WHERE 1=1"
             params = []
-            if project_id:
-                query += " AND s.project_id = %s"
-                params.append(project_id)
+            sql_clause, p_params = _build_pid_filter("s.project_id", project_id)
+            if sql_clause:
+                query += sql_clause
+                params.extend(p_params)
             if status:
                 query += " AND i.status = %s"
                 params.append(status)
@@ -1389,6 +1414,7 @@ def get_incidents(status=None, severity=None, limit=100, project_id=None):
             params.append(limit)
             cur.execute(query, tuple(params))
             incidents = cur.fetchall()
+
 
             if not incidents and not status:
                 try:
@@ -1713,7 +1739,7 @@ def get_playbooks():
     except Exception as e:
         logger.error(f"Error in get_playbooks: {e}")
         return []
-def get_projects():
+def get_projects(allowed_project_ids=None):
     conn = get_db_connection()
     if not conn: return []
     try:
@@ -1730,39 +1756,32 @@ def get_projects():
                 GROUP BY p.id, p.name, p.description, p.created_at
                 ORDER BY p.id ASC;
             """)
-            projects = cur.fetchall()
-            if not projects:
-                default_projects = [
-                    ("TEST-PROJECT", "Enterprise Infrastructure Project", "🏢")
-                ]
-                for name, desc, icon in default_projects:
-                    try:
-                        cur.execute("INSERT INTO projects (name, description) SELECT %s, %s WHERE NOT EXISTS (SELECT 1 FROM projects WHERE name = %s);", (name, desc, name))
-                    except Exception:
-                        pass
-                if hasattr(conn, 'commit'):
-                    try: conn.commit()
-                    except Exception: pass
-                cur.execute("""
-                    SELECT p.id, p.name, p.description, p.created_at,
-                           COUNT(DISTINCT s.id) as server_count,
-                           COUNT(DISTINCT CASE WHEN s.severity = 'critical' OR a.severity = 'critical' THEN s.id END) as critical_count,
-                           COUNT(DISTINCT CASE WHEN a.severity = 'warning' AND (a.is_resolved IS NOT TRUE) THEN a.id END) as warning_count,
-                           COUNT(DISTINCT a.id) as total_alerts
-                    FROM projects p
-                    LEFT JOIN servers s ON s.project_id = p.id
-                    LEFT JOIN alerts a ON a.server_id = s.id
-                    GROUP BY p.id, p.name, p.description, p.created_at
-                    ORDER BY p.id ASC;
-                """)
-                projects = cur.fetchall()
-                try:
-                    cur.execute("UPDATE servers SET project_id = 1 WHERE project_id IS NULL;")
-                    if hasattr(conn, 'commit'): conn.commit()
-                except Exception:
-                    pass
+            projects = cur.fetchall() or []
+
+            if allowed_project_ids is not None:
+                projects = [p for p in projects if p.get("id") in allowed_project_ids]
 
             for p in projects:
+                pid = p.get("id")
+                # Fetch assigned groups
+                cur.execute("""
+                    SELECT g.id, g.name, g.description
+                    FROM groups g JOIN group_projects gp ON g.id = gp.group_id
+                    WHERE gp.project_id = %s;
+                """, (pid,))
+                p["assigned_groups"] = cur.fetchall() or []
+
+                # Fetch assigned users
+                cur.execute("""
+                    SELECT DISTINCT u.id, u.username, u.email, u.full_name, u.role
+                    FROM users u
+                    JOIN user_groups ug ON u.id = ug.user_id
+                    JOIN group_projects gp ON ug.group_id = gp.group_id
+                    WHERE gp.project_id = %s;
+                """, (pid,))
+                p["assigned_users"] = cur.fetchall() or []
+                p["user_count"] = len(p["assigned_users"])
+
                 name_lower = (p.get("name") or "").lower()
                 if "apdcl" in name_lower or "power" in name_lower: p["icon"] = "🏭"
                 elif "pgvcl" in name_lower or "grid" in name_lower: p["icon"] = "⚡"
@@ -1782,6 +1801,7 @@ def get_projects():
         return []
     finally:
         conn.close()
+
 
 def get_project_by_id(project_id):
     if not project_id: return None

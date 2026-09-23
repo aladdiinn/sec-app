@@ -1458,6 +1458,54 @@ async def api_assign_project_assets(project_id: int, request: Request):
             conn.close()
     return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to assign assets"})
 
+@app.get("/api/projects/{project_id}/groups")
+async def api_get_project_groups(project_id: int):
+    all_groups = db.get_groups()
+    conn = db.get_db_connection()
+    assigned_gids = []
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT group_id FROM group_projects WHERE project_id = %s;", (project_id,))
+                assigned_gids = [r["group_id"] for r in cur.fetchall()]
+        finally:
+            conn.close()
+    for g in all_groups:
+        g["assigned"] = (g["id"] in assigned_gids)
+    return {"groups": all_groups}
+
+@app.post("/api/projects/{project_id}/groups")
+@app.post("/api/projects/{project_id}/assign-groups")
+async def api_assign_project_groups(project_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    group_ids = body.get("group_ids", [])
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM group_projects WHERE project_id = %s;", (project_id,))
+                    if group_ids and isinstance(group_ids, list):
+                        for gid in group_ids:
+                            try:
+                                cur.execute("INSERT INTO group_projects (group_id, project_id, created_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING;", (int(gid), project_id))
+                            except Exception:
+                                pass
+                    if hasattr(conn, 'commit'):
+                        conn.commit()
+                    uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+                    db.log_audit(uname, "ASSIGN_PROJECT_GROUPS", "project", project_id, f"Updated group access for project #{project_id}")
+                    return {"ok": True, "message": "Project groups updated"}
+        finally:
+            conn.close()
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to assign groups"})
+
+
 @app.put("/api/projects/{project_id}")
 async def api_update_project(project_id: int, request: Request):
     if not is_admin_user(request):
