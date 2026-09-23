@@ -3,7 +3,7 @@
 # EMBEDDED REAL-TIME HOST SECURITY WATCHER + FIM (FILE INTEGRITY MONITORING)
 # Continuously monitors SSH logs, shell commands, process execution, and FIM
 # ══════════════════════════════════════════════════════════════════════════════
-import time, subprocess, glob, threading, os, re, socket
+import time, subprocess, glob, threading, os, re, socket, json
 
 _watcher_auth_pos = 0
 _watcher_hist_positions = {}
@@ -1798,7 +1798,8 @@ async def setup_script(request: Request, node_name: Optional[str] = None, ip: Op
     target_ip = ip or "127.0.0.1"
     target_log_path = log_path or "/var/log/syslog"
 
-    payload_json = json.dumps({"hostname": target_node_name, "ip_address": target_ip})
+    escaped_hostname = json.dumps(target_node_name)
+    escaped_ip = json.dumps(target_ip)
 
     script = f"""#!/bin/bash
 set -e
@@ -1813,9 +1814,18 @@ echo "[SECUREPULSE] (Zero SSH Credentials Stored / Pure Outbound Push)"
 
 # 1. Submit Onboarding Approval Request
 echo "[SECUREPULSE] Submitting onboarding approval request for {target_node_name} ({target_ip})..."
+
+PAYLOAD_JSON=$(cat << 'JSON_EOF'
+{{
+  "hostname": {escaped_hostname},
+  "ip_address": {escaped_ip}
+}}
+JSON_EOF
+)
+
 REQ_RES=$(curl -s -X POST "{base_url}/api/approvals/request" \\
     -H "Content-Type: application/json" \\
-    --data-binary '{payload_json}' || echo '{{"ok": false}}')
+    -d "$PAYLOAD_JSON" || echo '{{"ok": false}}')
 
 TOKEN=$(echo "$REQ_RES" | grep -o '"token":"[^"]*' | cut -d'"' -f4 || echo "sp-token-{target_node_name}")
 if [ -z "$TOKEN" ]; then TOKEN="sp-token-{target_node_name}"; fi
