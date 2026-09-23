@@ -973,12 +973,19 @@ def get_servers(project_id=None):
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            sql_clause, params = _build_pid_filter("project_id", project_id)
+            sql_clause, params = _build_pid_filter("s.project_id", project_id)
+            where_parts = []
             if sql_clause:
-                where_sql = "WHERE " + sql_clause[5:]
-                cur.execute(f"SELECT * FROM servers {where_sql} ORDER BY id ASC;", params)
-            else:
-                cur.execute("SELECT * FROM servers ORDER BY id ASC;")
+                where_parts.append(sql_clause[5:])
+            where_parts.append("""
+                NOT EXISTS (
+                    SELECT 1 FROM approvals a 
+                    WHERE (LOWER(a.hostname) = LOWER(s.hostname) OR LOWER(a.hostname) = LOWER(s.name) OR a.ip_address = s.ip OR a.ip_address = s.ip_address) 
+                    AND a.status = 'pending'
+                )
+            """)
+            where_sql = "WHERE " + " AND ".join(where_parts)
+            cur.execute(f"SELECT s.* FROM servers s {where_sql} ORDER BY s.id ASC;", params)
             return cur.fetchall()
     except Exception as e:
         logger.error(f"Error in get_servers: {e}")
@@ -1142,12 +1149,22 @@ def add_approval_request(hostname: str, ip_address: str):
     try:
         token = f"sp-token-{int(time.time())}-{random.randint(1000, 9999)}"
         with conn.cursor() as cur:
+            # Delete any unapproved server record from servers table so it does not appear in Assets until approved
+            try:
+                cur.execute("""
+                    DELETE FROM servers 
+                    WHERE (LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) OR ip = %s OR ip_address = %s);
+                """, (hostname, hostname, ip_address, ip_address))
+            except Exception:
+                pass
+
             cur.execute("SELECT id, agent_token, status FROM approvals WHERE hostname = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (hostname, ip_address))
             row = cur.fetchone()
             if row:
                 row_dict = dict(row)
                 if row_dict.get("status") == "pending":
                     return {"id": row_dict["id"], "token": row_dict["agent_token"], "status": "pending"}
+
             cur.execute("""
                 INSERT INTO approvals (hostname, ip_address, agent_token, status, requested_at)
                 VALUES (%s, %s, %s, 'pending', NOW());

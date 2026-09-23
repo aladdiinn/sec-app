@@ -249,24 +249,24 @@
         }
 
         try {
-            const res = await apiFetch('/api/servers/add', {
+            const res = await apiFetch('/api/approvals/request', {
                 method: 'POST',
-                body: JSON.stringify({ name: hostname, hostname: hostname, ip: ip })
+                body: JSON.stringify({ hostname: hostname, ip_address: ip })
             });
 
-            if (res && (res.ok || res.id)) {
-                showToast('Asset node registered successfully!', 'success');
+            if (res && res.ok) {
+                showToast('Onboarding request created! Node must be approved under Agent Approvals after running command.', 'info');
                 closeAddServerModal();
                 loadServers();
                 
                 const cmd = document.getElementById('setup-command').innerText;
                 showSetupScriptModal({
                     title: "🚀 ASSET NODE PUSH AGENT SCRIPT",
-                    subtitle: `Run this 1-line command on target node ${hostname} (${ip}) to start outbound log & telemetry streaming (Zero SSH Credentials used):`,
+                    subtitle: `Run this 1-line command on target node ${hostname} (${ip}). Once executed, approve the node under AGENT APPROVALS to complete onboarding:`,
                     command: cmd
                 });
             } else {
-                showToast(res.message || 'Registration failed', 'error');
+                showToast(res.message || 'Onboarding request failed', 'error');
             }
         } catch (e) {
             showToast(e.message || 'Registration error', 'error');

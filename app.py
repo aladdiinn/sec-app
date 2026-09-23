@@ -1798,6 +1798,8 @@ async def setup_script(request: Request, node_name: Optional[str] = None, ip: Op
     target_ip = ip or "127.0.0.1"
     target_log_path = log_path or "/var/log/syslog"
 
+    payload_json = json.dumps({"hostname": target_node_name, "ip_address": target_ip})
+
     script = f"""#!/bin/bash
 set -e
 echo "============================================================"
@@ -1813,7 +1815,7 @@ echo "[SECUREPULSE] (Zero SSH Credentials Stored / Pure Outbound Push)"
 echo "[SECUREPULSE] Submitting onboarding approval request for {target_node_name} ({target_ip})..."
 REQ_RES=$(curl -s -X POST "{base_url}/api/approvals/request" \\
     -H "Content-Type: application/json" \\
-    -d "{{\"hostname\": \"{target_node_name}\", \"ip_address\": \"{target_ip}\"}}" || echo '{{"ok": false}}')
+    --data-binary '{payload_json}' || echo '{{"ok": false}}')
 
 TOKEN=$(echo "$REQ_RES" | grep -o '"token":"[^"]*' | cut -d'"' -f4 || echo "sp-token-{target_node_name}")
 if [ -z "$TOKEN" ]; then TOKEN="sp-token-{target_node_name}"; fi
@@ -1823,13 +1825,13 @@ echo "[PENDING] Onboarding request submitted to SOC Command Center!"
 echo "[PENDING] Waiting for SOC Administrator approval in Dashboard... (Token: $TOKEN)"
 
 STATUS="pending"
-MAX_WAIT=120
+MAX_WAIT=300
 WAITED=0
 
 while [ "$STATUS" = "pending" ] && [ $WAITED -lt $MAX_WAIT ]; do
     sleep 3
     WAITED=$((WAITED+3))
-    CHECK_RES=$(curl -s "{base_url}/api/agent/status?token=$TOKEN&hostname={target_node_name}&ip={target_ip}" || echo '{{"status":"pending"}}')
+    CHECK_RES=$(curl -s -G "{base_url}/api/agent/status" --data-urlencode "token=$TOKEN" --data-urlencode "hostname={target_node_name}" --data-urlencode "ip={target_ip}" || echo '{{"status":"pending"}}')
     STATUS=$(echo "$CHECK_RES" | grep -o '"status":"[^"]*' | cut -d'"' -f4 || echo "pending")
     if [ "$STATUS" = "pending" ]; then
         echo -n "."
@@ -1842,6 +1844,14 @@ if [ "$STATUS" = "rejected" ]; then
     echo "============================================================"
     echo " [REJECTED] Onboarding request was rejected by SOC Administrator."
     echo " Target Node installation aborted."
+    echo "============================================================"
+    exit 1
+fi
+
+if [ "$STATUS" != "approved" ]; then
+    echo "============================================================"
+    echo " [TIMED OUT] Approval not received within $MAX_WAIT seconds."
+    echo " Please approve in SOC Dashboard under Agent Approvals and re-run."
     echo "============================================================"
     exit 1
 fi
@@ -1860,11 +1870,20 @@ LOG_PATH="{target_log_path}"
 NODE_IP="{target_ip}"
 
 if [ -n "$LOG_PATH" ] && [ -f "$LOG_PATH" ]; then
-    tail -F -n 100 "$LOG_PATH" | while read -r line; do
-        curl -s -X POST "$SOC_URL/api/agent/push-logs" \\
-            -H "Content-Type: application/json" \\
-            -d "{{\"server_ip\": \"$NODE_IP\", \"line\": \"$line\"}}" >/dev/null 2>&1 || true
-    done
+    tail -F -n 100 "$LOG_PATH" | python3 -c '
+import sys, urllib.request, json
+url = "'"$SOC_URL"'/api/agent/push-logs"
+ip = "'"$NODE_IP"'"
+for line in sys.stdin:
+    line = line.rstrip("\r\n")
+    if not line: continue
+    data = json.dumps({"server_ip": ip, "line": line}).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=3)
+    except Exception:
+        pass
+'
 fi
 EOF
 
@@ -2442,8 +2461,8 @@ async def api_agent_status(request: Request):
     ip = request.query_params.get("ip")
     appr = db.get_approval_by_token(token, hostname=hostname, ip=ip)
     if appr:
-        return {"status": appr.get("status", "approved")}
-    return {"status": "approved"}
+        return {"status": appr.get("status", "pending")}
+    return {"status": "pending"}
 
 @app.get("/api/approvals")
 async def api_get_approvals(request: Request):
