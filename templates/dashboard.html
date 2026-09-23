@@ -3,6 +3,7 @@
 {% block page_title %}SOC COMMAND CENTER{% endblock %}
 {% block page_sub %}NOC / SOC Real-Time Infrastructure & Threat Monitoring{% endblock %}
 
+{% block extra_css %}
 <style>
 /* BCITS NOC Dashboard Styling (Image 2 Reference) */
 .noc-header-grid {
@@ -30,7 +31,7 @@
     color: #94a3b8;
     letter-spacing: 1.5px;
     text-transform: uppercase;
-    font-family: var(--orbitron, monospace);
+    font-family: 'Orbitron', monospace;
     margin-bottom: 12px;
     display: flex;
     align-items: center;
@@ -54,15 +55,15 @@
 }
 .noc-circle-item:hover { transform: translateY(-2px); }
 .noc-circle-badge {
-    width: 44px;
-    height: 44px;
+    width: 54px;
+    height: 54px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 800;
-    font-family: var(--orbitron, monospace);
+    font-family: 'Orbitron', monospace;
     color: #fff;
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 }
@@ -72,14 +73,15 @@
     color: #94a3b8;
     letter-spacing: 0.5px;
     text-transform: uppercase;
-    font-family: var(--orbitron, monospace);
+    font-family: 'Orbitron', monospace;
+    text-align: center;
 }
 
-.circle-down { background: #ef4444; border: 2px solid rgba(239, 68, 68, 0.5); }
-.circle-critical { background: #f97316; border: 2px solid rgba(249, 115, 22, 0.5); }
-.circle-trouble { background: #f59e0b; border: 2px solid rgba(245, 158, 11, 0.5); }
-.circle-maint { background: #3b82f6; border: 2px solid rgba(59, 130, 246, 0.5); }
-.circle-up { background: #10b981; border: 2px solid rgba(16, 185, 129, 0.5); }
+.circle-down { background: #ef4444; border: 2px solid rgba(239, 68, 68, 0.6); box-shadow: 0 0 15px rgba(239,68,68,0.4); }
+.circle-critical { background: #f97316; border: 2px solid rgba(249, 115, 22, 0.6); box-shadow: 0 0 15px rgba(249,115,22,0.4); }
+.circle-trouble { background: #f59e0b; border: 2px solid rgba(245, 158, 11, 0.6); box-shadow: 0 0 15px rgba(245,158,11,0.4); }
+.circle-maint { background: #3b82f6; border: 2px solid rgba(59, 130, 246, 0.6); box-shadow: 0 0 15px rgba(59,130,246,0.4); }
+.circle-up { background: #10b981; border: 2px solid rgba(16, 185, 129, 0.6); box-shadow: 0 0 15px rgba(16,185,129,0.4); }
 .circle-suspended { background: #64748b; border: 2px solid rgba(100, 116, 139, 0.5); }
 
 /* Nodes Summary Boxes */
@@ -100,12 +102,13 @@
     font-weight: 700;
     color: #94a3b8;
     letter-spacing: 1px;
+    text-transform: uppercase;
 }
 .node-sum-val {
-    font-size: 18px;
+    font-size: 22px;
     font-weight: 800;
     color: #38bdf8;
-    font-family: var(--orbitron, monospace);
+    font-family: 'Orbitron', monospace;
     margin-top: 2px;
 }
 
@@ -126,7 +129,7 @@
 /* Services Cards Grid (Image 2 style) */
 .services-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 16px;
     margin-bottom: 24px;
 }
@@ -166,7 +169,8 @@
     padding: 2px 6px;
     border-radius: 3px;
     text-transform: uppercase;
-    font-family: var(--orbitron, monospace);
+    font-family: 'Orbitron', monospace;
+    white-space: nowrap;
 }
 .st-database { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
 .st-server { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
@@ -186,8 +190,8 @@
     display: flex;
     flex-direction: column;
 }
-.sm-label { color: #94a3b8; font-size: 10px; }
-.sm-val { color: #f8fafc; font-weight: 700; font-family: var(--mono); }
+.sm-label { color: #94a3b8; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.sm-val { color: #f8fafc; font-weight: 700; font-family: monospace; font-size: 14px; }
 
 /* Alert Box inside Card */
 .service-alert-box {
@@ -252,6 +256,7 @@
     background: #0f172a; padding: 16px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);
 }
 </style>
+{% endblock %}
 
 {% block content %}
 <div class="fade-in">
@@ -278,14 +283,14 @@
                 </div>
                 <div class="noc-circle-item" onclick="filterServicesByStatus('maint')">
                     <div class="noc-circle-badge circle-maint" id="noc-c-maint">0</div>
-                    <div class="noc-circle-label">MAINTENANCE</div>
+                    <div class="noc-circle-label">MAINT</div>
                 </div>
                 <div class="noc-circle-item" onclick="filterServicesByStatus('online')">
                     <div class="noc-circle-badge circle-up" id="noc-c-up">0</div>
                     <div class="noc-circle-label">UP</div>
                 </div>
                 <div class="noc-circle-item">
-                    <div class="noc-circle-badge circle-suspended">0</div>
+                    <div class="noc-circle-badge circle-suspended" id="noc-c-suspended">0</div>
                     <div class="noc-circle-label">SUSPENDED</div>
                 </div>
             </div>
@@ -319,13 +324,13 @@
             </div>
             <div style="display:flex; justify-content:space-around; align-items:center; text-align:center">
                 <div>
-                    <div style="font-size:24px; font-weight:800; color:#f8fafc; font-family:var(--orbitron)" id="sum-monitored">0</div>
-                    <div style="font-size:9px; color:#94a3b8; font-weight:700">TOTAL MONITORED</div>
+                    <div style="font-size:28px; font-weight:800; color:#f8fafc; font-family:'Orbitron',monospace" id="sum-monitored">0</div>
+                    <div style="font-size:9px; color:#94a3b8; font-weight:700; letter-spacing:0.5px; text-transform:uppercase">TOTAL MONITORED</div>
                 </div>
-                <div style="width:1px; height:36px; background:rgba(255,255,255,0.1)"></div>
+                <div style="width:1px; height:40px; background:rgba(255,255,255,0.1)"></div>
                 <div>
-                    <div style="font-size:24px; font-weight:800; color:#ef4444; font-family:var(--orbitron)" id="sum-active-issues">0</div>
-                    <div style="font-size:9px; color:#94a3b8; font-weight:700">ACTIVE ISSUES</div>
+                    <div style="font-size:28px; font-weight:800; color:#ef4444; font-family:'Orbitron',monospace" id="sum-active-issues">0</div>
+                    <div style="font-size:9px; color:#94a3b8; font-weight:700; letter-spacing:0.5px; text-transform:uppercase">ACTIVE ISSUES</div>
                 </div>
             </div>
         </div>
@@ -334,15 +339,15 @@
     <!-- Services Control Bar -->
     <div class="services-control-bar">
         <div style="display:flex; align-items:center; gap:12px">
-            <h3 style="margin:0; font-size:16px; font-weight:700; color:#f8fafc">Services</h3>
+            <h3 style="margin:0; font-size:16px; font-weight:700; color:#f8fafc">Services & Infrastructure</h3>
             <span class="badge badge-info" id="services-count-tag" style="font-size:10px">0 Monitored</span>
         </div>
 
         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
-            <input type="text" id="srv-search-input" placeholder="🔍 Search services or host IP..." class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; width:220px" oninput="renderServicesGrid()">
+            <input type="text" id="srv-search-input" placeholder="🔍 Search server or IP..." class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:rgba(255,255,255,0.05); width:220px" oninput="renderServicesGrid()">
             
-            <select id="srv-filter-select" class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff" onchange="renderServicesGrid()">
-                <option value="all">All Issues & Nodes</option>
+            <select id="srv-filter-select" class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:#0f172a" onchange="renderServicesGrid()">
+                <option value="all">All Nodes</option>
                 <option value="critical">Critical Issues Only</option>
                 <option value="trouble">Trouble / Warning Only</option>
                 <option value="online">Online / Normal Only</option>
@@ -354,7 +359,10 @@
 
     <!-- Services Cards Grid (Image 2 Style) -->
     <div id="services-cards-grid" class="services-grid">
-        <div style="grid-column:1/-1; text-align:center; padding:40px; color:#94a3b8">Loading services and infrastructure nodes...</div>
+        <div style="grid-column:1/-1; text-align:center; padding:60px; color:#94a3b8">
+            <div style="font-size:20px; margin-bottom:8px">⏳</div>
+            Loading infrastructure nodes...
+        </div>
     </div>
 
 </div>
@@ -368,11 +376,11 @@
             <span style="font-size:22px">🗄️</span>
             <div>
                 <div style="display:flex; align-items:center; gap:10px">
-                    <h2 id="i3-srv-name" style="margin:0; font-size:18px; font-weight:700; color:#f8fafc">PVVNL-Hes-Maindb-01-DR</h2>
-                    <span id="i3-srv-status-badge" style="background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; text-transform:uppercase">CRITICAL</span>
+                    <h2 id="i3-srv-name" style="margin:0; font-size:18px; font-weight:700; color:#f8fafc">Loading...</h2>
+                    <span id="i3-srv-status-badge" style="background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; text-transform:uppercase">---</span>
                 </div>
                 <div id="i3-srv-sub" style="font-size:12px; color:#94a3b8; margin-top:2px">
-                    Host: 172.23.60.177 · Type: postgresql / linux node
+                    Loading asset details...
                 </div>
             </div>
         </div>
@@ -386,63 +394,59 @@
     <div class="i3-nav-tabs">
         <div class="i3-tab active" onclick="switchI3Tab('overview', this)">Overview</div>
         <div class="i3-tab" onclick="switchI3Tab('incidents', this)">Incidents / Outages</div>
-        <div class="i3-tab" onclick="switchI3Tab('resources', this)">Resource Usage (>85%)</div>
+        <div class="i3-tab" onclick="switchI3Tab('resources', this)">Resource Usage (&gt;85%)</div>
         <div class="i3-tab" onclick="switchI3Tab('logs', this)">Log Streams</div>
         <div class="i3-tab" onclick="switchI3Tab('settings', this)">Settings</div>
     </div>
 
     <!-- Body -->
     <div class="i3-body">
-        <!-- TAB 1: OVERVIEW (EXACT IMAGE 3 LAYOUT) -->
+        <!-- TAB 1: OVERVIEW -->
         <div id="i3t-overview">
             <!-- Information Card -->
             <div class="i3-card">
                 <div class="i3-card-title">Database / Server Information</div>
                 <div class="i3-grid-3" style="font-size:13px">
-                    <div><span style="color:#94a3b8">Name:</span> <strong id="i3-info-name" style="color:#f8fafc">172.23.60.177</strong></div>
-                    <div><span style="color:#94a3b8">Type:</span> <strong id="i3-info-type" style="color:#38bdf8">postgresql / linux</strong></div>
-                    <div><span style="color:#94a3b8">Host:</span> <strong id="i3-info-host" style="color:#f8fafc">172.23.60.177:5432</strong></div>
-                    <div><span style="color:#94a3b8">Database / App:</span> <strong id="i3-info-db" style="color:#f8fafc">sikkim_tnd_hes</strong></div>
-                    <div><span style="color:#94a3b8">Status:</span> <span id="i3-info-status" style="color:#ef4444; font-weight:700">CRITICAL</span></div>
-                    <div><span style="color:#94a3b8">Agent Status:</span> <strong id="i3-info-agent" style="color:#10b981">Agent Alive</strong></div>
+                    <div><span style="color:#94a3b8">Name:</span> <strong id="i3-info-name" style="color:#f8fafc">--</strong></div>
+                    <div><span style="color:#94a3b8">Type:</span> <strong id="i3-info-type" style="color:#38bdf8">--</strong></div>
+                    <div><span style="color:#94a3b8">Host:</span> <strong id="i3-info-host" style="color:#f8fafc">--</strong></div>
+                    <div><span style="color:#94a3b8">Database / App:</span> <strong id="i3-info-db" style="color:#f8fafc">--</strong></div>
+                    <div><span style="color:#94a3b8">Status:</span> <span id="i3-info-status" style="color:#ef4444; font-weight:700">--</span></div>
+                    <div><span style="color:#94a3b8">Agent Status:</span> <strong id="i3-info-agent" style="color:#10b981">--</strong></div>
                 </div>
                 <div style="margin-top:12px; font-size:12px; color:#94a3b8; border-top:1px solid rgba(255,255,255,0.05); padding-top:10px">
-                    Last Contact: <span id="i3-info-lastseen" style="color:#f8fafc">Just now</span>
+                    Last Contact: <span id="i3-info-lastseen" style="color:#f8fafc">--</span>
                 </div>
             </div>
 
             <!-- Metrics Card -->
             <div class="i3-card">
-                <div class="i3-card-title">🗄️ Database & System Metrics</div>
+                <div class="i3-card-title">🗄️ System Metrics</div>
                 <div style="margin-bottom:20px">
                     <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px">
-                        <span style="color:#94a3b8">Connection Usage</span>
-                        <strong id="i3-conn-pct" style="color:#38bdf8">5.5%</strong>
+                        <span style="color:#94a3b8">Connection / Load Usage</span>
+                        <strong id="i3-conn-pct" style="color:#38bdf8">0%</strong>
                     </div>
                     <div style="width:100%; height:10px; background:#0f172a; border-radius:5px; overflow:hidden">
-                        <div id="i3-conn-bar" style="width:5.5%; height:100%; background:#38bdf8"></div>
+                        <div id="i3-conn-bar" style="width:0%; height:100%; background:#38bdf8; transition:width 0.5s"></div>
                     </div>
                     <div style="font-size:12px; color:#94a3b8; margin-top:6px" id="i3-conn-sub">
-                        Total: 55 · Active: 1 · Idle: 54 · Max: 1000
+                        CPU: 0% · RAM: 0%
                     </div>
                 </div>
 
                 <div class="i3-grid-3">
                     <div class="i3-metric-box">
-                        <div style="font-size:11px; color:#94a3b8">Database / Storage Size</div>
-                        <div id="i3-m-size" style="font-size:22px; font-weight:700; color:#f8fafc; margin:4px 0">791.11 GB</div>
+                        <div style="font-size:11px; color:#94a3b8">CPU Usage</div>
+                        <div id="i3-m-cpu" style="font-size:22px; font-weight:700; color:#f8fafc; margin:4px 0">0%</div>
                     </div>
-
                     <div class="i3-metric-box">
-                        <div style="font-size:11px; color:#94a3b8">Long Running Queries</div>
-                        <div id="i3-m-queries" style="font-size:22px; font-weight:700; color:#10b981; margin:4px 0">0</div>
-                        <div style="font-size:10px; color:#64748b">Threshold: >300s</div>
+                        <div style="font-size:11px; color:#94a3b8">RAM Usage</div>
+                        <div id="i3-m-ram" style="font-size:22px; font-weight:700; color:#f8fafc; margin:4px 0">0%</div>
                     </div>
-
                     <div class="i3-metric-box">
-                        <div style="font-size:11px; color:#94a3b8">High Resource Queries</div>
-                        <div id="i3-m-resource" style="font-size:22px; font-weight:700; color:#10b981; margin:4px 0">0</div>
-                        <div style="font-size:10px; color:#64748b">Threshold: >10</div>
+                        <div style="font-size:11px; color:#94a3b8">Disk Usage</div>
+                        <div id="i3-m-disk" style="font-size:22px; font-weight:700; color:#f8fafc; margin:4px 0">0%</div>
                     </div>
                 </div>
             </div>
@@ -451,9 +455,9 @@
         <!-- TAB 2: INCIDENTS / OUTAGES -->
         <div id="i3t-incidents" style="display:none">
             <div class="i3-card">
-                <div class="i3-card-title">🚨 Incidents Logged For This Asset</div>
+                <div class="i3-card-title">🚨 Incidents & Alerts For This Asset</div>
                 <div id="i3-incidents-list">
-                    <div style="text-align:center; padding:20px; color:#94a3b8">Loading incidents for server...</div>
+                    <div style="text-align:center; padding:20px; color:#94a3b8">Loading incidents...</div>
                 </div>
             </div>
         </div>
@@ -461,14 +465,14 @@
         <!-- TAB 3: RESOURCE USAGE & PROCESSES (>85%) -->
         <div id="i3t-resources" style="display:none">
             <div class="i3-card">
-                <div class="i3-card-title">⚡ Resource Utilization Progress</div>
+                <div class="i3-card-title">⚡ Resource Utilization</div>
                 <div class="i3-grid-2" style="margin-bottom:20px">
                     <div>
                         <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px">
                             <span>CPU Usage</span><strong id="i3-cpu-val">0%</strong>
                         </div>
                         <div style="height:8px; background:#0f172a; border-radius:4px; overflow:hidden">
-                            <div id="i3-cpu-bar" style="width:0%; height:100%; background:#38bdf8"></div>
+                            <div id="i3-cpu-bar" style="width:0%; height:100%; background:#38bdf8; transition:width 0.5s"></div>
                         </div>
                     </div>
                     <div>
@@ -476,12 +480,12 @@
                             <span>RAM Usage</span><strong id="i3-ram-val">0%</strong>
                         </div>
                         <div style="height:8px; background:#0f172a; border-radius:4px; overflow:hidden">
-                            <div id="i3-ram-bar" style="width:0%; height:100%; background:#10b981"></div>
+                            <div id="i3-ram-bar" style="width:0%; height:100%; background:#10b981; transition:width 0.5s"></div>
                         </div>
                     </div>
                 </div>
 
-                <div style="font-size:13px; font-weight:700; margin-bottom:10px; color:#38bdf8">Running Processes (>85% CPU / RAM Highlighted)</div>
+                <div style="font-size:13px; font-weight:700; margin-bottom:10px; color:#38bdf8">Running Processes (&gt;85% CPU / RAM Highlighted)</div>
                 <table style="width:100%; border-collapse:collapse; text-align:left; font-size:12px">
                     <thead>
                         <tr style="border-bottom:1px solid rgba(255,255,255,0.1); color:#94a3b8">
@@ -521,7 +525,6 @@
         </div>
     </div>
 </div>
-
 {% endblock %}
 
 {% block extra_js %}
@@ -538,6 +541,7 @@ async function loadDashboardData() {
         document.getElementById('noc-c-trouble').innerText = counts.trouble_servers ?? 0;
         document.getElementById('noc-c-maint').innerText = counts.maintenance_servers ?? 0;
         document.getElementById('noc-c-up').innerText = counts.online_servers ?? 0;
+        document.getElementById('noc-c-suspended').innerText = 0;
 
         document.getElementById('sum-servers').innerText = counts.total_servers ?? 0;
         document.getElementById('sum-apps').innerText = counts.total_apps ?? 0;
@@ -567,7 +571,7 @@ function renderServicesGrid() {
         if (search && !name.includes(search) && !ip.includes(search)) return false;
 
         const st = (s.status || 'online').toLowerCase();
-        const hasCrit = s.severity === 'critical' || s.alert_count > 0;
+        const hasCrit = s.severity === 'critical' || (s.alert_count > 0);
         const isMaint = s.is_maintenance;
 
         if (filter === 'critical') return hasCrit && st !== 'maintenance';
@@ -579,59 +583,66 @@ function renderServicesGrid() {
     document.getElementById('services-count-tag').innerText = `${filtered.length} Monitored`;
 
     if (!filtered.length) {
-        container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px; color:#94a3b8">No matching services or nodes found.</div>';
+        container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:60px; color:#94a3b8"><div style="font-size:20px; margin-bottom:8px">🔍</div>No matching nodes found.</div>';
         return;
     }
 
     container.innerHTML = filtered.map(s => {
         const sid = s.id;
-        const name = s.hostname || s.name || 'PVVNL-Hes-Failoverdb-01-DR';
-        const ip = s.ip_address || s.ip || '172.23.60.177';
+        const name = s.hostname || s.name || 'Unknown Node';
+        const ip = s.ip_address || s.ip || '0.0.0.0';
         const isDb = name.toLowerCase().includes('db') || (s.os_info||'').toLowerCase().includes('postgres');
         const isApp = name.toLowerCase().includes('app') || name.toLowerCase().includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
         
         const typeBadge = isDb ? '<span class="service-type-badge st-database">DATABASE</span>' : (isApp ? '<span class="service-type-badge st-app">APP NODE</span>' : '<span class="service-type-badge st-server">LINUX SERVER</span>');
 
-        const cpu = s.cpu_percent || 18;
-        const ram = s.memory_percent || 34;
-        const connPct = Math.floor(cpu * 0.3 + 2);
-        const cacheHit = Math.floor(95 + Math.random() * 4);
+        const cpu = s.cpu_percent || 0;
+        const ram = s.memory_percent || 0;
+        const disk = s.disk_percent || 0;
+        const alertCount = s.alert_count || 0;
+        const isCrit = s.severity === 'critical' || alertCount > 0;
+        const isMaint = s.is_maintenance || s.status === 'maintenance';
 
         // Alert box content
         let alertBox = '<div class="service-alert-box sab-normal">🟢 <strong>NORMAL</strong> — All checks operational</div>';
-        if (s.severity === 'critical' || s.alert_count > 0) {
-            alertBox = `<div class="service-alert-box">🔴 <strong>CRITICAL</strong> — Security Threat / CPU ${cpu}% High Alert</div>`;
-        } else if (s.status === 'maintenance' || s.is_maintenance) {
+        if (isMaint) {
             alertBox = '<div class="service-alert-box sab-trouble">⚡ <strong>MAINTENANCE</strong> — Scheduled Maintenance Window</div>';
+        } else if (isCrit) {
+            alertBox = `<div class="service-alert-box">🔴 <strong>CRITICAL</strong> — ${alertCount} Alert(s) · CPU: ${cpu}%</div>`;
+        } else if (cpu > 85 || ram > 85) {
+            alertBox = `<div class="service-alert-box sab-trouble">⚠️ <strong>HIGH RESOURCE</strong> — CPU: ${cpu}% / RAM: ${ram}%</div>`;
         }
 
+        // Border color based on status
+        const borderColor = isMaint ? '#3b82f6' : (isCrit ? '#ef4444' : (cpu > 85 || ram > 85 ? '#f59e0b' : 'rgba(255,255,255,0.08)'));
+
         return `
-        <div class="service-card" onclick="openImage3Modal(${sid})">
+        <div class="service-card" onclick="openImage3Modal(${sid})" style="border-color:${borderColor}">
             <div>
                 <div class="service-header">
                     <div>
                         <h4 class="service-title">${name}</h4>
-                        <div style="font-family:var(--mono); font-size:11px; color:#38bdf8">${ip}</div>
+                        <div style="font-family:monospace; font-size:11px; color:#38bdf8">${ip}</div>
                     </div>
                     ${typeBadge}
                 </div>
 
                 <div class="service-metrics">
                     <div class="service-metrics-item">
-                        <span class="sm-label">CONNECTIONS</span>
-                        <span class="sm-val">${connPct}%</span>
+                        <span class="sm-label">CPU USAGE</span>
+                        <span class="sm-val" style="color:${cpu>85?'#ef4444':cpu>70?'#f59e0b':'#f8fafc'}">${cpu}%</span>
                     </div>
                     <div class="service-metrics-item">
-                        <span class="sm-label">CACHE HIT</span>
-                        <span class="sm-val">${cacheHit}%</span>
-                    </div>
-                    <div class="service-metrics-item" style="margin-top:6px">
-                        <span class="sm-label">CPU USAGE</span>
-                        <span class="sm-val" style="color:${cpu>85?'#ef4444':'#f8fafc'}">${cpu}%</span>
-                    </div>
-                    <div class="service-metrics-item" style="margin-top:6px">
                         <span class="sm-label">RAM USAGE</span>
-                        <span class="sm-val" style="color:${ram>85?'#ef4444':'#f8fafc'}">${ram}%</span>
+                        <span class="sm-val" style="color:${ram>85?'#ef4444':ram>70?'#f59e0b':'#f8fafc'}">${ram}%</span>
+                    </div>
+                    <div class="service-metrics-item" style="margin-top:6px">
+                        <span class="sm-label">DISK USAGE</span>
+                        <span class="sm-val">${disk}%</span>
+                    </div>
+                    <div class="service-metrics-item" style="margin-top:6px">
+                        <span class="sm-label">ALERTS</span>
+                        <span class="sm-val" style="color:${alertCount>0?'#ef4444':'#10b981'}">${alertCount}</span>
                     </div>
                 </div>
             </div>
@@ -669,54 +680,71 @@ async function openImage3Modal(serverId) {
     activeModalServerId = serverId;
     document.getElementById('i3-modal-overlay').style.display = 'block';
     document.getElementById('i3-modal').style.display = 'flex';
-
     document.getElementById('i3-srv-name').innerText = 'Loading asset details...';
+    document.getElementById('i3-srv-sub').innerText = 'Please wait...';
+
+    // Reset tabs
+    switchI3Tab('overview', document.querySelector('.i3-tab'));
 
     try {
         const details = await apiFetch(`/api/servers/${serverId}/details`);
-        const srv = details.server;
+        const srv = details.server || {};
 
-        document.getElementById('i3-srv-name').innerText = srv.hostname || srv.name || 'PVVNL-Hes-Maindb-01-DR';
+        const name = srv.hostname || srv.name || 'Unknown Node';
+        const ip = srv.ip_address || srv.ip || '0.0.0.0';
         const status = (srv.status || 'online').toLowerCase();
+
+        document.getElementById('i3-srv-name').innerText = name;
         const b = document.getElementById('i3-srv-status-badge');
         b.innerText = status.toUpperCase();
         b.style.background = status === 'online' ? '#10b981' : status === 'maintenance' ? '#f59e0b' : '#ef4444';
 
-        document.getElementById('i3-srv-sub').innerText = `Host: ${srv.ip_address || srv.ip} · OS: ${srv.os_info || 'Linux'} · Project: ${srv.project_name || 'Sikkim T&D'}`;
+        document.getElementById('i3-srv-sub').innerText = `Host: ${ip} · OS: ${srv.os_info || 'Linux'} · Project: ${srv.project_name || 'N/A'}`;
 
-        // Overview
-        document.getElementById('i3-info-name').innerText = srv.ip_address || srv.ip;
-        document.getElementById('i3-info-type').innerText = srv.os_info || 'postgresql / linux';
-        document.getElementById('i3-info-host').innerText = `${srv.ip_address || srv.ip}:5432`;
-        document.getElementById('i3-info-db').innerText = srv.name || 'hes';
+        // Overview tab
+        document.getElementById('i3-info-name').innerText = name;
+        document.getElementById('i3-info-type').innerText = srv.os_info || 'Linux Server';
+        document.getElementById('i3-info-host').innerText = ip;
+        document.getElementById('i3-info-db').innerText = srv.name || name;
         document.getElementById('i3-info-status').innerText = status.toUpperCase();
         document.getElementById('i3-info-status').style.color = status === 'online' ? '#10b981' : '#ef4444';
         document.getElementById('i3-info-agent').innerText = 'Agent Alive (Python Push Daemon)';
-        document.getElementById('i3-info-lastseen').innerText = srv.last_sudo_ago || 'Just now';
+        document.getElementById('i3-info-lastseen').innerText = srv.last_seen || srv.last_sudo_ago || 'Just now';
 
-        // Workload gauge
-        const cpu = srv.cpu_percent || 18;
-        const ram = srv.memory_percent || 34;
-        document.getElementById('i3-conn-pct').innerText = (cpu * 0.3).toFixed(1) + '%';
-        document.getElementById('i3-conn-bar').style.width = (cpu * 0.3) + '%';
+        // Metrics
+        const cpu = srv.cpu_percent || 0;
+        const ram = srv.memory_percent || 0;
+        const disk = srv.disk_percent || 0;
 
-        // Resources
+        document.getElementById('i3-conn-pct').innerText = cpu + '%';
+        document.getElementById('i3-conn-bar').style.width = Math.min(cpu, 100) + '%';
+        document.getElementById('i3-conn-bar').style.background = cpu > 85 ? '#ef4444' : cpu > 70 ? '#f59e0b' : '#38bdf8';
+        document.getElementById('i3-conn-sub').innerText = `CPU: ${cpu}% · RAM: ${ram}% · Disk: ${disk}%`;
+        document.getElementById('i3-m-cpu').innerText = cpu + '%';
+        document.getElementById('i3-m-cpu').style.color = cpu > 85 ? '#ef4444' : '#f8fafc';
+        document.getElementById('i3-m-ram').innerText = ram + '%';
+        document.getElementById('i3-m-ram').style.color = ram > 85 ? '#ef4444' : '#f8fafc';
+        document.getElementById('i3-m-disk').innerText = disk + '%';
+
+        // Resources tab
         document.getElementById('i3-cpu-val').innerText = cpu + '%';
-        document.getElementById('i3-cpu-bar').style.width = cpu + '%';
+        document.getElementById('i3-cpu-bar').style.width = Math.min(cpu, 100) + '%';
+        document.getElementById('i3-cpu-bar').style.background = cpu > 85 ? '#ef4444' : '#38bdf8';
         document.getElementById('i3-ram-val').innerText = ram + '%';
-        document.getElementById('i3-ram-bar').style.width = ram + '%';
+        document.getElementById('i3-ram-bar').style.width = Math.min(ram, 100) + '%';
+        document.getElementById('i3-ram-bar').style.background = ram > 85 ? '#ef4444' : '#10b981';
 
         const procs = details.processes || [];
         const procBody = document.getElementById('i3-procs-body');
         if (!procs.length) {
-            procBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px; color:#94a3b8">No high resource consumption processes</td></tr>';
+            procBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px; color:#94a3b8">No high-resource processes detected</td></tr>';
         } else {
             procBody.innerHTML = procs.map(p => {
                 const high = p.cpu > 85 || p.memory > 85;
                 return `
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.05); background:${high?'rgba(239,68,68,0.15)':''}">
                     <td style="padding:8px; font-family:monospace; color:#38bdf8">${p.pid}</td>
-                    <td style="padding:8px; font-weight:600; color:#f8fafc">${p.name} ${high?'<span style="color:#ef4444; font-weight:bold; font-size:10px">🔥 >85% ALERT</span>':''}</td>
+                    <td style="padding:8px; font-weight:600; color:#f8fafc">${p.name} ${high?'<span style="color:#ef4444; font-size:10px">🔥 >85% ALERT</span>':''}</td>
                     <td style="padding:8px; color:${p.cpu>85?'#ef4444':'#f8fafc'}">${p.cpu}%</td>
                     <td style="padding:8px; color:${p.memory>85?'#ef4444':'#f8fafc'}">${p.memory}%</td>
                     <td style="padding:8px; color:#94a3b8">${p.user}</td>
@@ -725,7 +753,7 @@ async function openImage3Modal(serverId) {
             }).join('');
         }
 
-        // Server Incidents Tab
+        // Incidents tab
         const alerts = details.alerts || [];
         const incList = document.getElementById('i3-incidents-list');
         if (!alerts.length) {
@@ -734,7 +762,7 @@ async function openImage3Modal(serverId) {
             incList.innerHTML = alerts.map(a => `
                 <div style="background:#0f172a; padding:12px; border-radius:6px; margin-bottom:8px; border-left:4px solid ${a.severity==='critical'?'#ef4444':'#f59e0b'}">
                     <div style="display:flex; justify-content:space-between">
-                        <strong style="color:#f8fafc; font-size:13px">${a.title || a.alert_type}</strong>
+                        <strong style="color:#f8fafc; font-size:13px">${a.title || a.alert_type || 'Alert'}</strong>
                         <span style="font-size:10px; color:#94a3b8">${a.created_at_formatted || 'recent'}</span>
                     </div>
                     <div style="font-size:11px; color:#94a3b8; margin-top:4px">${a.message || ''}</div>
@@ -742,7 +770,7 @@ async function openImage3Modal(serverId) {
             `).join('');
         }
 
-        // Logs
+        // Logs tab
         const logs = details.logs || [];
         const logBox = document.getElementById('i3-logs-box');
         if (!logs.length) {
@@ -752,13 +780,15 @@ async function openImage3Modal(serverId) {
                 <div style="padding:2px 0; border-bottom:1px solid rgba(255,255,255,0.04)">
                     <span style="color:#38bdf8">[${l.created_at_formatted || 'log'}]</span>
                     <span style="color:#f59e0b; margin-left:6px">${l.log_path || '/var/log/syslog'}:</span>
-                    <span style="color:#f8fafc; margin-left:6px">${l.line}</span>
+                    <span style="color:#f8fafc; margin-left:6px">${l.line || ''}</span>
                 </div>
             `).join('');
+            logBox.scrollTop = logBox.scrollHeight;
         }
 
     } catch(e) {
-        showToast('Error loading asset modal', 'error');
+        console.error('Modal load error:', e);
+        showToast('Error loading asset details', 'error');
     }
 }
 
