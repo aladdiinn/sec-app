@@ -2987,19 +2987,33 @@ def classify_log_entry(message: str, source: str = "", log_type: str = None) -> 
 
     level = _detect_level(msg_lower)
 
-    # 0. OS System Sources MUST remain OS logs unless explicitly tagged as app/db
+    # 0. EXPLICIT SOURCE MATCH (Highest Priority - never reclassify across application types based on log message contents)
+    is_tomcat_src = (
+        lt in ("tomcat", "catalina") or
+        any(k in src_lower for k in ["tomcat", "catalina", "nohup", "apache-tomcat", "mdm"])
+    )
+    if is_tomcat_src:
+        clean_src = src_str if (src_str and "node-agent" not in src_str and "app-agent" not in src_str) else "/opt/tomcat/logs/catalina.out"
+        return "tomcat", clean_src, level
+
+    is_pg_src = (
+        lt in ("postgres", "pgsql") or
+        (any(k in src_lower for k in ["postgres", "pgsql"]) and not is_os_source and not is_tomcat_src)
+    )
+    if is_pg_src:
+        clean_src = src_str if (src_str and "node-agent" not in src_str and "app-agent" not in src_str) else "/var/log/postgresql/postgresql.log"
+        return "postgres", clean_src, level
+
     is_os_source = (
         src_lower in ("systemd/journal", "journalctl", "syslog/journalctl") or
         src_lower.startswith("systemd/") or
         any(k in src_lower for k in ["/var/log/syslog", "/var/log/auth.log", "/var/log/secure", "/var/log/messages", "/var/log/kern.log", "/var/log/audit", "/var/log/dpkg.log"])
     )
-    if is_os_source and lt not in ("postgres", "pgsql", "tomcat", "catalina"):
+    if is_os_source:
         return "os", src_str, level
 
-    # 1. PostgreSQL detection
+    # Fallback Message Content Checks (Only when source path is generic/unspecified)
     is_pg = (
-        lt in ("postgres", "pgsql") or
-        any(k in src_lower for k in ["postgres", "pgsql", "5432"]) or
         any(k in msg_lower for k in [
             "statement:", "checkpoint", "duration:", "pg_hba", "autovacuum:",
             "database system is ready", "database system was shut down",
@@ -3008,17 +3022,13 @@ def classify_log_entry(message: str, source: str = "", log_type: str = None) -> 
             "alter user", "alter role", "grant all", "with superuser", "vacuum",
             "permission denied for database", "must be superuser"
         ]) or
-        bool(re.search(r'\[\d+\]:\s*(?:log|error|fatal|detail|hint|statement|warning):', msg_lower)) or
-        bool(re.search(r'\b(select\s+.*from|insert\s+into|update\s+\w+\s+set|delete\s+from|create\s+table|drop\s+database|truncate|alter\s+user|alter\s+role|grant\s+all)\b', msg_lower))
+        bool(re.search(r'\[\d+\]:\s*(?:log|error|fatal|detail|hint|statement|warning):', msg_lower))
     )
     if is_pg:
         clean_src = src_str if (src_str and "node-agent" not in src_str and "app-agent" not in src_str) else "/var/log/postgresql/postgresql.log"
         return "postgres", clean_src, level
 
-    # 2. Tomcat / Java Application detection
     is_tomcat = (
-        lt in ("tomcat", "catalina", "app", "java") or
-        any(k in src_lower for k in ["tomcat", "catalina", "nohup", "coyote", "8080", "8443", "java", "mdm", "spring", "app"]) or
         any(k in msg_lower for k in [
             "catalina", "org.apache.catalina", "org.apache.coyote", "org.apache.tomcat",
             "protocolhandler", "deployment of web application", "starting service",
@@ -3031,10 +3041,8 @@ def classify_log_entry(message: str, source: str = "", log_type: str = None) -> 
         clean_src = src_str if (src_str and "node-agent" not in src_str and "app-agent" not in src_str) else "/opt/tomcat/logs/catalina.out"
         return "tomcat", clean_src, level
 
-    # 3. OS System detection
     is_os = (
         lt in ("os", "auth", "syslog", "kernel", "audit", "journal") or
-        any(k in src_lower for k in ["auth", "syslog", "secure", "audit", "kern", "journal", "dpkg", "boot", "cron", "messages"]) or
         any(k in msg_lower for k in [
             "systemd[", "sshd[", "kernel:", "cron[", "sudo:", "su:", "pam_unix",
             "userdel", "deluser", "useradd", "adduser", "usermod", "chmod", "chown",
@@ -3073,7 +3081,7 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                 cur.execute("""
                     ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS log_type VARCHAR(32);
                 """)
-                # Automatically sanitize existing rotated log sources in database
+                # Automatically sanitize existing rotated log sources and log_types in database
                 try:
                     cur.execute("""
                         UPDATE pushed_logs 
@@ -3084,6 +3092,15 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                         UPDATE pushed_logs 
                         SET source = REGEXP_REPLACE(source, 'postgresql-[A-Za-z0-9_-]+\\.log$', 'postgresql.log') 
                         WHERE source ~* 'postgresql-[A-Za-z0-9_-]+\\.log$';
+                    """)
+                    cur.execute("""
+                        UPDATE pushed_logs SET log_type = 'tomcat' WHERE source ILIKE '%catalina%' OR source ILIKE '%tomcat%' OR source ILIKE '%nohup%';
+                    """)
+                    cur.execute("""
+                        UPDATE pushed_logs SET log_type = 'os' WHERE source = 'systemd/journal' OR source ILIKE '%syslog%' OR source ILIKE '%auth.log%' OR source ILIKE '%secure%';
+                    """)
+                    cur.execute("""
+                        UPDATE pushed_logs SET log_type = 'postgres' WHERE (source ILIKE '%postgres%' OR source ILIKE '%pgsql%') AND source NOT ILIKE '%catalina%' AND source NOT ILIKE '%journal%' AND source NOT ILIKE '%syslog%';
                     """)
                 except Exception:
                     pass

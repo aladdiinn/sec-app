@@ -775,7 +775,6 @@
             if (!f || !f.source) continue;
             const src = f.source;
             if (seen.has(src)) continue;
-            if (f.count === 0 && available.length > 1) continue;
 
             if (hasMainCatalina && /\.\d{4}-\d{2}-\d{2}\.log$/i.test(src)) continue;
             if (hasMainCatalina && /localhost\.|manager\.|host-manager\./i.test(src)) continue;
@@ -889,7 +888,10 @@
             return;
         }
 
-        logBox.innerHTML = filtered.map(l => {
+        // Reverse array to display oldest log lines at top and latest real-time lines at bottom
+        const displayLogs = filtered.slice().reverse();
+
+        logBox.innerHTML = displayLogs.map(l => {
             const text = l.line || l.message || '';
             const sourcePath = l.source || l.log_path || '/var/log/syslog';
             const isThreat = isModalLogSecurityThreat(text, sourcePath);

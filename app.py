@@ -2763,19 +2763,24 @@ def get_new_log_lines(max_lines_per_file=50):
         try:
             if not os.path.exists(path): continue
             size = os.path.getsize(path)
-            pos = log_positions.get(path, max(0, size - 15000))
-            if size < pos: pos = 0
+            if size == 0: continue
+
+            pos = log_positions.get(path)
+            if pos is None or pos > size or (size - pos) > 25000:
+                pos = max(0, size - 25000)
+
             with open(path, 'r', errors='ignore') as f:
                 f.seek(pos)
                 raw_lines = f.readlines()
                 log_positions[path] = f.tell()
-                if not raw_lines:
-                    f.seek(max(0, size - 8000))
+
+                if not raw_lines or len(raw_lines) < 5:
+                    f.seek(max(0, size - 15000))
                     raw_lines = f.readlines()[-30:]
 
                 clean_src = path
-                if re.search(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', clean_src, re.I):
-                    clean_src = re.sub(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', 'catalina.out', clean_src, flags=re.I)
+                if re.search(r'(catalina|localhost|manager|host-manager)\.\d{{4}}-\d{{2}}-\d{{2}}\.log$', clean_src, re.I):
+                    clean_src = re.sub(r'(catalina|localhost|manager|host-manager)\.\d{{4}}-\d{{2}}-\d{{2}}\.log$', 'catalina.out', clean_src, flags=re.I)
                 elif re.search(r'postgresql-[A-Za-z0-9_-]+\.log$', clean_src, re.I):
                     clean_src = re.sub(r'postgresql-[A-Za-z0-9_-]+\.log$', 'postgresql.log', clean_src, flags=re.I)
 
@@ -2783,12 +2788,13 @@ def get_new_log_lines(max_lines_per_file=50):
                     line = line.strip()
                     if not line: continue
                     lt = ltype
-                    lower_l = line.lower()
-                    if any(k in lower_l for k in ['postgres', 'pgsql', 'fatal:  password authentication', 'no pg_hba.conf', 'drop database', 'drop table', 'alter user', 'alter role', 'grant all', 'drop schema']):
-                        lt = 'postgres'
-                    elif any(k in lower_l for k in ['tomcat', 'catalina', 'nohup', 'org.apache.catalina', 'spring', 'hibernate', 'mdm']):
-                        lt = 'tomcat'
-                    
+                    if lt not in ('tomcat', 'postgres', 'os'):
+                        lower_l = line.lower()
+                        if any(k in lower_l for k in ['postgres', 'pgsql', 'fatal:  password authentication', 'no pg_hba.conf', 'drop database', 'drop table', 'alter user', 'alter role', 'grant all', 'drop schema']):
+                            lt = 'postgres'
+                        elif any(k in lower_l for k in ['tomcat', 'catalina', 'nohup', 'org.apache.catalina', 'spring', 'hibernate', 'mdm', 'unified_hes', 'meter_job']):
+                            lt = 'tomcat'
+
                     item = {{"line": line, "source": clean_src, "log_type": lt}}
                     if lt in cat_lines:
                         cat_lines[lt].append(item)
@@ -4302,7 +4308,7 @@ async def api_fetch_log_lines(request: Request):
                 row_lt = (pl.get("log_type") or "").lower()
                 if lt == "os" and row_lt != "os" and not any(k in src.lower() or k in msg.lower() for k in ["auth", "syslog", "secure", "audit", "kern", "sudo", "systemd"]):
                     continue
-                elif lt == "tomcat" and row_lt != "tomcat" and not any(k in src.lower() or k in msg.lower() for k in ["tomcat", "catalina", "nohup", "java"]):
+                elif lt == "tomcat" and row_lt != "tomcat" and not any(k in src.lower() or k in msg.lower() for k in ["tomcat", "catalina", "nohup", "java", "mdm"]):
                     continue
                 elif lt in ["postgres", "pgsql"] and row_lt not in ["postgres", "pgsql"] and not any(k in src.lower() or k in msg.lower() for k in ["postgres", "pgsql", "pg_", "drop database", "drop table", "alter user", "grant all"]):
                     continue
@@ -4813,52 +4819,54 @@ async def api_server_log_files(server_id: int):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT (CASE WHEN source ILIKE '%%catalina%%' OR source ILIKE '%%localhost%%' OR source ILIKE '%%manager%%' THEN 
-                                REGEXP_REPLACE(source, '(catalina|localhost|manager|host-manager)\\.\\d{4}-\\d{2}-\\d{2}\\.log$', 'catalina.out')
-                             WHEN source ILIKE '%%postgresql-%%' THEN
-                                REGEXP_REPLACE(source, 'postgresql-[A-Za-z0-9_-]+\\.log$', 'postgresql.log')
-                             ELSE source END) as source,
-                       (CASE WHEN source ILIKE '%%systemd/journal%%' OR source ILIKE '%%syslog%%' OR source ILIKE '%%auth%%' THEN 'os' 
-                             WHEN source ILIKE '%%catalina%%' OR source ILIKE '%%tomcat%%' OR source ILIKE '%%nohup%%' OR source ILIKE '%%mdm%%' THEN 'tomcat'
-                             WHEN source ILIKE '%%postgres%%' OR source ILIKE '%%pgsql%%' THEN 'postgres'
-                             ELSE MAX(COALESCE(log_type, 'os')) END) as log_type,
-                       SUM(1) as count
+                SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
                 FROM pushed_logs
                 WHERE server_id = %s AND source IS NOT NULL AND source != ''
-                  AND source NOT SIMILAR TO '%%\\.[0-9]{4}-[0-9]{2}-[0-9]{2}%%'
-                  AND source NOT ILIKE '%%localhost.%%' AND source NOT ILIKE '%%manager.%%'
-                GROUP BY 1, 2
-                HAVING SUM(1) > 0
+                GROUP BY source, log_type
                 ORDER BY count DESC
-                LIMIT 50;
+                LIMIT 100;
             """, (server_id,))
-            files = [dict(r) for r in cur.fetchall()]
+            rows = [dict(r) for r in cur.fetchall()]
 
+            deduped = {}
+            for r in rows:
+                src = (r.get("source") or "").strip()
+                lt = (r.get("log_type") or "os").strip()
+                cnt = int(r.get("count") or 0)
+
+                if src == "systemd/journal" and lt in ("postgres", "tomcat"):
+                    continue
+
+                clean_src = re.sub(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', 'catalina.out', src, flags=re.I)
+                clean_src = re.sub(r'postgresql-[A-Za-z0-9_-]+\.log$', 'postgresql.log', clean_src, flags=re.I)
+
+                # Skip un-normalized date-stamped rotated secondary log files (localhost, manager)
+                if re.search(r'^(localhost|manager|host-manager)\.', os.path.basename(src), re.I) and clean_src == src:
+                    continue
+
+                if clean_src not in deduped:
+                    deduped[clean_src] = {"source": clean_src, "log_type": lt, "count": cnt}
+                else:
+                    deduped[clean_src]["count"] += cnt
+
+            files = list(deduped.values())
             if not files:
                 try:
                     cur.execute("""
-                        SELECT log_file_path as source, MAX(COALESCE(service_type, 'os')) as log_type, 0 as count
+                        SELECT log_file_path as source, COALESCE(service_type, 'os') as log_type, 0 as count
                         FROM server_log_configs
                         WHERE server_id = %s AND log_file_path IS NOT NULL AND log_file_path != ''
-                        GROUP BY log_file_path;
+                        GROUP BY log_file_path, service_type;
                     """, (server_id,))
                     cfg_files = [dict(r) for r in cur.fetchall()]
                     files.extend(cfg_files)
                 except Exception: pass
 
             has_os = any(f.get("log_type") == "os" or any(k in (f.get("source") or "").lower() for k in ["auth", "syslog", "secure", "journal", "audit"]) for f in files)
-            if not has_os and not files:
+            if not has_os:
                 files.append({"source": "systemd/journal", "log_type": "os", "count": 0})
 
-            deduped = []
-            seen_src = set()
-            for f in files:
-                src = f.get("source")
-                if src and src not in seen_src:
-                    seen_src.add(src)
-                    deduped.append(f)
-
-            return {"files": deduped}
+            return {"files": files}
     except Exception as e:
         logger.error(f"Error in api_server_log_files: {e}")
         return {"files": []}

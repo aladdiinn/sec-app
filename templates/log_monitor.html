@@ -907,7 +907,6 @@ async function updateLogFileSelectorForServer(serverId) {
             if (!f || !f.source) continue;
             const src = f.source;
             if (seen.has(src)) continue;
-            if (f.count === 0 && files.length > 1) continue;
 
             if (hasMainCatalina && /\.\d{4}-\d{2}-\d{2}\.log$/i.test(src)) continue;
             if (hasMainCatalina && /localhost\.|manager\.|host-manager\./i.test(src)) continue;
