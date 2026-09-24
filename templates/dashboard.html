@@ -941,6 +941,18 @@ function updateModalSoarBanner() {
     }
 }
 
+// Merge new category logs into the buffer — deduplicate by id, sort descending, cap at 1000
+function mergeIntoBuffer(newLogs) {
+    if (!Array.isArray(newLogs) || !newLogs.length) return false;
+    const existingIds = new Set(currentModalLogs.filter(l => l.id).map(l => l.id));
+    const additions = newLogs.filter(l => l.id && !existingIds.has(l.id));
+    if (!additions.length) return false;
+    currentModalLogs = [...additions, ...currentModalLogs];
+    currentModalLogs.sort((a, b) => (b.id || 0) - (a.id || 0));
+    if (currentModalLogs.length > 1000) currentModalLogs = currentModalLogs.slice(0, 1000);
+    return true;
+}
+
 function selectModalLogCategory(cat) {
     modalActiveCategory = cat;
     document.querySelectorAll('.i3-log-cat-btn').forEach(b => b.classList.remove('active'));
@@ -951,14 +963,24 @@ function selectModalLogCategory(cat) {
     const sel = document.getElementById('modal-log-file-select');
     if (sel) sel.value = '';
 
-    // Update SOAR banner dynamically based on the selected category
     updateModalSoarBanner();
     updateModalFileSelector();
 
-    // Category filtering is 100% client-side from existing buffer
-    // Do NOT re-fetch from backend — it may return 0 if backend category query misses entries
-    // The buffer from openImage3Modal (limit=500) or refreshModalLogs covers all categories
+    // 1. Render immediately from existing buffer (instant, no flicker)
     renderModalLogs();
+
+    // 2. Background-fetch category-specific logs and merge new ones into buffer
+    // This ensures older category logs (pushed before the top-500 window) are included
+    const bgCats = ['tomcat', 'postgres', 'os', 'errors', 'userdel'];
+    if (bgCats.includes(cat) && activeModalServerId) {
+        apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=300&log_type=${encodeURIComponent(cat)}`)
+            .then(catLogs => {
+                if (mergeIntoBuffer(catLogs)) {
+                    renderModalLogs(); // re-render only if new logs were added
+                }
+            })
+            .catch(() => {});
+    }
 }
 
 function updateModalFileSelector() {
@@ -1243,11 +1265,19 @@ function escapeHtml(text) {
 async function refreshModalLogs() {
     if (!activeModalServerId) return;
     try {
-        // Fetch ALL log types (no log_type filter) with limit=500
-        // Category + file filtering handled client-side by renderModalLogs()
-        const stream = await apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=500`);
-        if (Array.isArray(stream) && stream.length > 0) {
-            currentModalLogs = stream;
+        // Step 1: Fetch ALL log types (no category filter) — gets the freshest 500 entries
+        const allLogs = await apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=500`);
+        if (Array.isArray(allLogs) && allLogs.length > 0) {
+            currentModalLogs = allLogs;
+        }
+        // Step 2: If on a specific category tab, also fetch that category
+        // and merge in any older category-specific logs not in the top-500 all-type window
+        const catsFetchable = ['tomcat', 'postgres', 'os', 'errors', 'userdel'];
+        if (catsFetchable.includes(modalActiveCategory) && activeModalServerId) {
+            try {
+                const catLogs = await apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200&log_type=${encodeURIComponent(modalActiveCategory)}`);
+                mergeIntoBuffer(catLogs);
+            } catch(e) {}
         }
         renderModalLogs();
         showToast('Logs refreshed', 'info');
