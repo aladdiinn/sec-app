@@ -2663,7 +2663,7 @@ def auto_discover_log_paths():
                 parts = line.split(None, 10)
                 if len(parts) > 1:
                     pid = parts[1]
-                    fd_dir = f"/proc/{pid}/fd"
+                    fd_dir = f"/proc/{{pid}}/fd"
                     if os.path.exists(fd_dir):
                         try:
                             for fd in os.listdir(fd_dir):
