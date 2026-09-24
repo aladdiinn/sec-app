@@ -965,11 +965,12 @@ async function selectModalLogCategory(cat) {
         if (cat && cat !== 'all') {
             streamUrl += `&log_type=${encodeURIComponent(cat)}`;
         }
+        if (modalActiveFile) {
+            streamUrl += `&source=${encodeURIComponent(modalActiveFile)}`;
+        }
         const freshLogs = await apiFetch(streamUrl);
-        if (Array.isArray(freshLogs) && freshLogs.length > 0) {
+        if (Array.isArray(freshLogs)) {
             currentModalLogs = freshLogs;
-        } else if (Array.isArray(freshLogs) && freshLogs.length === 0 && cat === 'all') {
-            currentModalLogs = [];
         }
     } catch(e) {
         console.warn('Error fetching logs for category:', e);
@@ -1028,10 +1029,17 @@ function anyMatch(str, words) {
     return words.some(w => str.includes(w));
 }
 
+function cleanLogSource(src) {
+    if (!src) return '';
+    return String(src).trim()
+        .replace(/(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$/i, 'catalina.out')
+        .replace(/postgresql-[A-Za-z0-9_-]+\.log$/i, 'postgresql.log');
+}
+
 function filterModalLogsByFile() {
     const sel = document.getElementById('modal-log-file-select');
     modalActiveFile = sel ? sel.value : '';
-    renderModalLogs();
+    refreshModalLogs();
 }
 
 function isModalLogSecurityThreat(text, src) {
@@ -1096,9 +1104,14 @@ function renderModalLogs() {
             if (!isUser) return false;
         }
 
-        // File filter
-        if (modalActiveFile && (l.source || l.log_path) !== modalActiveFile) {
-            return false;
+        // File filter using flexible source matching
+        if (modalActiveFile) {
+            const activeClean = cleanLogSource(modalActiveFile).toLowerCase();
+            const activeBase = activeClean.split('/').pop();
+            const cleanSrc = cleanLogSource(l.source || l.log_path).toLowerCase();
+            if (cleanSrc !== activeClean && !src.includes(activeClean) && !cleanSrc.includes(activeBase) && !src.includes(activeBase)) {
+                return false;
+            }
         }
 
         // Text search
@@ -1250,6 +1263,9 @@ async function refreshModalLogs() {
         let streamUrl = `/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200`;
         if (modalActiveCategory && modalActiveCategory !== 'all') {
             streamUrl += `&log_type=${encodeURIComponent(modalActiveCategory)}`;
+        }
+        if (modalActiveFile) {
+            streamUrl += `&source=${encodeURIComponent(modalActiveFile)}`;
         }
         const stream = await apiFetch(streamUrl);
         if (Array.isArray(stream)) {
