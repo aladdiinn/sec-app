@@ -2457,12 +2457,13 @@ chmod -R +r /var/log/tomcat* /opt/tomcat* 2>/dev/null || true
 # 1.5 Setup auditd safely (Cross-platform)
 echo "[SECUREPULSE] Configuring auditd security policies..."
 if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null 2>&1 || true
-    apt-get install -y -qq auditd >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install auditd, continuing..."
+    apt-get install -y -qq auditd </dev/null >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install auditd, continuing..."
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y audit >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install audit, continuing..."
+    yum install -y audit </dev/null >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install audit, continuing..."
 elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y audit >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install audit, continuing..."
+    dnf install -y audit </dev/null >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install audit, continuing..."
 fi
 
 if [ -d /etc/audit/rules.d/ ]; then
