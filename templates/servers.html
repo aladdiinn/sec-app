@@ -758,8 +758,18 @@
             });
         }
 
-        sel.innerHTML = '<option value="">-- All Discovered Files (' + available.length + ') --</option>' +
-            available.map(f => `<option value="${escapeHtml(f.source)}">${escapeHtml(f.source)} (${f.count || 0} lines)</option>`).join('');
+        const uniqueFiles = [];
+        const seen = new Set();
+        for (const f of available) {
+            if (!f || !f.source) continue;
+            if (seen.has(f.source)) continue;
+            if (f.count === 0 && available.length > 1) continue;
+            seen.add(f.source);
+            uniqueFiles.push(f);
+        }
+
+        sel.innerHTML = '<option value="">-- All Discovered Files (' + uniqueFiles.length + ') --</option>' +
+            uniqueFiles.map(f => `<option value="${escapeHtml(f.source)}">${escapeHtml(f.source)} (${f.count || 0} lines)</option>`).join('');
         modalActiveFile = '';
     }
 

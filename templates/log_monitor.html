@@ -848,6 +848,16 @@ function selectServerFilter(srvId, el) {
     selectedAppConfigId = null;
     selectedLogFilePath = null;
 
+    const sourceEl = document.getElementById('telemetry-file-path');
+    if (sourceEl) {
+        if (!srvId) {
+            sourceEl.innerText = 'Global Telemetry Stream';
+        } else {
+            const hostNameText = el ? (el.querySelector('div div')?.innerText || `#${srvId}`) : `#${srvId}`;
+            sourceEl.innerText = `Server Node: ${hostNameText}`;
+        }
+    }
+
     updateLogFileSelectorForServer(srvId);
     fetchLogsNow();
 }
@@ -868,8 +878,17 @@ async function updateLogFileSelectorForServer(serverId) {
     try {
         const res = await apiFetch(`/api/servers/${serverId}/log-files`);
         const files = (res && res.files) ? res.files : [];
-        sel.innerHTML = '<option value="">-- All Discovered Files --</option>' +
-            files.map(f => `<option value="${f.source}">${f.source} (${f.count || 0} lines)</option>`).join('');
+        const uniqueFiles = [];
+        const seen = new Set();
+        for (const f of files) {
+            if (!f || !f.source) continue;
+            if (seen.has(f.source)) continue;
+            if (f.count === 0 && files.length > 1) continue;
+            seen.add(f.source);
+            uniqueFiles.push(f);
+        }
+        sel.innerHTML = '<option value="">-- All Discovered Files (' + uniqueFiles.length + ') --</option>' +
+            uniqueFiles.map(f => `<option value="${escapeHtml(f.source)}">${escapeHtml(f.source)} (${f.count || 0} lines)</option>`).join('');
     } catch(e) {
         sel.innerHTML = '<option value="">-- All Discovered Files --</option>';
     }

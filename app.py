@@ -2472,13 +2472,17 @@ def get_processes():
     procs = []
     try:
         out = subprocess.check_output(["ps", "aux", "--no-headers"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.strip().split("\\n")[:50]:
+        for line in out.strip().split("\\n"):
             parts = line.split(None, 10)
             if len(parts) < 11: continue
             try:
                 cpu = float(parts[2])
                 mem = float(parts[3])
-                procs.append({{"user": parts[0], "pid": parts[1], "cpu": cpu, "memory": mem, "name": parts[10][:80]}})
+                name = parts[10][:80]
+                if name.startswith("[") and name.endswith("]"):
+                    if cpu == 0 and mem == 0:
+                        continue
+                procs.append({{"user": parts[0], "pid": parts[1], "cpu": cpu, "memory": mem, "name": name}})
             except: pass
         procs.sort(key=lambda x: x["cpu"] + x["memory"], reverse=True)
     except: pass
@@ -2529,7 +2533,7 @@ def auto_discover_log_paths():
             paths["systemd/journal"] = "os"
         except: pass
 
-    # Tomcat / nohup log discovery
+    # Tomcat / Java / Application / nohup log discovery
     tomcat_candidates = [
         "/opt/tomcat/logs/catalina.out",
         "/opt/tomcat*/logs/catalina.out",
@@ -2546,7 +2550,11 @@ def auto_discover_log_paths():
         "/data/logs/*.log",
         "/var/log/catalina.out",
         "/home/*/tomcat/logs/catalina.out",
-        "/home/*/catalina.out"
+        "/home/*/catalina.out",
+        "/opt/*.log",
+        "/opt/*/*.log",
+        "/var/log/*.log",
+        "/data/*.log"
     ]
     for candidate in tomcat_candidates:
         matched = glob.glob(candidate)
@@ -2554,7 +2562,7 @@ def auto_discover_log_paths():
             if os.path.exists(path):
                 paths[path] = "tomcat"
 
-    # Find tomcat from running processes
+    # Find tomcat / Java / Spring / MDM from running processes
     try:
         out = subprocess.check_output(["ps", "aux"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
         for line in out.split("\\n"):
@@ -2575,6 +2583,19 @@ def auto_discover_log_paths():
                     nohup_dir = os.path.dirname(m2.group(1))
                     nohup_path = os.path.join(nohup_dir, "nohup.out")
                     if os.path.exists(nohup_path): paths[nohup_path] = "tomcat"
+            elif any(k in line_l for k in ["java", "spring", "mdm", "jar"]):
+                parts = line.split(None, 10)
+                if len(parts) > 1:
+                    pid = parts[1]
+                    fd_dir = f"/proc/{pid}/fd"
+                    if os.path.exists(fd_dir):
+                        try:
+                            for fd in os.listdir(fd_dir):
+                                target = os.readlink(os.path.join(fd_dir, fd))
+                                if target.endswith(".log") or target.endswith(".out"):
+                                    if os.path.exists(target):
+                                        paths[target] = "tomcat"
+                        except: pass
     except: pass
 
     # Check tomcat systemd service
@@ -4361,8 +4382,18 @@ async def api_fetch_log_lines(request: Request):
             except Exception as ex_ssh:
                 logger.warning(f"Error fetching remote SSH logs from {host}: {ex_ssh}")
 
-    # 4. Priority 4: Read REAL Linux system log files & systemd journalctl directly from server disk
-    if not log_path or (log_type and log_type.lower() in ["syslog", "sys", "auth"]):
+    # 4. Priority 4: Read REAL Linux system log files & systemd journalctl directly from server disk (LOCAL SERVER ONLY)
+    is_local_target = False
+    if sid:
+        srv_target = db.get_server_by_id(sid)
+        if srv_target:
+            t_ip = srv_target.get("ip_address") or srv_target.get("ip") or ""
+            if t_ip in ("127.0.0.1", "localhost", "0.0.0.0"):
+                is_local_target = True
+    else:
+        is_local_target = True
+
+    if not lines and is_local_target and (not log_path or (log_type and log_type.lower() in ["syslog", "sys", "auth"])):
         sys_paths = []
         lt = (log_type or "").lower()
         if not lt or lt in ["syslog", "sys"]:
@@ -4720,12 +4751,12 @@ async def api_log_streams(
                     )"""
                 elif lt == 'tomcat':
                     query += """ AND (
-                        pl.log_type IN ('tomcat', 'app', 'nohup', 'catalina')
-                        OR pl.source ILIKE '%tomcat%' OR pl.source ILIKE '%catalina%' OR pl.source ILIKE '%nohup%'
+                        pl.log_type IN ('tomcat', 'app', 'nohup', 'catalina', 'java', 'spring')
+                        OR pl.source ILIKE '%tomcat%' OR pl.source ILIKE '%catalina%' OR pl.source ILIKE '%nohup%' OR pl.source ILIKE '%java%' OR pl.source ILIKE '%mdm%'
                         OR pl.message ILIKE '%catalina%' OR pl.message ILIKE '%org.apache%'
                         OR pl.message ILIKE '%coyote%' OR pl.message ILIKE '%protocolhandler%'
                         OR pl.message ILIKE '%outofmemory%' OR pl.message ILIKE '%java.lang%'
-                        OR pl.message ILIKE '%spring%' OR pl.message ILIKE '%hibernate%'
+                        OR pl.message ILIKE '%spring%' OR pl.message ILIKE '%hibernate%' OR pl.message ILIKE '%jdbc%' OR pl.message ILIKE '%hikari%' OR pl.message ILIKE '%mdm%'
                     )"""
                 elif lt == 'postgres':
                     query += """ AND (
@@ -4785,35 +4816,41 @@ async def api_server_log_files(server_id: int):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
+                SELECT source, MAX(COALESCE(log_type, 'os')) as log_type, COUNT(*) as count
                 FROM pushed_logs
                 WHERE server_id = %s AND source IS NOT NULL AND source != ''
-                GROUP BY source, log_type
+                GROUP BY source
+                HAVING COUNT(*) > 0
                 ORDER BY count DESC
                 LIMIT 50;
             """, (server_id,))
             files = [dict(r) for r in cur.fetchall()]
 
-            # Also check server_log_configs
-            try:
-                cur.execute("""
-                    SELECT log_file_path as source, COALESCE(service_type, 'os') as log_type, 0 as count
-                    FROM server_log_configs
-                    WHERE server_id = %s AND log_file_path IS NOT NULL AND log_file_path != '';
-                """, (server_id,))
-                cfg_files = [dict(r) for r in cur.fetchall()]
-                existing = {f["source"] for f in files}
-                for cf in cfg_files:
-                    if cf["source"] not in existing:
-                        files.append(cf)
-            except Exception: pass
+            if not files:
+                try:
+                    cur.execute("""
+                        SELECT log_file_path as source, MAX(COALESCE(service_type, 'os')) as log_type, 0 as count
+                        FROM server_log_configs
+                        WHERE server_id = %s AND log_file_path IS NOT NULL AND log_file_path != ''
+                        GROUP BY log_file_path;
+                    """, (server_id,))
+                    cfg_files = [dict(r) for r in cur.fetchall()]
+                    files.extend(cfg_files)
+                except Exception: pass
 
-            # Ensure systemd/journal fallback if no OS source is present
             has_os = any(f.get("log_type") == "os" or any(k in (f.get("source") or "").lower() for k in ["auth", "syslog", "secure", "journal", "audit"]) for f in files)
-            if not has_os:
+            if not has_os and not files:
                 files.append({"source": "systemd/journal", "log_type": "os", "count": 0})
 
-            return {"files": files}
+            deduped = []
+            seen_src = set()
+            for f in files:
+                src = f.get("source")
+                if src and src not in seen_src:
+                    seen_src.add(src)
+                    deduped.append(f)
+
+            return {"files": deduped}
     except Exception as e:
         logger.error(f"Error in api_server_log_files: {e}")
         return {"files": []}

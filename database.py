@@ -3006,15 +3006,16 @@ def classify_log_entry(message: str, source: str = "", log_type: str = None) -> 
         clean_src = src_str if (src_str and "node-agent" not in src_str and "app-agent" not in src_str) else "/var/log/postgresql/postgresql.log"
         return "postgres", clean_src, level
 
-    # 2. Tomcat / Application detection
+    # 2. Tomcat / Java Application detection
     is_tomcat = (
-        lt in ("tomcat", "catalina", "app") or
-        any(k in src_lower for k in ["tomcat", "catalina", "nohup", "coyote", "8080", "8443"]) or
+        lt in ("tomcat", "catalina", "app", "java") or
+        any(k in src_lower for k in ["tomcat", "catalina", "nohup", "coyote", "8080", "8443", "java", "mdm", "spring", "app"]) or
         any(k in msg_lower for k in [
             "catalina", "org.apache.catalina", "org.apache.coyote", "org.apache.tomcat",
             "protocolhandler", "deployment of web application", "starting service",
             "stopping service", "outofmemoryerror", "stackoverflowerror",
-            "java.lang.", "spring", "hibernate"
+            "java.lang.", "spring", "hibernate", "mdm_", "jdbc", "servlet",
+            "wildfly", "jboss", "jetty", "hikari", "hikari-pool"
         ])
     )
     if is_tomcat:
