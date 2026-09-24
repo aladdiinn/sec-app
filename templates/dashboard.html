@@ -949,7 +949,7 @@ function mergeIntoBuffer(newLogs) {
     if (!additions.length) return false;
     currentModalLogs = [...additions, ...currentModalLogs];
     currentModalLogs.sort((a, b) => (b.id || 0) - (a.id || 0));
-    if (currentModalLogs.length > 1000) currentModalLogs = currentModalLogs.slice(0, 1000);
+    if (currentModalLogs.length > 5000) currentModalLogs = currentModalLogs.slice(0, 5000);
     return true;
 }
 
@@ -971,7 +971,7 @@ function selectModalLogCategory(cat) {
 
     // 2. Background-fetch category-specific logs and merge new ones into buffer
     // This ensures older category logs (pushed before the top-500 window) are included
-    const bgCats = ['tomcat', 'postgres', 'os', 'errors', 'userdel'];
+    const bgCats = ['tomcat', 'postgres', 'os', 'errors', 'userdel', 'soar'];
     if (bgCats.includes(cat) && activeModalServerId) {
         apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=300&log_type=${encodeURIComponent(cat)}`)
             .then(catLogs => {
@@ -1099,7 +1099,7 @@ function renderModalLogs() {
                          /\b(select\s+.*from|insert\s+into|update\s+\w+\s+set|delete\s+from|create\s+table|drop\s+database|truncate|alter\s+user|alter\s+role|grant\s+all)\b/i.test(line);
             if (!isPg) return false;
         } else if (modalActiveCategory === 'errors') {
-            const isErr = anyMatch(line, ['error', 'fatal', 'crit', 'exception', 'severe', 'failed', 'failure', 'denied', 'panic']) ||
+            const isErr = /\b(error|fatal|crit|exception|severe|failed|failure|denied|panic)\b/i.test(line) ||
                           (l.level || l.log_level || '').toUpperCase().includes('ERR') ||
                           (l.level || l.log_level || '').toUpperCase().includes('CRIT') ||
                           (l.level || l.log_level || '').toUpperCase().includes('FATAL');
@@ -1133,7 +1133,7 @@ function renderModalLogs() {
             if (modalLogThreatAlerts && modalLogThreatAlerts.length > 0) {
                 alertsHtml = `
                 <div style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:16px; margin-bottom:12px; text-align:left">
-                    <div style="font-weight:700; color:#ef4444; margin-bottom:10px; font-size:12px; font-family:'Orbitron',monospace">🚨 ACTIVE LOG-BASED SOAR DETECTIONS (SSH Brute Force Excluded)</div>
+                    <div style="font-weight:700; color:#ef4444; margin-bottom:10px; font-size:12px; font-family:'Orbitron',monospace">🚨 ACTIVE LOG-BASED SOAR DETECTIONS</div>
                     ${modalLogThreatAlerts.map(a => `
                         <div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:flex-start">
                             <div>
@@ -1150,7 +1150,7 @@ function renderModalLogs() {
             <div style="color:#94a3b8; text-align:center; padding:35px">
                 <div style="font-size:24px; margin-bottom:8px">🛡️</div>
                 <div style="font-size:13px; font-weight:600; color:#e2e8f0; margin-bottom:4px">No Log-Based SOAR Threats Detected For This Node</div>
-                <div style="font-size:11px; color:#64748b">SSH Brute Force & login noise excluded. Monitored: PostgreSQL deletions/privileges, OS userdel, chmod 777, Tomcat errors.</div>
+                <div style="font-size:11px; color:#64748b">Monitored: PostgreSQL deletions/privileges, OS userdel, chmod 777, Tomcat errors.</div>
             </div>`;
             return;
         }
@@ -1279,7 +1279,7 @@ async function refreshModalLogs() {
         }
         // Step 2: If on a specific category tab, also fetch that category
         // and merge in any older category-specific logs not in the top-500 all-type window
-        const catsFetchable = ['tomcat', 'postgres', 'os', 'errors', 'userdel'];
+        const catsFetchable = ['tomcat', 'postgres', 'os', 'errors', 'userdel', 'soar'];
         if (catsFetchable.includes(modalActiveCategory) && activeModalServerId) {
             try {
                 const catLogs = await apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200&log_type=${encodeURIComponent(modalActiveCategory)}`);

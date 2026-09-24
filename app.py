@@ -4343,7 +4343,7 @@ async def api_fetch_log_lines(request: Request):
                     if not any(k in msg_low for k in ['userdel', 'deluser', 'useradd', 'adduser', 'usermod', 'chmod', 'chown', 'sudo', 'su:']) and not any(k in src_low for k in ['auth', 'secure', 'audit']):
                         continue
                 elif preset == "error":
-                    if lvl not in ['ERROR', 'CRITICAL', 'CRIT', 'HIGH', 'FATAL'] and not any(k in msg_low for k in ['error', 'fail', 'exception', 'fatal', 'crit']):
+                    if lvl not in ['ERROR', 'CRITICAL', 'CRIT', 'HIGH', 'FATAL'] and not re.search(r'\b(error|fail|exception|fatal|crit|severe|denied)\b', msg_low, re.I):
                         continue
                 elif preset == "warn":
                     if lvl not in ['WARN', 'WARNING', 'MEDIUM'] and not any(k in msg_low for k in ['warn', 'warning', 'medium']):
@@ -4844,7 +4844,7 @@ async def api_log_streams(
                         OR pl.message ILIKE '%usermod%sudo%' OR pl.message ILIKE '%outofmemory%' OR pl.message ILIKE '%soar%'
                     )"""
                 elif lt == 'errors':
-                    query += " AND (pl.log_level IN ('ERROR', 'CRITICAL', 'FATAL') OR pl.message ILIKE '%error%' OR pl.message ILIKE '%fatal%' OR pl.message ILIKE '%exception%' OR pl.message ILIKE '%fail%' OR pl.message ILIKE '%severe%' OR pl.message ILIKE '%denied%')"
+                    query += " AND (pl.log_level IN ('ERROR', 'CRITICAL', 'FATAL') OR pl.message ~* '\\y(error|fatal|exception|fail|severe|denied|crit|panic)\\y')"
                 elif lt == 'userdel':
                     query += " AND (pl.message ILIKE '%userdel%' OR pl.message ILIKE '%deluser%' OR pl.message ILIKE '%chmod%' OR pl.message ILIKE '%chown%' OR pl.message ILIKE '%usermod%' OR pl.message ILIKE '%useradd%' OR pl.message ILIKE '%adduser%' OR pl.message ILIKE '%sudo:%' OR pl.message ILIKE '%su:%')"
 

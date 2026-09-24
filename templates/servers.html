@@ -715,7 +715,7 @@
         if (!additions.length) return false;
         currentModalLogs = [...additions, ...currentModalLogs];
         currentModalLogs.sort((a, b) => (b.id || 0) - (a.id || 0));
-        if (currentModalLogs.length > 1000) currentModalLogs = currentModalLogs.slice(0, 1000);
+        if (currentModalLogs.length > 5000) currentModalLogs = currentModalLogs.slice(0, 5000);
         return true;
     }
 
@@ -737,7 +737,7 @@
 
         // 2. Background-fetch category-specific logs and merge new ones into buffer
         // Ensures older category logs not in the top-500 ALL window are included
-        const bgCats = ['tomcat', 'postgres', 'os', 'errors', 'userdel'];
+        const bgCats = ['tomcat', 'postgres', 'os', 'errors', 'userdel', 'soar'];
         if (bgCats.includes(cat) && activeModalServerId) {
             apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=300&log_type=${encodeURIComponent(cat)}`)
                 .then(catLogs => {
@@ -863,7 +863,7 @@
                              /\b(select\s+.*from|insert\s+into|update\s+\w+\s+set|delete\s+from|create\s+table|drop\s+database|truncate|alter\s+user|alter\s+role|grant\s+all)\b/i.test(line);
                 if (!isPg) return false;
             } else if (modalActiveCategory === 'errors') {
-                const isErr = anyMatch(line, ['error', 'fatal', 'crit', 'exception', 'severe', 'failed', 'failure', 'denied', 'panic']) ||
+                const isErr = /\b(error|fatal|crit|exception|severe|failed|failure|denied|panic)\b/i.test(line) ||
                               (l.level || l.log_level || '').toUpperCase().includes('ERR') ||
                               (l.level || l.log_level || '').toUpperCase().includes('CRIT') ||
                               (l.level || l.log_level || '').toUpperCase().includes('FATAL');
@@ -954,7 +954,7 @@
             }
             // Step 2: If on a specific category tab, fetch category logs and merge
             // so older category-specific logs not in the all-type window are included
-            const catsFetchable = ['tomcat', 'postgres', 'os', 'errors', 'userdel'];
+            const catsFetchable = ['tomcat', 'postgres', 'os', 'errors', 'userdel', 'soar'];
             if (catsFetchable.includes(modalActiveCategory) && activeModalServerId) {
                 try {
                     const catLogs = await apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200&log_type=${encodeURIComponent(modalActiveCategory)}`);

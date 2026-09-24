@@ -1353,7 +1353,7 @@ function filterLogLines() {
             } else if (pk === 'userdel' || pk === 'perm') {
                 if (!anyMatch(msg, ['userdel', 'deluser', 'useradd', 'adduser', 'usermod', 'chmod', 'chown', 'sudo', 'su:']) && !anyMatch(src, ['auth', 'secure', 'audit'])) return false;
             } else if (pk === 'error') {
-                if (!['ERROR', 'CRITICAL', 'CRIT', 'HIGH', 'FATAL'].includes(lvl) && !anyMatch(msg, ['error', 'fail', 'exception', 'fatal', 'crit'])) return false;
+                if (!['ERROR', 'CRITICAL', 'CRIT', 'HIGH', 'FATAL'].includes(lvl) && !/\b(error|fail|exception|fatal|crit|severe|denied|panic)\b/i.test(msg)) return false;
             } else if (pk === 'warn') {
                 if (!['WARN', 'WARNING', 'MEDIUM'].includes(lvl) && !anyMatch(msg, ['warn', 'warning', 'medium'])) return false;
             } else if (pk === 'auth') {
