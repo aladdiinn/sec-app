@@ -922,7 +922,14 @@
             const isWarn = lower.includes('warn') || lower.includes('alert') || lower.includes('privilege');
 
             const textColor = isThreat ? '#f87171' : (isErr ? '#ef4444' : (isWarn ? '#f59e0b' : '#f8fafc'));
-            const ts = l.created_at_formatted || (l.created_at ? new Date(l.created_at).toLocaleTimeString() : 'log');
+            // Convert UTC created_at to local timezone (e.g. IST = UTC+5:30) for display
+            const ts = (() => {
+                if (l.created_at) {
+                    const d = new Date(l.created_at);
+                    if (!isNaN(d)) return d.toLocaleString('en-GB', {hour12:false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit'}).replace(',','');
+                }
+                return l.created_at_formatted || 'log';
+            })();
 
             return `
             <div style="padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03); display:flex; align-items:flex-start; gap:8px">

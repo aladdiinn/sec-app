@@ -2766,17 +2766,22 @@ def get_new_log_lines(max_lines_per_file=50):
             if size == 0: continue
 
             pos = log_positions.get(path)
-            if pos is None or pos > size or (size - pos) > 25000:
-                pos = max(0, size - 25000)
+            if pos is None:
+                # First start: seek to END of file — only push new real-time lines, not old history
+                # For small new files (< 10 KB) read last 50 lines as initial context
+                pos = size if size > 10240 else max(0, size - 5000)
+            elif pos > size:
+                # File was rotated / truncated — restart from end of new file
+                pos = size
 
             with open(path, 'r', errors='ignore') as f:
                 f.seek(pos)
                 raw_lines = f.readlines()
-                log_positions[path] = f.tell()
+                log_positions[path] = f.tell()  # always save position, even if no new lines
 
-                if not raw_lines or len(raw_lines) < 5:
-                    f.seek(max(0, size - 15000))
-                    raw_lines = f.readlines()[-30:]
+                # No new lines since last check — wait for next poll cycle
+                if not raw_lines:
+                    continue
 
                 clean_src = path
                 if re.search(r'(catalina|localhost|manager|host-manager)\.\d{{4}}-\d{{2}}-\d{{2}}\.log$', clean_src, re.I):
