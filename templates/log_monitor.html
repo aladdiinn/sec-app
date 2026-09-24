@@ -1015,8 +1015,12 @@ function exportLogs(format) {
     showToast(`Exported ${allLogLines.length} logs to ${filename}`, "success");
 }
 
-async function fetchLogsNow() {
+async function fetchLogsNow(isAutoRefreshCall = false) {
     const tailLimit = parseInt(document.getElementById('log-tail-limit') ? document.getElementById('log-tail-limit').value : 100);
+    const term = document.getElementById('log-terminal-output');
+    if (!isAutoRefreshCall && term) {
+        term.innerHTML = '<div style="text-align:center; padding:40px; color:var(--cyan); font-family:var(--mono); font-size:11px">Fetching secure log stream...<br><br><span style="font-size:24px">⚡</span></div>';
+    }
     try {
         const payload = {
             server_id: selectedServerId ? parseInt(selectedServerId) : null,
@@ -1314,7 +1318,7 @@ function applyPresetFilter(term, btn) {
         if (searchInput && searchInput.value) searchInput.value = '';
     }
 
-    filterLogLines();
+    fetchLogsNow();
     showToast(`Preset: ${term ? term.toUpperCase() : 'ALL STREAMS'}`, "info");
 }
 
@@ -1381,7 +1385,7 @@ function filterLogLines() {
 function startAutoRefresh() {
     if (autoRefreshTimer) clearInterval(autoRefreshTimer);
     autoRefreshTimer = setInterval(() => {
-        if (isAutoRefresh) fetchLogsNow();
+        if (isAutoRefresh) fetchLogsNow(true);
     }, 1000);
 }
 
