@@ -2769,6 +2769,16 @@ def get_new_log_lines(max_lines_per_file=50):
                 f.seek(pos)
                 raw_lines = f.readlines()
                 log_positions[path] = f.tell()
+                if not raw_lines:
+                    f.seek(max(0, size - 8000))
+                    raw_lines = f.readlines()[-30:]
+
+                clean_src = path
+                if re.search(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', clean_src, re.I):
+                    clean_src = re.sub(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', 'catalina.out', clean_src, flags=re.I)
+                elif re.search(r'postgresql-[A-Za-z0-9_-]+\.log$', clean_src, re.I):
+                    clean_src = re.sub(r'postgresql-[A-Za-z0-9_-]+\.log$', 'postgresql.log', clean_src, flags=re.I)
+
                 for line in raw_lines[-max_lines_per_file:]:
                     line = line.strip()
                     if not line: continue
@@ -2776,10 +2786,10 @@ def get_new_log_lines(max_lines_per_file=50):
                     lower_l = line.lower()
                     if any(k in lower_l for k in ['postgres', 'pgsql', 'fatal:  password authentication', 'no pg_hba.conf', 'drop database', 'drop table', 'alter user', 'alter role', 'grant all', 'drop schema']):
                         lt = 'postgres'
-                    elif any(k in lower_l for k in ['tomcat', 'catalina', 'nohup', 'org.apache.catalina', 'spring', 'hibernate']):
+                    elif any(k in lower_l for k in ['tomcat', 'catalina', 'nohup', 'org.apache.catalina', 'spring', 'hibernate', 'mdm']):
                         lt = 'tomcat'
                     
-                    item = {{"line": line, "source": path, "log_type": lt}}
+                    item = {{"line": line, "source": clean_src, "log_type": lt}}
                     if lt in cat_lines:
                         cat_lines[lt].append(item)
                     else:
@@ -4803,11 +4813,22 @@ async def api_server_log_files(server_id: int):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT source, MAX(COALESCE(log_type, 'os')) as log_type, COUNT(*) as count
+                SELECT (CASE WHEN source ILIKE '%%catalina%%' OR source ILIKE '%%localhost%%' OR source ILIKE '%%manager%%' THEN 
+                                REGEXP_REPLACE(source, '(catalina|localhost|manager|host-manager)\\.\\d{4}-\\d{2}-\\d{2}\\.log$', 'catalina.out')
+                             WHEN source ILIKE '%%postgresql-%%' THEN
+                                REGEXP_REPLACE(source, 'postgresql-[A-Za-z0-9_-]+\\.log$', 'postgresql.log')
+                             ELSE source END) as source,
+                       (CASE WHEN source ILIKE '%%systemd/journal%%' OR source ILIKE '%%syslog%%' OR source ILIKE '%%auth%%' THEN 'os' 
+                             WHEN source ILIKE '%%catalina%%' OR source ILIKE '%%tomcat%%' OR source ILIKE '%%nohup%%' OR source ILIKE '%%mdm%%' THEN 'tomcat'
+                             WHEN source ILIKE '%%postgres%%' OR source ILIKE '%%pgsql%%' THEN 'postgres'
+                             ELSE MAX(COALESCE(log_type, 'os')) END) as log_type,
+                       SUM(1) as count
                 FROM pushed_logs
                 WHERE server_id = %s AND source IS NOT NULL AND source != ''
-                GROUP BY source
-                HAVING COUNT(*) > 0
+                  AND source NOT SIMILAR TO '%%\\.[0-9]{4}-[0-9]{2}-[0-9]{2}%%'
+                  AND source NOT ILIKE '%%localhost.%%' AND source NOT ILIKE '%%manager.%%'
+                GROUP BY 1, 2
+                HAVING SUM(1) > 0
                 ORDER BY count DESC
                 LIMIT 50;
             """, (server_id,))

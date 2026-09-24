@@ -3073,9 +3073,21 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                 cur.execute("""
                     ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS log_type VARCHAR(32);
                 """)
-                cur.execute("""
-                    ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS source VARCHAR(512);
-                """)
+                # Automatically sanitize existing rotated log sources in database
+                try:
+                    cur.execute("""
+                        UPDATE pushed_logs 
+                        SET source = REGEXP_REPLACE(source, '(catalina|localhost|manager|host-manager)\\.\\d{4}-\\d{2}-\\d{2}\\.log$', 'catalina.out') 
+                        WHERE source ~* '(catalina|localhost|manager|host-manager)\\.\\d{4}-\\d{2}-\\d{2}\\.log$';
+                    """)
+                    cur.execute("""
+                        UPDATE pushed_logs 
+                        SET source = REGEXP_REPLACE(source, 'postgresql-[A-Za-z0-9_-]+\\.log$', 'postgresql.log') 
+                        WHERE source ~* 'postgresql-[A-Za-z0-9_-]+\\.log$';
+                    """)
+                except Exception:
+                    pass
+
                 for line in lines:
                     # Support both plain strings and structured dicts from the agent
                     if isinstance(line, dict) and 'line' in line:
@@ -3089,6 +3101,13 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                     if not line_str: continue
 
                     row_log_type, row_source, level = classify_log_entry(line_str, raw_source, raw_log_type)
+
+                    # Normalize date-stamped rotated source paths to single main source names
+                    if row_source:
+                        if re.search(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', row_source, re.I):
+                            row_source = re.sub(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', 'catalina.out', row_source, flags=re.I)
+                        elif re.search(r'postgresql-[A-Za-z0-9_-]+\.log$', row_source, re.I):
+                            row_source = re.sub(r'postgresql-[A-Za-z0-9_-]+\.log$', 'postgresql.log', row_source, flags=re.I)
 
                     cur.execute("""
                         INSERT INTO pushed_logs (config_id, server_id, log_level, source, log_type, message, created_at)
