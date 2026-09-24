@@ -2510,6 +2510,14 @@ def get_open_ports():
 def auto_discover_log_paths():
     paths = {{}}
 
+    def is_rotated_archive(filepath):
+        filename = os.path.basename(filepath)
+        if re.search(r'\.\d{{4}}-\d{{2}}-\d{{2}}\.log$', filename, re.IGNORECASE): return True
+        if re.search(r'\.\d{{8}}\.log$', filename, re.IGNORECASE): return True
+        if re.search(r'\.(gz|bz2|zip|tar|1|2|3|4|5|bak|old|swp)$', filename, re.IGNORECASE): return True
+        if re.search(r'^(localhost|manager|host-manager)\.', filename, re.IGNORECASE): return True
+        return False
+
     # OS Log Discovery (Ubuntu/Debian vs RHEL/CentOS/Rocky/Amazon Linux)
     os_log_candidates = [
         ("/var/log/auth.log", "os"),
@@ -2523,7 +2531,7 @@ def auto_discover_log_paths():
         ("/var/log/boot.log", "os"),
     ]
     for path, ltype in os_log_candidates:
-        if os.path.exists(path):
+        if os.path.exists(path) and not is_rotated_archive(path):
             paths[path] = ltype
 
     # If no physical OS log files found, check journalctl
@@ -2540,26 +2548,20 @@ def auto_discover_log_paths():
         "/var/log/tomcat*/catalina.out",
         "/usr/local/tomcat/logs/catalina.out",
         "/opt/apache-tomcat*/logs/catalina.out",
-        "/var/log/tomcat*/*.log",
-        "/opt/tomcat*/logs/*.log",
-        "/usr/share/tomcat*/logs/catalina.out",
-        "/usr/share/tomcat*/*.log",
         "/data/tomcat*/logs/catalina.out",
-        "/data/tomcat*/logs/*.log",
+        "/data/MDM/apache-tomcat*/logs/catalina.out",
         "/data/logs/catalina.out",
-        "/data/logs/*.log",
         "/var/log/catalina.out",
         "/home/*/tomcat/logs/catalina.out",
         "/home/*/catalina.out",
-        "/opt/*.log",
-        "/opt/*/*.log",
-        "/var/log/*.log",
-        "/data/*.log"
+        "/opt/nohup.out",
+        "/data/nohup.out",
+        "/var/log/nohup.out"
     ]
     for candidate in tomcat_candidates:
         matched = glob.glob(candidate)
         for path in matched:
-            if os.path.exists(path):
+            if os.path.exists(path) and not is_rotated_archive(path):
                 paths[path] = "tomcat"
 
     # Find tomcat / Java / Spring / MDM from running processes
@@ -2572,8 +2574,6 @@ def auto_discover_log_paths():
                 if m:
                     cat_log = os.path.join(m.group(1), "logs", "catalina.out")
                     if os.path.exists(cat_log): paths[cat_log] = "tomcat"
-                    for ext_lg in glob.glob(os.path.join(m.group(1), "logs", "*.log")):
-                        paths[ext_lg] = "tomcat"
                 m_base = re.search(r'-Dcatalina\\.base=([^\\s]+)', line)
                 if m_base:
                     cat_log = os.path.join(m_base.group(1), "logs", "catalina.out")
@@ -2592,56 +2592,43 @@ def auto_discover_log_paths():
                         try:
                             for fd in os.listdir(fd_dir):
                                 target = os.readlink(os.path.join(fd_dir, fd))
-                                if target.endswith(".log") or target.endswith(".out"):
+                                if (target.endswith(".log") or target.endswith(".out")) and not is_rotated_archive(target):
                                     if os.path.exists(target):
                                         paths[target] = "tomcat"
                         except: pass
     except: pass
 
-    # Check tomcat systemd service
-    try:
-        out = subprocess.check_output(["systemctl", "is-active", "tomcat"], stderr=subprocess.DEVNULL, timeout=2).decode().strip()
-        if out in ("active", "activating"):
-            paths["systemd/tomcat"] = "tomcat"
-    except:
-        try:
-            out = subprocess.check_output(["systemctl", "list-units", "--type=service", "--state=running"], stderr=subprocess.DEVNULL, timeout=2).decode()
-            if "tomcat" in out.lower():
-                paths["systemd/tomcat"] = "tomcat"
-        except: pass
+    # If no catalina.out found yet for tomcat, pick ONLY the single newest .log file in tomcat log directory
+    has_tomcat = any(lt == 'tomcat' for lt in paths.values())
+    if not has_tomcat:
+        fallback_globs = ["/data/MDM/apache-tomcat*/logs/*.log", "/opt/tomcat*/logs/*.log", "/var/log/tomcat*/*.log", "/data/logs/*.log"]
+        for fg in fallback_globs:
+            matches = [p for p in glob.glob(fg) if os.path.exists(p) and not is_rotated_archive(p)]
+            if matches:
+                matches.sort(key=os.path.getmtime, reverse=True)
+                paths[matches[0]] = "tomcat"
+                break
 
-    # nohup.out discovery
-    nohup_candidates = [
-        "/opt/nohup.out", "/home/ubuntu/nohup.out", "/root/nohup.out",
-        "/opt/app/nohup.out", "/var/log/nohup.out", "/home/*/nohup.out", "/opt/*/nohup.out"
-    ]
-    for cand in nohup_candidates:
-        for path in glob.glob(cand):
-            if os.path.exists(path):
-                paths[path] = "tomcat"
-
-    # PostgreSQL log discovery (Ubuntu/Debian, RHEL/CentOS, Amazon Linux, Rocky/Alma)
+    # PostgreSQL log discovery: pick ONLY the single newest active PostgreSQL log file
     pg_candidates = [
+        "/data/pgsql/*/data/log/*.log",
+        "/data/pgsql/data/log/*.log",
         "/var/log/postgresql/*.log",
         "/var/log/postgresql/*/*.log",
         "/var/lib/pgsql/*/data/log/*.log",
         "/var/lib/pgsql/*/data/pg_log/*.log",
-        "/var/lib/pgsql/data/log/*.log",
-        "/var/lib/pgsql/data/pg_log/*.log",
         "/var/lib/postgresql/data/*.log",
-        "/var/lib/postgresql/data/log/*.log",
-        "/var/lib/postgresql/*/main/pg_log/*.log",
-        "/var/lib/postgresql/*/main/log/*.log",
-        "/var/lib/postgresql/*/main/*.log",
-        "/var/log/postgres*.log",
-        "/opt/postgresql*/logs/*.log",
-        "/opt/pgsql*/logs/*.log"
+        "/var/lib/postgresql/*/main/log/*.log"
     ]
+    all_pg_matches = []
     for candidate in pg_candidates:
-        matched = glob.glob(candidate)
-        for path in sorted(matched, key=os.path.getmtime, reverse=True)[:4]:
-            if os.path.exists(path):
-                paths[path] = "postgres"
+        matched = [p for p in glob.glob(candidate) if os.path.exists(p) and not is_rotated_archive(p)]
+        all_pg_matches.extend(matched)
+    if all_pg_matches:
+        all_pg_matches.sort(key=os.path.getmtime, reverse=True)
+        paths[all_pg_matches[0]] = "postgres"
+
+    return paths
 
     # Find postgres log from running processes (any process with -D data directory)
     try:

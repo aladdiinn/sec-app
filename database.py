@@ -2987,6 +2987,15 @@ def classify_log_entry(message: str, source: str = "", log_type: str = None) -> 
 
     level = _detect_level(msg_lower)
 
+    # 0. OS System Sources MUST remain OS logs unless explicitly tagged as app/db
+    is_os_source = (
+        src_lower in ("systemd/journal", "journalctl", "syslog/journalctl") or
+        src_lower.startswith("systemd/") or
+        any(k in src_lower for k in ["/var/log/syslog", "/var/log/auth.log", "/var/log/secure", "/var/log/messages", "/var/log/kern.log", "/var/log/audit", "/var/log/dpkg.log"])
+    )
+    if is_os_source and lt not in ("postgres", "pgsql", "tomcat", "catalina"):
+        return "os", src_str, level
+
     # 1. PostgreSQL detection
     is_pg = (
         lt in ("postgres", "pgsql") or

@@ -877,14 +877,42 @@ async function updateLogFileSelectorForServer(serverId) {
     }
     try {
         const res = await apiFetch(`/api/servers/${serverId}/log-files`);
-        const files = (res && res.files) ? res.files : [];
+        let files = (res && res.files) ? res.files : [];
+        const svc = (currentServiceType || '').toLowerCase();
+
+        if (svc === 'postgres') {
+            files = files.filter(f => {
+                const src = (f.source || '').toLowerCase();
+                if (src.includes('journal') || src.includes('syslog') || src.includes('auth.log')) return false;
+                return (f.log_type || '').toLowerCase() === 'postgres' || src.includes('postgres') || src.includes('pgsql');
+            });
+        } else if (svc === 'tomcat') {
+            files = files.filter(f => {
+                const src = (f.source || '').toLowerCase();
+                if (src.includes('journal') || src.includes('syslog') || src.includes('auth.log')) return false;
+                return (f.log_type || '').toLowerCase() === 'tomcat' || src.includes('tomcat') || src.includes('catalina') || src.includes('nohup') || src.includes('mdm');
+            });
+        } else if (svc === 'os') {
+            files = files.filter(f => {
+                const src = (f.source || '').toLowerCase();
+                if (src.includes('postgres') || src.includes('pgsql') || src.includes('catalina') || src.includes('tomcat')) return false;
+                return true;
+            });
+        }
+
+        const hasMainCatalina = files.some(f => (f.source || '').endsWith('catalina.out'));
         const uniqueFiles = [];
         const seen = new Set();
         for (const f of files) {
             if (!f || !f.source) continue;
-            if (seen.has(f.source)) continue;
+            const src = f.source;
+            if (seen.has(src)) continue;
             if (f.count === 0 && files.length > 1) continue;
-            seen.add(f.source);
+
+            if (hasMainCatalina && /\.\d{4}-\d{2}-\d{2}\.log$/i.test(src)) continue;
+            if (hasMainCatalina && /localhost\.|manager\.|host-manager\./i.test(src)) continue;
+
+            seen.add(src);
             uniqueFiles.push(f);
         }
         sel.innerHTML = '<option value="">-- All Discovered Files (' + uniqueFiles.length + ') --</option>' +

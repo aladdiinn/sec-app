@@ -751,20 +751,36 @@
             available = currentModalFiles.filter(f => {
                 const ft = (f.log_type || '').toLowerCase();
                 const src = (f.source || '').toLowerCase();
-                if (modalActiveCategory === 'os') return ft === 'os' || anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal', 'systemd']);
-                if (modalActiveCategory === 'tomcat') return ft === 'tomcat' || anyMatch(src, ['tomcat', 'catalina', 'nohup', 'coyote']);
-                if (modalActiveCategory === 'postgres') return ft === 'postgres' || anyMatch(src, ['postgres', 'pgsql', '5432']);
+
+                if (modalActiveCategory === 'postgres') {
+                    if (src.includes('journal') || src.includes('syslog') || src.includes('auth.log') || src.includes('messages')) return false;
+                    return ft === 'postgres' || anyMatch(src, ['postgres', 'pgsql', '5432']);
+                }
+                if (modalActiveCategory === 'tomcat') {
+                    if (src.includes('journal') || src.includes('syslog') || src.includes('auth.log') || src.includes('messages')) return false;
+                    return ft === 'tomcat' || anyMatch(src, ['tomcat', 'catalina', 'nohup', 'coyote', 'mdm']);
+                }
+                if (modalActiveCategory === 'os') {
+                    if (src.includes('postgres') || src.includes('pgsql') || src.includes('catalina') || src.includes('tomcat')) return false;
+                    return ft === 'os' || anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal', 'systemd']);
+                }
                 return true;
             });
         }
 
+        const hasMainCatalina = available.some(f => (f.source || '').endsWith('catalina.out'));
         const uniqueFiles = [];
         const seen = new Set();
         for (const f of available) {
             if (!f || !f.source) continue;
-            if (seen.has(f.source)) continue;
+            const src = f.source;
+            if (seen.has(src)) continue;
             if (f.count === 0 && available.length > 1) continue;
-            seen.add(f.source);
+
+            if (hasMainCatalina && /\.\d{4}-\d{2}-\d{2}\.log$/i.test(src)) continue;
+            if (hasMainCatalina && /localhost\.|manager\.|host-manager\./i.test(src)) continue;
+
+            seen.add(src);
             uniqueFiles.push(f);
         }
 
