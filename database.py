@@ -3196,7 +3196,10 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                               AND (log_level IS NULL OR log_level NOT IN ('ERROR', 'CRITICAL', 'FATAL', 'CRIT', 'SEVERE', 'HIGH'))
                               AND message !~* '\\y(error|fatal|exception|fail|severe|denied|crit|panic)\\y'
                               AND id NOT IN (
-                                  SELECT id FROM pushed_logs WHERE config_id = %s ORDER BY id DESC LIMIT 800
+                                  SELECT id FROM (
+                                      SELECT id, row_number() OVER (PARTITION BY COALESCE(log_type, 'other') ORDER BY id DESC) as rn 
+                                      FROM pushed_logs WHERE config_id = %s
+                                  ) t WHERE t.rn <= 1000
                               );
                         """, (config_id, config_id))
                     except Exception: pass
@@ -3208,7 +3211,10 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                               AND (log_level IS NULL OR log_level NOT IN ('ERROR', 'CRITICAL', 'FATAL', 'CRIT', 'SEVERE', 'HIGH'))
                               AND message !~* '\\y(error|fatal|exception|fail|severe|denied|crit|panic)\\y'
                               AND id NOT IN (
-                                  SELECT id FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT 800
+                                  SELECT id FROM (
+                                      SELECT id, row_number() OVER (PARTITION BY COALESCE(log_type, 'other') ORDER BY id DESC) as rn 
+                                      FROM pushed_logs WHERE server_id = %s
+                                  ) t WHERE t.rn <= 1000
                               );
                         """, (server_id, server_id))
                     except Exception: pass
