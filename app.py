@@ -4279,6 +4279,7 @@ async def api_fetch_log_lines(request: Request):
     log_type = body.get("log_type", "")
     log_path = body.get("log_file_path")
     search = (body.get("search") or "").lower()
+    preset = (body.get("preset_filter") or "").lower()
 
     # Parse tail line limit (default 100, max 1000)
     try:
@@ -4299,7 +4300,8 @@ async def api_fetch_log_lines(request: Request):
 
     # 1. First priority: Fetch logs pushed by push agents from pushed_logs table
     cfg_id = matching_cfg.get("id") if matching_cfg else None
-    pushed = db.get_pushed_logs(config_id=cfg_id, server_id=sid, limit=limit)
+    db_limit = 3000 if (preset or search or log_path or log_type) else limit
+    pushed = db.get_pushed_logs(config_id=cfg_id, server_id=sid, limit=db_limit)
     if pushed:
         for pl in pushed:
             msg = pl.get("msg", "")
@@ -4311,13 +4313,54 @@ async def api_fetch_log_lines(request: Request):
             if log_type and log_type.lower() != 'all':
                 lt = log_type.lower()
                 row_lt = (pl.get("log_type") or "").lower()
-                if lt == "os" and row_lt != "os" and not any(k in src.lower() or k in msg.lower() for k in ["auth", "syslog", "secure", "audit", "kern", "sudo", "systemd"]):
+                if lt == "os" and row_lt != "os" and not any(k in src.lower() for k in ["auth", "syslog", "secure", "audit", "kern", "sudo", "systemd", "dpkg", "boot"]):
                     continue
-                elif lt == "tomcat" and row_lt != "tomcat" and not any(k in src.lower() or k in msg.lower() for k in ["tomcat", "catalina", "nohup", "java", "mdm"]):
+                elif lt == "tomcat" and row_lt != "tomcat" and not any(k in src.lower() for k in ["tomcat", "catalina", "nohup", "mdm", "java"]):
                     continue
-                elif lt in ["postgres", "pgsql"] and row_lt not in ["postgres", "pgsql"] and not any(k in src.lower() or k in msg.lower() for k in ["postgres", "pgsql", "pg_", "drop database", "drop table", "alter user", "grant all"]):
+                elif lt in ["postgres", "pgsql"] and row_lt not in ["postgres", "pgsql"] and not any(k in src.lower() for k in ["postgres", "pgsql", "pg_"]):
                     continue
+
+            # Apply preset filter exactly like frontend
+            if preset:
+                lvl = (pl.get("level") or "INFO").upper()
+                msg_low = msg.lower()
+                src_low = src.lower()
+                if preset == "soar":
+                    is_threat = False
+                    if not ("auth_fail" in msg_low or "ssh_brute" in msg_low or "failed password" in msg_low or "invalid user" in msg_low or "sudo su" in msg_low or "su - root" in msg_low):
+                        if re.search(r'drop\s+database|drop\s+schema|drop\s+table|truncate|dropdb|dropuser|alter\s+user|alter\s+role|grant\s+all|with\s+superuser|createuser|userdel|deluser|usermod.*sudo|chmod\s+.*777|chmod\s+.*\+s|chown\s+.*root|\/etc\/shadow|\/etc\/sudoers|outofmemoryerror|stackoverflowerror|soar\s+detection', msg_low, re.I):
+                            is_threat = True
+                        elif any(k in src_low for k in ['postgres', 'pgsql']) and any(k in msg_low for k in ['fatal', 'denied', 'drop', 'alter', 'grant', 'delete']):
+                            is_threat = True
+                        elif any(k in src_low for k in ['tomcat', 'catalina']) and any(k in msg_low for k in ['fatal', 'outofmemory', 'severe']):
+                            is_threat = True
+                    if not is_threat:
+                        continue
+                elif preset in ["postgres", "psql"]:
+                    if not any(k in msg_low for k in ['psql', 'postgres', 'select', 'insert', 'update', 'delete', 'query', 'sql', 'db', 'drop', 'alter', 'grant']) and not any(k in src_low for k in ['postgres', 'pgsql']):
+                        continue
+                elif preset in ["userdel", "perm"]:
+                    if not any(k in msg_low for k in ['userdel', 'deluser', 'useradd', 'adduser', 'usermod', 'chmod', 'chown', 'sudo', 'su:']) and not any(k in src_low for k in ['auth', 'secure', 'audit']):
+                        continue
+                elif preset == "error":
+                    if lvl not in ['ERROR', 'CRITICAL', 'CRIT', 'HIGH', 'FATAL'] and not any(k in msg_low for k in ['error', 'fail', 'exception', 'fatal', 'crit']):
+                        continue
+                elif preset == "warn":
+                    if lvl not in ['WARN', 'WARNING', 'MEDIUM'] and not any(k in msg_low for k in ['warn', 'warning', 'medium']):
+                        continue
+                elif preset == "auth":
+                    if not any(k in msg_low for k in ['auth', 'ssh', 'login', 'pass', 'perm', 'sec', 'token', 'user', 'chmod']) and not any(k in src_low for k in ['auth', 'sec']):
+                        continue
+                elif preset == "500":
+                    if not any(k in msg_low for k in ['500', '502', '503', '504', '5xx', 'internal server error', 'http/1.1 5', 'http/2.0 5']):
+                        continue
+                elif preset == "apm":
+                    if not any(k in msg_low for k in ['apm', 'trace', 'duration_ms', 'latency', 'cpu=', 'ram=', 'rum']) and not 'apm' in src_low:
+                        continue
+
             lines.append(pl)
+            if len(lines) >= limit:
+                break
 
     # 2. Second priority: Try reading local files directly for all matching log sources
     if not lines:

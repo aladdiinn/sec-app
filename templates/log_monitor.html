@@ -1023,7 +1023,8 @@ async function fetchLogsNow() {
             log_type: currentServiceType || '',
             log_file_path: selectedLogFilePath || null,
             search: document.getElementById('log-search-input').value,
-            limit: tailLimit
+            limit: tailLimit,
+            preset_filter: activePresetKey
         };
 
         const res = await apiFetch('/api/logs/fetch', {
@@ -1141,7 +1142,7 @@ function renderLogLines(lines) {
             if (window.activeLogThreatAlerts && window.activeLogThreatAlerts.length > 0) {
                 alertsHtml = `
                 <div style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:16px; margin:16px; text-align:left">
-                    <div style="font-weight:700; color:#ef4444; margin-bottom:10px; font-size:12px; font-family:var(--orbitron)">🚨 ACTIVE LOG-BASED SOAR DETECTIONS (SSH Brute Force Excluded)</div>
+                    <div style="font-weight:700; color:#ef4444; margin-bottom:10px; font-size:12px; font-family:var(--orbitron)">🚨 ACTIVE LOG-BASED SOAR DETECTIONS</div>
                     ${window.activeLogThreatAlerts.map(a => `
                         <div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:flex-start">
                             <div>
@@ -1154,7 +1155,7 @@ function renderLogLines(lines) {
                     `).join('')}
                 </div>`;
             }
-            term.innerHTML = alertsHtml || '<div style="text-align:center; padding:40px; color:var(--text3)"><div style="font-size:24px; margin-bottom:8px">🛡️</div><div style="font-weight:600; color:#f8fafc">No Log-Based SOAR Threats Found in Current Stream Window</div><div style="font-size:11px; margin-top:4px">SSH Brute Force & login noise excluded. Monitored: PostgreSQL deletions/privileges, OS userdel, chmod 777, Tomcat errors.</div></div>';
+            term.innerHTML = alertsHtml || '<div style="text-align:center; padding:40px; color:var(--text3)"><div style="font-size:24px; margin-bottom:8px">🛡️</div><div style="font-weight:600; color:#f8fafc">No Log-Based SOAR Threats Found in Current Stream Window</div><div style="font-size:11px; margin-top:4px">Monitored: PostgreSQL deletions/privileges, OS userdel, chmod 777, Tomcat errors.</div></div>';
         } else {
             term.innerHTML = '<div style="text-align:center; padding:30px; color:var(--text3)">No matching log entries found.</div>';
         }
@@ -1166,7 +1167,7 @@ function renderLogLines(lines) {
     if (activePresetKey === 'soar' && window.activeLogThreatAlerts && window.activeLogThreatAlerts.length > 0) {
         topAlertsNotice = `
         <div style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:12px 16px; margin:10px 14px; text-align:left">
-            <div style="font-weight:700; color:#ef4444; margin-bottom:6px; font-size:11px; font-family:var(--orbitron)">🚨 ACTIVE LOG-BASED SOAR DETECTIONS (SSH Brute Force Excluded)</div>
+            <div style="font-weight:700; color:#ef4444; margin-bottom:6px; font-size:11px; font-family:var(--orbitron)">🚨 ACTIVE LOG-BASED SOAR DETECTIONS</div>
             ${window.activeLogThreatAlerts.map(a => `
                 <div style="font-size:11px; padding:4px 0; color:#f8fafc">
                     <span class="lvl-tag CRITICAL" style="background:#ef4444; color:#fff; font-size:9px; padding:2px 5px">CRITICAL</span>
