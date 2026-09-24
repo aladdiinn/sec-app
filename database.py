@@ -3182,21 +3182,34 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                             except Exception as ex_os_inc:
                                 logger.debug(f"OS security alert creation error: {ex_os_inc}")
                 
-                # Trim old logs to keep table lightweight (max 2000 per config)
+                # 1. 24-Hour Expiration: Delete ALL logs older than 24 hours
+                try:
+                    cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '1 day';")
+                except Exception: pass
+                
+                # 2. Smart Tiering: Keep latest 800 lines. Delete older noise, but keep errors/criticals.
                 if config_id:
                     try:
                         cur.execute("""
-                            DELETE FROM pushed_logs WHERE config_id = %s AND id NOT IN (
-                                SELECT id FROM pushed_logs WHERE config_id = %s ORDER BY id DESC LIMIT 2000
-                            );
+                            DELETE FROM pushed_logs 
+                            WHERE config_id = %s 
+                              AND (log_level IS NULL OR log_level NOT IN ('ERROR', 'CRITICAL', 'FATAL', 'CRIT', 'SEVERE', 'HIGH'))
+                              AND message !~* '\\y(error|fatal|exception|fail|severe|denied|crit|panic)\\y'
+                              AND id NOT IN (
+                                  SELECT id FROM pushed_logs WHERE config_id = %s ORDER BY id DESC LIMIT 800
+                              );
                         """, (config_id, config_id))
                     except Exception: pass
                 elif server_id:
                     try:
                         cur.execute("""
-                            DELETE FROM pushed_logs WHERE server_id = %s AND id NOT IN (
-                                SELECT id FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT 2000
-                            );
+                            DELETE FROM pushed_logs 
+                            WHERE server_id = %s 
+                              AND (log_level IS NULL OR log_level NOT IN ('ERROR', 'CRITICAL', 'FATAL', 'CRIT', 'SEVERE', 'HIGH'))
+                              AND message !~* '\\y(error|fatal|exception|fail|severe|denied|crit|panic)\\y'
+                              AND id NOT IN (
+                                  SELECT id FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT 800
+                              );
                         """, (server_id, server_id))
                     except Exception: pass
                 
