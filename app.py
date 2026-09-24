@@ -2761,7 +2761,7 @@ def check_fim():
             gid = st.st_gid
             with open(path, "rb") as f: content = f.read()
             h = hashlib.md5(content).hexdigest()
-            sig = f"{h}:{{mode}}:{{uid}}:{{gid}}"
+            sig = f"{{h}}:{{mode}}:{{uid}}:{{gid}}"
             if path in fim_state and fim_state[path] != sig:
                 changes.append({{"path": path, "type": "modified", "detail": "Content or metadata changed"}})
             fim_state[path] = sig
