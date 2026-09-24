@@ -961,12 +961,10 @@ async function selectModalLogCategory(cat) {
     }
 
     try {
+        // Fetch full category buffer — file filtering is client-side only
         let streamUrl = `/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200`;
         if (cat && cat !== 'all') {
             streamUrl += `&log_type=${encodeURIComponent(cat)}`;
-        }
-        if (modalActiveFile) {
-            streamUrl += `&source=${encodeURIComponent(modalActiveFile)}`;
         }
         const freshLogs = await apiFetch(streamUrl);
         if (Array.isArray(freshLogs)) {
@@ -1039,7 +1037,8 @@ function cleanLogSource(src) {
 function filterModalLogsByFile() {
     const sel = document.getElementById('modal-log-file-select');
     modalActiveFile = sel ? sel.value : '';
-    refreshModalLogs();
+    // Client-side file filter only — do NOT re-fetch from server (source path may not match DB exactly)
+    renderModalLogs();
 }
 
 function isModalLogSecurityThreat(text, src) {
@@ -1260,12 +1259,10 @@ function escapeHtml(text) {
 async function refreshModalLogs() {
     if (!activeModalServerId) return;
     try {
+        // Fetch full category buffer — do NOT pass &source= (file filter is client-side)
         let streamUrl = `/api/log-monitor/streams?server_id=${activeModalServerId}&limit=200`;
         if (modalActiveCategory && modalActiveCategory !== 'all') {
             streamUrl += `&log_type=${encodeURIComponent(modalActiveCategory)}`;
-        }
-        if (modalActiveFile) {
-            streamUrl += `&source=${encodeURIComponent(modalActiveFile)}`;
         }
         const stream = await apiFetch(streamUrl);
         if (Array.isArray(stream)) {
