@@ -1414,17 +1414,56 @@ def _check_sudo_misuse(server_id, data):
 def _check_file_modifications(server_id, data):
     """Detection: OS file modifications & critical system file changes (FIM)."""
     file_changes = data.get("file_changes", [])
-    critical_paths = ['/etc/passwd', '/etc/shadow', '/etc/sudoers', '/etc/ssh/sshd_config', '/etc/crontab']
-
+    
     for fc in file_changes:
         path = fc.get("path", "") if isinstance(fc, dict) else str(fc)
         change_type = fc.get("type", "modified") if isinstance(fc, dict) else "modified"
-        if any(cp in path for cp in critical_paths):
-            _create_alert_dedup(
-                server_id, f'FIM_{path.replace("/", "_")}', 'critical',
-                'OS File Modification Alert',
-                f'Detection Rule [File Integrity Monitor]: Critical system file {change_type}: {path}'
-            )
+        detail = fc.get("detail", "") if isinstance(fc, dict) else ""
+        
+        # Noise Reduction: Check if package manager was active recently
+        bash_cmds = data.get("commands", [])
+        is_maintenance = False
+        for cmd in bash_cmds:
+            c = cmd.get("command", "") if isinstance(cmd, dict) else str(cmd)
+            if any(k in c.lower() for k in ["apt-get", "apt install", "apt update", "apt upgrade", "yum", "dnf"]):
+                is_maintenance = True
+                break
+                
+        if is_maintenance:
+            continue
+            
+        _create_alert_dedup(
+            server_id, f'FIM_{path.replace("/", "_")}', 'critical',
+            'OS File Modification Alert',
+            f'Detection Rule [File Integrity Monitor]: {change_type} at {path}. {detail}'
+        )
+
+def _check_auditd_events(server_id, data):
+    """Detection: Auditd kernel-level security events with User Attribution."""
+    audit_events = data.get("audit_events", [])
+    for ae in audit_events:
+        auid = ae.get("auid", "unknown")
+        key = ae.get("key", "unknown")
+        line = ae.get("line", "")
+        
+        severity = "high"
+        title = "Kernel Audit Event"
+        
+        if key == "identity" or key == "priv_esc":
+            severity = "critical"
+            title = f"Critical File Modification by User (AUID: {auid})"
+        elif key == "scheduled_tasks":
+            severity = "high"
+            title = f"Scheduled Task (Cron) Modification by User (AUID: {auid})"
+        elif key == "remote_access":
+            severity = "critical"
+            title = f"Remote Access Config Modified by User (AUID: {auid})"
+            
+        _create_alert_dedup(
+            server_id, f'AUDIT_{key}_{auid}', severity,
+            title,
+            f'Detection Rule [Kernel Audit]: {line[:250]}'
+        )
 
     log_lines = data.get("log_lines", []) or data.get("logs", [])
     fim_cmd_pat = re.compile(r'(chmod\s+[0-7]{3,4}\s+/(?:etc|bin|sbin|usr)|chown\s+\S+\s+/(?:etc|bin|sbin))', re.IGNORECASE)
@@ -1584,6 +1623,11 @@ def run_detection_engine(server_id: int, data: dict):
         _check_sudo_misuse(server_id, data)
     except Exception as e:
         logger.debug(f"Error in _check_sudo_misuse: {e}")
+
+    try:
+        _check_auditd_events(server_id, data)
+    except Exception as e:
+        logger.debug(f"Error in _check_auditd_events: {e}")
 
     try:
         _check_file_modifications(server_id, data)
@@ -2404,6 +2448,32 @@ chmod +r /var/log/auth.log /var/log/secure /var/log/syslog /var/log/messages 2>/
 chmod -R +r /var/log/postgresql /var/lib/pgsql /var/lib/postgresql /opt/postgresql* /opt/pgsql* 2>/dev/null || true
 chmod -R +r /var/log/tomcat* /opt/tomcat* 2>/dev/null || true
 
+# 1.5 Setup auditd safely (Cross-platform)
+echo "[SECUREPULSE] Configuring auditd security policies..."
+if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -qq >/dev/null 2>&1 || true
+    apt-get install -y -qq auditd >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install auditd, continuing..."
+elif command -v yum >/dev/null 2>&1; then
+    yum install -y audit >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install audit, continuing..."
+elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y audit >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install audit, continuing..."
+fi
+
+if [ -d /etc/audit/rules.d/ ]; then
+    cat << 'AUDIT_EOF' > /etc/audit/rules.d/securepulse.rules
+-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/sudoers -p wa -k priv_esc
+-w /etc/sudoers.d/ -p wa -k priv_esc
+-w /etc/crontab -p wa -k scheduled_tasks
+-w /etc/cron.hourly/ -p wa -k scheduled_tasks
+-w /etc/cron.daily/ -p wa -k scheduled_tasks
+-w /etc/ssh/sshd_config -p wa -k remote_access
+AUDIT_EOF
+    augenrules --load >/dev/null 2>&1 || true
+    systemctl restart auditd >/dev/null 2>&1 || true
+fi
+
 # 2. Setup background Python Push Agent Daemon
 mkdir -p /opt/securepulse
 
@@ -2658,24 +2728,64 @@ def auto_discover_log_paths():
     return paths
 
 # FIM (File Integrity Monitor) state
-fim_hashes = {{}}
+fim_state = {{}}
 fim_paths = [
-    "/etc/passwd", "/etc/shadow", "/etc/sudoers",
-    "/etc/ssh/sshd_config", "/etc/crontab", "/etc/hosts"
+    "/etc/passwd", "/etc/shadow", "/etc/sudoers", "/etc/sudoers.d",
+    "/etc/ssh/sshd_config", "/etc/crontab", "/etc/hosts",
+    "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/var/spool/cron"
 ]
 
 def check_fim():
     changes = []
-    for path in fim_paths:
+    target_files = []
+    for p in fim_paths:
+        if os.path.isfile(p):
+            target_files.append(p)
+        elif os.path.isdir(p):
+            for root, _, files in os.walk(p):
+                for f in files:
+                    target_files.append(os.path.join(root, f))
+    
+    for path in target_files:
         if not os.path.exists(path): continue
         try:
+            st = os.stat(path)
+            mode = oct(st.st_mode)[-4:]
+            uid = st.st_uid
+            gid = st.st_gid
             with open(path, "rb") as f: content = f.read()
             h = hashlib.md5(content).hexdigest()
-            if path in fim_hashes and fim_hashes[path] != h:
-                changes.append({{"path": path, "type": "modified"}})
-            fim_hashes[path] = h
+            sig = f"{h}:{{mode}}:{{uid}}:{{gid}}"
+            if path in fim_state and fim_state[path] != sig:
+                changes.append({{"path": path, "type": "modified", "detail": "Content or metadata changed"}})
+            fim_state[path] = sig
         except: pass
     return changes
+
+# Auditd event tracking
+audit_log_positions = {{}}
+def get_auditd_events():
+    events = []
+    path = "/var/log/audit/audit.log"
+    if not os.path.exists(path): return events
+    try:
+        size = os.path.getsize(path)
+        pos = audit_log_positions.get(path, max(0, size - 8000))
+        if size < pos: pos = 0
+        with open(path, 'r', errors='ignore') as f:
+            f.seek(pos)
+            for line in f:
+                if "type=SYSCALL" in line or "type=PATH" in line:
+                    auid_m = re.search(r'auid=(\d+)', line)
+                    key_m = re.search(r'key="([^"]+)"', line)
+                    if auid_m and auid_m.group(1) != "4294967295":
+                        auid = auid_m.group(1)
+                        key = key_m.group(1) if key_m else "unknown"
+                        if key != "unknown":
+                            events.append({{"auid": auid, "key": key, "line": line.strip()[:300]}})
+            audit_log_positions[path] = f.tell()
+    except: pass
+    return events[-30:]
 
 # Auth failure tracking
 auth_log_positions = {{}}
@@ -2868,6 +2978,7 @@ while True:
         auth_failures = get_auth_failures()
         sudo_events = get_sudo_events()
         file_changes = check_fim()
+        audit_events = get_auditd_events()
 
         payload = {{
             "server_id": sid,
@@ -2884,6 +2995,7 @@ while True:
             "auth_failures": auth_failures,
             "sudo_events": sudo_events,
             "file_changes": file_changes,
+            "audit_events": audit_events,
             "discovered_log_paths": list(discovered_paths.keys())
         }}
 
