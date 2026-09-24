@@ -1282,6 +1282,12 @@ _dedup_alerts_cache = {}     # {(server_id, alert_type): last_timestamp}
 
 def _create_alert_dedup(server_id, alert_type, severity, title, message):
     """Create alert only if similar alert not created within last 2 minutes, and trigger SOAR audit."""
+    
+    # Check if server is in maintenance mode (Suppress Active Alerts)
+    srv = db.get_server_by_id(server_id)
+    if srv and srv.get("is_maintenance"):
+        return  # Silently suppress alert to prevent spam during OS patching
+        
     cache_key = (server_id, alert_type)
     now = time.time()
     last_time = _dedup_alerts_cache.get(cache_key, 0)
