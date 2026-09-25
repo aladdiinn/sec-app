@@ -712,7 +712,7 @@
             if (vpnTrackEl) vpnTrackEl.checked = srv.vpn_tracking_enabled || false;
             if (vpnSubnetEl) vpnSubnetEl.value = srv.vpn_subnet || '';
 
-            const ports = details.open_ports || [];
+            const ports = details.ports || details.open_ports || [];
             const portsList = document.getElementById('i3t-ports-list');
             if (portsList) {
                 if (!ports.length) {
