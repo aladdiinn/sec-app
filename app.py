@@ -4766,8 +4766,11 @@ async def api_fetch_log_lines(request: Request):
                     continue
                 elif lt == "tomcat" and row_lt != "tomcat" and not any(k in src.lower() for k in ["tomcat", "catalina", "nohup", "mdm", "java"]):
                     continue
-                elif lt in ["postgres", "pgsql"] and row_lt not in ["postgres", "pgsql"] and not any(k in src.lower() for k in ["postgres", "pgsql", "pg_"]):
-                    continue
+                elif lt in ["postgres", "pgsql"]:
+                    if any(k in src.lower() for k in ["tomcat", "catalina", "apache"]):
+                        continue
+                    if row_lt not in ["postgres", "pgsql"] and not any(k in src.lower() for k in ["postgres", "pgsql", "pg_"]):
+                        continue
 
             # Apply preset filter exactly like frontend
             if preset:
@@ -5271,17 +5274,18 @@ async def api_log_streams(
                     )"""
                 elif lt == 'postgres':
                     query += """ AND (
-                        pl.log_type IN ('postgres', 'pgsql')
-                        OR (
-                            pl.log_type NOT IN ('tomcat', 'app', 'os')
-                            AND pl.source NOT ILIKE '%tomcat%' AND pl.source NOT ILIKE '%catalina%'
-                            AND pl.source NOT ILIKE '%apache%'
-                            AND (
-                                pl.source ILIKE '%postgres%' OR pl.source ILIKE '%pgsql%'
-                                OR pl.message ILIKE '%postgres%' OR pl.message ILIKE '%pgsql%'
-                                OR pl.message ILIKE '%statement:%' OR pl.message ILIKE '%checkpoint%'
-                                OR pl.message ILIKE '%pg_hba%' OR pl.message ILIKE '%autovacuum%'
-                                OR pl.message ILIKE '%database system%'
+                        pl.source NOT ILIKE '%tomcat%' AND pl.source NOT ILIKE '%catalina%' AND pl.source NOT ILIKE '%apache%'
+                        AND (
+                            pl.log_type IN ('postgres', 'pgsql')
+                            OR (
+                                pl.log_type NOT IN ('tomcat', 'app', 'os')
+                                AND (
+                                    pl.source ILIKE '%postgres%' OR pl.source ILIKE '%pgsql%'
+                                    OR pl.message ILIKE '%postgres%' OR pl.message ILIKE '%pgsql%'
+                                    OR pl.message ILIKE '%statement:%' OR pl.message ILIKE '%checkpoint%'
+                                    OR pl.message ILIKE '%pg_hba%' OR pl.message ILIKE '%autovacuum%'
+                                    OR pl.message ILIKE '%database system%'
+                                )
                             )
                         )
                     )"""
