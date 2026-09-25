@@ -1751,20 +1751,12 @@ async def api_agent_push(request: Request):
             except Exception: pass
             finally: conn.close()
 
-    # Step 5: Auto-register server if it has a non-loopback remote IP
+    # Step 5: Reject if still not found (e.g. deleted from dashboard)
     if not server_id:
-        remote_ip = server_ip if (server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost")) else (client_ip if client_ip not in ("127.0.0.1", "localhost") else None)
-        if remote_ip:
-            hname = hostname or f"node-{remote_ip}"
-            new_sid = db.add_server(hname, remote_ip)
-            if new_sid:
-                server_id = new_sid
-        elif hostname and hostname.lower() not in ("localhost", "target-node"):
-            new_sid = db.add_server(hostname, "127.0.0.1")
-            if new_sid:
-                server_id = new_sid
-        else:
-            server_id = 1
+        return JSONResponse(
+            status_code=403, 
+            content={"status": "error", "ok": False, "message": "Server not registered or was deleted. Re-onboarding required."}
+        )
 
     # Inject resolved server_id back into data
     data["server_id"] = server_id
