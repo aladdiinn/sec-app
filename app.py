@@ -1461,8 +1461,12 @@ def _check_unified_fim(server_id, data):
         auid_str = "unknown"
         if matched_key and matched_key in audit_map:
             last_event = audit_map[matched_key][-1]
-            actor = last_event.get("username", "unknown")
             auid_str = last_event.get("auid", "unknown")
+            actor = last_event.get("username", "unknown")
+            if actor == "unknown" and auid_str == "1000":
+                actor = "ubuntu"
+            elif actor == "unknown" and auid_str == "0":
+                actor = "root"
             alerted_keys.add(matched_key)
             
             _create_alert_dedup(
@@ -1482,8 +1486,13 @@ def _check_unified_fim(server_id, data):
     for key, events in audit_map.items():
         if key in alerted_keys: continue
         last_event = events[-1]
-        actor = last_event.get("username", "unknown")
         auid_str = last_event.get("auid", "unknown")
+        actor = last_event.get("username", "unknown")
+        if actor == "unknown" and auid_str == "1000":
+            actor = "ubuntu"
+        elif actor == "unknown" and auid_str == "0":
+            actor = "root"
+            
         line = last_event.get("line", "")
         
         severity = "critical" if key in ["identity", "priv_esc", "remote_access"] else "high"
