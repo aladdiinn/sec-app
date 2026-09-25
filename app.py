@@ -2179,19 +2179,21 @@ async def api_create_project(request: Request):
     name = body.get("name", "New Project")
     desc = body.get("description", "")
     server_ids = body.get("server_ids", [])
+    vpn_tracking = bool(body.get("vpn_tracking_enabled", False))
+    vpn_subnet = body.get("vpn_subnet", "")
     
     conn = db.get_db_connection()
     if conn:
         try:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute("INSERT INTO projects (name, description) VALUES (%s, %s) RETURNING id;", (name, desc))
+                    cur.execute("INSERT INTO projects (name, description, vpn_tracking_enabled, vpn_subnet) VALUES (%s, %s, %s, %s) RETURNING id;", (name, desc, vpn_tracking, vpn_subnet))
                     row = cur.fetchone()
                     pid = row["id"] if isinstance(row, dict) else row[0]
                     if server_ids and isinstance(server_ids, list):
                         for sid in server_ids:
                             try:
-                                cur.execute("UPDATE servers SET project_id = %s WHERE id = %s;", (pid, int(sid)))
+                                cur.execute("UPDATE servers SET project_id = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = %s;", (pid, vpn_tracking, vpn_subnet, int(sid)))
                             except Exception:
                                 pass
                     if hasattr(conn, 'commit'):
@@ -2223,13 +2225,18 @@ async def api_assign_project_assets(project_id: int, request: Request):
         try:
             with conn:
                 with conn.cursor() as cur:
+                    cur.execute("SELECT vpn_tracking_enabled, vpn_subnet FROM projects WHERE id = %s;", (project_id,))
+                    p_row = cur.fetchone()
+                    p_track = p_row["vpn_tracking_enabled"] if p_row else False
+                    p_subnet = p_row["vpn_subnet"] if p_row else ""
+
                     # Unassign servers previously assigned to this project
                     cur.execute("UPDATE servers SET project_id = NULL WHERE project_id = %s;", (project_id,))
                     # Assign selected server_ids to this project
                     if server_ids and isinstance(server_ids, list):
                         for sid in server_ids:
                             try:
-                                cur.execute("UPDATE servers SET project_id = %s WHERE id = %s;", (project_id, int(sid)))
+                                cur.execute("UPDATE servers SET project_id = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = %s;", (project_id, p_track, p_subnet, int(sid)))
                             except Exception:
                                 pass
                     if hasattr(conn, 'commit'):
@@ -2297,18 +2304,43 @@ async def api_update_project(project_id: int, request: Request):
         body = {}
     name = body.get("name")
     desc = body.get("description")
+    vpn_tracking = bool(body.get("vpn_tracking_enabled", False))
+    vpn_subnet = body.get("vpn_subnet", "")
     conn = db.get_db_connection()
     if conn:
         try:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE projects SET name = %s, description = %s WHERE id = %s;", (name, desc, project_id))
+                    cur.execute("UPDATE projects SET name = %s, description = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = %s;", (name, desc, vpn_tracking, vpn_subnet, project_id))
                     if hasattr(conn, 'commit'):
                         conn.commit()
                     return {"ok": True, "message": "Project updated"}
         finally:
             conn.close()
     return JSONResponse(status_code=400, content={"ok": False, "message": "Update failed"})
+
+@app.post("/api/servers/{server_id}/network")
+async def api_update_server_network(server_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied."})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    vpn_tracking = bool(body.get("vpn_tracking_enabled", False))
+    vpn_subnet = body.get("vpn_subnet", "")
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE servers SET vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = %s;", (vpn_tracking, vpn_subnet, server_id))
+                    if hasattr(conn, 'commit'):
+                        conn.commit()
+                    return {"ok": True, "message": "Server network configuration updated"}
+        finally:
+            conn.close()
+    return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to update network settings"})
 
 @app.delete("/api/projects/{project_id}")
 async def api_delete_project(project_id: int, request: Request):

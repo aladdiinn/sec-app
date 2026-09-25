@@ -144,6 +144,8 @@
         <div class="i3-tab" onclick="switchI3Tab('incidents', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Incidents / Outages</div>
         <div class="i3-tab" onclick="switchI3Tab('resources', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Resource Usage (>85%)</div>
         <div class="i3-tab" onclick="switchI3Tab('logs', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Log Streams</div>
+        <div class="i3-tab" onclick="switchI3Tab('ports', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Ports</div>
+        <div class="i3-tab" onclick="switchI3Tab('network', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Network</div>
         <div class="i3-tab" onclick="switchI3Tab('settings', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Settings</div>
     </div>
 
@@ -260,6 +262,48 @@
                 <div id="i3-logs-box" style="background:#050811; border:1px solid rgba(255,255,255,0.1); padding:14px; border-radius:6px; height:340px; overflow-y:auto; font-family:monospace; font-size:11px; color:#e2e8f0; line-height:1.6">
                     <div style="color:#94a3b8; text-align:center; padding:30px">Loading pushed log stream...</div>
                 </div>
+            </div>
+        </div>
+
+        <div id="i3t-ports" style="display:none">
+            <div style="background:#1e293b; padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">ðŸ”Œ Open Ports & Connections</div>
+                <div style="font-size:12px; color:#94a3b8; margin-bottom:16px">Detected by SOC Agent via ss/netstat</div>
+                <div id="i3t-ports-list" style="display:flex; flex-direction:column; gap:8px">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </div>
+
+        <div id="i3t-network" style="display:none">
+            <div style="background:#1e293b; padding:20px; border-radius:8px; margin-bottom:16px">
+                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">ðŸ“¡ Server Traffic Stats</div>
+                <div style="display:flex; justify-content:space-between; align-items:center">
+                    <div>
+                        <div style="font-size:11px; color:#94a3b8">Total Received (RX)</div>
+                        <div style="font-size:24px; color:#34d399; font-weight:bold" id="i3t-net-rx">0 MB</div>
+                    </div>
+                    <div>
+                        <div style="font-size:11px; color:#94a3b8">Total Transmitted (TX)</div>
+                        <div style="font-size:24px; color:#38bdf8; font-weight:bold" id="i3t-net-tx">0 MB</div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="background:#1e293b; padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:8px">ðŸ›¡ï¸ VPN Subnet Detection</div>
+                <p style="font-size:12px; color:#94a3b8; margin-bottom:16px">Optionally override the Project's VPN subnet tracking settings for this specific server.</p>
+                <form id="server-network-form" onsubmit="saveServerNetwork(event)">
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:12px">
+                        <input type="checkbox" id="serverVpnTracking" style="accent-color:#38bdf8; width:16px; height:16px">
+                        <span style="font-size:13px; color:#f8fafc; font-weight:500">Enable Independent Server VPN Subnet Tracking</span>
+                    </label>
+                    <div style="margin-bottom:16px">
+                        <label style="display:block; font-size:11px; color:#94a3b8; margin-bottom:6px">Authorized VPN Subnets (CIDR, comma-separated)</label>
+                        <input type="text" id="serverVpnSubnet" placeholder="e.g., 10.0.0.0/24" style="width:100%; padding:8px 12px; font-size:13px; background:#0f172a; border:1px solid #334155; color:#f8fafc; border-radius:6px; outline:none">
+                    </div>
+                    <button type="submit" id="btn-save-network" class="btn" style="background:rgba(56,189,248,0.1); border:1px solid #38bdf8; color:#38bdf8; font-size:12px; padding:6px 12px">Save Network Settings</button>
+                </form>
             </div>
         </div>
 
@@ -558,7 +602,7 @@
             btn.style.color = '#38bdf8';
             btn.style.borderBottom = '2px solid #38bdf8';
         }
-        ['overview', 'incidents', 'resources', 'logs', 'settings'].forEach(t => {
+        ['overview', 'incidents', 'resources', 'logs', 'ports', 'network', 'settings'].forEach(t => {
             const el = document.getElementById(`i3t-${t}`);
             if (el) el.style.display = (t === tabName) ? 'block' : 'none';
         });
@@ -652,6 +696,40 @@
                                 <span style="font-size:10px; color:#64748b">${a.created_at_formatted || 'recent'}</span>
                             </div>
                             <div style="font-size:11px; color:#94a3b8">${escapeHtml(a.message || '')}</div>
+                        </div>`;
+                    }).join('');
+                }
+            }
+
+            // Phase 4: Network and Ports
+            const rx_bytes = srv.network_rx_bytes || 0;
+            const tx_bytes = srv.network_tx_bytes || 0;
+            if (document.getElementById('i3t-net-rx')) document.getElementById('i3t-net-rx').innerText = (rx_bytes / 1024 / 1024).toFixed(2) + ' MB';
+            if (document.getElementById('i3t-net-tx')) document.getElementById('i3t-net-tx').innerText = (tx_bytes / 1024 / 1024).toFixed(2) + ' MB';
+            
+            const vpnTrackEl = document.getElementById('serverVpnTracking');
+            const vpnSubnetEl = document.getElementById('serverVpnSubnet');
+            if (vpnTrackEl) vpnTrackEl.checked = srv.vpn_tracking_enabled || false;
+            if (vpnSubnetEl) vpnSubnetEl.value = srv.vpn_subnet || '';
+
+            const ports = details.open_ports || [];
+            const portsList = document.getElementById('i3t-ports-list');
+            if (portsList) {
+                if (!ports.length) {
+                    portsList.innerHTML = '<div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px">No open ports reported by agent</div>';
+                } else {
+                    const dangerous = [21, 23, 3389, 5432, 3306, 6379, 27017, 11211, 9200, 2375];
+                    portsList.innerHTML = ports.map(p => {
+                        let pt = p.port || p;
+                        let proc = p.process || 'unknown';
+                        let isDanger = dangerous.includes(parseInt(pt));
+                        return `
+                        <div style="background:rgba(255,255,255,0.03); border-left:3px solid ${isDanger?'#ef4444':'#38bdf8'}; padding:10px 14px; margin-bottom:6px; border-radius:4px; display:flex; justify-content:space-between; align-items:center">
+                            <div>
+                                <strong style="color:${isDanger?'#ef4444':'#f8fafc'}; font-size:13px; font-family:monospace">PORT ${pt}</strong>
+                                ${isDanger ? '<span style="margin-left:8px; font-size:10px; background:#ef4444; color:#fff; padding:2px 4px; border-radius:3px">DANGEROUS DEFAULT</span>' : ''}
+                            </div>
+                            <div style="font-size:11px; color:#94a3b8">Process: ${escapeHtml(proc)}</div>
                         </div>`;
                     }).join('');
                 }
@@ -1044,6 +1122,28 @@
             loadServers();
         } catch(e) {
             showToast('Failed to toggle maintenance', 'error');
+        }
+    }
+
+    async function saveServerNetwork(e) {
+        e.preventDefault();
+        if (!activeModalServerId) return;
+        const btn = document.getElementById('btn-save-network');
+        btn.disabled = true;
+        btn.innerText = 'Saving...';
+
+        try {
+            const payload = {
+                vpn_tracking_enabled: document.getElementById('serverVpnTracking').checked,
+                vpn_subnet: document.getElementById('serverVpnSubnet').value
+            };
+            await apiFetch(`/api/servers/${activeModalServerId}/network`, { method: 'POST', body: JSON.stringify(payload) });
+            showToast('Server network configuration updated', 'success');
+        } catch(err) {
+            showToast(err.message || 'Failed to update server network', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = 'Save Network Settings';
         }
     }
 

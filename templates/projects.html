@@ -39,6 +39,18 @@
             <textarea id="description" class="glass" placeholder="Brief explanation of project scope..." style="width:100%; padding:10px 14px; height:70px; border-radius:4px; color:var(--text); outline:none; resize:none"></textarea>
         </div>
 
+        <!-- Phase 4: VPN Subnet Tracking -->
+        <div style="margin-bottom:24px; padding:12px; border:1px dashed rgba(6, 182, 212, 0.4); border-radius:6px; background:rgba(6, 182, 212, 0.05)">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:10px">
+                <input type="checkbox" id="vpnTrackingEnabled" onchange="document.getElementById('vpnSubnetContainer').style.display = this.checked ? 'block' : 'none'" style="accent-color:var(--cyan); width:14px; height:14px">
+                <span class="stat-label" style="color:var(--cyan); font-size:11px">ENABLE VPN SUBNET TRACKING (OUT-OF-SUBNET ALERTS)</span>
+            </label>
+            <div id="vpnSubnetContainer" style="display:none">
+                <label class="text-meta" style="display:block; margin-bottom:6px">Authorized VPN Subnets (CIDR, comma-separated)</label>
+                <input id="vpnSubnets" type="text" class="glass" placeholder="e.g. 10.5.0.0/24, 192.168.1.0/24" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px; color:var(--text); outline:none">
+            </div>
+        </div>
+
         <!-- Asset Selection Section -->
         <div style="margin-bottom:24px">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
@@ -200,8 +212,12 @@ async function enterProjectView(projectId) {
 }
 
 /* ── Create project with asset checkboxes ────────────────── */
+let isEditingProjectId = null;
+
 async function openCreateModal() {
+    isEditingProjectId = null;
     document.getElementById('create-form').reset();
+    document.getElementById('vpnSubnetContainer').style.display = 'none';
     document.getElementById('create-modal').style.display = 'block';
     
     const listEl = document.getElementById('create-assets-list');
@@ -241,7 +257,7 @@ async function submitForm(e) {
     e.preventDefault();
     const btn = document.getElementById('btn-submit');
     btn.disabled = true;
-    btn.innerText = 'Creating...';
+    btn.innerText = 'Saving...';
 
     const selectedIds = Array.from(document.querySelectorAll('.create-asset-chk:checked')).map(c => parseInt(c.value));
 
@@ -249,17 +265,26 @@ async function submitForm(e) {
         const payload = {
             name: document.getElementById('name').value,
             description: document.getElementById('description').value,
+            vpn_tracking_enabled: document.getElementById('vpnTrackingEnabled').checked,
+            vpn_subnet: document.getElementById('vpnSubnets').value,
             server_ids: selectedIds
         };
-        await apiFetch('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
-        showToast('Project created successfully', 'success');
+        
+        if (isEditingProjectId) {
+            await apiFetch(`/api/projects/${isEditingProjectId}`, { method: 'PUT', body: JSON.stringify(payload) });
+            showToast('Project updated successfully', 'success');
+        } else {
+            await apiFetch('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
+            showToast('Project created successfully', 'success');
+        }
+        
         closeCreateModal();
         loadData();
     } catch (err) {
-        showToast(err.message || 'Failed to create project', 'error');
+        showToast(err.message || 'Failed to save project', 'error');
     } finally {
         btn.disabled = false;
-        btn.innerText = 'Create Project';
+        btn.innerText = 'Save Project';
     }
 }
 
