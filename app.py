@@ -2870,7 +2870,7 @@ def get_network_bytes():
     return rx_bytes, tx_bytes
 
 def get_process_connections():
-    conns = {}
+    conns = {{}}
     try:
         out = subprocess.check_output(["ss", "-tunpa"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
         for line in out.strip().split("\\n")[1:]:
@@ -2879,10 +2879,10 @@ def get_process_connections():
                 if m:
                     name = m.group(1)
                     pid = m.group(2)
-                    k = f"{name}({pid})"
+                    k = f"{{name}}({{pid}})"
                     conns[k] = conns.get(k, 0) + 1
     except: pass
-    return [{"process": k, "connections": v} for k, v in sorted(conns.items(), key=lambda item: item[1], reverse=True)[:20]]
+    return [{{"process": k, "connections": v}} for k, v in sorted(conns.items(), key=lambda item: item[1], reverse=True)[:20]]
 
 def auto_discover_log_paths():
     paths = {{}}
