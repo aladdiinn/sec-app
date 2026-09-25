@@ -209,6 +209,9 @@ def init_db():
                 ("cpu_percent", "FLOAT DEFAULT 0"),
                 ("memory_percent", "FLOAT DEFAULT 0"),
                 ("disk_percent", "FLOAT DEFAULT 0"),
+                ("agent_version", "VARCHAR(32) DEFAULT '0.2'"),
+                ("target_agent_version", "VARCHAR(32)"),
+                ("update_status", "VARCHAR(32) DEFAULT 'up_to_date'"),
                 ("last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
                 ("is_maintenance", "BOOLEAN DEFAULT FALSE"),
                 ("registered_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP")

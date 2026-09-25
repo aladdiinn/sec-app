@@ -346,6 +346,17 @@
                                 <div class="text-meta" style="margin-bottom:3px">LAST SEEN</div>
                                 <div style="font-size:13px; color:var(--text)">${s.last_sudo_ago || 'just now'}</div>
                             </div>
+                            <div style="grid-column: 1/-1; display:flex; justify-content:space-between; align-items:center; border-top: 1px solid var(--border); padding-top:8px; margin-top:4px">
+                                <div style="display:flex; align-items:center; gap:6px">
+                                    <div class="text-meta">AGENT VERSION:</div>
+                                    <div style="font-size:11px; font-family:'Share Tech Mono', monospace; font-weight:700; color:${s.update_status === 'updating' ? 'var(--orange)' : (s.update_status === 'update_failed' ? 'var(--red)' : 'var(--cyan)')}">${s.agent_version || '0.2'} ${s.update_status === 'updating' ? '(Updating...)' : ''}</div>
+                                </div>
+                                ${window.USER_ROLE !== 'normal' && s.agent_version !== '0.3' && s.update_status !== 'updating' ? `
+                                <button onclick="event.stopPropagation(); triggerAgentUpdate(${id})" class="btn btn-glass" style="padding:2px 8px; font-size:9px; border-color:rgba(0,212,255,0.4); color:var(--cyan)">
+                                    ROLLOUT UPDATE
+                                </button>
+                                ` : ''}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -364,6 +375,20 @@
             showToast('Asset deleted', 'success');
         } catch (e) {
             showToast(e.message || 'Delete failed', 'error');
+        }
+    }
+
+    async function triggerAgentUpdate(id) {
+        if(!confirm("Initiate staged rollout update for this agent?")) return;
+        try {
+            const res = await apiFetch(`/api/servers/${id}/update-agent`, {
+                method: 'POST',
+                body: JSON.stringify({target_version: "0.3"})
+            });
+            showToast(res.message || "Update scheduled", "success");
+            loadServers();
+        } catch(e) {
+            showToast("Failed to schedule update", "error");
         }
     }
 

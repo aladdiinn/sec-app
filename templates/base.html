@@ -26,11 +26,14 @@
         <!-- ── SIDEBAR ── -->
         <aside class="sidebar">
             <!-- Brand -->
-            <div class="sb-brand">
-                <div class="sb-logo">
-                    <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+            <div class="sb-brand" style="display:flex; align-items:center; flex-direction:column; padding:20px 0 10px;">
+                <div style="display:flex; align-items:center;">
+                    <div class="sb-logo">
+                        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+                    </div>
+                    <div class="sb-title">SECURE<br>PULSE</div>
                 </div>
-                <div class="sb-title">SECURE<br>PULSE</div>
+                <div id="sb-app-version" style="font-family:'Share Tech Mono', monospace; font-size:10px; color:var(--text-dim); margin-top:8px; opacity:0.7;">v...</div>
             </div>
             {% if current_project or session.get('project_id') %}
             <div class="project-badge" style="margin:8px 12px; background:rgba(0,212,255,0.08); border:1px solid rgba(0,212,255,0.2); border-radius:4px; padding:8px 10px; font-size:9px; letter-spacing:1px; color:#00d4ff; text-transform:uppercase;">
@@ -377,6 +380,13 @@
         document.addEventListener('DOMContentLoaded', () => {
             updatePendingApprovalsBadge();
             setInterval(updatePendingApprovalsBadge, 15000);
+            
+            // Fetch version
+            apiFetch('/api/version').then(res => {
+                if(res && res.app_version) {
+                    document.getElementById('sb-app-version').innerText = 'v' + res.app_version;
+                }
+            }).catch(e => console.error(e));
         });
     </script>
     {% block extra_js %}{% endblock %}

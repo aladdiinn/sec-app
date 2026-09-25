@@ -450,11 +450,17 @@ async def lifespan(app: FastAPI):
     yield
 
 # Initialize FastAPI App
-app = FastAPI(title="EC2 Security Monitor", version="2.0.0", lifespan=lifespan)
+APP_VERSION = "0.3"
+AGENT_VERSION = "0.3"
+app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifespan)
 
 # Secret Key from Environment Variable
 SECRET_KEY = os.getenv("SECRET_KEY", "ec2-security-monitor-production-secret-key-2026")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+
+@app.get("/api/version")
+async def api_get_version():
+    return {"app_version": APP_VERSION, "agent_version": AGENT_VERSION}
 
 # Mount Static Files
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -1183,6 +1189,22 @@ async def api_server_action(server_id: int, request: Request):
     db.log_alert(server_id, f"ACTION_{action.upper()}", f"Action '{action}' executed on target {target}", severity="warning")
     return {"ok": True, "message": f"Action '{action}' executed successfully on server {server_id}"}
 
+@app.post("/api/servers/{server_id}/update-agent")
+async def api_server_update_agent(server_id: int, request: Request):
+    """Trigger an agent update for a specific server (Staged Rollout)"""
+    body = await request.json()
+    target_v = body.get("target_version", AGENT_VERSION)
+    conn = db.get_db_connection()
+    if not conn: return JSONResponse(status_code=500, content={"ok": False})
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE servers SET target_agent_version = %s, update_status = 'pending' WHERE id = %s;", (target_v, server_id))
+        return {"ok": True, "message": f"Update to {target_v} scheduled"}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "message": str(e)})
+    finally:
+        conn.close()
+
 @app.get("/api/servers/{server_id}/system-users")
 async def api_get_system_users(server_id: int):
     server = db.get_server_by_id(server_id)
@@ -1696,6 +1718,7 @@ async def api_agent_push(request: Request):
     server_id = data.get("server_id")
     server_ip = (data.get("server_ip") or "").strip()
     hostname = (data.get("hostname") or "").strip()
+    agent_version = data.get("agent_version", "0.2")
     client_ip = request.client.host if request.client else None
 
     # Step 1: Validate server_id if provided
@@ -1818,7 +1841,54 @@ async def api_agent_push(request: Request):
     except Exception as ex_det:
         logger.error(f"Detection engine execution error: {ex_det}")
 
-    return {"status": "ok", "ok": True, "server_id": server_id, "message": "Agent telemetry ingested and analyzed"}
+    # Agent Versioning & Controlled Update Rollout
+    update_req = False
+    update_cmd_url = ""
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT agent_version, target_agent_version, update_status FROM servers WHERE id = %s;", (server_id,))
+                srow = cur.fetchone()
+                if srow:
+                    db_version = srow.get("agent_version")
+                    target = srow.get("target_agent_version")
+                    
+                    if agent_version != db_version:
+                        up_status = "up_to_date" if (target and agent_version == target) else srow.get("update_status", "up_to_date")
+                        cur.execute("UPDATE servers SET agent_version = %s, update_status = %s WHERE id = %s;", (agent_version, up_status, server_id))
+                    
+                    if target and target != agent_version:
+                        update_req = True
+                        update_cmd_url = f"{str(request.base_url).rstrip('/')}/setup_node.sh"
+        except Exception as e:
+            logger.error(f"Agent version check error: {e}")
+        finally:
+            conn.close()
+
+    res = {"status": "ok", "ok": True, "server_id": server_id, "message": "Agent telemetry ingested and analyzed"}
+    if update_req:
+        res["update_requested"] = True
+        res["update_cmd_url"] = update_cmd_url
+    return res
+
+@app.post("/api/agent/status-update")
+async def api_agent_status_update(request: Request):
+    try:
+        data = await request.json()
+        sid = data.get("server_id")
+        status_val = data.get("status")
+        if sid and status_val:
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("UPDATE servers SET update_status = %s WHERE id = %s;", (status_val, sid))
+                except Exception: pass
+                finally: conn.close()
+        return {"ok": True}
+    except Exception:
+        return {"ok": False}
 
 @app.get("/api/alerts")
 async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False, log_type: Optional[str] = None):
@@ -2523,6 +2593,7 @@ import os, sys, time, json, socket, subprocess, glob, re, hashlib
 import urllib.request, urllib.error
 from datetime import datetime
 
+AGENT_VERSION = "0.3"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
@@ -3038,6 +3109,7 @@ while True:
 
         payload = {{
             "server_id": sid,
+            "agent_version": AGENT_VERSION,
             "server_ip": TARGET_IP,
             "hostname": get_hostname(),
             "cpu_percent": cpu,
@@ -3061,7 +3133,18 @@ while True:
             data=data,
             headers={{"Content-Type": "application/json"}}
         )
-        urllib.request.urlopen(req, timeout=10)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            res_data = json.loads(r.read().decode())
+            if res_data.get("update_requested"):
+                dl_url = res_data.get("update_cmd_url")
+                try:
+                    ureq = urllib.request.Request(f"{{SOC_URL}}/api/agent/status-update", data=json.dumps({{"server_id": sid, "status": "updating"}}).encode('utf-8'), headers={{"Content-Type": "application/json"}})
+                    urllib.request.urlopen(ureq, timeout=5)
+                except: pass
+                
+                cmd = f"curl -s {{dl_url}} -d 'name={{TARGET_NAME}}&ip={{TARGET_IP}}' | bash"
+                subprocess.Popen(["bash", "-c", cmd])
+                sys.exit(0)
 
         # Also push structured logs
         if log_lines:
