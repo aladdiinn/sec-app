@@ -1291,8 +1291,13 @@ def delete_server(server_id: int):
                 cur.execute("SELECT hostname, name, ip, ip_address FROM servers WHERE id = %s;", (server_id,))
                 srv = cur.fetchone()
                 if srv:
-                    hname = srv.get("hostname") or srv.get("name") if isinstance(srv, dict) else (srv[0] if srv else None)
-                    ip_addr = srv.get("ip") or srv.get("ip_address") if isinstance(srv, dict) else (srv[2] if srv and len(srv)>2 else None)
+                    # Robustly extract hname and ip_addr whether srv is dict or tuple
+                    if hasattr(srv, 'keys'):
+                        hname = srv.get("hostname") or srv.get("name")
+                        ip_addr = srv.get("ip_address") or srv.get("ip")
+                    else:
+                        hname = srv[0] if srv[0] else (srv[1] if len(srv) > 1 else None)
+                        ip_addr = srv[3] if len(srv) > 3 and srv[3] else (srv[2] if len(srv) > 2 else None)
             except Exception:
                 pass
 
@@ -1315,7 +1320,7 @@ def delete_server(server_id: int):
             if hname or ip_addr:
                 try:
                     cur.execute("SAVEPOINT sp_appr;")
-                    cur.execute("DELETE FROM approvals WHERE hostname = %s OR ip_address = %s;", (hname, ip_addr))
+                    cur.execute("DELETE FROM approvals WHERE LOWER(hostname) = LOWER(%s) OR ip_address = %s OR ip_address = %s;", (hname or '', ip_addr or '', ip_addr or ''))
                     cur.execute("RELEASE SAVEPOINT sp_appr;")
                 except Exception:
                     try: cur.execute("ROLLBACK TO SAVEPOINT sp_appr;")
