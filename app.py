@@ -1387,7 +1387,8 @@ def _check_sudo_misuse(server_id, data):
         # Account creation / management
         (re.compile(r'\b(useradd|adduser)\s+', re.IGNORECASE), 'New User Account Created', 'warning', 'Identity Management Alert', 'USER_CREATED'),
         (re.compile(r'passwd\s+(?:root|\S+)', re.IGNORECASE), 'User Password Modified', 'warning', 'Credential Modification Alert', 'PASSWD_CHANGED'),
-        (re.compile(r'su\s+-\s+root|sudo\s+su', re.IGNORECASE), 'Root Escalation via su', 'warning', 'Privilege Escalation Alert', 'SUDO_ROOT_ESCALATION'),
+        # Failed Root Escalation (Replaced successful su/sudo rule)
+        (re.compile(r'(FAILED su for root|incorrect password attempt|sudo:.*authentication failure)', re.IGNORECASE), 'Failed Root Escalation Attempt', 'critical', 'Privilege Escalation Alert', 'SUDO_ROOT_ESCALATION'),
         (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'warning', 'Host Anomaly Alert', 'MASS_PROCESS_KILL'),
         (re.compile(r'iptables\s+-F|ufw\s+disable', re.IGNORECASE), 'Firewall Disabled', 'critical', 'Network Security Alert', 'FIREWALL_DISABLED'),
         (re.compile(r'crontab\s+-[er]', re.IGNORECASE), 'Cron Persistence Attempt', 'warning', 'Persistence Alert', 'CRON_PERSISTENCE'),
@@ -1417,58 +1418,81 @@ def _check_sudo_misuse(server_id, data):
                 )
                 break
 
-def _check_file_modifications(server_id, data):
-    """Detection: OS file modifications & critical system file changes (FIM)."""
+def _check_unified_fim(server_id, data):
+    """Detection: Unified OS file modifications & Auditd kernel-level security events."""
     file_changes = data.get("file_changes", [])
+    audit_events = data.get("audit_events", [])
     
+    # Noise Reduction: Check if package manager was active recently
+    bash_cmds = data.get("commands", [])
+    is_maintenance = False
+    for cmd in bash_cmds:
+        c = cmd.get("command", "") if isinstance(cmd, dict) else str(cmd)
+        if any(k in c.lower() for k in ["apt-get", "apt install", "apt update", "apt upgrade", "yum", "dnf"]):
+            is_maintenance = True
+            break
+            
+    if is_maintenance:
+        return
+
+    # Map audit events by key
+    audit_map = {}
+    for ae in audit_events:
+        key = ae.get("key", "unknown")
+        if key not in audit_map:
+            audit_map[key] = []
+        audit_map[key].append(ae)
+
+    alerted_keys = set()
+    
+    # Check FIM changes and correlate
     for fc in file_changes:
         path = fc.get("path", "") if isinstance(fc, dict) else str(fc)
         change_type = fc.get("type", "modified") if isinstance(fc, dict) else "modified"
         detail = fc.get("detail", "") if isinstance(fc, dict) else ""
         
-        # Noise Reduction: Check if package manager was active recently
-        bash_cmds = data.get("commands", [])
-        is_maintenance = False
-        for cmd in bash_cmds:
-            c = cmd.get("command", "") if isinstance(cmd, dict) else str(cmd)
-            if any(k in c.lower() for k in ["apt-get", "apt install", "apt update", "apt upgrade", "yum", "dnf"]):
-                is_maintenance = True
-                break
-                
-        if is_maintenance:
-            continue
+        matched_key = None
+        if "passwd" in path or "shadow" in path: matched_key = "identity"
+        elif "sudoers" in path: matched_key = "priv_esc"
+        elif "cron" in path: matched_key = "scheduled_tasks"
+        elif "ssh" in path: matched_key = "remote_access"
+        
+        actor = "Unknown User"
+        auid_str = "unknown"
+        if matched_key and matched_key in audit_map:
+            last_event = audit_map[matched_key][-1]
+            actor = last_event.get("username", "unknown")
+            auid_str = last_event.get("auid", "unknown")
+            alerted_keys.add(matched_key)
             
-        _create_alert_dedup(
-            server_id, f'FIM_{path.replace("/", "_")}', 'critical',
-            'OS File Modification Alert',
-            f'Detection Rule [File Integrity Monitor]: {change_type} at {path}. {detail}'
-        )
+            _create_alert_dedup(
+                server_id, f'CORRELATED_FIM_{path.replace("/", "_")}', 'critical',
+                'Correlated File Modification Alert',
+                f"Detection Rule [Unified FIM & Audit]: '{path}' was maliciously modified by user '{actor}' (AUID: {auid_str})."
+            )
+        else:
+            # Standalone FIM alert (No auditd correlation)
+            _create_alert_dedup(
+                server_id, f'FIM_{path.replace("/", "_")}', 'critical',
+                'OS File Modification Alert',
+                f'Detection Rule [File Integrity Monitor]: {change_type} at {path}. {detail}'
+            )
 
-def _check_auditd_events(server_id, data):
-    """Detection: Auditd kernel-level security events with User Attribution."""
-    audit_events = data.get("audit_events", [])
-    for ae in audit_events:
-        auid = ae.get("auid", "unknown")
-        key = ae.get("key", "unknown")
-        line = ae.get("line", "")
+    # Process leftover audit events that didn't have a matching FIM file change
+    for key, events in audit_map.items():
+        if key in alerted_keys: continue
+        last_event = events[-1]
+        actor = last_event.get("username", "unknown")
+        auid_str = last_event.get("auid", "unknown")
+        line = last_event.get("line", "")
         
-        severity = "high"
-        title = "Kernel Audit Event"
+        severity = "critical" if key in ["identity", "priv_esc", "remote_access"] else "high"
+        title = f"{key.replace('_', ' ').title()} Alert by {actor}"
         
-        if key == "identity" or key == "priv_esc":
-            severity = "critical"
-            title = f"Critical File Modification by User (AUID: {auid})"
-        elif key == "scheduled_tasks":
-            severity = "high"
-            title = f"Scheduled Task (Cron) Modification by User (AUID: {auid})"
-        elif key == "remote_access":
-            severity = "critical"
-            title = f"Remote Access Config Modified by User (AUID: {auid})"
-            
         _create_alert_dedup(
-            server_id, f'AUDIT_{key}_{auid}', severity,
+            server_id, f'AUDIT_{key}_{auid_str}', severity,
             title,
-            f'Detection Rule [Kernel Audit]: {line[:250]}'
+            f"Detection Rule [Kernel Audit]: {key} event triggered by user '{actor}' (AUID: {auid_str}). {line[:200]}"
         )
 
     log_lines = data.get("log_lines", []) or data.get("logs", [])
@@ -1631,14 +1655,9 @@ def run_detection_engine(server_id: int, data: dict):
         logger.debug(f"Error in _check_sudo_misuse: {e}")
 
     try:
-        _check_auditd_events(server_id, data)
+        _check_unified_fim(server_id, data)
     except Exception as e:
-        logger.debug(f"Error in _check_auditd_events: {e}")
-
-    try:
-        _check_file_modifications(server_id, data)
-    except Exception as e:
-        logger.debug(f"Error in _check_file_modifications: {e}")
+        logger.debug(f"Error in _check_unified_fim: {e}")
 
     try:
         _check_port_scan(server_id, data)
@@ -2769,6 +2788,17 @@ def check_fim():
         except: pass
     return changes
 
+def get_user_mapping():
+    mapping = {}
+    try:
+        with open("/etc/passwd", "r") as f:
+            for line in f:
+                parts = line.strip().split(":")
+                if len(parts) > 2:
+                    mapping[parts[2]] = parts[0]
+    except: pass
+    return mapping
+
 # Auditd event tracking
 audit_log_positions = {{}}
 def get_auditd_events():
@@ -2776,6 +2806,7 @@ def get_auditd_events():
     path = "/var/log/audit/audit.log"
     if not os.path.exists(path): return events
     try:
+        user_mapping = get_user_mapping()
         size = os.path.getsize(path)
         pos = audit_log_positions.get(path, max(0, size - 8000))
         if size < pos: pos = 0
@@ -2787,9 +2818,10 @@ def get_auditd_events():
                     key_m = re.search(r'key="([^"]+)"', line)
                     if auid_m and auid_m.group(1) != "4294967295":
                         auid = auid_m.group(1)
+                        uname = user_mapping.get(auid, "unknown")
                         key = key_m.group(1) if key_m else "unknown"
                         if key != "unknown":
-                            events.append({{"auid": auid, "key": key, "line": line.strip()[:300]}})
+                            events.append({{"auid": auid, "username": uname, "key": key, "line": line.strip()[:300]}})
             audit_log_positions[path] = f.tell()
     except: pass
     return events[-30:]
