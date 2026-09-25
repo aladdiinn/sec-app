@@ -779,9 +779,12 @@ def save_agent_data(server_id: int, data: dict):
                     last_sudo_ago_val = last_cmd.get("ago", "just now")
 
             # Update server resource metrics
-            cpu_val = float(data.get("cpu_percent") or (data.get("metrics") or {}).get("cpu") or 0)
-            mem_val = float(data.get("memory_percent") or (data.get("metrics") or {}).get("memory") or 0)
-            disk_val = float(data.get("disk_percent") or (data.get("metrics") or {}).get("disk") or 0)
+            cpu_raw = data.get("cpu_percent")
+            cpu_val = float(cpu_raw) if cpu_raw is not None else float((data.get("metrics") or {}).get("cpu") or 0)
+            mem_raw = data.get("memory_percent")
+            mem_val = float(mem_raw) if mem_raw is not None else float((data.get("metrics") or {}).get("memory") or 0)
+            disk_raw = data.get("disk_percent")
+            disk_val = float(disk_raw) if disk_raw is not None else float((data.get("metrics") or {}).get("disk") or 0)
 
             procs_list = data.get("processes", [])
             if procs_list:

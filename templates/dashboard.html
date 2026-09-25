@@ -378,6 +378,8 @@
                 <option value="critical">Critical Issues Only</option>
                 <option value="trouble">Trouble / Warning Only</option>
                 <option value="online">Online / Normal Only</option>
+                <option value="maint">Maintenance / Isolated</option>
+                <option value="down">Offline / Down</option>
             </select>
 
             <button class="btn btn-glass" style="padding:6px 12px; font-size:11px" onclick="loadDashboardData()">🔄 Refresh</button>
@@ -648,12 +650,19 @@ function renderServicesGrid() {
         if (search && !name.includes(search) && !ip.includes(search)) return false;
 
         const st = (s.status || 'online').toLowerCase();
-        const hasCrit = s.severity === 'critical' || (s.alert_count > 0);
-        const isMaint = s.is_maintenance;
+        const sev = (s.severity || 'info').toLowerCase();
+        const isMaint = s.is_maintenance || st === 'maintenance' || st === 'isolated';
+        const isDown = st === 'offline' || st === 'down';
+        
+        const isCrit = !isDown && !isMaint && sev === 'critical';
+        const isTrouble = !isDown && !isMaint && !isCrit && (sev === 'warning' || sev === 'high');
+        const isUp = !isDown && !isMaint && !isCrit && !isTrouble;
 
-        if (filter === 'critical') return hasCrit && st !== 'maintenance';
-        if (filter === 'trouble') return st === 'warning' || st === 'trouble';
-        if (filter === 'online') return st === 'online' && !hasCrit;
+        if (filter === 'down') return isDown;
+        if (filter === 'maint') return isMaint;
+        if (filter === 'critical') return isCrit;
+        if (filter === 'trouble') return isTrouble;
+        if (filter === 'online') return isUp;
         return true;
     });
 
@@ -735,6 +744,8 @@ function filterServicesByStatus(st) {
     if (st === 'critical') sel.value = 'critical';
     else if (st === 'trouble') sel.value = 'trouble';
     else if (st === 'online') sel.value = 'online';
+    else if (st === 'maint') sel.value = 'maint';
+    else if (st === 'down') sel.value = 'down';
     else sel.value = 'all';
     renderServicesGrid();
 }

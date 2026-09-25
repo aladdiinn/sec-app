@@ -2543,14 +2543,16 @@ def check_assigned_server_id():
 def get_cpu_percent():
     try:
         with open("/proc/stat") as f: t1 = f.readline().split()
-        time.sleep(0.3)
+        time.sleep(0.5)
         with open("/proc/stat") as f: t2 = f.readline().split()
-        idle1, total1 = int(t1[4]), sum(int(x) for x in t1[1:])
-        idle2, total2 = int(t2[4]), sum(int(x) for x in t2[1:])
-        dt = total2 - total1
-        di = idle2 - idle1
-        return round((1 - di/dt) * 100, 1) if dt else 0
-    except: return 0
+        idle1 = int(t1[4]) + int(t1[5])
+        total1 = sum(int(x) for x in t1[1:])
+        idle2 = int(t2[4]) + int(t2[5])
+        total2 = sum(int(x) for x in t2[1:])
+        dt = float(total2 - total1)
+        di = float(idle2 - idle1)
+        return round((1.0 - di/dt) * 100.0, 1) if dt > 0 else 0.0
+    except: return 0.0
 
 def get_memory_percent():
     try:
