@@ -1920,6 +1920,20 @@ async def api_patch_alert(id: int, request: Request):
     finally:
         conn.close()
 
+@app.post("/api/servers/{server_id}/alerts/resolve-all")
+async def api_resolve_all_server_alerts(server_id: int, request: Request):
+    conn = db.get_db_connection()
+    if not conn: raise HTTPException(status_code=500)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE alerts SET is_resolved = TRUE, resolved_at = NOW() WHERE server_id = %s AND (is_resolved IS NULL OR is_resolved = FALSE)", (server_id,))
+            rc = cur.rowcount
+            uname = request.session.get('username', 'system')
+            db.log_audit(uname, 'RESOLVE_ALL_ALERTS', 'server', server_id, f"Resolved {rc} active alerts for server {server_id}")
+            return {"ok": True, "resolved_count": rc}
+    finally:
+        conn.close()
+
 @app.get("/api/notifications")
 async def api_get_notifications():
     alerts = db.get_alerts()

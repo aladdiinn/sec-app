@@ -482,7 +482,10 @@
         <!-- TAB 2: INCIDENTS / OUTAGES -->
         <div id="i3t-incidents" style="display:none">
             <div class="i3-card">
-                <div class="i3-card-title">🚨 Incidents & Alerts For This Asset</div>
+                <div class="i3-card-title" style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>🚨 Incidents & Alerts For This Asset</span>
+                    <button onclick="resolveAllServerAlerts()" style="background:#0f172a; border:1px solid #1e293b; color:#94a3b8; padding:4px 10px; border-radius:4px; font-size:12px; cursor:pointer;">Mark All Closed</button>
+                </div>
                 <div id="i3-incidents-list">
                     <div style="text-align:center; padding:20px; color:#94a3b8">Loading incidents...</div>
                 </div>
@@ -837,10 +840,13 @@ async function openImage3Modal(serverId) {
                 const isCrit = (a.severity || '').toLowerCase() === 'critical';
                 const sevClass = isCrit ? 'sev-critical' : 'sev-warning';
                 return `
-                <div class="i3-alert-item ${sevClass}">
+                <div class="i3-alert-item ${sevClass}" id="alert-card-${a.id}">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
                         <strong style="color:#f8fafc; font-size:13px; font-weight:700">${a.title || a.alert_type || 'Security Alert'}</strong>
-                        <span style="font-size:10px; color:#64748b; font-family:monospace">${a.created_at_formatted || 'recent'}</span>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span style="font-size:10px; color:#64748b; font-family:monospace">${a.created_at_formatted || 'recent'}</span>
+                            <input type="checkbox" title="Mark Closed" style="cursor:pointer;" onchange="resolveSingleAlert(${a.id}, this)">
+                        </div>
                     </div>
                     <div style="font-size:11px; color:#94a3b8; font-family:system-ui,sans-serif; line-height:1.5; word-break:break-word">${a.message || ''}</div>
                 </div>
@@ -1351,7 +1357,40 @@ async function toggleMaintInModal() {
         showToast('Failed to toggle maintenance', 'error');
     }
 }
+async function resolveSingleAlert(alertId, checkbox) {
+    if (!checkbox.checked) return;
+    try {
+        await apiFetch(`/api/alerts/${alertId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({is_resolved: true})
+        });
+        const card = document.getElementById(`alert-card-${alertId}`);
+        if (card) {
+            card.style.opacity = '0.5';
+            card.style.pointerEvents = 'none';
+        }
+        showToast('Alert marked as closed', 'success');
+        // Refresh dashboard numbers in background
+        loadDashboardData();
+    } catch(e) {
+        showToast('Failed to close alert', 'error');
+        checkbox.checked = false;
+    }
+}
 
+async function resolveAllServerAlerts() {
+    if (!activeModalServerId) return;
+    try {
+        await apiFetch(`/api/servers/${activeModalServerId}/alerts/resolve-all`, {
+            method: 'POST'
+        });
+        showToast('All alerts for this server marked as closed', 'success');
+        openImage3Modal(activeModalServerId); // refresh modal UI
+        loadDashboardData(); // refresh dashboard
+    } catch(e) {
+        showToast('Failed to close alerts', 'error');
+    }
+}
 window.addEventListener('DOMContentLoaded', () => {
     loadDashboardData();
     setInterval(loadDashboardData, 20000);

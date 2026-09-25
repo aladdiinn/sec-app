@@ -1072,8 +1072,27 @@ def get_servers(project_id=None):
                 )
             """)
             where_sql = "WHERE " + " AND ".join(where_parts)
-            cur.execute(f"SELECT s.* FROM servers s {where_sql} ORDER BY s.id ASC;", params)
-            return cur.fetchall()
+            query = f"""
+                SELECT s.*, 
+                       (SELECT COUNT(*) FROM alerts a WHERE a.server_id = s.id AND a.is_resolved IS NOT TRUE) as alert_count,
+                       (SELECT CASE 
+                           WHEN EXISTS (SELECT 1 FROM alerts a WHERE a.server_id = s.id AND a.severity = 'critical' AND a.is_resolved IS NOT TRUE) THEN 'critical'
+                           WHEN EXISTS (SELECT 1 FROM alerts a WHERE a.server_id = s.id AND (a.severity = 'warning' OR a.severity = 'high') AND a.is_resolved IS NOT TRUE) THEN 'warning'
+                           ELSE 'info'
+                       END) as computed_severity
+                FROM servers s 
+                {where_sql} 
+                ORDER BY s.id ASC;
+            """
+            cur.execute(query, params)
+            results = cur.fetchall()
+            # Override the static severity column with the dynamic computed_severity
+            ret = []
+            for r in results:
+                d = dict(r)
+                d['severity'] = d.get('computed_severity', 'info')
+                ret.append(d)
+            return ret
     except Exception as e:
         logger.error(f"Error in get_servers: {e}")
         return []
@@ -2263,37 +2282,47 @@ def get_dashboard_counts(project_id=None):
             cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where};", params)
             total_servers = (cur.fetchone() or {}).get("cnt", 0)
 
-            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} status = 'online';", params)
-            online_servers = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (status = 'offline' OR status = 'down');", params)
+            down_servers = (cur.fetchone() or {}).get("cnt", 0)
 
             cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (is_maintenance = TRUE OR status = 'maintenance' OR status = 'isolated');", params)
             maint_servers = (cur.fetchone() or {}).get("cnt", 0)
 
-            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (status = 'offline' OR status = 'down');", params)
-            down_servers = (cur.fetchone() or {}).get("cnt", 0)
+            sql_clause_a, params_a = _build_pid_filter("s.project_id", project_id)
+            a_where = ("WHERE " + sql_clause_a[5:]) if sql_clause_a else ""
+
+            # Servers that are Critical (NOT Down, NOT Maint)
+            cur.execute(f"""
+                SELECT COUNT(DISTINCT s.id) as cnt FROM servers s
+                JOIN alerts a ON a.server_id = s.id 
+                {a_where} {'AND' if a_where else 'WHERE'} a.severity = 'critical' AND a.is_resolved IS NOT TRUE
+                AND (s.status != 'offline' AND s.status != 'down')
+                AND (s.is_maintenance IS NOT TRUE AND s.status != 'maintenance' AND s.status != 'isolated');
+            """, params_a)
+            crit_servers = (cur.fetchone() or {}).get("cnt", 0)
+
+            # Servers that are Trouble (NOT Down, NOT Maint, NOT Critical)
+            cur.execute(f"""
+                SELECT COUNT(DISTINCT s.id) as cnt FROM servers s
+                JOIN alerts a ON a.server_id = s.id 
+                {a_where} {'AND' if a_where else 'WHERE'} (a.severity = 'warning' OR a.severity = 'high') AND a.is_resolved IS NOT TRUE
+                AND (s.status != 'offline' AND s.status != 'down')
+                AND (s.is_maintenance IS NOT TRUE AND s.status != 'maintenance' AND s.status != 'isolated')
+                AND s.id NOT IN (
+                    SELECT server_id FROM alerts WHERE severity = 'critical' AND is_resolved IS NOT TRUE
+                );
+            """, params_a)
+            trouble_servers = (cur.fetchone() or {}).get("cnt", 0)
+
+            # UP servers (Online, No Maint, No Critical, No Trouble)
+            up_servers = total_servers - down_servers - maint_servers - crit_servers - trouble_servers
+            if up_servers < 0: up_servers = 0
 
             cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE %s OR LOWER(hostname) LIKE %s OR LOWER(os_info) LIKE %s);", list(params) + ['%db%', '%db%', '%postgres%'])
             total_db = (cur.fetchone() or {}).get("cnt", 0)
 
             cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE %s OR LOWER(hostname) LIKE %s OR LOWER(name) LIKE %s);", list(params) + ['%app%', '%app%', '%web%'])
             total_apps = (cur.fetchone() or {}).get("cnt", 0)
-
-            sql_clause_a, params_a = _build_pid_filter("s.project_id", project_id)
-            a_where = ("WHERE " + sql_clause_a[5:]) if sql_clause_a else ""
-
-            cur.execute(f"""
-                SELECT COUNT(*) as cnt FROM alerts a 
-                JOIN servers s ON a.server_id = s.id 
-                {a_where} {'AND' if a_where else 'WHERE'} a.severity = 'critical' AND (a.is_resolved IS NOT TRUE);
-            """, params_a)
-            crit_alerts = (cur.fetchone() or {}).get("cnt", 0)
-
-            cur.execute(f"""
-                SELECT COUNT(*) as cnt FROM alerts a 
-                JOIN servers s ON a.server_id = s.id 
-                {a_where} {'AND' if a_where else 'WHERE'} (a.severity = 'warning' OR a.severity = 'high') AND (a.is_resolved IS NOT TRUE);
-            """, params_a)
-            trouble_servers = (cur.fetchone() or {}).get("cnt", 0)
 
             cur.execute(f"SELECT COUNT(*) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id {a_where};", params_a)
             total_alerts = (cur.fetchone() or {}).get("cnt", 0)
@@ -2303,8 +2332,8 @@ def get_dashboard_counts(project_id=None):
 
             return {
                 "total_servers": total_servers,
-                "online_servers": online_servers,
-                "critical_alerts": crit_alerts,
+                "online_servers": up_servers,
+                "critical_alerts": crit_servers,
                 "maintenance_servers": maint_servers,
                 "down_servers": down_servers,
                 "trouble_servers": trouble_servers,
