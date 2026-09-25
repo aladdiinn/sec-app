@@ -235,6 +235,17 @@ def init_db():
                 );
             """)
 
+            # Open Ports Table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS open_ports (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT REFERENCES servers(id) ON DELETE CASCADE,
+                    port INT NOT NULL,
+                    service VARCHAR(128) DEFAULT 'unknown',
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
             # Login History Table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS login_history (

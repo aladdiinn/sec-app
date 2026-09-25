@@ -163,11 +163,18 @@ function renderProjects() {
             <div>
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
                     <h3 class="card-title" style="font-size:16px; font-family:var(--orbitron,monospace); color:var(--cyan); letter-spacing:1px">${p.name}</h3>
-                    <button onclick="event.stopPropagation(); deleteProject(${id}, '${name}', this)"
-                        title="Delete project"
-                        style="background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono);">
-                        DEL
-                    </button>
+                    <div>
+                        <button onclick="event.stopPropagation(); openEditModal(${id})"
+                            title="Edit project"
+                            style="background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.4); color:var(--cyan); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono); margin-right:4px">
+                            EDIT
+                        </button>
+                        <button onclick="event.stopPropagation(); deleteProject(${id}, '${name}', this)"
+                            title="Delete project"
+                            style="background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono);">
+                            DEL
+                        </button>
+                    </div>
                 </div>
                 <p class="text-meta" style="margin-bottom:14px; line-height:1.5; height:36px; overflow:hidden">${desc}</p>
             </div>
@@ -214,8 +221,68 @@ async function enterProjectView(projectId) {
 /* ── Create project with asset checkboxes ────────────────── */
 let isEditingProjectId = null;
 
+async function openEditModal(id) {
+    const proj = currentProjects.find(p => p.id === id);
+    if (!proj) return;
+    
+    isEditingProjectId = id;
+    document.getElementById('create-form').reset();
+    document.getElementById('name').value = proj.name || '';
+    document.getElementById('description').value = proj.description || '';
+    
+    const vpnTrack = document.getElementById('vpnTrackingEnabled');
+    const vpnSubnet = document.getElementById('vpnSubnets');
+    
+    if (proj.vpn_tracking_enabled) {
+        vpnTrack.checked = true;
+        document.getElementById('vpnSubnetContainer').style.display = 'block';
+        vpnSubnet.value = proj.vpn_subnet || '';
+    } else {
+        vpnTrack.checked = false;
+        document.getElementById('vpnSubnetContainer').style.display = 'none';
+        vpnSubnet.value = '';
+    }
+
+    const titleEl = document.getElementById('create-modal').querySelector('h3');
+    if (titleEl) titleEl.innerText = 'EDIT PROJECT';
+    document.getElementById('create-modal').style.display = 'block';
+    
+    const listEl = document.getElementById('create-assets-list');
+    listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">Loading assets...</div>';
+
+    try {
+        let servers = await apiFetch('/api/servers');
+        if (!Array.isArray(servers)) servers = servers.servers || [];
+        allAvailableServers = servers;
+
+        if (servers.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:10px; color:var(--text-sub); font-size:11px">No assets registered yet</div>';
+            return;
+        }
+
+        const assignedIds = typeof proj.server_ids === 'string' ? JSON.parse(proj.server_ids || '[]') : (proj.server_ids || []);
+
+        listEl.innerHTML = servers.map(s => {
+            const isAssigned = assignedIds.includes(s.id);
+            return `
+            <label style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:rgba(255,255,255,0.02); border-radius:4px; margin-bottom:6px; cursor:pointer">
+                <div style="display:flex; align-items:center; gap:10px">
+                    <input type="checkbox" class="create-asset-chk" value="${s.id}" style="accent-color:var(--cyan)" ${isAssigned ? 'checked' : ''}>
+                    <span style="font-size:12px; color:var(--text); font-weight:500">${s.hostname || s.name}</span>
+                </div>
+                <span style="font-size:10px; color:var(--text-sub)">${s.ip_address || s.ip}</span>
+            </label>
+            `;
+        }).join('');
+    } catch (e) {
+        listEl.innerHTML = '<div style="text-align:center; padding:10px; color:var(--red); font-size:11px">Failed to load assets</div>';
+    }
+}
+
 async function openCreateModal() {
     isEditingProjectId = null;
+    const titleEl = document.getElementById('create-modal').querySelector('h3');
+    if (titleEl) titleEl.innerText = 'CREATE NEW PROJECT';
     document.getElementById('create-form').reset();
     document.getElementById('vpnSubnetContainer').style.display = 'none';
     document.getElementById('create-modal').style.display = 'block';

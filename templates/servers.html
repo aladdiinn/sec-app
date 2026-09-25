@@ -954,6 +954,7 @@
                                  anyMatch(line, ['tomcat', 'catalina', 'org.apache', 'coyote', 'protocolhandler', 'outofmemory', 'java.lang.', 'spring', 'hibernate', 'starting service', 'stopping service']);
                 if (!isTomcat) return false;
             } else if (modalActiveCategory === 'postgres') {
+                if (ltype === 'tomcat' || anyMatch(src, ['tomcat', 'catalina', 'apache', 'nohup'])) return false;
                 const isPg = ltype === 'postgres' || ltype === 'pgsql' ||
                              anyMatch(src, ['postgres', 'pgsql', '5432']) ||
                              anyMatch(line, [
