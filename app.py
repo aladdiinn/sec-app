@@ -2789,7 +2789,7 @@ def check_fim():
     return changes
 
 def get_user_mapping():
-    mapping = {}
+    mapping = {{}}
     try:
         with open("/etc/passwd", "r") as f:
             for line in f:
