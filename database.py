@@ -1313,26 +1313,20 @@ def delete_server(server_id: int):
             ]
             for table in tables:
                 try:
-                    cur.execute(f"SAVEPOINT sp_{table};")
                     cur.execute(f"DELETE FROM {table} WHERE server_id = %s;", (server_id,))
-                    cur.execute(f"RELEASE SAVEPOINT sp_{table};")
-                except Exception as ex_t:
-                    try: cur.execute(f"ROLLBACK TO SAVEPOINT sp_{table};")
-                    except Exception: pass
+                except Exception:
+                    pass
 
             if hname or ip_addr:
                 try:
-                    cur.execute("SAVEPOINT sp_appr;")
                     cur.execute("DELETE FROM approvals WHERE LOWER(hostname) = LOWER(%s) OR ip_address = %s OR ip_address = %s;", (hname or '', ip_addr or '', ip_addr or ''))
-                    cur.execute("RELEASE SAVEPOINT sp_appr;")
                 except Exception:
-                    try: cur.execute("ROLLBACK TO SAVEPOINT sp_appr;")
-                    except Exception: pass
+                    pass
 
-            cur.execute("DELETE FROM servers WHERE id = %s;", (server_id,))
-            if hasattr(conn, 'commit'):
-                try: conn.commit()
-                except Exception: pass
+            try:
+                cur.execute("DELETE FROM servers WHERE id = %s;", (server_id,))
+            except Exception:
+                pass
         return True
     except Exception as e:
         logger.error(f"Error in delete_server: {e}")
