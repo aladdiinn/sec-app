@@ -922,7 +922,14 @@ async function openImage3Modal(serverId) {
         if (vpnTrackEl) vpnTrackEl.checked = srv.vpn_tracking_enabled || false;
         if (vpnSubnetEl) vpnSubnetEl.value = srv.vpn_subnet || '';
 
-        const ports = details.ports || details.open_ports || [];
+        const rawPorts = details.ports || details.open_ports || [];
+        const seenPorts = new Set();
+        const ports = rawPorts.filter(p => {
+            const portNum = p.port || p;
+            if (seenPorts.has(portNum)) return false;
+            seenPorts.add(portNum);
+            return true;
+        });
         const portsList = document.getElementById('i3t-ports-list');
         if (portsList) {
             if (!ports.length) {
