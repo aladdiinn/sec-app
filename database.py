@@ -482,7 +482,14 @@ def init_db():
             # Servers Alter
             for col, col_type in [
                 ('project_id', 'INT'),
-                ('maintenance_until', 'TIMESTAMP WITH TIME ZONE')
+                ('maintenance_until', 'TIMESTAMP WITH TIME ZONE'),
+                ('vpn_subnet', 'VARCHAR(255)'),
+                ('vpn_tracking_enabled', 'BOOLEAN DEFAULT FALSE'),
+                ('network_rx_bytes', 'BIGINT DEFAULT 0'),
+                ('network_tx_bytes', 'BIGINT DEFAULT 0'),
+                ('network_rx_avg', 'BIGINT DEFAULT 0'),
+                ('network_tx_avg', 'BIGINT DEFAULT 0'),
+                ('network_samples', 'INT DEFAULT 0')
             ]:
                 try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass
@@ -498,7 +505,9 @@ def init_db():
 
             # Projects Alter
             for col, col_type in [
-                ('server_ids', "TEXT DEFAULT '[]'")
+                ('server_ids', "TEXT DEFAULT '[]'"),
+                ('vpn_subnet', 'VARCHAR(255)'),
+                ('vpn_tracking_enabled', 'BOOLEAN DEFAULT FALSE')
             ]:
                 try: cur.execute(f"ALTER TABLE projects ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass

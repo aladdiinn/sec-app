@@ -1538,7 +1538,7 @@ def _check_unified_fim(server_id, data):
             )
 
 def _check_port_scan(server_id, data):
-    """Detection: Port scan detection & unexpected open ports."""
+    """Phase 4: Port scan detection & unexpected open ports (including default infrastructure ports)."""
     open_ports = data.get("open_ports", [])
     if not open_ports:
         return
@@ -1551,18 +1551,36 @@ def _check_port_scan(server_id, data):
         except Exception:
             pass
 
+    # Phase 4: Strict Dangerous Default Port Detection
+    dangerous_defaults = {
+        21: "FTP", 23: "Telnet", 3389: "RDP", 5432: "PostgreSQL",
+        3306: "MySQL", 6379: "Redis", 27017: "MongoDB", 11211: "Memcached",
+        9200: "Elasticsearch", 2375: "Docker API"
+    }
+    for p in current_ports:
+        if p in dangerous_defaults:
+            _create_alert_dedup(
+                server_id, f'DANGEROUS_PORT_{p}', 'critical',
+                'Exposed Infrastructure Port',
+                f'Detection Rule [Exposed Service]: Dangerous default port {p} ({dangerous_defaults[p]}) is open and exposed. This should not be publicly listening.'
+            )
+
     if server_id not in _known_server_ports:
         _known_server_ports[server_id] = current_ports
         return
 
     known = _known_server_ports[server_id]
     new_ports = current_ports - known
-    suspicious_ports = [p for p in new_ports if p not in [22, 80, 443, 8080, 8443, 5432, 3306, 6379, 27017, 8000, 5000]]
+    
+    # Only ignore strictly public expected ports for the general "new port" alert
+    whitelisted_public = [22, 80, 443, 8080, 8443, 8000, 5000]
+    suspicious_ports = [p for p in new_ports if p not in whitelisted_public and p not in dangerous_defaults]
+    
     if suspicious_ports:
         _create_alert_dedup(
             server_id, 'PORT_SCAN_DETECTED', 'warning',
-            'Port Scan Detection Alert',
-            f'Detection Rule [Port Scan Detection]: Unexpected open port(s) detected: {suspicious_ports}. Possible backdoor or port scan.'
+            'Unexpected Port Opened Alert',
+            f'Detection Rule [Network Anomaly]: New unexpected open port(s) detected: {suspicious_ports}. Possible backdoor or unauthorized service.'
         )
 
     _known_server_ports[server_id] = current_ports
@@ -1589,6 +1607,105 @@ def _check_high_resource_processes(server_id, data):
                 'Traffic Anomaly Alert',
                 f'Detection Rule [High Resource Anomaly]: Process {pname} (PID: {pid}) RAM at {mem:.1f}% (>85% threshold).'
             )
+
+_process_conn_baselines = {}
+
+def _check_network_and_connections(server_id, data):
+    """Phase 4: Network Traffic Spikes & Process Connection Spikes."""
+    rx_bytes = data.get("network_rx_bytes", 0)
+    tx_bytes = data.get("network_tx_bytes", 0)
+    proc_conns = data.get("process_connections", [])
+
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT network_rx_bytes, network_tx_bytes, network_rx_avg, network_tx_avg, network_samples FROM servers WHERE id = %s;", (server_id,))
+                row = cur.fetchone()
+                if row:
+                    last_rx = row.get("network_rx_bytes", 0) or 0
+                    last_tx = row.get("network_tx_bytes", 0) or 0
+                    rx_avg = row.get("network_rx_avg", 0) or 0
+                    tx_avg = row.get("network_tx_avg", 0) or 0
+                    samples = row.get("network_samples", 0) or 0
+
+                    if rx_bytes >= last_rx and last_rx > 0:
+                        delta_rx = rx_bytes - last_rx
+                        delta_tx = tx_bytes - last_tx
+                        
+                        if samples > 10:
+                            if delta_rx > (rx_avg * 4) and delta_rx > 52428800:
+                                _create_alert_dedup(server_id, 'NETWORK_RX_SPIKE', 'critical', 'Network Traffic Spike Alert', f'Detection Rule [Traffic Anomaly]: Sudden incoming traffic spike. 30s volume was {delta_rx//1024//1024}MB (Historical 24h avg is {rx_avg//1024//1024}MB).')
+                            if delta_tx > (tx_avg * 4) and delta_tx > 52428800:
+                                _create_alert_dedup(server_id, 'NETWORK_TX_SPIKE', 'critical', 'Network Traffic Spike Alert', f'Detection Rule [Traffic Anomaly]: Sudden outgoing traffic spike. 30s volume was {delta_tx//1024//1024}MB (Historical 24h avg is {tx_avg//1024//1024}MB).')
+
+                        alpha = 2.0 / (min(samples, 2880) + 1.0)
+                        new_rx_avg = int((delta_rx * alpha) + (rx_avg * (1.0 - alpha))) if rx_avg > 0 else delta_rx
+                        new_tx_avg = int((delta_tx * alpha) + (tx_avg * (1.0 - alpha))) if tx_avg > 0 else delta_tx
+                        
+                        cur.execute("UPDATE servers SET network_rx_bytes=%s, network_tx_bytes=%s, network_rx_avg=%s, network_tx_avg=%s, network_samples=%s WHERE id = %s;",
+                            (rx_bytes, tx_bytes, new_rx_avg, new_tx_avg, samples + 1, server_id))
+                    else:
+                        cur.execute("UPDATE servers SET network_rx_bytes=%s, network_tx_bytes=%s WHERE id = %s;", (rx_bytes, tx_bytes, server_id))
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Network spike error: {e}")
+        finally:
+            conn.close()
+
+    if server_id not in _process_conn_baselines: _process_conn_baselines[server_id] = {}
+    for p in proc_conns:
+        name = p.get("process")
+        count = p.get("connections", 0)
+        baseline = _process_conn_baselines[server_id].get(name, {"avg": count, "samples": 0})
+        avg = baseline["avg"]
+        samples = baseline["samples"]
+        
+        if samples > 10 and count > (avg * 4) and count > 50:
+            _create_alert_dedup(server_id, f'PROC_CONN_SPIKE_{name}', 'warning', 'Process Connection Anomaly', f'Detection Rule [Traffic Anomaly]: Process {name} suddenly jumped to {count} active connections (Normal baseline is {int(avg)}).')
+        
+        alpha = 2.0 / (min(samples, 2880) + 1.0)
+        baseline["avg"] = (count * alpha) + (avg * (1.0 - alpha))
+        baseline["samples"] = samples + 1
+        _process_conn_baselines[server_id][name] = baseline
+
+def _check_vpn_subnets_and_reverse_shell(server_id, data):
+    """Phase 4: Out-of-Subnet detection & DB Reverse Shells."""
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT s.vpn_subnet, s.vpn_tracking_enabled, p.vpn_subnet as p_subnet, p.vpn_tracking_enabled as p_tracking FROM servers s LEFT JOIN projects p ON s.project_id = p.id WHERE s.id = %s;", (server_id,))
+                row = cur.fetchone()
+                if row:
+                    s_track = row.get("vpn_tracking_enabled")
+                    s_subnet = row.get("vpn_subnet")
+                    p_track = row.get("p_tracking")
+                    p_subnet = row.get("p_subnet")
+                    
+                    track_enabled = s_track if s_track is not None else p_track
+                    subnet_cidr = s_subnet if s_subnet else p_subnet
+                    
+                    if track_enabled and subnet_cidr:
+                        import ipaddress
+                        try:
+                            allowed_nets = [ipaddress.ip_network(n.strip(), strict=False) for n in subnet_cidr.split(",") if n.strip()]
+                            auth_failures = data.get("auth_failures", [])
+                            for ev in auth_failures:
+                                ip = ev.get("ip")
+                                if ip and ip != "unknown":
+                                    ip_obj = ipaddress.ip_address(ip)
+                                    if not any(ip_obj in net for net in allowed_nets):
+                                        _create_alert_dedup(server_id, f'OUT_OF_SUBNET_{ip}', 'critical', 'External Access Attempt', f'Detection Rule [Out-of-Subnet Access]: Login attempt from {ip}, which is strictly outside the authorized VPN subnets ({subnet_cidr}).')
+                        except: pass
+        except Exception as e: logger.error(f"VPN subnet error: {e}")
+        finally: conn.close()
+
+    bash_cmds = data.get("commands", [])
+    for cmd in bash_cmds:
+        c = cmd.get("command", "").lower()
+        if ("nc -e" in c or "bash -i" in c or "/dev/tcp/" in c) and any(dbp in c for dbp in ["postgres", "mysql", "redis"]):
+            _create_alert_dedup(server_id, 'REVERSE_SHELL_DETECTED', 'critical', 'Database Reverse Shell', f'Detection Rule [Reverse Shell]: Suspicious outbound shell connection initiated from database process context: {c[:200]}')
 
 def _analyze_application_and_db_logs(server_id, data):
     """Detection: Application (Tomcat, nohup) & Database (PostgreSQL) log anomalies with SOAR response."""
@@ -1704,6 +1821,16 @@ def run_detection_engine(server_id: int, data: dict):
         _analyze_application_and_db_logs(server_id, data)
     except Exception as e:
         logger.debug(f"Error in _analyze_application_and_db_logs: {e}")
+
+    try:
+        _check_network_and_connections(server_id, data)
+    except Exception as e:
+        logger.debug(f"Error in _check_network_and_connections: {e}")
+
+    try:
+        _check_vpn_subnets_and_reverse_shell(server_id, data)
+    except Exception as e:
+        logger.debug(f"Error in _check_vpn_subnets_and_reverse_shell: {e}")
 
 
 @app.post("/api/agent/push")
@@ -2691,6 +2818,38 @@ def get_open_ports():
         except: pass
     return ports
 
+def get_network_bytes():
+    rx_bytes = 0
+    tx_bytes = 0
+    try:
+        with open("/proc/net/dev", "r") as f:
+            lines = f.readlines()
+            for line in lines[2:]:
+                parts = line.strip().split(":")
+                if len(parts) == 2:
+                    iface = parts[0].strip()
+                    if iface != "lo" and not iface.startswith("veth") and not iface.startswith("br-") and not iface.startswith("docker"):
+                        stats = parts[1].split()
+                        rx_bytes += int(stats[0])
+                        tx_bytes += int(stats[8])
+    except: pass
+    return rx_bytes, tx_bytes
+
+def get_process_connections():
+    conns = {}
+    try:
+        out = subprocess.check_output(["ss", "-tunpa"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
+        for line in out.strip().split("\\n")[1:]:
+            if "ESTAB" in line or "SYN-RECV" in line:
+                m = re.search(r'users:\(\("([^"]+)",pid=(\d+)', line)
+                if m:
+                    name = m.group(1)
+                    pid = m.group(2)
+                    k = f"{name}({pid})"
+                    conns[k] = conns.get(k, 0) + 1
+    except: pass
+    return [{"process": k, "connections": v} for k, v in sorted(conns.items(), key=lambda item: item[1], reverse=True)[:20]]
+
 def auto_discover_log_paths():
     paths = {{}}
 
@@ -3106,6 +3265,8 @@ while True:
         sudo_events = get_sudo_events()
         file_changes = check_fim()
         audit_events = get_auditd_events()
+        rx, tx = get_network_bytes()
+        proc_conns = get_process_connections()
 
         payload = {{
             "server_id": sid,
@@ -3115,7 +3276,10 @@ while True:
             "cpu_percent": cpu,
             "memory_percent": mem,
             "disk_percent": disk,
+            "network_rx_bytes": rx,
+            "network_tx_bytes": tx,
             "processes": procs,
+            "process_connections": proc_conns,
             "open_ports": ports,
             "commands": bash_cmds,
             "log_lines": [x["line"] for x in log_lines[:100]],
