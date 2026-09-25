@@ -1594,6 +1594,8 @@ def _check_high_resource_processes(server_id, data):
         mem = float(proc.get("memory", 0) or 0)
         pname = proc.get("name", "unknown")
         pid = proc.get("pid", "?")
+        if 'ps aux' in pname.lower() or 'ps ' in pname.lower() or pname.lower().strip() == 'ps':
+            continue
 
         if cpu > 85.0:
             _create_alert_dedup(
@@ -5270,16 +5272,18 @@ async def api_log_streams(
                 elif lt == 'postgres':
                     query += """ AND (
                         pl.log_type IN ('postgres', 'pgsql')
-                        OR pl.source ILIKE '%postgres%' OR pl.source ILIKE '%pgsql%'
-                        OR pl.message ILIKE '%postgres%' OR pl.message ILIKE '%pgsql%'
-                        OR pl.message ILIKE '%statement:%' OR pl.message ILIKE '%checkpoint%'
-                        OR pl.message ILIKE '%duration:%' OR pl.message ILIKE '%pg_hba%'
-                        OR pl.message ILIKE '%autovacuum%' OR pl.message ILIKE '%drop database%'
-                        OR pl.message ILIKE '%drop table%' OR pl.message ILIKE '%drop schema%'
-                        OR pl.message ILIKE '%dropdb%' OR pl.message ILIKE '%dropuser%'
-                        OR pl.message ILIKE '%alter user%' OR pl.message ILIKE '%alter role%'
-                        OR pl.message ILIKE '%grant %' OR pl.message ILIKE '%database system%'
-                        OR pl.message ILIKE '%vacuum %'
+                        OR (
+                            pl.log_type NOT IN ('tomcat', 'app', 'os')
+                            AND pl.source NOT ILIKE '%tomcat%' AND pl.source NOT ILIKE '%catalina%'
+                            AND pl.source NOT ILIKE '%apache%'
+                            AND (
+                                pl.source ILIKE '%postgres%' OR pl.source ILIKE '%pgsql%'
+                                OR pl.message ILIKE '%postgres%' OR pl.message ILIKE '%pgsql%'
+                                OR pl.message ILIKE '%statement:%' OR pl.message ILIKE '%checkpoint%'
+                                OR pl.message ILIKE '%pg_hba%' OR pl.message ILIKE '%autovacuum%'
+                                OR pl.message ILIKE '%database system%'
+                            )
+                        )
                     )"""
                 elif lt == 'soar':
                     query += """ AND (
