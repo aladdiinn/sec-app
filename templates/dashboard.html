@@ -425,6 +425,8 @@
         <div class="i3-tab" onclick="switchI3Tab('incidents', this)">Incidents / Outages</div>
         <div class="i3-tab" onclick="switchI3Tab('resources', this)">Resource Usage (&gt;85%)</div>
         <div class="i3-tab" onclick="switchI3Tab('logs', this)">Log Streams</div>
+        <div class="i3-tab" onclick="switchI3Tab('ports', this)">Ports</div>
+        <div class="i3-tab" onclick="switchI3Tab('network', this)">Network</div>
         <div class="i3-tab" onclick="switchI3Tab('settings', this)">Settings</div>
     </div>
 
@@ -592,6 +594,50 @@
             </div>
         </div>
 
+        <!-- TAB: PORTS -->
+        <div id="i3t-ports" style="display:none">
+            <div class="i3-panel">
+                <div class="i3-panel-title">ðŸ”Œ Open Ports & Connections</div>
+                <div style="font-size:12px; color:var(--text-sub); margin-bottom:16px">Detected by SOC Agent via ss/netstat</div>
+                <div id="i3t-ports-list" style="display:flex; flex-direction:column; gap:8px">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: NETWORK -->
+        <div id="i3t-network" style="display:none">
+            <div class="i3-panel" style="margin-bottom:16px">
+                <div class="i3-panel-title">ðŸ“¡ Server Traffic Stats</div>
+                <div style="display:flex; justify-content:space-between; align-items:center">
+                    <div>
+                        <div style="font-size:11px; color:var(--text-sub)">Total Received (RX)</div>
+                        <div style="font-size:24px; color:var(--green); font-weight:bold" id="i3t-net-rx">0 MB</div>
+                    </div>
+                    <div>
+                        <div style="font-size:11px; color:var(--text-sub)">Total Transmitted (TX)</div>
+                        <div style="font-size:24px; color:var(--cyan); font-weight:bold" id="i3t-net-tx">0 MB</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="i3-panel">
+                <div class="i3-panel-title">ðŸ›¡ï¸  VPN Subnet Detection</div>
+                <p style="font-size:12px; color:var(--text-sub); margin-bottom:16px">Optionally override the Project's VPN subnet tracking settings for this specific server.</p>
+                <form id="server-network-form-dash" onsubmit="saveServerNetwork(event)">
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:12px">
+                        <input type="checkbox" id="serverVpnTracking" style="accent-color:var(--cyan); width:16px; height:16px">
+                        <span style="font-size:13px; color:var(--text); font-weight:500">Enable Independent Server VPN Subnet Tracking</span>
+                    </label>
+                    <div style="margin-bottom:16px">
+                        <label style="display:block; font-size:11px; color:var(--text-sub); margin-bottom:6px">Authorized VPN Subnets (CIDR, comma-separated)</label>
+                        <input type="text" id="serverVpnSubnet" placeholder="e.g., 10.0.0.0/24" style="width:100%; padding:8px 12px; font-size:13px; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); border-radius:6px; outline:none">
+                    </div>
+                    <button type="submit" id="btn-save-network" class="btn" style="background:rgba(56,189,248,0.1); border:1px solid var(--cyan); color:var(--cyan); font-size:12px; padding:6px 12px">Save Network Settings</button>
+                </form>
+            </div>
+        </div>
+
         <!-- TAB 5: SETTINGS -->
         <div id="i3t-settings" style="display:none">
             <div class="i3-card">
@@ -754,7 +800,7 @@ function filterServicesByStatus(st) {
 function switchI3Tab(tabName, btn) {
     document.querySelectorAll('.i3-tab').forEach(t => t.classList.remove('active'));
     btn.classList.add('active');
-    ['overview', 'incidents', 'resources', 'logs', 'settings'].forEach(t => {
+    ['overview', 'incidents', 'resources', 'logs', 'ports', 'network', 'settings'].forEach(t => {
         document.getElementById(`i3t-${t}`).style.display = (t === tabName) ? 'block' : 'none';
     });
 }
@@ -863,6 +909,40 @@ async function openImage3Modal(serverId) {
                 </div>
                 `;
             }).join('');
+        }
+
+        // Phase 4: Network and Ports
+        const rx_bytes = srv.network_rx_bytes || 0;
+        const tx_bytes = srv.network_tx_bytes || 0;
+        if (document.getElementById('i3t-net-rx')) document.getElementById('i3t-net-rx').innerText = (rx_bytes / 1024 / 1024).toFixed(2) + ' MB';
+        if (document.getElementById('i3t-net-tx')) document.getElementById('i3t-net-tx').innerText = (tx_bytes / 1024 / 1024).toFixed(2) + ' MB';
+        
+        const vpnTrackEl = document.getElementById('serverVpnTracking');
+        const vpnSubnetEl = document.getElementById('serverVpnSubnet');
+        if (vpnTrackEl) vpnTrackEl.checked = srv.vpn_tracking_enabled || false;
+        if (vpnSubnetEl) vpnSubnetEl.value = srv.vpn_subnet || '';
+
+        const ports = details.open_ports || [];
+        const portsList = document.getElementById('i3t-ports-list');
+        if (portsList) {
+            if (!ports.length) {
+                portsList.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:12px">No open ports reported by agent</div>';
+            } else {
+                const dangerous = [21, 23, 3389, 5432, 3306, 6379, 27017, 11211, 9200, 2375];
+                portsList.innerHTML = ports.map(p => {
+                    let pt = p.port || p;
+                    let proc = p.process || 'unknown';
+                    let isDanger = dangerous.includes(parseInt(pt));
+                    return `
+                    <div style="background:rgba(255,255,255,0.03); border-left:3px solid ${isDanger?'var(--red)':'var(--cyan)'}; padding:10px 14px; margin-bottom:6px; border-radius:4px; display:flex; justify-content:space-between; align-items:center">
+                        <div>
+                            <strong style="color:${isDanger?'var(--red)':'var(--text)'}; font-size:13px; font-family:var(--mono)">PORT ${pt}</strong>
+                            ${isDanger ? '<span style="margin-left:8px; font-size:10px; background:var(--red); color:#fff; padding:2px 4px; border-radius:3px">DANGEROUS DEFAULT</span>' : ''}
+                        </div>
+                        <div style="font-size:11px; color:var(--text-sub)">Process: ${proc}</div>
+                    </div>`;
+                }).join('');
+            }
         }
 
         // Store all alerts for context-sensitive SOAR banner filtering
@@ -1402,6 +1482,29 @@ async function resolveAllServerAlerts() {
         showToast('Failed to close alerts', 'error');
     }
 }
+
+async function saveServerNetwork(e) {
+    e.preventDefault();
+    if (!activeModalServerId) return;
+    const btn = document.getElementById('btn-save-network');
+    btn.disabled = true;
+    btn.innerText = 'Saving...';
+
+    try {
+        const payload = {
+            vpn_tracking_enabled: document.getElementById('serverVpnTracking').checked,
+            vpn_subnet: document.getElementById('serverVpnSubnet').value
+        };
+        await apiFetch(`/api/servers/${activeModalServerId}/network`, { method: 'POST', body: JSON.stringify(payload) });
+        showToast('Server network configuration updated', 'success');
+    } catch(err) {
+        showToast(err.message || 'Failed to update server network', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Save Network Settings';
+    }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
     loadDashboardData();
     setInterval(loadDashboardData, 20000);
