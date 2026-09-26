@@ -86,16 +86,20 @@ async function loadData(page = 1) {
             tbody.innerHTML = '<tr><td colspan="6" style="padding:20px; text-align:center">No records found.</td></tr>';
             document.getElementById('btn-next').disabled = true;
         } else {
-            tbody.innerHTML = data.map(log => `
-                <tr style="border-bottom:1px solid var(--border)">
-                    <td style="padding:12px">#${log.id}</td>
-                    <td style="padding:12px">${new Date(log.timestamp || log.created_at).toLocaleString()}</td>
+            tbody.innerHTML = data.map(log => {
+                const dateStr = log.timestamp || log.created_at;
+                const d = new Date(dateStr && (dateStr.toString().endsWith('Z') || dateStr.toString().includes('+')) ? dateStr : (dateStr ? dateStr + 'Z' : ''));
+                const timeFormatted = !isNaN(d) ? d.toLocaleString('en-GB', {timeZone: 'Asia/Kolkata', hour12:false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit'}).replace(',','') : dateStr;
+                return `
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+                    <td style="padding:12px; color:var(--cyan)">#${log.id}</td>
+                    <td style="padding:12px">${timeFormatted}</td>
                     <td style="padding:12px">${log.username}</td>
-                    <td style="padding:12px"><span class="badge badge-info">${log.action.toUpperCase()}</span></td>
-                    <td style="padding:12px">${log.target_type} (${log.target_id})</td>
-                    <td style="padding:12px" style="font-family:var(--mono); font-size:12px">${log.detail || '-'}</td>
+                    <td style="padding:12px"><span style="background:rgba(56,189,248,0.1); color:#38bdf8; border:1px solid #38bdf8; font-size:9px; padding:2px 6px; border-radius:3px">${log.action.toUpperCase()}</span></td>
+                    <td style="padding:12px; color:var(--text2)">${log.target_type} (${log.target_id})</td>
+                    <td style="padding:12px; font-family:var(--mono); font-size:12px; color:var(--text)">${log.detail || '-'}</td>
                 </tr>
-            `).join('');
+            `}).join('');
             document.getElementById('btn-next').disabled = data.length < limit;
         }
         document.getElementById('page-info').innerText = `Page ${currentPage}`;
