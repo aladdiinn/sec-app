@@ -1624,9 +1624,13 @@ def _check_network_and_connections(server_id, data):
             with conn.cursor() as cur:
                 cur.execute("SELECT network_rx_bytes, network_tx_bytes, network_rx_avg, network_tx_avg, network_samples FROM servers WHERE id = %s;", (server_id,))
                 row = cur.fetchone()
+                
+                # Debug logging to database
+                db.log_audit("system", f"NET_DEBUG", "server", server_id, f"Received rx={rx_bytes}, tx={tx_bytes}. DB row={dict(row) if row else None}")
+
                 if row:
-                    last_rx = row.get("network_rx_bytes", 0) or 0
-                    last_tx = row.get("network_tx_bytes", 0) or 0
+                    last_rx = row.get("network_rx_bytes") or 0
+                    last_tx = row.get("network_tx_bytes") or 0
                     rx_avg = row.get("network_rx_avg", 0) or 0
                     tx_avg = row.get("network_tx_avg", 0) or 0
                     samples = row.get("network_samples", 0) or 0

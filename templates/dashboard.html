@@ -1313,8 +1313,10 @@ function renderModalLogs() {
         // Convert UTC created_at to local timezone (e.g. IST = UTC+5:30) for display
         const ts = (() => {
             if (l.created_at) {
-                const d = new Date(l.created_at);
-                if (!isNaN(d)) return d.toLocaleString('en-GB', {hour12:false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit'}).replace(',','');
+                // Ensure date string is treated as UTC if it lacks a timezone indicator
+                const dateStr = l.created_at.toString().endsWith('Z') || l.created_at.toString().includes('+') ? l.created_at : l.created_at + 'Z';
+                const d = new Date(dateStr);
+                if (!isNaN(d)) return d.toLocaleString('en-GB', {timeZone: 'Asia/Kolkata', hour12:false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit'}).replace(',','');
             }
             return l.created_at_formatted || 'log';
         })();

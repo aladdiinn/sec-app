@@ -502,8 +502,14 @@ def init_db():
                 ('network_tx_avg', 'BIGINT DEFAULT 0'),
                 ('network_samples', 'INT DEFAULT 0')
             ]:
-                try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
-                except: pass
+                try: 
+                    cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                    if hasattr(conn, 'commit'): conn.commit()
+                except Exception: 
+                    try:
+                        cur.execute(f"ALTER TABLE servers ADD COLUMN {col} {col_type};")
+                        if hasattr(conn, 'commit'): conn.commit()
+                    except Exception: pass
 
             # Server Log Configs Alter
             for col, col_type in [
