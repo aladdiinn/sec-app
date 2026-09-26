@@ -134,37 +134,37 @@
             }
 
             el.innerHTML = items.map(inc => {
-                const sColor = inc.severity === 'critical' ? 'var(--accent-red)' : (inc.severity === 'warning' ? 'var(--accent-orange)' : 'var(--accent-blue)');
+                const isCrit = (inc.severity || '').toLowerCase() === 'critical';
+                const sColor = isCrit ? 'var(--red)' : (inc.severity === 'warning' ? 'var(--amber)' : 'var(--cyan)');
                 const st = inc.status || 'open';
                 return `
-                <div class="card glass fade-in" id="inc-card-${inc.id}" style="border-left: 4px solid ${sColor}; padding:20px">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px">
-                        <div style="flex:1; min-width:280px">
-                            <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
-                                ${severityBadge(inc.severity)}
-                                ${statusBadge(st)}
-                                <span style="font-size:12px; color:var(--text-muted); font-family:var(--font-mono)">#INC-${inc.id}</span>
-                            </div>
-                            <h3 class="card-title" style="font-size:18px; margin-bottom:6px">${inc.title || 'Security Incident'}</h3>
-                            <p class="text-sub" style="margin-bottom:12px">${inc.description || 'No description provided'}</p>
-                            <div class="text-meta" style="display:flex; gap:20px; flex-wrap:wrap">
-                                <span>Assigned: <strong style="color:var(--text-primary)">${inc.assigned_to || 'Unassigned'}</strong></span>
-                                <span>Time: ${inc.created_at ? new Date(inc.created_at).toLocaleString() : 'recently'}</span>
-                            </div>
+                <div class="fade-in" id="inc-card-${inc.id}" style="background:#0f172a; border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid ${sColor}; border-radius: 6px; padding: 16px 20px; margin-bottom: 12px; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; box-shadow: 0 4px 6px rgba(0,0,0,0.2)">
+                    <div style="flex:1; min-width:280px">
+                        <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
+                            ${severityBadge(inc.severity)}
+                            ${statusBadge(st)}
+                            <span style="font-size:11px; color:var(--text3); font-family:var(--mono)">#INC-${inc.id}</span>
+                            <span style="font-size:11px; color:var(--text3); font-family:var(--mono); margin-left:auto">${inc.created_at ? new Date(inc.created_at).toLocaleString() : 'recently'}</span>
                         </div>
+                        <h3 style="font-size:15px; margin:0 0 8px 0; color:var(--text); font-weight:600">${inc.title || 'Security Incident'}</h3>
+                        <p style="margin:0 0 12px 0; font-size:13px; color:var(--text2); line-height:1.5">${inc.description || 'No description provided'}</p>
+                        <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:12px; color:var(--text2)">
+                            <span>Assigned: <strong style="color:var(--text)">${inc.assigned_to || 'Unassigned'}</strong></span>
+                            <span>Target: <strong style="color:var(--text)">${inc.hostname || 'Unknown'}</strong></span>
+                        </div>
+                    </div>
 
-                        <!-- Status Triage & Actions -->
-                        <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end">
-                            <div style="display:flex; gap:6px">
-                                <select class="glass" style="padding:6px 10px; font-size:12px; border-radius:var(--radius-sm)" onchange="updateIncidentStatus(${inc.id}, this.value)">
-                                    <option value="open" ${st === 'open' ? 'selected' : ''}>Open</option>
-                                    <option value="investigating" ${st === 'investigating' ? 'selected' : ''}>Investigating</option>
-                                    <option value="resolved" ${st === 'resolved' ? 'selected' : ''}>Resolved</option>
-                                </select>
-                                <button class="btn btn-glass" style="padding:6px 10px; color:var(--accent-red); border-color:var(--accent-red)" onclick="deleteIncidentItem(${inc.id})">
-                                    <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                                </button>
-                            </div>
+                    <!-- Status Triage & Actions -->
+                    <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end">
+                        <div style="display:flex; gap:6px">
+                            <select style="background:#1e293b; color:var(--text); border:1px solid rgba(255,255,255,0.1); padding:6px 10px; font-size:12px; border-radius:4px; outline:none" onchange="updateIncidentStatus(${inc.id}, this.value)">
+                                <option value="open" ${st === 'open' ? 'selected' : ''}>Open</option>
+                                <option value="investigating" ${st === 'investigating' ? 'selected' : ''}>Investigating</option>
+                                <option value="resolved" ${st === 'resolved' ? 'selected' : ''}>Resolved</option>
+                            </select>
+                            <button class="btn" style="padding:6px 10px; background:rgba(239,68,68,0.1); color:var(--red); border:1px solid rgba(239,68,68,0.3)" onclick="deleteIncidentItem(${inc.id})">
+                                <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                            </button>
                         </div>
                     </div>
                 </div>`;
