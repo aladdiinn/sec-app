@@ -1153,5 +1153,24 @@
     }
 
     window.addEventListener('load', loadServers);
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('servers-grid').addEventListener('click', (e) => {
+            const card = e.target.closest('.service-card');
+            if (!card) return;
+            // Ignore if clicked on a button
+            if (e.target.closest('button')) return;
+            const id = card.getAttribute('data-id');
+            if (id) {
+                console.log('Grid event listener opening modal for id:', id);
+                try {
+                    openImage3Modal(id);
+                } catch(err) {
+                    console.error('Modal error:', err);
+                }
+            }
+        });
+    });
+    
 </script>
 {% endblock %}
