@@ -6,7 +6,7 @@
     <title>{% block title %}SecurePulse{% endblock %} — SOC Command Center</title>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet"/>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300c8ff'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>" />
-    <link rel="stylesheet" href="/static/css/main.css" />
+    <link rel="stylesheet" href="/static/css/main.css?v=2" />
     <!-- Theme init: run before paint to prevent flash -->
     <script>
       (function() {
@@ -118,7 +118,7 @@
                     </p>
                 </div>
                 <div style="display:flex; align-items:center; gap:14px">
-                    <a href="/projects/select" class="btn-project-view" style="font-family:'Orbitron',sans-serif; font-size:10px; font-weight:700; letter-spacing:2px; color:#00ff88; background:rgba(0,255,136,0.08); border:1px solid #00ff88; padding:6px 14px; border-radius:4px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s ease">
+                    <a href="/projects/select" class="btn-project-view" style="font-family:'Orbitron',sans-serif; font-size:10px; font-weight:700; letter-spacing:2px; color:var(--cyan); background:var(--cyan3); border:1px solid var(--cyan); padding:6px 14px; border-radius:4px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s ease">
                         <span style="font-size:12px">⊞</span> PROJECT VIEW
                     </a>
                     {% block topbar_actions %}{% endblock %}

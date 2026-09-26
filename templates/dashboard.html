@@ -17,7 +17,7 @@
 }
 
 .noc-panel {
-    background: #0f172a;
+    background: var(--bg2);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     padding: 14px 18px;
@@ -28,7 +28,7 @@
 .noc-panel-title {
     font-size: 11px;
     font-weight: 700;
-    color: #94a3b8;
+    color: var(--text2);
     letter-spacing: 1.5px;
     text-transform: uppercase;
     font-family: 'Orbitron', monospace;
@@ -70,19 +70,19 @@
 .noc-circle-label {
     font-size: 9px;
     font-weight: 700;
-    color: #94a3b8;
+    color: var(--text2);
     letter-spacing: 0.5px;
     text-transform: uppercase;
     font-family: 'Orbitron', monospace;
     text-align: center;
 }
 
-.circle-down { background: #ef4444; border: 2px solid rgba(239, 68, 68, 0.6); box-shadow: 0 0 15px rgba(239,68,68,0.4); }
-.circle-critical { background: #f97316; border: 2px solid rgba(249, 115, 22, 0.6); box-shadow: 0 0 15px rgba(249,115,22,0.4); }
-.circle-trouble { background: #f59e0b; border: 2px solid rgba(245, 158, 11, 0.6); box-shadow: 0 0 15px rgba(245,158,11,0.4); }
-.circle-maint { background: #3b82f6; border: 2px solid rgba(59, 130, 246, 0.6); box-shadow: 0 0 15px rgba(59,130,246,0.4); }
-.circle-up { background: #10b981; border: 2px solid rgba(16, 185, 129, 0.6); box-shadow: 0 0 15px rgba(16,185,129,0.4); }
-.circle-suspended { background: #64748b; border: 2px solid rgba(100, 116, 139, 0.5); }
+.circle-down { background: var(--red); border: 2px solid rgba(255, 51, 102, 0.6); box-shadow: 0 0 15px rgba(239,68,68,0.4); }
+.circle-critical { background: var(--amber); border: 2px solid rgba(255, 204, 0, 0.6); box-shadow: 0 0 15px rgba(249,115,22,0.4); }
+.circle-trouble { background: var(--amber); border: 2px solid rgba(255, 204, 0, 0.6); box-shadow: 0 0 15px rgba(245,158,11,0.4); }
+.circle-maint { background: var(--cyan); border: 2px solid rgba(0, 229, 255, 0.6); box-shadow: 0 0 15px rgba(59,130,246,0.4); }
+.circle-up { background: var(--green); border: 2px solid rgba(0, 250, 154, 0.6); box-shadow: 0 0 15px rgba(16,185,129,0.4); }
+.circle-suspended { background: var(--text3); border: 2px solid rgba(113, 113, 122, 0.5); }
 
 /* Nodes Summary Boxes */
 .nodes-summary-row {
@@ -91,7 +91,7 @@
     gap: 10px;
 }
 .node-sum-box {
-    background: #1e293b;
+    background: var(--bg3);
     border-radius: 6px;
     padding: 10px;
     text-align: center;
@@ -100,14 +100,14 @@
 .node-sum-label {
     font-size: 9px;
     font-weight: 700;
-    color: #94a3b8;
+    color: var(--text2);
     letter-spacing: 1px;
     text-transform: uppercase;
 }
 .node-sum-val {
     font-size: 22px;
     font-weight: 800;
-    color: #38bdf8;
+    color: var(--cyan);
     font-family: 'Orbitron', monospace;
     margin-top: 2px;
 }
@@ -117,7 +117,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: #0f172a;
+    background: var(--bg2);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     padding: 12px 18px;
@@ -134,7 +134,7 @@
     margin-bottom: 24px;
 }
 .service-card {
-    background: #0f172a;
+    background: var(--bg2);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     padding: 16px;
@@ -147,7 +147,7 @@
 }
 .service-card:hover {
     transform: translateY(-2px);
-    border-color: #38bdf8;
+    border-color: var(--cyan);
     box-shadow: 0 10px 30px rgba(0,0,0,0.5);
 }
 .service-header {
@@ -159,7 +159,7 @@
 .service-title {
     font-size: 14px;
     font-weight: 700;
-    color: #f8fafc;
+    color: var(--text);
     margin: 0 0 2px 0;
     word-break: break-all;
 }
@@ -173,14 +173,14 @@
     white-space: nowrap;
 }
 .st-database { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
-.st-server { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
-.st-app { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); }
+.st-server { background: rgba(0, 250, 154, 0.2); color: #34d399; border: 1px solid rgba(0, 250, 154, 0.4); }
+.st-app { background: rgba(0, 229, 255, 0.2); color: var(--cyan); border: 1px solid rgba(0, 229, 255, 0.4); }
 
 .service-metrics {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 10px;
-    background: #1e293b;
+    background: var(--bg3);
     padding: 10px;
     border-radius: 6px;
     margin: 10px 0;
@@ -190,13 +190,13 @@
     display: flex;
     flex-direction: column;
 }
-.sm-label { color: #94a3b8; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
-.sm-val { color: #f8fafc; font-weight: 700; font-family: monospace; font-size: 14px; }
+.sm-label { color: var(--text2); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.sm-val { color: var(--text); font-weight: 700; font-family: monospace; font-size: 14px; }
 
 /* Alert Box inside Card */
 .service-alert-box {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    background: rgba(255, 51, 102, 0.1);
+    border: 1px solid rgba(255, 51, 102, 0.3);
     border-radius: 6px;
     padding: 8px 10px;
     font-size: 11px;
@@ -207,13 +207,13 @@
     gap: 6px;
 }
 .sab-trouble {
-    background: rgba(245, 158, 11, 0.1);
-    border-color: rgba(245, 158, 11, 0.3);
+    background: rgba(255, 204, 0, 0.1);
+    border-color: rgba(255, 204, 0, 0.3);
     color: #fde68a;
 }
 .sab-normal {
-    background: rgba(16, 185, 129, 0.1);
-    border-color: rgba(16, 185, 129, 0.3);
+    background: rgba(0, 250, 154, 0.1);
+    border-color: rgba(0, 250, 154, 0.3);
     color: #6ee7b7;
 }
 
@@ -224,64 +224,64 @@
 .image3-modal {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
     width: 900px; max-width: 95vw; max-height: 90vh; display: none; flex-direction: column;
-    z-index: 9999; background: #0f172a; border: 1px solid rgba(255,255,255,0.15); border-radius: 10px;
+    z-index: 9999; background: var(--bg2); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px;
     box-shadow: 0 30px 90px rgba(0,0,0,0.9); overflow: hidden; font-family: system-ui, -apple-system, sans-serif;
 }
 .i3-header {
-    padding: 16px 24px; background: #0b1320; border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding: 16px 24px; background: var(--bg); border-bottom: 1px solid rgba(255,255,255,0.1);
     display: flex; justify-content: space-between; align-items: center;
 }
 .i3-nav-tabs {
-    display: flex; background: #090f1d; border-bottom: 1px solid rgba(255,255,255,0.1); padding: 0 16px;
+    display: flex; background: var(--bg); border-bottom: 1px solid rgba(255,255,255,0.1); padding: 0 16px;
 }
 .i3-tab {
-    padding: 12px 20px; font-size: 13px; font-weight: 500; color: #94a3b8; cursor: pointer;
+    padding: 12px 20px; font-size: 13px; font-weight: 500; color: var(--text2); cursor: pointer;
     border-bottom: 2px solid transparent; transition: all 0.2s;
 }
 .i3-tab.active {
-    color: #38bdf8; border-bottom-color: #38bdf8; font-weight: 600;
+    color: var(--cyan); border-bottom-color: var(--cyan); font-weight: 600;
 }
 .i3-body {
-    padding: 24px; overflow-y: auto; max-height: calc(90vh - 120px); background: #0b1320; color: #e2e8f0;
+    padding: 24px; overflow-y: auto; max-height: calc(90vh - 120px); background: var(--bg); color: var(--text);
 }
 .i3-card {
-    background: #1e293b; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 20px; margin-bottom: 20px;
+    background: var(--bg3); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 20px; margin-bottom: 20px;
 }
 .i3-card-title {
-    font-size: 14px; font-weight: 700; color: #f8fafc; margin: 0 0 16px 0; display: flex; align-items: center; gap: 8px;
+    font-size: 14px; font-weight: 700; color: var(--text); margin: 0 0 16px 0; display: flex; align-items: center; gap: 8px;
 }
 .i3-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .i3-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 .i3-metric-box {
-    background: #0f172a; padding: 16px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);
+    background: var(--bg2); padding: 16px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);
 }
 .i3-log-cat-btn {
-    background: transparent; border: none; color: #94a3b8; font-size: 11px;
+    background: transparent; border: none; color: var(--text2); font-size: 11px;
     font-weight: 600; padding: 5px 12px; border-radius: 4px; cursor: pointer;
     transition: all 0.15s ease;
 }
-.i3-log-cat-btn:hover { color: #f8fafc; }
-.i3-log-cat-btn.active { background: #38bdf8; color: #0f172a; font-weight: 700; }
-.i3-log-cat-btn.cat-soar { color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.35); }
-.i3-log-cat-btn.cat-soar:hover { background: rgba(239, 68, 68, 0.15); color: #fff; }
-.i3-log-cat-btn.cat-soar.active { background: #ef4444; color: #fff; border-color: #ef4444; }
+.i3-log-cat-btn:hover { color: var(--text); }
+.i3-log-cat-btn.active { background: var(--cyan); color: var(--bg2); font-weight: 700; }
+.i3-log-cat-btn.cat-soar { color: var(--red); border: 1px solid rgba(255, 51, 102, 0.35); }
+.i3-log-cat-btn.cat-soar:hover { background: rgba(255, 51, 102, 0.15); color: #fff; }
+.i3-log-cat-btn.cat-soar.active { background: var(--red); color: #fff; border-color: var(--red); }
 
 .i3-alert-item {
-    background: #0b1320; border: 1px solid rgba(255,255,255,0.06);
+    background: var(--bg); border: 1px solid rgba(255,255,255,0.06);
     border-radius: 6px; padding: 14px 18px; margin-bottom: 10px;
-    border-left: 4px solid #ef4444;
+    border-left: 4px solid var(--red);
 }
-.i3-alert-item.sev-warning { border-left-color: #f59e0b; }
-.i3-alert-item.sev-info { border-left-color: #38bdf8; }
+.i3-alert-item.sev-warning { border-left-color: var(--amber); }
+.i3-alert-item.sev-info { border-left-color: var(--cyan); }
 
 .dash-alert-row {
-    background: #0f172a; border: 1px solid rgba(255,255,255,0.06);
-    border-left: 4px solid #ef4444; border-radius: 6px; padding: 12px 18px;
+    background: var(--bg2); border: 1px solid rgba(255,255,255,0.06);
+    border-left: 4px solid var(--red); border-radius: 6px; padding: 12px 18px;
     display: flex; align-items: flex-start; gap: 14px; cursor: pointer;
     transition: all 0.15s ease;
 }
-.dash-alert-row:hover { background: #131d31; transform: translateX(2px); }
-.dash-alert-row.sev-warning { border-left-color: #f59e0b; }
+.dash-alert-row:hover { background: var(--bg3); transform: translateX(2px); }
+.dash-alert-row.sev-warning { border-left-color: var(--amber); }
 </style>
 {% endblock %}
 
@@ -293,7 +293,7 @@
         <!-- 1. MONITOR STATUS NOC (Circles) -->
         <div class="noc-panel">
             <div class="noc-panel-title">
-                <span style="color:#ef4444">📊</span> MONITOR STATUS NOC
+                <span style="color:var(--red)">📊</span> MONITOR STATUS NOC
             </div>
             <div class="noc-circles-row">
                 <div class="noc-circle-item" onclick="filterServicesByStatus('down')">
@@ -326,7 +326,7 @@
         <!-- 2. NODES SUMMARY -->
         <div class="noc-panel">
             <div class="noc-panel-title">
-                <span style="color:#38bdf8">☁️</span> NODES SUMMARY
+                <span style="color:var(--cyan)">☁️</span> NODES SUMMARY
             </div>
             <div class="nodes-summary-row">
                 <div class="node-sum-box">
@@ -347,17 +347,17 @@
         <!-- 3. ANALYTICS OVERVIEW -->
         <div class="noc-panel">
             <div class="noc-panel-title">
-                <span style="color:#f59e0b">📈</span> ANALYTICS OVERVIEW
+                <span style="color:var(--amber)">📈</span> ANALYTICS OVERVIEW
             </div>
             <div style="display:flex; justify-content:space-around; align-items:center; text-align:center">
                 <div>
-                    <div style="font-size:28px; font-weight:800; color:#f8fafc; font-family:'Orbitron',monospace" id="sum-monitored">0</div>
-                    <div style="font-size:9px; color:#94a3b8; font-weight:700; letter-spacing:0.5px; text-transform:uppercase">TOTAL MONITORED</div>
+                    <div style="font-size:28px; font-weight:800; color:var(--text); font-family:'Orbitron',monospace" id="sum-monitored">0</div>
+                    <div style="font-size:9px; color:var(--text2); font-weight:700; letter-spacing:0.5px; text-transform:uppercase">TOTAL MONITORED</div>
                 </div>
                 <div style="width:1px; height:40px; background:rgba(255,255,255,0.1)"></div>
                 <div>
-                    <div style="font-size:28px; font-weight:800; color:#ef4444; font-family:'Orbitron',monospace" id="sum-active-issues">0</div>
-                    <div style="font-size:9px; color:#94a3b8; font-weight:700; letter-spacing:0.5px; text-transform:uppercase">ACTIVE ISSUES</div>
+                    <div style="font-size:28px; font-weight:800; color:var(--red); font-family:'Orbitron',monospace" id="sum-active-issues">0</div>
+                    <div style="font-size:9px; color:var(--text2); font-weight:700; letter-spacing:0.5px; text-transform:uppercase">ACTIVE ISSUES</div>
                 </div>
             </div>
         </div>
@@ -366,14 +366,14 @@
     <!-- Services Control Bar -->
     <div class="services-control-bar">
         <div style="display:flex; align-items:center; gap:12px">
-            <h3 style="margin:0; font-size:16px; font-weight:700; color:#f8fafc">Services & Infrastructure</h3>
+            <h3 style="margin:0; font-size:16px; font-weight:700; color:var(--text)">Services & Infrastructure</h3>
             <span class="badge badge-info" id="services-count-tag" style="font-size:10px">0 Monitored</span>
         </div>
 
         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
             <input type="text" id="srv-search-input" placeholder="🔍 Search server or IP..." class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:rgba(255,255,255,0.05); width:220px" oninput="renderServicesGrid()">
             
-            <select id="srv-filter-select" class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:#0f172a" onchange="renderServicesGrid()">
+            <select id="srv-filter-select" class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:var(--bg2)" onchange="renderServicesGrid()">
                 <option value="all">All Nodes</option>
                 <option value="critical">Critical Issues Only</option>
                 <option value="trouble">Trouble / Warning Only</option>
@@ -388,7 +388,7 @@
 
     <!-- Services Cards Grid (Image 2 Style) -->
     <div id="services-cards-grid" class="services-grid">
-        <div style="grid-column:1/-1; text-align:center; padding:60px; color:#94a3b8">
+        <div style="grid-column:1/-1; text-align:center; padding:60px; color:var(--text2)">
             <div style="font-size:20px; margin-bottom:8px">⏳</div>
             Loading infrastructure nodes...
         </div>
@@ -405,17 +405,17 @@
             <span style="font-size:22px">🗄️</span>
             <div>
                 <div style="display:flex; align-items:center; gap:10px">
-                    <h2 id="i3-srv-name" style="margin:0; font-size:18px; font-weight:700; color:#f8fafc">Loading...</h2>
-                    <span id="i3-srv-status-badge" style="background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; text-transform:uppercase">---</span>
+                    <h2 id="i3-srv-name" style="margin:0; font-size:18px; font-weight:700; color:var(--text)">Loading...</h2>
+                    <span id="i3-srv-status-badge" style="background:var(--red); color:#fff; font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; text-transform:uppercase">---</span>
                 </div>
-                <div id="i3-srv-sub" style="font-size:12px; color:#94a3b8; margin-top:2px">
+                <div id="i3-srv-sub" style="font-size:12px; color:var(--text2); margin-top:2px">
                     Loading asset details...
                 </div>
             </div>
         </div>
         <div style="display:flex; gap:10px; align-items:center">
-            <button class="btn btn-glass" onclick="toggleMaintInModal()" style="font-size:11px; color:#f59e0b">⚡ Toggle Maintenance</button>
-            <button style="background:none; border:none; color:#94a3b8; font-size:20px; cursor:pointer" onclick="closeImage3Modal()">✕</button>
+            <button class="btn btn-glass" onclick="toggleMaintInModal()" style="font-size:11px; color:var(--amber)">⚡ Toggle Maintenance</button>
+            <button style="background:none; border:none; color:var(--text2); font-size:20px; cursor:pointer" onclick="closeImage3Modal()">✕</button>
         </div>
     </div>
 
@@ -438,15 +438,15 @@
             <div class="i3-card">
                 <div class="i3-card-title">Database / Server Information</div>
                 <div class="i3-grid-3" style="font-size:13px">
-                    <div><span style="color:#94a3b8">Name:</span> <strong id="i3-info-name" style="color:#f8fafc">--</strong></div>
-                    <div><span style="color:#94a3b8">Type:</span> <strong id="i3-info-type" style="color:#38bdf8">--</strong></div>
-                    <div><span style="color:#94a3b8">Host:</span> <strong id="i3-info-host" style="color:#f8fafc">--</strong></div>
-                    <div><span style="color:#94a3b8">Database / App:</span> <strong id="i3-info-db" style="color:#f8fafc">--</strong></div>
-                    <div><span style="color:#94a3b8">Status:</span> <span id="i3-info-status" style="color:#ef4444; font-weight:700">--</span></div>
-                    <div><span style="color:#94a3b8">Agent Status:</span> <strong id="i3-info-agent" style="color:#10b981">--</strong></div>
+                    <div><span style="color:var(--text2)">Name:</span> <strong id="i3-info-name" style="color:var(--text)">--</strong></div>
+                    <div><span style="color:var(--text2)">Type:</span> <strong id="i3-info-type" style="color:var(--cyan)">--</strong></div>
+                    <div><span style="color:var(--text2)">Host:</span> <strong id="i3-info-host" style="color:var(--text)">--</strong></div>
+                    <div><span style="color:var(--text2)">Database / App:</span> <strong id="i3-info-db" style="color:var(--text)">--</strong></div>
+                    <div><span style="color:var(--text2)">Status:</span> <span id="i3-info-status" style="color:var(--red); font-weight:700">--</span></div>
+                    <div><span style="color:var(--text2)">Agent Status:</span> <strong id="i3-info-agent" style="color:var(--green)">--</strong></div>
                 </div>
-                <div style="margin-top:12px; font-size:12px; color:#94a3b8; border-top:1px solid rgba(255,255,255,0.05); padding-top:10px">
-                    Last Contact: <span id="i3-info-lastseen" style="color:#f8fafc">--</span>
+                <div style="margin-top:12px; font-size:12px; color:var(--text2); border-top:1px solid rgba(255,255,255,0.05); padding-top:10px">
+                    Last Contact: <span id="i3-info-lastseen" style="color:var(--text)">--</span>
                 </div>
             </div>
 
@@ -455,29 +455,29 @@
                 <div class="i3-card-title">🗄️ System Metrics</div>
                 <div style="margin-bottom:20px">
                     <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px">
-                        <span style="color:#94a3b8">Connection / Load Usage</span>
-                        <strong id="i3-conn-pct" style="color:#38bdf8">0%</strong>
+                        <span style="color:var(--text2)">Connection / Load Usage</span>
+                        <strong id="i3-conn-pct" style="color:var(--cyan)">0%</strong>
                     </div>
-                    <div style="width:100%; height:10px; background:#0f172a; border-radius:5px; overflow:hidden">
-                        <div id="i3-conn-bar" style="width:0%; height:100%; background:#38bdf8; transition:width 0.5s"></div>
+                    <div style="width:100%; height:10px; background:var(--bg2); border-radius:5px; overflow:hidden">
+                        <div id="i3-conn-bar" style="width:0%; height:100%; background:var(--cyan); transition:width 0.5s"></div>
                     </div>
-                    <div style="font-size:12px; color:#94a3b8; margin-top:6px" id="i3-conn-sub">
+                    <div style="font-size:12px; color:var(--text2); margin-top:6px" id="i3-conn-sub">
                         CPU: 0% · RAM: 0%
                     </div>
                 </div>
 
                 <div class="i3-grid-3">
                     <div class="i3-metric-box">
-                        <div style="font-size:11px; color:#94a3b8">CPU Usage</div>
-                        <div id="i3-m-cpu" style="font-size:22px; font-weight:700; color:#f8fafc; margin:4px 0">0%</div>
+                        <div style="font-size:11px; color:var(--text2)">CPU Usage</div>
+                        <div id="i3-m-cpu" style="font-size:22px; font-weight:700; color:var(--text); margin:4px 0">0%</div>
                     </div>
                     <div class="i3-metric-box">
-                        <div style="font-size:11px; color:#94a3b8">RAM Usage</div>
-                        <div id="i3-m-ram" style="font-size:22px; font-weight:700; color:#f8fafc; margin:4px 0">0%</div>
+                        <div style="font-size:11px; color:var(--text2)">RAM Usage</div>
+                        <div id="i3-m-ram" style="font-size:22px; font-weight:700; color:var(--text); margin:4px 0">0%</div>
                     </div>
                     <div class="i3-metric-box">
-                        <div style="font-size:11px; color:#94a3b8">Disk Usage</div>
-                        <div id="i3-m-disk" style="font-size:22px; font-weight:700; color:#f8fafc; margin:4px 0">0%</div>
+                        <div style="font-size:11px; color:var(--text2)">Disk Usage</div>
+                        <div id="i3-m-disk" style="font-size:22px; font-weight:700; color:var(--text); margin:4px 0">0%</div>
                     </div>
                 </div>
             </div>
@@ -488,10 +488,10 @@
             <div class="i3-card">
                 <div class="i3-card-title" style="display:flex; justify-content:space-between; align-items:center;">
                     <span>🚨 Incidents & Alerts For This Asset</span>
-                    <button onclick="resolveAllServerAlerts()" style="background:#0f172a; border:1px solid #1e293b; color:#94a3b8; padding:4px 10px; border-radius:4px; font-size:12px; cursor:pointer;">Mark All Closed</button>
+                    <button onclick="resolveAllServerAlerts()" style="background:var(--bg2); border:1px solid var(--bg3); color:var(--text2); padding:4px 10px; border-radius:4px; font-size:12px; cursor:pointer;">Mark All Closed</button>
                 </div>
                 <div id="i3-incidents-list">
-                    <div style="text-align:center; padding:20px; color:#94a3b8">Loading incidents...</div>
+                    <div style="text-align:center; padding:20px; color:var(--text2)">Loading incidents...</div>
                 </div>
             </div>
         </div>
@@ -505,24 +505,24 @@
                         <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px">
                             <span>CPU Usage</span><strong id="i3-cpu-val">0%</strong>
                         </div>
-                        <div style="height:8px; background:#0f172a; border-radius:4px; overflow:hidden">
-                            <div id="i3-cpu-bar" style="width:0%; height:100%; background:#38bdf8; transition:width 0.5s"></div>
+                        <div style="height:8px; background:var(--bg2); border-radius:4px; overflow:hidden">
+                            <div id="i3-cpu-bar" style="width:0%; height:100%; background:var(--cyan); transition:width 0.5s"></div>
                         </div>
                     </div>
                     <div>
                         <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px">
                             <span>RAM Usage</span><strong id="i3-ram-val">0%</strong>
                         </div>
-                        <div style="height:8px; background:#0f172a; border-radius:4px; overflow:hidden">
-                            <div id="i3-ram-bar" style="width:0%; height:100%; background:#10b981; transition:width 0.5s"></div>
+                        <div style="height:8px; background:var(--bg2); border-radius:4px; overflow:hidden">
+                            <div id="i3-ram-bar" style="width:0%; height:100%; background:var(--green); transition:width 0.5s"></div>
                         </div>
                     </div>
                 </div>
 
-                <div style="font-size:13px; font-weight:700; margin-bottom:10px; color:#38bdf8">Running Processes (&gt;85% CPU / RAM Highlighted)</div>
+                <div style="font-size:13px; font-weight:700; margin-bottom:10px; color:var(--cyan)">Running Processes (&gt;85% CPU / RAM Highlighted)</div>
                 <table style="width:100%; border-collapse:collapse; text-align:left; font-size:12px">
                     <thead>
-                        <tr style="border-bottom:1px solid rgba(255,255,255,0.1); color:#94a3b8">
+                        <tr style="border-bottom:1px solid rgba(255,255,255,0.1); color:var(--text2)">
                             <th style="padding:8px">PID</th>
                             <th style="padding:8px">PROCESS NAME</th>
                             <th style="padding:8px">CPU %</th>
@@ -531,7 +531,7 @@
                         </tr>
                     </thead>
                     <tbody id="i3-procs-body">
-                        <tr><td colspan="5" style="text-align:center; padding:15px; color:#94a3b8">Loading process list...</td></tr>
+                        <tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text2)">Loading process list...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -543,12 +543,12 @@
                 <!-- Real-Time SOAR Detections Banner for This Server (Image 1 Style) -->
                 <div id="modal-soar-alerts-bar" style="display:none; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:7px 12px; font-size:11px; align-items:center; justify-content:space-between; margin-bottom:12px">
                     <div style="display:flex; align-items:center; gap:8px; overflow:hidden">
-                        <span class="lvl-tag CRITICAL" style="background:rgba(239,68,68,0.25); color:#ef4444; border:1px solid rgba(239,68,68,0.5); padding:2px 6px; border-radius:4px; font-weight:700; font-size:10px; flex-shrink:0">🚨 SOAR DETECTIONS</span>
-                        <span id="modal-soar-alerts-text" style="color:#f8fafc; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">Active Threat Alert</span>
+                        <span class="lvl-tag CRITICAL" style="background:rgba(239,68,68,0.25); color:var(--red); border:1px solid rgba(239,68,68,0.5); padding:2px 6px; border-radius:4px; font-weight:700; font-size:10px; flex-shrink:0">🚨 SOAR DETECTIONS</span>
+                        <span id="modal-soar-alerts-text" style="color:var(--text); font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">Active Threat Alert</span>
                     </div>
                     <div style="display:flex; gap:6px; align-items:center; flex-shrink:0">
-                        <button class="btn btn-glass" onclick="selectModalLogCategory('soar')" style="font-size:9px; padding:2px 8px; color:#ef4444; border-color:rgba(239,68,68,0.4)">⚡ FILTER THREATS</button>
-                        <button class="btn btn-glass" onclick="switchI3Tab('incidents', document.querySelectorAll('.i3-tab')[1])" style="font-size:9px; padding:2px 8px; color:#38bdf8; border-color:rgba(56,189,248,0.4)">VIEW INCIDENTS</button>
+                        <button class="btn btn-glass" onclick="selectModalLogCategory('soar')" style="font-size:9px; padding:2px 8px; color:var(--red); border-color:rgba(239,68,68,0.4)">⚡ FILTER THREATS</button>
+                        <button class="btn btn-glass" onclick="switchI3Tab('incidents', document.querySelectorAll('.i3-tab')[1])" style="font-size:9px; padding:2px 8px; color:var(--cyan); border-color:rgba(0, 229, 255,0.4)">VIEW INCIDENTS</button>
                     </div>
                 </div>
 
@@ -556,7 +556,7 @@
                     <div class="i3-card-title" style="margin:0">📑 Auto-Discovered Log Streams</div>
                     
                     <!-- Presets & Category Options (Matching Image 1) -->
-                    <div style="display:flex; gap:6px; background:#090f1d; padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); flex-wrap:wrap">
+                    <div style="display:flex; gap:6px; background:var(--bg); padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); flex-wrap:wrap">
                         <button class="i3-log-cat-btn active" id="btn-cat-all" onclick="selectModalLogCategory('all')">⚡ All Streams</button>
                         <button class="i3-log-cat-btn cat-soar" id="btn-cat-soar" onclick="selectModalLogCategory('soar')">🚨 SOAR Threats</button>
                         <button class="i3-log-cat-btn" id="btn-cat-os" onclick="selectModalLogCategory('os')">💻 OS Logs</button>
@@ -568,28 +568,28 @@
                 </div>
 
                 <!-- Log Files Selector & Export Bar (Matching Image 1 Export Options) -->
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; background:#090f1d; padding:8px 12px; border-radius:6px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.06)">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; background:var(--bg); padding:8px 12px; border-radius:6px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.06)">
                     <div style="display:flex; align-items:center; gap:8px">
-                        <span style="font-size:11px; font-weight:700; color:#38bdf8">LOG FILE:</span>
-                        <select id="modal-log-file-select" onchange="filterModalLogsByFile()" style="font-size:11px; background:#1e293b; border:1px solid rgba(255,255,255,0.12); color:#f8fafc; padding:4px 10px; border-radius:4px; max-width:280px; font-family:monospace">
+                        <span style="font-size:11px; font-weight:700; color:var(--cyan)">LOG FILE:</span>
+                        <select id="modal-log-file-select" onchange="filterModalLogsByFile()" style="font-size:11px; background:var(--bg3); border:1px solid rgba(255,255,255,0.12); color:var(--text); padding:4px 10px; border-radius:4px; max-width:280px; font-family:monospace">
                             <option value="">-- All Discovered Files --</option>
                         </select>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
-                        <input type="text" id="modal-log-search" placeholder="🔍 Filter lines..." oninput="renderModalLogs()" style="font-size:11px; background:#1e293b; border:1px solid rgba(255,255,255,0.12); color:#f8fafc; padding:4px 10px; border-radius:4px; width:150px; font-family:monospace">
+                        <input type="text" id="modal-log-search" placeholder="🔍 Filter lines..." oninput="renderModalLogs()" style="font-size:11px; background:var(--bg3); border:1px solid rgba(255,255,255,0.12); color:var(--text); padding:4px 10px; border-radius:4px; width:150px; font-family:monospace">
                         <button class="btn btn-glass" style="font-size:10px; padding:4px 8px" onclick="refreshModalLogs()" title="Refresh Logs">🔄</button>
                         
                         <!-- Image 1 Export Options -->
-                        <span style="font-size:10px; color:#64748b; font-family:'Orbitron',monospace; margin-left:4px">EXPORT:</span>
-                        <button class="btn btn-glass" onclick="exportModalLogs('csv')" style="font-size:9px; padding:3px 7px; color:#10b981; border-color:rgba(16,185,129,0.3)">📄 CSV</button>
-                        <button class="btn btn-glass" onclick="exportModalLogs('json')" style="font-size:9px; padding:3px 7px; color:#38bdf8; border-color:rgba(56,189,248,0.3)">{ } JSON</button>
-                        <button class="btn btn-glass" onclick="exportModalLogs('raw')" style="font-size:9px; padding:3px 7px; color:#f59e0b; border-color:rgba(245,158,11,0.3)">📜 RAW</button>
+                        <span style="font-size:10px; color:var(--text3); font-family:'Orbitron',monospace; margin-left:4px">EXPORT:</span>
+                        <button class="btn btn-glass" onclick="exportModalLogs('csv')" style="font-size:9px; padding:3px 7px; color:var(--green); border-color:rgba(16,185,129,0.3)">📄 CSV</button>
+                        <button class="btn btn-glass" onclick="exportModalLogs('json')" style="font-size:9px; padding:3px 7px; color:var(--cyan); border-color:rgba(0, 229, 255,0.3)">{ } JSON</button>
+                        <button class="btn btn-glass" onclick="exportModalLogs('raw')" style="font-size:9px; padding:3px 7px; color:var(--amber); border-color:rgba(245,158,11,0.3)">📜 RAW</button>
                     </div>
                 </div>
 
                 <!-- Log Output Terminal -->
-                <div id="i3-logs-box" style="background:#050811; border:1px solid rgba(255,255,255,0.1); padding:14px; border-radius:6px; height:340px; overflow-y:auto; font-family:monospace; font-size:11px; color:#e2e8f0; line-height:1.6">
-                    <div style="color:#94a3b8; text-align:center; padding:30px">Loading pushed log stream...</div>
+                <div id="i3-logs-box" style="background:#000000; border:1px solid rgba(255,255,255,0.1); padding:14px; border-radius:6px; height:340px; overflow-y:auto; font-family:monospace; font-size:11px; color:var(--text); line-height:1.6">
+                    <div style="color:var(--text2); text-align:center; padding:30px">Loading pushed log stream...</div>
                 </div>
             </div>
         </div>
@@ -633,7 +633,7 @@
                         <label style="display:block; font-size:11px; color:var(--text-sub); margin-bottom:6px">Authorized VPN Subnets (CIDR, comma-separated)</label>
                         <input type="text" id="serverVpnSubnet" placeholder="e.g., 10.0.0.0/24" style="width:100%; padding:8px 12px; font-size:13px; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); border-radius:6px; outline:none">
                     </div>
-                    <button type="submit" id="btn-save-network" class="btn" style="background:rgba(56,189,248,0.1); border:1px solid var(--cyan); color:var(--cyan); font-size:12px; padding:6px 12px">Save Network Settings</button>
+                    <button type="submit" id="btn-save-network" class="btn" style="background:rgba(0, 229, 255,0.1); border:1px solid var(--cyan); color:var(--cyan); font-size:12px; padding:6px 12px">Save Network Settings</button>
                 </form>
             </div>
         </div>
@@ -644,7 +644,7 @@
                 <div class="i3-card-title">⚙️ Asset Maintenance & Configuration</div>
                 <div style="display:flex; align-items:center; gap:16px; margin-bottom:20px">
                     <button class="btn btn-primary" onclick="toggleMaintInModal()" style="font-size:12px">Toggle Maintenance Mode</button>
-                    <span id="i3-maint-status" style="font-size:13px; color:#94a3b8">Maintenance: Disabled</span>
+                    <span id="i3-maint-status" style="font-size:13px; color:var(--text2)">Maintenance: Disabled</span>
                 </div>
             </div>
         </div>
@@ -715,7 +715,7 @@ function renderServicesGrid() {
     document.getElementById('services-count-tag').innerText = `${filtered.length} Monitored`;
 
     if (!filtered.length) {
-        container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:60px; color:#94a3b8"><div style="font-size:20px; margin-bottom:8px">🔍</div>No matching nodes found.</div>';
+        container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:60px; color:var(--text2)"><div style="font-size:20px; margin-bottom:8px">🔍</div>No matching nodes found.</div>';
         return;
     }
 
@@ -746,7 +746,7 @@ function renderServicesGrid() {
         }
 
         // Border color based on status
-        const borderColor = isMaint ? '#3b82f6' : (isCrit ? '#ef4444' : (cpu > 85 || ram > 85 ? '#f59e0b' : 'rgba(255,255,255,0.08)'));
+        const borderColor = isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : 'rgba(255,255,255,0.08)'));
 
         return `
         <div class="service-card" onclick="openImage3Modal(${sid})" style="border-color:${borderColor}">
@@ -754,7 +754,7 @@ function renderServicesGrid() {
                 <div class="service-header">
                     <div>
                         <h4 class="service-title">${name}</h4>
-                        <div style="font-family:monospace; font-size:11px; color:#38bdf8">${ip}</div>
+                        <div style="font-family:monospace; font-size:11px; color:var(--cyan)">${ip}</div>
                     </div>
                     ${typeBadge}
                 </div>
@@ -762,11 +762,11 @@ function renderServicesGrid() {
                 <div class="service-metrics">
                     <div class="service-metrics-item">
                         <span class="sm-label">CPU USAGE</span>
-                        <span class="sm-val" style="color:${cpu>85?'#ef4444':cpu>70?'#f59e0b':'#f8fafc'}">${cpu}%</span>
+                        <span class="sm-val" style="color:${cpu>85?'var(--red)':cpu>70?'var(--amber)':'var(--text)'}">${cpu}%</span>
                     </div>
                     <div class="service-metrics-item">
                         <span class="sm-label">RAM USAGE</span>
-                        <span class="sm-val" style="color:${ram>85?'#ef4444':ram>70?'#f59e0b':'#f8fafc'}">${ram}%</span>
+                        <span class="sm-val" style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--text)'}">${ram}%</span>
                     </div>
                     <div class="service-metrics-item" style="margin-top:6px">
                         <span class="sm-label">DISK USAGE</span>
@@ -774,7 +774,7 @@ function renderServicesGrid() {
                     </div>
                     <div class="service-metrics-item" style="margin-top:6px">
                         <span class="sm-label">ALERTS</span>
-                        <span class="sm-val" style="color:${alertCount>0?'#ef4444':'#10b981'}">${alertCount}</span>
+                        <span class="sm-val" style="color:${alertCount>0?'var(--red)':'var(--green)'}">${alertCount}</span>
                     </div>
                 </div>
             </div>
@@ -831,7 +831,7 @@ async function openImage3Modal(serverId) {
         document.getElementById('i3-srv-name').innerText = name;
         const b = document.getElementById('i3-srv-status-badge');
         b.innerText = status.toUpperCase();
-        b.style.background = status === 'online' ? '#10b981' : status === 'maintenance' ? '#f59e0b' : '#ef4444';
+        b.style.background = status === 'online' ? 'var(--green)' : status === 'maintenance' ? 'var(--amber)' : 'var(--red)';
 
         document.getElementById('i3-srv-sub').innerText = `Host: ${ip} · OS: ${srv.os_info || 'Linux'} · Project: ${srv.project_name || 'N/A'}`;
 
@@ -841,7 +841,7 @@ async function openImage3Modal(serverId) {
         document.getElementById('i3-info-host').innerText = ip;
         document.getElementById('i3-info-db').innerText = srv.name || name;
         document.getElementById('i3-info-status').innerText = status.toUpperCase();
-        document.getElementById('i3-info-status').style.color = status === 'online' ? '#10b981' : '#ef4444';
+        document.getElementById('i3-info-status').style.color = status === 'online' ? 'var(--green)' : 'var(--red)';
         document.getElementById('i3-info-agent').innerText = 'Agent Alive (Python Push Daemon)';
         document.getElementById('i3-info-lastseen').innerText = srv.last_seen || srv.last_sudo_ago || 'Just now';
 
@@ -852,36 +852,36 @@ async function openImage3Modal(serverId) {
 
         document.getElementById('i3-conn-pct').innerText = cpu + '%';
         document.getElementById('i3-conn-bar').style.width = Math.min(cpu, 100) + '%';
-        document.getElementById('i3-conn-bar').style.background = cpu > 85 ? '#ef4444' : cpu > 70 ? '#f59e0b' : '#38bdf8';
+        document.getElementById('i3-conn-bar').style.background = cpu > 85 ? 'var(--red)' : cpu > 70 ? 'var(--amber)' : 'var(--cyan)';
         document.getElementById('i3-conn-sub').innerText = `CPU: ${cpu}% · RAM: ${ram}% · Disk: ${disk}%`;
         document.getElementById('i3-m-cpu').innerText = cpu + '%';
-        document.getElementById('i3-m-cpu').style.color = cpu > 85 ? '#ef4444' : '#f8fafc';
+        document.getElementById('i3-m-cpu').style.color = cpu > 85 ? 'var(--red)' : 'var(--text)';
         document.getElementById('i3-m-ram').innerText = ram + '%';
-        document.getElementById('i3-m-ram').style.color = ram > 85 ? '#ef4444' : '#f8fafc';
+        document.getElementById('i3-m-ram').style.color = ram > 85 ? 'var(--red)' : 'var(--text)';
         document.getElementById('i3-m-disk').innerText = disk + '%';
 
         // Resources tab
         document.getElementById('i3-cpu-val').innerText = cpu + '%';
         document.getElementById('i3-cpu-bar').style.width = Math.min(cpu, 100) + '%';
-        document.getElementById('i3-cpu-bar').style.background = cpu > 85 ? '#ef4444' : '#38bdf8';
+        document.getElementById('i3-cpu-bar').style.background = cpu > 85 ? 'var(--red)' : 'var(--cyan)';
         document.getElementById('i3-ram-val').innerText = ram + '%';
         document.getElementById('i3-ram-bar').style.width = Math.min(ram, 100) + '%';
-        document.getElementById('i3-ram-bar').style.background = ram > 85 ? '#ef4444' : '#10b981';
+        document.getElementById('i3-ram-bar').style.background = ram > 85 ? 'var(--red)' : 'var(--green)';
 
         const procs = details.processes || [];
         const procBody = document.getElementById('i3-procs-body');
         if (!procs.length) {
-            procBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px; color:#94a3b8">No high-resource processes detected</td></tr>';
+            procBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text2)">No high-resource processes detected</td></tr>';
         } else {
             procBody.innerHTML = procs.map(p => {
                 const high = p.cpu > 85 || p.memory > 85;
                 return `
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.05); background:${high?'rgba(239,68,68,0.15)':''}">
-                    <td style="padding:8px; font-family:monospace; color:#38bdf8">${p.pid}</td>
-                    <td style="padding:8px; font-weight:600; color:#f8fafc">${p.name} ${high?'<span style="color:#ef4444; font-size:10px">🔥 >85% ALERT</span>':''}</td>
-                    <td style="padding:8px; color:${p.cpu>85?'#ef4444':'#f8fafc'}">${p.cpu}%</td>
-                    <td style="padding:8px; color:${p.memory>85?'#ef4444':'#f8fafc'}">${p.memory}%</td>
-                    <td style="padding:8px; color:#94a3b8">${p.user}</td>
+                    <td style="padding:8px; font-family:monospace; color:var(--cyan)">${p.pid}</td>
+                    <td style="padding:8px; font-weight:600; color:var(--text)">${p.name} ${high?'<span style="color:var(--red); font-size:10px">🔥 >85% ALERT</span>':''}</td>
+                    <td style="padding:8px; color:${p.cpu>85?'var(--red)':'var(--text)'}">${p.cpu}%</td>
+                    <td style="padding:8px; color:${p.memory>85?'var(--red)':'var(--text)'}">${p.memory}%</td>
+                    <td style="padding:8px; color:var(--text2)">${p.user}</td>
                 </tr>
                 `;
             }).join('');
@@ -891,7 +891,7 @@ async function openImage3Modal(serverId) {
         const alerts = details.alerts || [];
         const incList = document.getElementById('i3-incidents-list');
         if (!alerts.length) {
-            incList.innerHTML = '<div style="text-align:center; padding:30px; color:#10b981; font-weight:600">✅ No active incidents or alerts for this asset</div>';
+            incList.innerHTML = '<div style="text-align:center; padding:30px; color:var(--green); font-weight:600">✅ No active incidents or alerts for this asset</div>';
         } else {
             incList.innerHTML = alerts.map(a => {
                 const isCrit = (a.severity || '').toLowerCase() === 'critical';
@@ -899,13 +899,13 @@ async function openImage3Modal(serverId) {
                 return `
                 <div class="i3-alert-item ${sevClass}" id="alert-card-${a.id}">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
-                        <strong style="color:#f8fafc; font-size:13px; font-weight:700">${a.title || a.alert_type || 'Security Alert'}</strong>
+                        <strong style="color:var(--text); font-size:13px; font-weight:700">${a.title || a.alert_type || 'Security Alert'}</strong>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <span style="font-size:10px; color:#64748b; font-family:monospace">${a.created_at_formatted || 'recent'}</span>
+                            <span style="font-size:10px; color:var(--text3); font-family:monospace">${a.created_at_formatted || 'recent'}</span>
                             <input type="checkbox" title="Mark Closed" style="cursor:pointer;" onchange="resolveSingleAlert(${a.id}, this)">
                         </div>
                     </div>
-                    <div style="font-size:11px; color:#94a3b8; font-family:system-ui,sans-serif; line-height:1.5; word-break:break-word">${a.message || ''}</div>
+                    <div style="font-size:11px; color:var(--text2); font-family:system-ui,sans-serif; line-height:1.5; word-break:break-word">${a.message || ''}</div>
                 </div>
                 `;
             }).join('');
@@ -1038,7 +1038,7 @@ function updateModalSoarBanner() {
 
     if (relevantAlerts.length > 0) {
         const top = relevantAlerts[0];
-        modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:#94a3b8; font-size:9px">(${top.created_at_formatted || 'recent'})</span>`;
+        modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:var(--text2); font-size:9px">(${top.created_at_formatted || 'recent'})</span>`;
         modalBanner.style.display = 'flex';
     } else {
         modalBanner.style.display = 'none';
@@ -1238,24 +1238,24 @@ function renderModalLogs() {
             if (modalLogThreatAlerts && modalLogThreatAlerts.length > 0) {
                 alertsHtml = `
                 <div style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:16px; margin-bottom:12px; text-align:left">
-                    <div style="font-weight:700; color:#ef4444; margin-bottom:10px; font-size:12px; font-family:'Orbitron',monospace">🚨 ACTIVE LOG-BASED SOAR DETECTIONS</div>
+                    <div style="font-weight:700; color:var(--red); margin-bottom:10px; font-size:12px; font-family:'Orbitron',monospace">🚨 ACTIVE LOG-BASED SOAR DETECTIONS</div>
                     ${modalLogThreatAlerts.map(a => `
                         <div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:flex-start">
                             <div>
-                                <span style="background:#ef4444; color:#fff; font-size:9px; padding:2px 6px; border-radius:3px; font-weight:700">CRITICAL</span>
-                                <strong style="color:#f8fafc; margin-left:8px">${escapeHtml(a.title || a.alert_type)}</strong>
+                                <span style="background:var(--red); color:#fff; font-size:9px; padding:2px 6px; border-radius:3px; font-weight:700">CRITICAL</span>
+                                <strong style="color:var(--text); margin-left:8px">${escapeHtml(a.title || a.alert_type)}</strong>
                                 <div style="color:#cbd5e1; font-size:11px; margin-top:4px">${escapeHtml(a.message || '')}</div>
                             </div>
-                            <span style="color:#94a3b8; font-size:9px; white-space:nowrap">${a.created_at_formatted || 'recent'}</span>
+                            <span style="color:var(--text2); font-size:9px; white-space:nowrap">${a.created_at_formatted || 'recent'}</span>
                         </div>
                     `).join('')}
                 </div>`;
             }
             logBox.innerHTML = alertsHtml || `
-            <div style="color:#94a3b8; text-align:center; padding:35px">
+            <div style="color:var(--text2); text-align:center; padding:35px">
                 <div style="font-size:24px; margin-bottom:8px">🛡️</div>
-                <div style="font-size:13px; font-weight:600; color:#e2e8f0; margin-bottom:4px">No Log-Based SOAR Threats Detected For This Node</div>
-                <div style="font-size:11px; color:#64748b">Monitored: PostgreSQL deletions/privileges, OS userdel, chmod 777, Tomcat errors.</div>
+                <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:4px">No Log-Based SOAR Threats Detected For This Node</div>
+                <div style="font-size:11px; color:var(--text3)">Monitored: PostgreSQL deletions/privileges, OS userdel, chmod 777, Tomcat errors.</div>
             </div>`;
             return;
         }
@@ -1271,14 +1271,14 @@ function renderModalLogs() {
         const catLabel = catNames[modalActiveCategory] || modalActiveCategory.toUpperCase();
 
         const bufferNote = (currentModalLogs.length > 0)
-            ? `<div style="font-size:11px; color:#94a3b8; margin-top:8px">Showing 0 matching lines out of ${currentModalLogs.length} lines in buffer. <button class="btn btn-glass" onclick="selectModalLogCategory('all')" style="margin-left:8px; font-size:10px; padding:2px 8px; cursor:pointer">⚡ View All Streams</button></div>`
-            : `<div style="font-size:11px; color:#38bdf8; margin-top:8px">Ensure agent daemon is running on target host, or click <strong>⚡ ALL STREAMS</strong></div>`;
+            ? `<div style="font-size:11px; color:var(--text2); margin-top:8px">Showing 0 matching lines out of ${currentModalLogs.length} lines in buffer. <button class="btn btn-glass" onclick="selectModalLogCategory('all')" style="margin-left:8px; font-size:10px; padding:2px 8px; cursor:pointer">⚡ View All Streams</button></div>`
+            : `<div style="font-size:11px; color:var(--cyan); margin-top:8px">Ensure agent daemon is running on target host, or click <strong>⚡ ALL STREAMS</strong></div>`;
 
         logBox.innerHTML = `
-        <div style="color:#94a3b8; text-align:center; padding:35px">
+        <div style="color:var(--text2); text-align:center; padding:35px">
             <div style="font-size:24px; margin-bottom:8px">📄</div>
-            <div style="font-size:13px; font-weight:600; color:#e2e8f0; margin-bottom:4px">No log lines found for ${escapeHtml(catLabel)}</div>
-            <div style="font-size:11px; color:#64748b">Filter: ${modalActiveCategory.toUpperCase()} ${modalActiveFile ? '· File: ' + escapeHtml(modalActiveFile) : ''}</div>
+            <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:4px">No log lines found for ${escapeHtml(catLabel)}</div>
+            <div style="font-size:11px; color:var(--text3)">Filter: ${modalActiveCategory.toUpperCase()} ${modalActiveFile ? '· File: ' + escapeHtml(modalActiveFile) : ''}</div>
             ${bufferNote}
         </div>`;
         return;
@@ -1288,10 +1288,10 @@ function renderModalLogs() {
     if (modalActiveCategory === 'soar' && modalLogThreatAlerts && modalLogThreatAlerts.length > 0) {
         topNotice = `
         <div style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:12px; margin-bottom:12px; text-align:left">
-            <div style="font-weight:700; color:#ef4444; margin-bottom:6px; font-size:11px; font-family:'Orbitron',monospace">🚨 ACTIVE LOG-BASED SOAR DETECTIONS (SSH Brute Force Excluded)</div>
+            <div style="font-weight:700; color:var(--red); margin-bottom:6px; font-size:11px; font-family:'Orbitron',monospace">🚨 ACTIVE LOG-BASED SOAR DETECTIONS (SSH Brute Force Excluded)</div>
             ${modalLogThreatAlerts.map(a => `
-                <div style="font-size:11px; padding:4px 0; color:#f8fafc">
-                    <span style="background:#ef4444; color:#fff; font-size:9px; padding:2px 5px; border-radius:3px">CRITICAL</span>
+                <div style="font-size:11px; padding:4px 0; color:var(--text)">
+                    <span style="background:var(--red); color:#fff; font-size:9px; padding:2px 5px; border-radius:3px">CRITICAL</span>
                     <strong style="margin-left:6px">${escapeHtml(a.title || a.alert_type)}:</strong> ${escapeHtml(a.message || '')}
                 </div>
             `).join('')}
@@ -1309,7 +1309,7 @@ function renderModalLogs() {
         const isErr = isThreat || lower.includes('fatal') || lower.includes('error') || lower.includes('critical');
         const isWarn = lower.includes('warn') || lower.includes('alert') || lower.includes('privilege');
 
-        const textColor = isThreat ? '#f87171' : (isErr ? '#ef4444' : (isWarn ? '#f59e0b' : '#f8fafc'));
+        const textColor = isThreat ? '#f87171' : (isErr ? 'var(--red)' : (isWarn ? 'var(--amber)' : 'var(--text)'));
         // Convert UTC created_at to local timezone (e.g. IST = UTC+5:30) for display
         const ts = (() => {
             if (l.created_at) {
@@ -1323,8 +1323,8 @@ function renderModalLogs() {
 
         return `
         <div style="padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03); display:flex; align-items:flex-start; gap:8px">
-            <span style="color:#38bdf8; flex-shrink:0">[${ts}]</span>
-            ${isThreat ? '<span style="background:#ef4444; color:#fff; font-size:8px; padding:1px 5px; border-radius:3px; font-weight:700; flex-shrink:0">🚨 SOAR</span>' : ''}
+            <span style="color:var(--cyan); flex-shrink:0">[${ts}]</span>
+            ${isThreat ? '<span style="background:var(--red); color:#fff; font-size:8px; padding:1px 5px; border-radius:3px; font-weight:700; flex-shrink:0">🚨 SOAR</span>' : ''}
             <span style="color:#a855f7; flex-shrink:0; max-width:200px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">${escapeHtml(sourcePath)}:</span>
             <span style="color:${textColor}; word-break:break-all">${escapeHtml(text)}</span>
         </div>
@@ -1415,14 +1415,14 @@ async function loadDashboardAlerts() {
         const items = res.items || res || [];
 
         if (!items.length) {
-            container.innerHTML = '<div style="text-align:center; padding:30px; color:#10b981; font-weight:600; background:#0f172a; border-radius:8px; border:1px solid rgba(255,255,255,0.05)">✅ All Systems Normal — No Active Incidents or Threats</div>';
+            container.innerHTML = '<div style="text-align:center; padding:30px; color:var(--green); font-weight:600; background:var(--bg2); border-radius:8px; border:1px solid rgba(255,255,255,0.05)">✅ All Systems Normal — No Active Incidents or Threats</div>';
             return;
         }
 
         container.innerHTML = items.map(a => {
             const isCrit = (a.severity || '').toLowerCase() === 'critical';
             const sevClass = isCrit ? '' : 'sev-warning';
-            const badgeColor = isCrit ? '#ef4444' : '#f59e0b';
+            const badgeColor = isCrit ? 'var(--red)' : 'var(--amber)';
             const badgeBg = isCrit ? 'rgba(239,68,68,0.2)' : 'rgba(245,158,11,0.2)';
             const srvName = a.hostname || `Node #${a.server_id}`;
 
@@ -1432,12 +1432,12 @@ async function loadDashboardAlerts() {
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
                         <div style="display:flex; align-items:center; gap:8px">
                             <span style="background:${badgeBg}; color:${badgeColor}; font-size:9px; font-weight:800; padding:2px 6px; border-radius:3px; text-transform:uppercase">${a.severity || 'WARNING'}</span>
-                            <strong style="color:#f8fafc; font-size:13px">${a.title || a.alert_type || 'Security Incident'}</strong>
+                            <strong style="color:var(--text); font-size:13px">${a.title || a.alert_type || 'Security Incident'}</strong>
                         </div>
-                        <span style="font-size:10px; color:#64748b; font-family:monospace">${a.created_at_ago || 'recently'}</span>
+                        <span style="font-size:10px; color:var(--text3); font-family:monospace">${a.created_at_ago || 'recently'}</span>
                     </div>
-                    <div style="font-size:11px; color:#94a3b8; line-height:1.4">${a.message || ''}</div>
-                    <div style="font-size:10px; color:#38bdf8; margin-top:4px; font-family:monospace">🖥️ Target Server: ${srvName} (ID: ${a.server_id}) · Click to open asset modal</div>
+                    <div style="font-size:11px; color:var(--text2); line-height:1.4">${a.message || ''}</div>
+                    <div style="font-size:10px; color:var(--cyan); margin-top:4px; font-family:monospace">🖥️ Target Server: ${srvName} (ID: ${a.server_id}) · Click to open asset modal</div>
                 </div>
             </div>
             `;

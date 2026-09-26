@@ -117,118 +117,118 @@
         <button class="btn btn-glass" onclick="closeServerLogConfigModal()">Done</button>
 <!-- IMAGE 3 POPUP MODAL WINDOW FOR SERVER / DATABASE DETAILS -->
 <div id="i3-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9998; display:none; backdrop-filter:blur(6px)" onclick="closeImage3Modal()"></div>
-<div id="i3-modal" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:900px; max-width:95vw; max-height:90vh; display:none; flex-direction:column; z-index:9999; background:#0f172a; border:1px solid rgba(255,255,255,0.15); border-radius:10px; box-shadow:0 30px 90px rgba(0,0,0,0.9); overflow:hidden; font-family:system-ui,-apple-system,sans-serif">
+<div id="i3-modal" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:900px; max-width:95vw; max-height:90vh; display:none; flex-direction:column; z-index:9999; background:var(--bg2); border:1px solid rgba(255,255,255,0.15); border-radius:10px; box-shadow:0 30px 90px rgba(0,0,0,0.9); overflow:hidden; font-family:system-ui,-apple-system,sans-serif">
     <!-- Header -->
-    <div style="padding:16px 24px; background:#0b1320; border-bottom:1px solid rgba(255,255,255,0.1); display:flex; justify-content:space-between; align-items:center">
+    <div style="padding:16px 24px; background:var(--bg); border-bottom:1px solid rgba(255,255,255,0.1); display:flex; justify-content:space-between; align-items:center">
         <div style="display:flex; align-items:center; gap:12px">
             <span style="font-size:22px">🗄️</span>
             <div>
                 <div style="display:flex; align-items:center; gap:10px">
-                    <h2 id="i3-srv-name" style="margin:0; font-size:18px; font-weight:700; color:#f8fafc">PVVNL-Hes-Maindb-01-DR</h2>
-                    <span id="i3-srv-status-badge" style="background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; text-transform:uppercase">CRITICAL</span>
+                    <h2 id="i3-srv-name" style="margin:0; font-size:18px; font-weight:700; color:var(--text)">PVVNL-Hes-Maindb-01-DR</h2>
+                    <span id="i3-srv-status-badge" style="background:var(--red); color:#fff; font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; text-transform:uppercase">CRITICAL</span>
                 </div>
-                <div id="i3-srv-sub" style="font-size:12px; color:#94a3b8; margin-top:2px">
+                <div id="i3-srv-sub" style="font-size:12px; color:var(--text2); margin-top:2px">
                     Host: 172.23.60.177 · Type: postgresql / linux node
                 </div>
             </div>
         </div>
         <div style="display:flex; gap:10px; align-items:center">
-            <button class="btn btn-glass" onclick="toggleMaintInModal()" style="font-size:11px; color:#f59e0b">⚡ Toggle Maintenance</button>
-            <button style="background:none; border:none; color:#94a3b8; font-size:20px; cursor:pointer" onclick="closeImage3Modal()">✕</button>
+            <button class="btn btn-glass" onclick="toggleMaintInModal()" style="font-size:11px; color:var(--amber)">⚡ Toggle Maintenance</button>
+            <button style="background:none; border:none; color:var(--text2); font-size:20px; cursor:pointer" onclick="closeImage3Modal()">✕</button>
         </div>
     </div>
 
     <!-- Tabs Header -->
-    <div style="display:flex; background:#090f1d; border-bottom:1px solid rgba(255,255,255,0.1); padding:0 16px">
-        <div class="i3-tab active" onclick="switchI3Tab('overview', this)" style="padding:12px 20px; font-size:13px; font-weight:600; color:#38bdf8; cursor:pointer; border-bottom:2px solid #38bdf8">Overview</div>
-        <div class="i3-tab" onclick="switchI3Tab('incidents', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Incidents / Outages</div>
-        <div class="i3-tab" onclick="switchI3Tab('resources', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Resource Usage (>85%)</div>
-        <div class="i3-tab" onclick="switchI3Tab('logs', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Log Streams</div>
-        <div class="i3-tab" onclick="switchI3Tab('ports', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Ports</div>
-        <div class="i3-tab" onclick="switchI3Tab('network', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Network</div>
-        <div class="i3-tab" onclick="switchI3Tab('settings', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:#94a3b8; cursor:pointer">Settings</div>
+    <div style="display:flex; background:var(--bg); border-bottom:1px solid rgba(255,255,255,0.1); padding:0 16px">
+        <div class="i3-tab active" onclick="switchI3Tab('overview', this)" style="padding:12px 20px; font-size:13px; font-weight:600; color:var(--cyan); cursor:pointer; border-bottom:2px solid var(--cyan)">Overview</div>
+        <div class="i3-tab" onclick="switchI3Tab('incidents', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Incidents / Outages</div>
+        <div class="i3-tab" onclick="switchI3Tab('resources', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Resource Usage (>85%)</div>
+        <div class="i3-tab" onclick="switchI3Tab('logs', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Log Streams</div>
+        <div class="i3-tab" onclick="switchI3Tab('ports', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Ports</div>
+        <div class="i3-tab" onclick="switchI3Tab('network', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Network</div>
+        <div class="i3-tab" onclick="switchI3Tab('settings', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Settings</div>
     </div>
 
     <!-- Body -->
-    <div style="padding:24px; overflow-y:auto; max-height:calc(90vh - 120px); background:#0b1320; color:#e2e8f0">
+    <div style="padding:24px; overflow-y:auto; max-height:calc(90vh - 120px); background:var(--bg); color:var(--text)">
         <!-- TAB 1: OVERVIEW -->
         <div id="i3t-overview">
-            <div style="background:#1e293b; border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:20px; margin-bottom:20px">
-                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:16px">Database / Server Information</div>
+            <div style="background:var(--bg3); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:20px; margin-bottom:20px">
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:16px">Database / Server Information</div>
                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; font-size:13px">
-                    <div><span style="color:#94a3b8">Name:</span> <strong id="i3-info-name" style="color:#f8fafc">172.23.60.177</strong></div>
-                    <div><span style="color:#94a3b8">Type:</span> <strong id="i3-info-type" style="color:#38bdf8">postgresql / linux</strong></div>
-                    <div><span style="color:#94a3b8">Host:</span> <strong id="i3-info-host" style="color:#f8fafc">172.23.60.177:5432</strong></div>
-                    <div><span style="color:#94a3b8">Database / App:</span> <strong id="i3-info-db" style="color:#f8fafc">sikkim_tnd_hes</strong></div>
-                    <div><span style="color:#94a3b8">Status:</span> <span id="i3-info-status" style="color:#ef4444; font-weight:700">CRITICAL</span></div>
-                    <div><span style="color:#94a3b8">Agent Status:</span> <strong id="i3-info-agent" style="color:#10b981">Agent Alive</strong></div>
+                    <div><span style="color:var(--text2)">Name:</span> <strong id="i3-info-name" style="color:var(--text)">172.23.60.177</strong></div>
+                    <div><span style="color:var(--text2)">Type:</span> <strong id="i3-info-type" style="color:var(--cyan)">postgresql / linux</strong></div>
+                    <div><span style="color:var(--text2)">Host:</span> <strong id="i3-info-host" style="color:var(--text)">172.23.60.177:5432</strong></div>
+                    <div><span style="color:var(--text2)">Database / App:</span> <strong id="i3-info-db" style="color:var(--text)">sikkim_tnd_hes</strong></div>
+                    <div><span style="color:var(--text2)">Status:</span> <span id="i3-info-status" style="color:var(--red); font-weight:700">CRITICAL</span></div>
+                    <div><span style="color:var(--text2)">Agent Status:</span> <strong id="i3-info-agent" style="color:var(--green)">Agent Alive</strong></div>
                 </div>
             </div>
 
-            <div style="background:#1e293b; border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:20px">
-                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:16px">🗄️ Database & System Metrics</div>
+            <div style="background:var(--bg3); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:20px">
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:16px">🗄️ Database & System Metrics</div>
                 <div style="margin-bottom:20px">
                     <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px">
-                        <span style="color:#94a3b8">Connection Usage</span><strong id="i3-conn-pct" style="color:#38bdf8">5.5%</strong>
+                        <span style="color:var(--text2)">Connection Usage</span><strong id="i3-conn-pct" style="color:var(--cyan)">5.5%</strong>
                     </div>
-                    <div style="width:100%; height:10px; background:#0f172a; border-radius:5px; overflow:hidden">
-                        <div id="i3-conn-bar" style="width:5.5%; height:100%; background:#38bdf8"></div>
+                    <div style="width:100%; height:10px; background:var(--bg2); border-radius:5px; overflow:hidden">
+                        <div id="i3-conn-bar" style="width:5.5%; height:100%; background:var(--cyan)"></div>
                     </div>
                 </div>
                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px">
-                    <div style="background:#0f172a; padding:16px; border-radius:6px">
-                        <div style="font-size:11px; color:#94a3b8">Database Size</div>
-                        <div id="i3-m-size" style="font-size:22px; font-weight:700; color:#f8fafc; margin:4px 0">791.11 GB</div>
+                    <div style="background:var(--bg2); padding:16px; border-radius:6px">
+                        <div style="font-size:11px; color:var(--text2)">Database Size</div>
+                        <div id="i3-m-size" style="font-size:22px; font-weight:700; color:var(--text); margin:4px 0">791.11 GB</div>
                     </div>
-                    <div style="background:#0f172a; padding:16px; border-radius:6px">
-                        <div style="font-size:11px; color:#94a3b8">Long Running Queries</div>
-                        <div id="i3-m-queries" style="font-size:22px; font-weight:700; color:#10b981; margin:4px 0">0</div>
+                    <div style="background:var(--bg2); padding:16px; border-radius:6px">
+                        <div style="font-size:11px; color:var(--text2)">Long Running Queries</div>
+                        <div id="i3-m-queries" style="font-size:22px; font-weight:700; color:var(--green); margin:4px 0">0</div>
                     </div>
-                    <div style="background:#0f172a; padding:16px; border-radius:6px">
-                        <div style="font-size:11px; color:#94a3b8">High Resource Queries</div>
-                        <div id="i3-m-resource" style="font-size:22px; font-weight:700; color:#10b981; margin:4px 0">0</div>
+                    <div style="background:var(--bg2); padding:16px; border-radius:6px">
+                        <div style="font-size:11px; color:var(--text2)">High Resource Queries</div>
+                        <div id="i3-m-resource" style="font-size:22px; font-weight:700; color:var(--green); margin:4px 0">0</div>
                     </div>
                 </div>
             </div>
         </div>
 
         <div id="i3t-incidents" style="display:none">
-            <div style="background:#1e293b; padding:20px; border-radius:8px">
-                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">🚨 Incidents Logged For This Asset</div>
-                <div id="i3-incidents-list"><div style="text-align:center; padding:20px; color:#94a3b8">Loading incidents...</div></div>
+            <div style="background:var(--bg3); padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:12px">🚨 Incidents Logged For This Asset</div>
+                <div id="i3-incidents-list"><div style="text-align:center; padding:20px; color:var(--text2)">Loading incidents...</div></div>
             </div>
         </div>
 
         <div id="i3t-resources" style="display:none">
-            <div style="background:#1e293b; padding:20px; border-radius:8px">
-                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">⚡ Resource Utilization (>85%)</div>
+            <div style="background:var(--bg3); padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:12px">⚡ Resource Utilization (>85%)</div>
                 <table style="width:100%; border-collapse:collapse; text-align:left; font-size:12px">
-                    <thead><tr style="border-bottom:1px solid rgba(255,255,255,0.1); color:#94a3b8"><th style="padding:8px">PID</th><th style="padding:8px">PROCESS</th><th style="padding:8px">CPU %</th><th style="padding:8px">RAM %</th><th style="padding:8px">USER</th></tr></thead>
-                    <tbody id="i3-procs-body"><tr><td colspan="5" style="text-align:center; padding:15px; color:#94a3b8">Loading...</td></tr></tbody>
+                    <thead><tr style="border-bottom:1px solid rgba(255,255,255,0.1); color:var(--text2)"><th style="padding:8px">PID</th><th style="padding:8px">PROCESS</th><th style="padding:8px">CPU %</th><th style="padding:8px">RAM %</th><th style="padding:8px">USER</th></tr></thead>
+                    <tbody id="i3-procs-body"><tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text2)">Loading...</td></tr></tbody>
                 </table>
             </div>
         </div>
 
         <!-- TAB 4: LOG STREAMS (Tomcat, Postgres, OS, SOAR Detections) -->
         <div id="i3t-logs" style="display:none">
-            <div style="background:#1e293b; padding:20px; border-radius:8px">
+            <div style="background:var(--bg3); padding:20px; border-radius:8px">
                 <!-- Real-Time SOAR Detections Banner for This Server (Image 1 Style) -->
                 <div id="modal-soar-alerts-bar" style="display:none; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:7px 12px; font-size:11px; align-items:center; justify-content:space-between; margin-bottom:12px">
                     <div style="display:flex; align-items:center; gap:8px; overflow:hidden">
-                        <span style="background:rgba(239,68,68,0.25); color:#ef4444; border:1px solid rgba(239,68,68,0.5); padding:2px 6px; border-radius:4px; font-weight:700; font-size:10px; flex-shrink:0">🚨 SOAR DETECTIONS</span>
-                        <span id="modal-soar-alerts-text" style="color:#f8fafc; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">Active Threat Alert</span>
+                        <span style="background:rgba(239,68,68,0.25); color:var(--red); border:1px solid rgba(239,68,68,0.5); padding:2px 6px; border-radius:4px; font-weight:700; font-size:10px; flex-shrink:0">🚨 SOAR DETECTIONS</span>
+                        <span id="modal-soar-alerts-text" style="color:var(--text); font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">Active Threat Alert</span>
                     </div>
                     <div style="display:flex; gap:6px; align-items:center; flex-shrink:0">
-                        <button class="btn btn-glass" onclick="selectModalLogCategory('soar')" style="font-size:9px; padding:2px 8px; color:#ef4444; border-color:rgba(239,68,68,0.4)">⚡ FILTER THREATS</button>
-                        <button class="btn btn-glass" onclick="switchI3Tab('incidents', document.querySelectorAll('.i3-tab')[1])" style="font-size:9px; padding:2px 8px; color:#38bdf8; border-color:rgba(56,189,248,0.4)">VIEW INCIDENTS</button>
+                        <button class="btn btn-glass" onclick="selectModalLogCategory('soar')" style="font-size:9px; padding:2px 8px; color:var(--red); border-color:rgba(239,68,68,0.4)">⚡ FILTER THREATS</button>
+                        <button class="btn btn-glass" onclick="switchI3Tab('incidents', document.querySelectorAll('.i3-tab')[1])" style="font-size:9px; padding:2px 8px; color:var(--cyan); border-color:rgba(0, 229, 255,0.4)">VIEW INCIDENTS</button>
                     </div>
                 </div>
 
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
-                    <div style="font-size:14px; font-weight:700; color:#f8fafc">📑 Auto-Discovered Log Streams</div>
+                    <div style="font-size:14px; font-weight:700; color:var(--text)">📑 Auto-Discovered Log Streams</div>
                     
                     <!-- Presets & Category Options -->
-                    <div style="display:flex; gap:6px; background:#090f1d; padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); flex-wrap:wrap">
+                    <div style="display:flex; gap:6px; background:var(--bg); padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); flex-wrap:wrap">
                         <button class="i3-log-cat-btn active" id="btn-cat-all" onclick="selectModalLogCategory('all')">⚡ All Streams</button>
                         <button class="i3-log-cat-btn cat-soar" id="btn-cat-soar" onclick="selectModalLogCategory('soar')">🚨 SOAR Threats</button>
                         <button class="i3-log-cat-btn" id="btn-cat-os" onclick="selectModalLogCategory('os')">💻 OS Logs</button>
@@ -240,35 +240,35 @@
                 </div>
 
                 <!-- Log Files Selector & Export Bar -->
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; background:#090f1d; padding:8px 12px; border-radius:6px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.06)">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; background:var(--bg); padding:8px 12px; border-radius:6px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.06)">
                     <div style="display:flex; align-items:center; gap:8px">
-                        <span style="font-size:11px; font-weight:700; color:#38bdf8">LOG FILE:</span>
-                        <select id="modal-log-file-select" onchange="filterModalLogsByFile()" style="font-size:11px; background:#1e293b; border:1px solid rgba(255,255,255,0.12); color:#f8fafc; padding:4px 10px; border-radius:4px; max-width:280px; font-family:monospace">
+                        <span style="font-size:11px; font-weight:700; color:var(--cyan)">LOG FILE:</span>
+                        <select id="modal-log-file-select" onchange="filterModalLogsByFile()" style="font-size:11px; background:var(--bg3); border:1px solid rgba(255,255,255,0.12); color:var(--text); padding:4px 10px; border-radius:4px; max-width:280px; font-family:monospace">
                             <option value="">-- All Discovered Files --</option>
                         </select>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
-                        <input type="text" id="modal-log-search" placeholder="🔍 Filter lines..." oninput="renderModalLogs()" style="font-size:11px; background:#1e293b; border:1px solid rgba(255,255,255,0.12); color:#f8fafc; padding:4px 10px; border-radius:4px; width:150px; font-family:monospace">
+                        <input type="text" id="modal-log-search" placeholder="🔍 Filter lines..." oninput="renderModalLogs()" style="font-size:11px; background:var(--bg3); border:1px solid rgba(255,255,255,0.12); color:var(--text); padding:4px 10px; border-radius:4px; width:150px; font-family:monospace">
                         <button class="btn btn-glass" style="font-size:10px; padding:4px 8px" onclick="refreshModalLogs()" title="Refresh Logs">🔄</button>
                         
                         <span style="font-size:10px; color:#64748b; font-family:'Orbitron',monospace; margin-left:4px">EXPORT:</span>
-                        <button class="btn btn-glass" onclick="exportModalLogs('csv')" style="font-size:9px; padding:3px 7px; color:#10b981; border-color:rgba(16,185,129,0.3)">📄 CSV</button>
-                        <button class="btn btn-glass" onclick="exportModalLogs('json')" style="font-size:9px; padding:3px 7px; color:#38bdf8; border-color:rgba(56,189,248,0.3)">{ } JSON</button>
-                        <button class="btn btn-glass" onclick="exportModalLogs('raw')" style="font-size:9px; padding:3px 7px; color:#f59e0b; border-color:rgba(245,158,11,0.3)">📜 RAW</button>
+                        <button class="btn btn-glass" onclick="exportModalLogs('csv')" style="font-size:9px; padding:3px 7px; color:var(--green); border-color:rgba(16,185,129,0.3)">📄 CSV</button>
+                        <button class="btn btn-glass" onclick="exportModalLogs('json')" style="font-size:9px; padding:3px 7px; color:var(--cyan); border-color:rgba(0, 229, 255,0.3)">{ } JSON</button>
+                        <button class="btn btn-glass" onclick="exportModalLogs('raw')" style="font-size:9px; padding:3px 7px; color:var(--amber); border-color:rgba(245,158,11,0.3)">📜 RAW</button>
                     </div>
                 </div>
 
                 <!-- Log Output Terminal -->
-                <div id="i3-logs-box" style="background:#050811; border:1px solid rgba(255,255,255,0.1); padding:14px; border-radius:6px; height:340px; overflow-y:auto; font-family:monospace; font-size:11px; color:#e2e8f0; line-height:1.6">
-                    <div style="color:#94a3b8; text-align:center; padding:30px">Loading pushed log stream...</div>
+                <div id="i3-logs-box" style="background:#050811; border:1px solid rgba(255,255,255,0.1); padding:14px; border-radius:6px; height:340px; overflow-y:auto; font-family:monospace; font-size:11px; color:var(--text); line-height:1.6">
+                    <div style="color:var(--text2); text-align:center; padding:30px">Loading pushed log stream...</div>
                 </div>
             </div>
         </div>
 
         <div id="i3t-ports" style="display:none">
-            <div style="background:#1e293b; padding:20px; border-radius:8px">
-                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">🔌 Open Ports & Connections</div>
-                <div style="font-size:12px; color:#94a3b8; margin-bottom:16px">Detected by SOC Agent via ss/netstat</div>
+            <div style="background:var(--bg3); padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:12px">🔌 Open Ports & Connections</div>
+                <div style="font-size:12px; color:var(--text2); margin-bottom:16px">Detected by SOC Agent via ss/netstat</div>
                 <div id="i3t-ports-list" style="display:flex; flex-direction:column; gap:8px">
                     <!-- Populated by JS -->
                 </div>
@@ -276,40 +276,40 @@
         </div>
 
         <div id="i3t-network" style="display:none">
-            <div style="background:#1e293b; padding:20px; border-radius:8px; margin-bottom:16px">
-                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">📡 Server Traffic Stats</div>
+            <div style="background:var(--bg3); padding:20px; border-radius:8px; margin-bottom:16px">
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:12px">📡 Server Traffic Stats</div>
                 <div style="display:flex; justify-content:space-between; align-items:center">
                     <div>
-                        <div style="font-size:11px; color:#94a3b8">Total Received (RX)</div>
+                        <div style="font-size:11px; color:var(--text2)">Total Received (RX)</div>
                         <div style="font-size:24px; color:#34d399; font-weight:bold" id="i3t-net-rx">0 MB</div>
                     </div>
                     <div>
-                        <div style="font-size:11px; color:#94a3b8">Total Transmitted (TX)</div>
-                        <div style="font-size:24px; color:#38bdf8; font-weight:bold" id="i3t-net-tx">0 MB</div>
+                        <div style="font-size:11px; color:var(--text2)">Total Transmitted (TX)</div>
+                        <div style="font-size:24px; color:var(--cyan); font-weight:bold" id="i3t-net-tx">0 MB</div>
                     </div>
                 </div>
             </div>
 
-            <div style="background:#1e293b; padding:20px; border-radius:8px">
-                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:8px">🛡ï¸ VPN Subnet Detection</div>
-                <p style="font-size:12px; color:#94a3b8; margin-bottom:16px">Optionally override the Project's VPN subnet tracking settings for this specific server.</p>
+            <div style="background:var(--bg3); padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:8px">🛡ï¸ VPN Subnet Detection</div>
+                <p style="font-size:12px; color:var(--text2); margin-bottom:16px">Optionally override the Project's VPN subnet tracking settings for this specific server.</p>
                 <form id="server-network-form" onsubmit="saveServerNetwork(event)">
                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:12px">
-                        <input type="checkbox" id="serverVpnTracking" style="accent-color:#38bdf8; width:16px; height:16px">
-                        <span style="font-size:13px; color:#f8fafc; font-weight:500">Enable Independent Server VPN Subnet Tracking</span>
+                        <input type="checkbox" id="serverVpnTracking" style="accent-color:var(--cyan); width:16px; height:16px">
+                        <span style="font-size:13px; color:var(--text); font-weight:500">Enable Independent Server VPN Subnet Tracking</span>
                     </label>
                     <div style="margin-bottom:16px">
-                        <label style="display:block; font-size:11px; color:#94a3b8; margin-bottom:6px">Authorized VPN Subnets (CIDR, comma-separated)</label>
-                        <input type="text" id="serverVpnSubnet" placeholder="e.g., 10.0.0.0/24" style="width:100%; padding:8px 12px; font-size:13px; background:#0f172a; border:1px solid #334155; color:#f8fafc; border-radius:6px; outline:none">
+                        <label style="display:block; font-size:11px; color:var(--text2); margin-bottom:6px">Authorized VPN Subnets (CIDR, comma-separated)</label>
+                        <input type="text" id="serverVpnSubnet" placeholder="e.g., 10.0.0.0/24" style="width:100%; padding:8px 12px; font-size:13px; background:var(--bg2); border:1px solid var(--border); color:var(--text); border-radius:6px; outline:none">
                     </div>
-                    <button type="submit" id="btn-save-network" class="btn" style="background:rgba(56,189,248,0.1); border:1px solid #38bdf8; color:#38bdf8; font-size:12px; padding:6px 12px">Save Network Settings</button>
+                    <button type="submit" id="btn-save-network" class="btn" style="background:rgba(0, 229, 255,0.1); border:1px solid var(--cyan); color:var(--cyan); font-size:12px; padding:6px 12px">Save Network Settings</button>
                 </form>
             </div>
         </div>
 
         <div id="i3t-settings" style="display:none">
-            <div style="background:#1e293b; padding:20px; border-radius:8px">
-                <div style="font-size:14px; font-weight:700; color:#f8fafc; margin-bottom:12px">⚙️ Asset Maintenance</div>
+            <div style="background:var(--bg3); padding:20px; border-radius:8px">
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:12px">⚙️ Asset Maintenance</div>
                 <button class="btn btn-primary" onclick="toggleMaintInModal()">Toggle Maintenance Mode</button>
             </div>
         </div>
@@ -594,13 +594,13 @@
     function switchI3Tab(tabName, btn) {
         document.querySelectorAll('.i3-tab').forEach(t => {
             t.classList.remove('active');
-            t.style.color = '#94a3b8';
+            t.style.color = 'var(--text2)';
             t.style.borderBottom = 'none';
         });
         if (btn) {
             btn.classList.add('active');
-            btn.style.color = '#38bdf8';
-            btn.style.borderBottom = '2px solid #38bdf8';
+            btn.style.color = 'var(--cyan)';
+            btn.style.borderBottom = '2px solid var(--cyan)';
         }
         ['overview', 'incidents', 'resources', 'logs', 'ports', 'network', 'settings'].forEach(t => {
             const el = document.getElementById(`i3t-${t}`);
@@ -640,7 +640,7 @@
             const b = document.getElementById('i3-srv-status-badge');
             if (b) {
                 b.innerText = status.toUpperCase();
-                b.style.background = status === 'online' ? '#10b981' : status === 'maintenance' ? '#f59e0b' : '#ef4444';
+                b.style.background = status === 'online' ? 'var(--green)' : status === 'maintenance' ? 'var(--amber)' : 'var(--red)';
             }
             if (subEl) subEl.innerText = `Host: ${ip} · OS: ${srv.os_info || 'Linux'} · Project: ${srv.project_name || 'N/A'}`;
 
@@ -651,7 +651,7 @@
             const infStat = document.getElementById('i3-info-status');
             if (infStat) {
                 infStat.innerText = status.toUpperCase();
-                infStat.style.color = status === 'online' ? '#10b981' : '#ef4444';
+                infStat.style.color = status === 'online' ? 'var(--green)' : 'var(--red)';
             }
 
             const cpu = srv.cpu_percent || 0;
@@ -660,22 +660,22 @@
             if (document.getElementById('i3-conn-pct')) document.getElementById('i3-conn-pct').innerText = cpu + '%';
             if (document.getElementById('i3-conn-bar')) {
                 document.getElementById('i3-conn-bar').style.width = Math.min(cpu, 100) + '%';
-                document.getElementById('i3-conn-bar').style.background = cpu > 85 ? '#ef4444' : cpu > 70 ? '#f59e0b' : '#38bdf8';
+                document.getElementById('i3-conn-bar').style.background = cpu > 85 ? 'var(--red)' : cpu > 70 ? 'var(--amber)' : 'var(--cyan)';
             }
 
             const procs = details.processes || [];
             const procBody = document.getElementById('i3-procs-body');
             if (procBody) {
                 if (!procs.length) {
-                    procBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px; color:#94a3b8">No high-resource processes detected</td></tr>';
+                    procBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text2)">No high-resource processes detected</td></tr>';
                 } else {
                     procBody.innerHTML = procs.map(p => `
                         <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
-                            <td style="padding:8px; font-family:monospace; color:#38bdf8">${p.pid}</td>
-                            <td style="padding:8px; font-weight:600; color:#f8fafc">${escapeHtml(p.name)}</td>
-                            <td style="padding:8px; color:${p.cpu>85?'#ef4444':'#f8fafc'}">${p.cpu}%</td>
-                            <td style="padding:8px; color:${p.memory>85?'#ef4444':'#f8fafc'}">${p.memory}%</td>
-                            <td style="padding:8px; color:#94a3b8">${escapeHtml(p.user)}</td>
+                            <td style="padding:8px; font-family:monospace; color:var(--cyan)">${p.pid}</td>
+                            <td style="padding:8px; font-weight:600; color:var(--text)">${escapeHtml(p.name)}</td>
+                            <td style="padding:8px; color:${p.cpu>85?'var(--red)':'var(--text)'}">${p.cpu}%</td>
+                            <td style="padding:8px; color:${p.memory>85?'var(--red)':'var(--text)'}">${p.memory}%</td>
+                            <td style="padding:8px; color:var(--text2)">${escapeHtml(p.user)}</td>
                         </tr>
                     `).join('');
                 }
@@ -685,17 +685,17 @@
             const incList = document.getElementById('i3-incidents-list');
             if (incList) {
                 if (!alerts.length) {
-                    incList.innerHTML = '<div style="text-align:center; padding:30px; color:#10b981; font-weight:600">✅ No active incidents or alerts for this asset</div>';
+                    incList.innerHTML = '<div style="text-align:center; padding:30px; color:var(--green); font-weight:600">✅ No active incidents or alerts for this asset</div>';
                 } else {
                     incList.innerHTML = alerts.map(a => {
                         const isCrit = (a.severity || '').toLowerCase() === 'critical';
                         return `
-                        <div style="background:rgba(255,255,255,0.03); border-left:3px solid ${isCrit?'#ef4444':'#f59e0b'}; padding:10px 14px; margin-bottom:8px; border-radius:4px">
+                        <div style="background:rgba(255,255,255,0.03); border-left:3px solid ${isCrit?'var(--red)':'var(--amber)'}; padding:10px 14px; margin-bottom:8px; border-radius:4px">
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
-                                <strong style="color:#f8fafc; font-size:12px">${escapeHtml(a.title || a.alert_type)}</strong>
+                                <strong style="color:var(--text); font-size:12px">${escapeHtml(a.title || a.alert_type)}</strong>
                                 <span style="font-size:10px; color:#64748b">${a.created_at_formatted || 'recent'}</span>
                             </div>
-                            <div style="font-size:11px; color:#94a3b8">${escapeHtml(a.message || '')}</div>
+                            <div style="font-size:11px; color:var(--text2)">${escapeHtml(a.message || '')}</div>
                         </div>`;
                     }).join('');
                 }
@@ -723,7 +723,7 @@
             const portsList = document.getElementById('i3t-ports-list');
             if (portsList) {
                 if (!ports.length) {
-                    portsList.innerHTML = '<div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px">No open ports reported by agent</div>';
+                    portsList.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text2); font-size:12px">No open ports reported by agent</div>';
                 } else {
                     const dangerous = [21, 23, 3389, 5432, 3306, 6379, 27017, 11211, 9200, 2375];
                     portsList.innerHTML = ports.map(p => {
@@ -731,12 +731,12 @@
                         let proc = p.process || 'unknown';
                         let isDanger = dangerous.includes(parseInt(pt));
                         return `
-                        <div style="background:rgba(255,255,255,0.03); border-left:3px solid ${isDanger?'#ef4444':'#38bdf8'}; padding:10px 14px; margin-bottom:6px; border-radius:4px; display:flex; justify-content:space-between; align-items:center">
+                        <div style="background:rgba(255,255,255,0.03); border-left:3px solid ${isDanger?'var(--red)':'var(--cyan)'}; padding:10px 14px; margin-bottom:6px; border-radius:4px; display:flex; justify-content:space-between; align-items:center">
                             <div>
-                                <strong style="color:${isDanger?'#ef4444':'#f8fafc'}; font-size:13px; font-family:monospace">PORT ${pt}</strong>
-                                ${isDanger ? '<span style="margin-left:8px; font-size:10px; background:#ef4444; color:#fff; padding:2px 4px; border-radius:3px">DANGEROUS DEFAULT</span>' : ''}
+                                <strong style="color:${isDanger?'var(--red)':'var(--text)'}; font-size:13px; font-family:monospace">PORT ${pt}</strong>
+                                ${isDanger ? '<span style="margin-left:8px; font-size:10px; background:var(--red); color:#fff; padding:2px 4px; border-radius:3px">DANGEROUS DEFAULT</span>' : ''}
                             </div>
-                            <div style="font-size:11px; color:#94a3b8">Process: ${escapeHtml(proc)}</div>
+                            <div style="font-size:11px; color:var(--text2)">Process: ${escapeHtml(proc)}</div>
                         </div>`;
                     }).join('');
                 }
@@ -810,7 +810,7 @@
 
         if (relevantAlerts.length > 0) {
             const top = relevantAlerts[0];
-            modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:#94a3b8; font-size:9px">(${top.created_at_formatted || 'recent'})</span>`;
+            modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:var(--text2); font-size:9px">(${top.created_at_formatted || 'recent'})</span>`;
             modalBanner.style.display = 'flex';
         } else {
             modalBanner.style.display = 'none';
@@ -1008,13 +1008,13 @@
             const catLabel = catNames[modalActiveCategory] || modalActiveCategory.toUpperCase();
 
             const bufferNote = (currentModalLogs.length > 0)
-                ? `<div style="font-size:11px; color:#94a3b8; margin-top:8px">Showing 0 matching lines out of ${currentModalLogs.length} lines in buffer. <button class="btn btn-glass" onclick="selectModalLogCategory('all')" style="margin-left:8px; font-size:10px; padding:2px 8px; cursor:pointer">⚡ View All Streams</button></div>`
-                : `<div style="font-size:11px; color:#38bdf8; margin-top:8px">Ensure agent daemon is running on target host, or click <strong>⚡ ALL STREAMS</strong></div>`;
+                ? `<div style="font-size:11px; color:var(--text2); margin-top:8px">Showing 0 matching lines out of ${currentModalLogs.length} lines in buffer. <button class="btn btn-glass" onclick="selectModalLogCategory('all')" style="margin-left:8px; font-size:10px; padding:2px 8px; cursor:pointer">⚡ View All Streams</button></div>`
+                : `<div style="font-size:11px; color:var(--cyan); margin-top:8px">Ensure agent daemon is running on target host, or click <strong>⚡ ALL STREAMS</strong></div>`;
 
             logBox.innerHTML = `
-            <div style="color:#94a3b8; text-align:center; padding:35px">
+            <div style="color:var(--text2); text-align:center; padding:35px">
                 <div style="font-size:24px; margin-bottom:8px">📄</div>
-                <div style="font-size:13px; font-weight:600; color:#e2e8f0; margin-bottom:4px">No log lines found for ${escapeHtml(catLabel)}</div>
+                <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:4px">No log lines found for ${escapeHtml(catLabel)}</div>
                 <div style="font-size:11px; color:#64748b">Filter: ${modalActiveCategory.toUpperCase()} ${modalActiveFile ? '· File: ' + escapeHtml(modalActiveFile) : ''}</div>
                 ${bufferNote}
             </div>`;
@@ -1032,7 +1032,7 @@
             const isErr = isThreat || lower.includes('fatal') || lower.includes('error') || lower.includes('critical');
             const isWarn = lower.includes('warn') || lower.includes('alert') || lower.includes('privilege');
 
-            const textColor = isThreat ? '#f87171' : (isErr ? '#ef4444' : (isWarn ? '#f59e0b' : '#f8fafc'));
+            const textColor = isThreat ? '#f87171' : (isErr ? 'var(--red)' : (isWarn ? 'var(--amber)' : 'var(--text)'));
             // Convert UTC created_at to local timezone (e.g. IST = UTC+5:30) for display
             const ts = (() => {
                 if (l.created_at) {
@@ -1045,8 +1045,8 @@
 
             return `
             <div style="padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03); display:flex; align-items:flex-start; gap:8px">
-                <span style="color:#38bdf8; flex-shrink:0">[${ts}]</span>
-                ${isThreat ? '<span style="background:#ef4444; color:#fff; font-size:8px; padding:1px 5px; border-radius:3px; font-weight:700; flex-shrink:0">🚨 SOAR</span>' : ''}
+                <span style="color:var(--cyan); flex-shrink:0">[${ts}]</span>
+                ${isThreat ? '<span style="background:var(--red); color:#fff; font-size:8px; padding:1px 5px; border-radius:3px; font-weight:700; flex-shrink:0">🚨 SOAR</span>' : ''}
                 <span style="color:#a855f7; flex-shrink:0; max-width:200px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">${escapeHtml(sourcePath)}:</span>
                 <span style="color:${textColor}; word-break:break-all">${escapeHtml(text)}</span>
             </div>

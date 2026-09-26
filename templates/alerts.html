@@ -138,7 +138,7 @@
                 const sColor = isCrit ? 'var(--red)' : (inc.severity === 'warning' ? 'var(--amber)' : 'var(--cyan)');
                 const st = inc.status || 'open';
                 return `
-                <div class="fade-in" id="inc-card-${inc.id}" style="background:#0f172a; border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid ${sColor}; border-radius: 6px; padding: 16px 20px; margin-bottom: 12px; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; box-shadow: 0 4px 6px rgba(0,0,0,0.2)">
+                <div class="fade-in" id="inc-card-${inc.id}" style="background:var(--bg2); border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid ${sColor}; border-radius: 6px; padding: 16px 20px; margin-bottom: 12px; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; box-shadow: 0 4px 6px rgba(0,0,0,0.2)">
                     <div style="flex:1; min-width:280px">
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
                             ${severityBadge(inc.severity)}
@@ -157,7 +157,7 @@
                     <!-- Status Triage & Actions -->
                     <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end">
                         <div style="display:flex; gap:6px">
-                            <select style="background:#1e293b; color:var(--text); border:1px solid rgba(255,255,255,0.1); padding:6px 10px; font-size:12px; border-radius:4px; outline:none" onchange="updateIncidentStatus(${inc.id}, this.value)">
+                            <select style="background:var(--bg3); color:var(--text); border:1px solid rgba(255,255,255,0.1); padding:6px 10px; font-size:12px; border-radius:4px; outline:none" onchange="updateIncidentStatus(${inc.id}, this.value)">
                                 <option value="open" ${st === 'open' ? 'selected' : ''}>Open</option>
                                 <option value="investigating" ${st === 'investigating' ? 'selected' : ''}>Investigating</option>
                                 <option value="resolved" ${st === 'resolved' ? 'selected' : ''}>Resolved</option>
