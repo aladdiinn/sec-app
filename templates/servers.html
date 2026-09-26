@@ -321,6 +321,7 @@
 <script>
     async function loadServers() {
         const grid = document.getElementById('servers-grid');
+        grid.innerHTML = '<div style="grid-column:1/-1; display:flex; flex-direction:column; align-items:center; padding:100px; color:var(--cyan); font-family:var(--mono); letter-spacing:1px;" class="fade-in"><div class="loader-spinner" style="margin-bottom:20px;"></div><div>ESTABLISHING SECURE CONNECTION...</div></div>';
         const status = document.getElementById('filter-status').value;
         let url = `/api/servers`;
         if (status) url += `?status=${status}`;
@@ -334,76 +335,72 @@
                 return;
             }
 
-            grid.innerHTML = data.map(s => {
+            grid.innerHTML = data.map((s, index) => {
                 const id = s.id;
                 const hostname = String(s.hostname || s.name || s.ip || 'server-node').replace(/'/g, "\\'");
                 const ip = s.ip_address || s.ip || '127.0.0.1';
                 const isMaint = s.is_maintenance || (s.maintenance_until && new Date(s.maintenance_until) > new Date());
                 const statusStr = isMaint ? 'maintenance' : String(s.status || 'online').toLowerCase();
-                const severityStr = String(s.severity || 'info').toLowerCase();
+                const cpu = s.cpu_percent || 0;
+                const ram = s.memory_percent || 0;
+                const disk = s.disk_percent || 0;
+                const alertCount = s.alert_count || 0;
+                const isCrit = s.severity === 'critical' || alertCount > 0;
                 
-                const statIconColor = statusStr === 'online' ? 'green' : (statusStr === 'maintenance' ? 'orange' : 'red');
-                const badgeClass = statusStr === 'online' ? 'success' : (statusStr === 'maintenance' ? 'warning' : 'critical');
+                const typeBadge = '<span class="service-type-badge st-server">LINUX SERVER</span>';
+                
+                let alertBox = '<div class="service-alert-box sab-normal"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>NORMAL</strong> – All checks operational</div>';
+                if (isMaint) {
+                    alertBox = '<div class="service-alert-box sab-trouble"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>MAINTENANCE</strong> – Scheduled Maintenance Window</div>';
+                } else if (isCrit) {
+                    alertBox = `<div class="service-alert-box"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>CRITICAL</strong> – ${alertCount} Alert(s) • CPU: ${cpu}%</div>`;
+                } else if (cpu > 85 || ram > 85) {
+                    alertBox = `<div class="service-alert-box sab-trouble"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>HIGH RESOURCE</strong> – CPU: ${cpu}% / RAM: ${ram}%</div>`;
+                }
+
+                const borderColor = isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : 'rgba(255,255,255,0.08)'));
 
                 return `
-                <div class="card glass glass-hover fade-in" id="srv-card-${id}" style="position:relative; display:flex; flex-direction:column; cursor:pointer" onclick="openImage3Modal(${id})">
+                <div class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${id})" style="border-color:${borderColor}; position:relative;">
                     ${window.USER_ROLE !== 'normal' ? `
-                    <div style="position:absolute; top:12px; right:12px; z-index:2; display:flex; gap:5px">
-                        <button onclick="event.stopPropagation(); openServerLogConfigModal(${id}, '${ip}', '${hostname}')"
-                            title="Configure Log Analyzer Applications"
-                            class="btn btn-glass"
-                            style="padding:4px 8px; font-size:10px; color:var(--cyan); border-color:rgba(0,212,255,0.4)">
-                            ⚙ LOG CONFIG
-                        </button>
-                        <button onclick="event.stopPropagation(); toggleMaintenance(${id}, ${isMaint}, this)"
-                            title="Toggle Maintenance"
-                            class="btn btn-glass"
-                            style="padding:4px 8px; font-size:10px">
+                    <div style="position:absolute; top:-10px; right:12px; z-index:2; display:flex; gap:5px; background:var(--bg2); padding:0 4px; border-radius:4px;">
+                        <button onclick="event.stopPropagation(); toggleMaintenance(${id}, ${isMaint}, this)" title="Toggle Maintenance" class="btn btn-glass" style="padding:2px 8px; font-size:9px; border-color:var(--border);">
                             ${isMaint ? 'UNMAINT' : 'MAINT'}
                         </button>
-                        <button onclick="event.stopPropagation(); deleteServer(${id})"
-                            title="Delete server"
-                            class="btn btn-glass"
-                            style="background:rgba(255,59,92,0.1); border-color:rgba(255,59,92,0.4); color:var(--red); padding:4px 8px; font-size:10px">
+                        <button onclick="event.stopPropagation(); deleteServer(${id})" title="Delete server" class="btn btn-glass" style="background:rgba(255,51,102,0.1); border-color:rgba(255,51,102,0.4); color:var(--red); padding:2px 8px; font-size:9px;">
                             DEL
                         </button>
                     </div>
                     ` : ''}
-
-                    <div style="cursor:pointer; flex:1; margin-top:20px" onclick="openImage3Modal(${id})">
-                        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px">
-                            <div class="stat-icon ${statIconColor}" style="width:48px; height:48px">
-                                <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                    <div>
+                        <div class="service-header">
+                            <div>
+                                <h4 class="service-title">${hostname}</h4>
+                                <div style="font-family:monospace; font-size:11px; color:var(--cyan)">${ip}</div>
                             </div>
-                            <span class="badge badge-${badgeClass}" id="srv-badge-${id}" style="margin-right:0">${statusStr.toUpperCase()}</span>
+                            ${typeBadge}
                         </div>
-
-                        <h3 class="card-title" style="font-size:18px; margin-bottom:4px">${hostname}</h3>
-                        <p class="text-meta" style="margin-bottom:16px">${ip}</p>
-
-                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; border-top: 1px solid var(--border); padding-top:12px">
-                            <div>
-                                <div class="text-meta" style="margin-bottom:3px">RISK LEVEL</div>
-                                <div style="font-size:13px; font-weight:700; color:${severityStr === 'critical' ? 'var(--red)' : 'var(--green)'}">${severityStr.toUpperCase()}</div>
+                        <div class="service-metrics">
+                            <div class="service-metrics-item">
+                                <span class="sm-label">CPU USAGE</span>
+                                <span class="sm-val" style="color:${cpu>85?'var(--red)':cpu>70?'var(--amber)':'var(--text)'}">${cpu}%</span>
                             </div>
-                            <div>
-                                <div class="text-meta" style="margin-bottom:3px">LAST SEEN</div>
-                                <div style="font-size:13px; color:var(--text)">${s.last_sudo_ago || 'just now'}</div>
+                            <div class="service-metrics-item">
+                                <span class="sm-label">RAM USAGE</span>
+                                <span class="sm-val" style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--text)'}">${ram}%</span>
                             </div>
-                            <div style="grid-column: 1/-1; display:flex; justify-content:space-between; align-items:center; border-top: 1px solid var(--border); padding-top:8px; margin-top:4px">
-                                <div style="display:flex; align-items:center; gap:6px">
-                                    <div class="text-meta">AGENT VERSION:</div>
-                                    <div style="font-size:11px; font-family:'Share Tech Mono', monospace; font-weight:700; color:${s.update_status === 'updating' ? 'var(--orange)' : (s.update_status === 'update_failed' ? 'var(--red)' : 'var(--cyan)')}">${s.agent_version || '0.2'} ${s.update_status === 'updating' ? '(Updating...)' : ''}</div>
-                                </div>
-                                ${window.USER_ROLE !== 'normal' && s.agent_version !== '0.3' && s.update_status !== 'updating' ? `
-                                <button onclick="event.stopPropagation(); triggerAgentUpdate(${id})" class="btn btn-glass" style="padding:2px 8px; font-size:9px; border-color:rgba(0,212,255,0.4); color:var(--cyan)">
-                                    ROLLOUT UPDATE
-                                </button>
-                                ` : ''}
+                            <div class="service-metrics-item" style="margin-top:6px">
+                                <span class="sm-label">DISK USAGE</span>
+                                <span class="sm-val">${disk}%</span>
+                            </div>
+                            <div class="service-metrics-item" style="margin-top:6px">
+                                <span class="sm-label">ALERTS</span>
+                                <span class="sm-val" style="color:${alertCount>0?'var(--red)':'var(--green)'}">${alertCount}</span>
                             </div>
                         </div>
                     </div>
-                </div>
+                    ${alertBox}
+                </div>`;
                 `;
             }).join('');
         } catch (e) {

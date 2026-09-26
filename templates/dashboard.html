@@ -388,10 +388,7 @@
 
     <!-- Services Cards Grid (Image 2 Style) -->
     <div id="services-cards-grid" class="services-grid">
-        <div style="grid-column:1/-1; text-align:center; padding:60px; color:var(--text2)">
-            <div style="font-size:20px; margin-bottom:8px">⏳</div>
-            Loading infrastructure nodes...
-        </div>
+        <div style="grid-column:1/-1; display:flex; flex-direction:column; align-items:center; padding:80px; color:var(--cyan); font-family:var(--mono); letter-spacing:1px;" class="fade-in"><div class="loader-spinner" style="margin-bottom:20px;"></div><div>ESTABLISHING SECURE CONNECTION...</div></div>
     </div>
 
 </div>
@@ -719,7 +716,7 @@ function renderServicesGrid() {
         return;
     }
 
-    container.innerHTML = filtered.map(s => {
+    container.innerHTML = filtered.map((s, index) => {
         const sid = s.id;
         const name = s.hostname || s.name || 'Unknown Node';
         const ip = s.ip_address || s.ip || '0.0.0.0';
@@ -749,7 +746,7 @@ function renderServicesGrid() {
         const borderColor = isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : 'rgba(255,255,255,0.08)'));
 
         return `
-        <div class="service-card" onclick="openImage3Modal(${sid})" style="border-color:${borderColor}">
+        <div class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="border-color:${borderColor}">
             <div>
                 <div class="service-header">
                     <div>
