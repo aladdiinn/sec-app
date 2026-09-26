@@ -361,7 +361,7 @@
                 const borderColor = isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : 'rgba(255,255,255,0.08)'));
 
                 return `
-                <div class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${id})" style="border-color:${borderColor}; position:relative;">
+                <div class="service-card fade-in delay-${(index % 5) + 1}" data-id="${id}" style="border-color:${borderColor}; position:relative;">
                     ${window.USER_ROLE !== 'normal' ? `
                     <div style="position:absolute; top:-10px; right:12px; z-index:2; display:flex; gap:5px; background:var(--bg2); padding:0 4px; border-radius:4px;">
                         <button onclick="event.stopPropagation(); toggleMaintenance(${id}, ${isMaint}, this)" title="Toggle Maintenance" class="btn btn-glass" style="padding:2px 8px; font-size:9px; border-color:var(--border);">
@@ -1172,5 +1172,19 @@
         });
     });
     
+
+    // Global delegation
+    document.addEventListener('click', (e) => {
+        const card = e.target.closest('.service-card');
+        if (!card) return;
+        if (e.target.closest('button')) return; // ignore buttons
+        
+        const sid = card.getAttribute('data-id') || card.getAttribute('onclick')?.match(/(\d+)/)?.[1];
+        if (sid) {
+            console.log("CLICK DELEGATION SUCCESS:", sid);
+            openImage3Modal(sid);
+        }
+    });
+
 </script>
 {% endblock %}
