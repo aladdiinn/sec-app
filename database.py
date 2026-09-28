@@ -853,20 +853,7 @@ def save_agent_data(server_id: int, data: dict):
             if isinstance(data.get("sudo_cmds"), list):
                 commands.extend(data.get("sudo_cmds", []))
 
-            # Fetch active detection rules and threat intel IOCs
-            active_rules = []
-            active_iocs = []
-            try:
-                cur.execute("SELECT name, pattern, severity, event_type, mitre_tactic, mitre_technique FROM detection_rules WHERE enabled = TRUE;")
-                active_rules = cur.fetchall()
-            except Exception as ex_rfetch:
-                logger.debug(f"Rules fetch error: {ex_rfetch}")
 
-            try:
-                cur.execute("SELECT ioc_value, ioc_type, severity, description FROM threat_intel;")
-                active_iocs = cur.fetchall()
-            except Exception as ex_tfetch:
-                logger.debug(f"Threat intel fetch error: {ex_tfetch}")
 
             for cmd_obj in commands:
                 username = cmd_obj.get("user", cmd_obj.get("username", "root"))
@@ -893,84 +880,7 @@ def save_agent_data(server_id: int, data: dict):
                         VALUES (%s, %s, %s, %s, %s, %s, NOW());
                     """, (server_id, username, cmd_str, category, risk_level, is_sudo))
 
-                # Check Threat Intel table for known malicious domains, IPs, URLs, hashes
-                ti_matched = False
-                for ioc in active_iocs:
-                    ioc_val = (ioc.get("ioc_value") or "").strip()
-                    if not ioc_val: continue
-                    if ioc_val.lower() in cmd_str.lower():
-                        ti_matched = True
-                        log_alert(
-                            server_id,
-                            "THREAT_INTEL_MATCH",
-                            f"Threat Intel Hit ({ioc.get('ioc_type', 'DOMAIN').upper()}): {ioc_val} ({ioc.get('description', 'Known Malicious')}) detected in command: {cmd_str}",
-                            severity=ioc.get("severity", "critical").lower()
-                        )
-                        break
 
-                # Check custom detection rules first
-                rule_matched = False
-                for r in active_rules:
-                    pat = r.get("pattern", "")
-                    if not pat: continue
-                    matched = False
-                    try:
-                        if re.search(pat, cmd_str, re.IGNORECASE): matched = True
-                    except Exception:
-                        if pat.lower() in cmd_str.lower(): matched = True
-                    
-                    if matched:
-                        rule_matched = True
-                        log_alert(
-                            server_id,
-                            r.get("event_type", "DETECTION_RULE"),
-                            f"Detection Rule [{r.get('name')}]: {cmd_str}",
-                            severity=r.get("severity", "warning").lower()
-                        )
-                        break  # Only one rule alert per command!
-
-                # Fallback alert if no custom rule matched but command is dangerous or FIM
-                if not rule_matched and (category in ["PERM_CHANGE", "DESTRUCTIVE", "FILE_INTEGRITY"] or "chmod" in cmd_str or "chown" in cmd_str or "FIM Alert" in cmd_str):
-                    alert_msg = f"Dangerous command ({category}) executed by {username}: {cmd_str}"
-                    log_alert(server_id, category, alert_msg, severity="critical" if category in ["DESTRUCTIVE", "FORK_BOMB"] else "warning")
-
-            # Check auth / login / syslog events against rules with single match break
-            raw_events = data.get("events", []) or data.get("logins", [])
-            for ev in raw_events:
-                ev_ip = str(ev.get('ip', ''))
-                if any(self_ip in ev_ip or self_ip in str(ev.get('message', '')) for self_ip in ["172.31.2.38", "127.0.0.1", "localhost"]):
-                    continue  # Ignore local internal system probes
-                ev_text = f"{ev.get('type', '')} {ev.get('user', '')} {ev.get('ip', '')} {ev.get('message', '')}"
-                for r in active_rules:
-                    pat = r.get("pattern", "")
-                    if not pat: continue
-                    matched = False
-                    try:
-                        if re.search(pat, ev_text, re.IGNORECASE): matched = True
-                    except Exception:
-                        if pat.lower() in ev_text.lower(): matched = True
-                    
-                    if matched:
-                        log_alert(
-                            server_id,
-                            r.get("event_type", "AUTH_FAIL"),
-                            f"Detection Rule [{r.get('name')}]: {ev_text}",
-                            severity=r.get("severity", "critical").lower()
-                        )
-                        break  # Only one rule alert per event!
-
-                # Check event text against Threat Intel IOCs
-                for ioc in active_iocs:
-                    ioc_val = (ioc.get("ioc_value") or "").strip()
-                    if not ioc_val: continue
-                    if ioc_val.lower() in ev_text.lower():
-                        log_alert(
-                            server_id,
-                            "THREAT_INTEL_MATCH",
-                            f"Threat Intel Hit ({ioc.get('ioc_type', 'DOMAIN').upper()}): {ioc_val} ({ioc.get('description', 'Known Malicious')}) in event: {ev_text}",
-                            severity=ioc.get("severity", "critical").lower()
-                        )
-                        break
 
             # 2. Ingest logins & check against threat intel + failed thresholds
             raw_logins = data.get("logins", []) or data.get("events", [])
@@ -997,26 +907,7 @@ def save_agent_data(server_id: int, data: dict):
                             VALUES (%s, %s, %s, %s, %s, NOW());
                         ''', (server_id, user, ip, 'SSH', success))
 
-                        # Check Threat Intel table for known bad IP
-                        try:
-                            cur.execute("SELECT ioc_value, severity, description FROM threat_intel WHERE ioc_type = 'ipv4' AND ioc_value = %s;", (ip,))
-                            ioc = cur.fetchone()
-                            if ioc:
-                                log_alert(
-                                    server_id,
-                                    "THREAT_INTEL_MATCH",
-                                    f"Login attempt from Known Malicious IP {ip} ({ioc.get('description', 'IOC Match')})",
-                                    severity=ioc.get("severity", "critical").lower()
-                                )
-                        except Exception:
-                            pass
 
-                        # Threshold check on failed logins
-                        if not success:
-                            if count >= crit_thresh:
-                                log_alert(server_id, "BRUTE_FORCE", f"Critical brute force detected: {count} failed logins for user {user} from {ip}", severity="critical")
-                            elif count >= warn_thresh:
-                                log_alert(server_id, "AUTH_FAIL", f"Multiple failed login attempts ({count}) for user {user} from {ip}", severity="warning")
 
         return True
     except Exception as e:

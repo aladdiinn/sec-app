@@ -1904,10 +1904,56 @@ def _analyze_application_and_db_logs(server_id, data):
                     f'Detection Rule [Tomcat Application Error]: {line[:250]}'
                 )
 
+def _check_threat_intel(server_id, data):
+    """Detection: Check commands, events, and logins against known Threat Intel IOCs."""
+    active_iocs = []
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT ioc_value, ioc_type, severity, description FROM threat_intel;")
+                active_iocs = cur.fetchall()
+        except Exception:
+            pass
+        finally:
+            conn.close()
+            
+    if not active_iocs:
+        return
+        
+    candidates = []
+    # Add commands
+    for c in data.get("commands", []):
+        candidates.append(c.get("command", "") if isinstance(c, dict) else str(c))
+    # Add logins / events
+    for ev in data.get("logins", []) or data.get("events", []):
+        candidates.append(f"{ev.get('user', '')} {ev.get('ip', '')} {ev.get('message', '')}")
+        
+    for text in candidates:
+        if not text.strip(): continue
+        text_lower = text.lower()
+        for ioc in active_iocs:
+            ioc_val = (ioc.get("ioc_value", "") if isinstance(ioc, dict) else ioc[0]).strip().lower()
+            if not ioc_val: continue
+            if ioc_val in text_lower:
+                desc = ioc.get("description", "Known Malicious") if isinstance(ioc, dict) else ioc[3]
+                itype = ioc.get("ioc_type", "DOMAIN").upper() if isinstance(ioc, dict) else ioc[1].upper()
+                sev = ioc.get("severity", "critical").lower() if isinstance(ioc, dict) else ioc[2].lower()
+                _create_alert_dedup(
+                    server_id, "THREAT_INTEL_MATCH", sev,
+                    "Threat Intel Match Detected",
+                    f"Threat Intel Hit ({itype}): '{ioc_val}' ({desc}) detected in telemetry: {text[:200]}"
+                )
+
 def run_detection_engine(server_id: int, data: dict):
     """Execute all active SIEM/IDS/IPS detection use cases on inbound agent telemetry."""
     if not server_id:
         return
+    try:
+        _check_threat_intel(server_id, data)
+    except Exception as e:
+        logger.debug(f"Error in _check_threat_intel: {e}")
+
     try:
         _check_failed_logins(server_id, data)
     except Exception as e:
