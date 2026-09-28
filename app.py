@@ -1439,6 +1439,9 @@ def _check_failed_logins(server_id, data):
         user_pattern = re.compile(r'(?:for invalid user|for user|invalid user)\s+(\S+)', re.IGNORECASE)
         for item in log_lines:
             line = item.get("line", "") if isinstance(item, dict) else str(item)
+            # Exclude our own dashboard setup scripts — they use curl | sudo bash which can confuse auth parsers
+            if any(own in line for own in ["setup_node.sh", "setup_app.sh", "/api/agent/", "securepulse"]):
+                continue
             if auth_patterns.search(line):
                 ip_m = ip_pattern.search(line)
                 usr_m = user_pattern.search(line)
@@ -1513,27 +1516,41 @@ def _check_sudo_misuse(server_id, data):
         (re.compile(r'crontab\s+-[er]', re.IGNORECASE), 'Cron Persistence Attempt', 'warning', 'Persistence Alert', 'CRON_PERSISTENCE'),
     ]
 
-    candidates = []
+    # Setup/dashboard own URLs — never flag as suspicious
+    _OWN_URLS = ["setup_node.sh", "setup_app.sh", "securepulse", "/api/agent/"]
+
+    candidates = []  # list of (text, username)
     for se in sudo_events:
-        candidates.append(se.get("line", "") if isinstance(se, dict) else str(se))
+        line = se.get("line", "") if isinstance(se, dict) else str(se)
+        user = se.get("user", se.get("username", "")) if isinstance(se, dict) else ""
+        candidates.append((line, user))
     for c in commands:
-        candidates.append(c.get("command", "") if isinstance(c, dict) else str(c))
+        cmd = c.get("command", "") if isinstance(c, dict) else str(c)
+        user = c.get("user", c.get("username", "")) if isinstance(c, dict) else ""
+        candidates.append((cmd, user))
     for item in log_lines:
         line = item.get("line", "") if isinstance(item, dict) else str(item)
+        # extract username from syslog patterns: username[pid]: or (username) or user=username
+        u_match = re.search(r'\(([^)]+)\)\s+(?:REPLACE|LIST|BEGIN)|sudo:\s+(\S+)\s*:|\buser=([\w]+)', line)
+        extracted_user = (u_match.group(1) or u_match.group(2) or u_match.group(3) or "").strip() if u_match else ""
         line_low = line.lower()
         if any(w in line_low for w in [
             "sudo", "su:", "command=", "userdel", "deluser", "usermod",
             "chmod", "chown", "dropdb", "dropuser", "createuser", "passwd", "useradd", "adduser", "psql", "cron", "crontab"
         ]):
-            candidates.append(line)
+            candidates.append((line, extracted_user))
 
-    for text in candidates:
+    for text, actor in candidates:
+        # Never alert on setup/dashboard own scripts
+        if any(own in text for own in _OWN_URLS):
+            continue
         for pat, rule_name, sev, title, atype in suspicious_patterns:
             if pat.search(text):
+                actor_str = f" by user '{actor}'" if actor else ""
                 _create_alert_dedup(
                     server_id, atype, sev,
                     title,
-                    f'SOAR Detections [{rule_name}]: {text[:250]}'
+                    f'SOAR Detections [{rule_name}]{actor_str}: {text[:250]}'
                 )
                 break
 
