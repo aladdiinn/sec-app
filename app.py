@@ -1522,6 +1522,19 @@ def _check_sudo_misuse(server_id, data):
     # Setup/dashboard own URLs — never flag as suspicious
     _OWN_URLS = ["setup_node.sh", "setup_app.sh", "securepulse", "/api/agent/"]
 
+    # Build real user map from sudo_events: {effective_user -> original_user}
+    # When vinay does sudo su → root, sudo log shows "sudo: vinay ... USER=root"
+    sudo_actor_map = {}  # maps "root" -> "vinay" for this push cycle
+    for se in sudo_events:
+        raw = se.get("line", "") if isinstance(se, dict) else str(se)
+        # sudo: vinay : TTY=pts/4 ; ... ; USER=root ; COMMAND=...
+        import re as _re
+        m = _re.search(r'sudo:\s+(\S+)\s.*?USER=(\S+)', raw)
+        if m:
+            original = m.group(1).strip(';').strip()
+            effective = m.group(2).strip(';').strip()
+            sudo_actor_map[effective] = original
+
     candidates = []  # list of (text, username)
     for se in sudo_events:
         line = se.get("line", "") if isinstance(se, dict) else str(se)
@@ -1540,7 +1553,7 @@ def _check_sudo_misuse(server_id, data):
         if any(w in line_low for w in [
             "sudo", "su:", "command=", "userdel", "deluser", "usermod",
             "chmod", "chown", "dropdb", "dropuser", "createuser", "passwd", "useradd", "adduser", "psql",
-            "cron", "crontab", "replace", "begin edit"
+            "cron", "crontab", "begin edit"
         ]):
             candidates.append((line, extracted_user))
 
@@ -1550,7 +1563,14 @@ def _check_sudo_misuse(server_id, data):
             continue
         for pat, rule_name, sev, title, atype in suspicious_patterns:
             if pat.search(text):
-                actor_str = f" by user '{actor}'" if actor else ""
+                # Resolve real user: if actor is root but vinay did sudo su, show vinay→root
+                real_actor = sudo_actor_map.get(actor, actor) if actor else ""
+                if real_actor and real_actor != actor and actor:
+                    actor_str = f" by user '{real_actor}'→'{actor}' (via sudo)"
+                elif real_actor:
+                    actor_str = f" by user '{real_actor}'"
+                else:
+                    actor_str = ""
                 _create_alert_dedup(
                     server_id, atype, sev,
                     title,
@@ -2924,6 +2944,7 @@ if [ -d /etc/audit/rules.d/ ]; then
 -w /etc/crontab -p wa -k scheduled_tasks
 -w /etc/cron.hourly/ -p wa -k scheduled_tasks
 -w /etc/cron.daily/ -p wa -k scheduled_tasks
+-w /var/spool/cron/ -p wa -k scheduled_tasks
 -w /etc/ssh/sshd_config -p wa -k remote_access
 AUDIT_EOF
     augenrules --load >/dev/null 2>&1 || true
