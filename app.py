@@ -1660,7 +1660,13 @@ def _check_unified_fim(server_id, data):
             
         line = last_event.get("line", "")
         
-        severity = "critical" if key in ["identity", "priv_esc", "remote_access"] else "high"
+        if key in ["identity", "priv_esc", "remote_access", "modules"]:
+            severity = "critical"
+        elif key in ["scheduled_tasks", "MAC-policy", "time-change", "system-locale", "delete"]:
+            severity = "high"
+        else:
+            severity = "warning"  # session, logins, mounts, perm_mod
+        
         title = f"{key.replace('_', ' ').title()} Alert by {actor}"
         
         _create_alert_dedup(
@@ -2937,15 +2943,58 @@ fi
 
 if [ -d /etc/audit/rules.d/ ]; then
     cat << 'AUDIT_EOF' > /etc/audit/rules.d/securepulse.rules
+# 1. Identity and Privilege Escalation
 -w /etc/passwd -p wa -k identity
 -w /etc/shadow -p wa -k identity
--w /etc/sudoers -p wa -k priv_esc
--w /etc/sudoers.d/ -p wa -k priv_esc
+-w /etc/group -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /usr/sbin/usermod -p x -k identity
+-w /etc/sudoers -p wa -k scope
+-w /etc/sudoers.d/ -p wa -k scope
+
+# 2. Remote Access and SSH
+-w /etc/ssh/sshd_config -p wa -k remote_access
+-w /etc/ssh/sshd_config.d -p wa -k remote_access
+
+# 3. Scheduled Tasks (Cron)
 -w /etc/crontab -p wa -k scheduled_tasks
 -w /etc/cron.hourly/ -p wa -k scheduled_tasks
 -w /etc/cron.daily/ -p wa -k scheduled_tasks
 -w /var/spool/cron/ -p wa -k scheduled_tasks
--w /etc/ssh/sshd_config -p wa -k remote_access
+
+# 4. Kernel Modules (Rootkits)
+-w /usr/sbin/insmod -p x -k modules
+-w /usr/sbin/rmmod -p x -k modules
+-w /usr/sbin/modprobe -p x -k modules
+-a always,exit -F arch=b64 -S init_module -S finit_module -S delete_module -F auid>=1000 -F auid!=-1 -k modules
+
+# 5. Time and Network Configuration
+-a always,exit -F arch=b64 -S adjtimex -S settimeofday -S clock_settime -F auid>=1000 -F auid!=-1 -k time-change
+-w /etc/localtime -p wa -k time-change
+-a always,exit -F arch=b64 -S sethostname -S setdomainname -F auid>=1000 -F auid!=-1 -k system-locale
+-w /etc/hosts -p wa -k system-locale
+-w /etc/hostname -p wa -k system-locale
+-w /etc/netplan/ -p wa -k system-locale
+
+# 6. AppArmor MAC Policy
+-w /etc/apparmor/ -p wa -k MAC-policy
+-w /etc/apparmor.d/ -p wa -k MAC-policy
+
+# 7. File Permissions and Deletion
+-a always,exit -F arch=b64 -S fchmod,fchmodat -F auid>=1000 -F auid!=-1 -k perm_mod
+-a always,exit -F arch=b64 -S fchown,fchownat -F auid>=1000 -F auid!=-1 -k perm_mod
+-w /usr/bin/chattr -p x -k perm_mod
+-a always,exit -F arch=b64 -S unlinkat -S renameat -S renameat2 -F auid>=1000 -F auid!=-1 -k delete
+
+# 8. Logins and Sessions
+-w /var/log/faillog -p wa -k logins
+-w /var/log/lastlog -p wa -k logins
+-w /var/run/utmp -p wa -k session
+-w /var/log/wtmp -p wa -k session
+-w /var/log/btmp -p wa -k session
+
+# 9. System Mounts
+-a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=-1 -k mounts
 AUDIT_EOF
     augenrules --load >/dev/null 2>&1 || true
     systemctl restart auditd >/dev/null 2>&1 || true
