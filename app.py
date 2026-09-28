@@ -2864,9 +2864,9 @@ def get_network_bytes():
         for iface in os.listdir('/sys/class/net/'):
             if iface != "lo" and not iface.startswith("veth") and not iface.startswith("br-") and not iface.startswith("docker"):
                 try:
-                    with open(f'/sys/class/net/{iface}/statistics/rx_bytes', 'r') as f:
+                    with open(f'/sys/class/net/{{iface}}/statistics/rx_bytes', 'r') as f:
                         rx_bytes += int(f.read().strip())
-                    with open(f'/sys/class/net/{iface}/statistics/tx_bytes', 'r') as f:
+                    with open(f'/sys/class/net/{{iface}}/statistics/tx_bytes', 'r') as f:
                         tx_bytes += int(f.read().strip())
                 except:
                     pass
