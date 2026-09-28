@@ -725,13 +725,13 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 logger.debug(f"log_alert called with unresolvable server_id={server_id}. Skipping alert insertion to prevent misattribution.")
                 return
 
-            # Strict Deduplication: Suppress identical alert within 15-second window
+            # Strict Deduplication: Suppress identical alert within 24-hour window
             try:
                 cur.execute("""
                     SELECT id FROM alerts 
                     WHERE (server_id = %s OR (server_id IS NULL AND %s IS NULL))
                       AND message = %s 
-                      AND created_at >= NOW() - INTERVAL '15 seconds'
+                      AND created_at >= NOW() - INTERVAL '24 hours'
                     LIMIT 1;
                 """, (valid_server_id, valid_server_id, message))
                 if cur.fetchone():
