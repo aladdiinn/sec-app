@@ -1513,7 +1513,10 @@ def _check_sudo_misuse(server_id, data):
         (re.compile(r'(FAILED su for root|incorrect password attempt|sudo:.*authentication failure)', re.IGNORECASE), 'Failed Root Escalation Attempt', 'critical', 'Privilege Escalation Alert', 'SUDO_ROOT_ESCALATION'),
         (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'warning', 'Host Anomaly Alert', 'MASS_PROCESS_KILL'),
         (re.compile(r'iptables\s+-F|ufw\s+disable', re.IGNORECASE), 'Firewall Disabled', 'critical', 'Network Security Alert', 'FIREWALL_DISABLED'),
-        (re.compile(r'crontab\s+-[er]|crontab\[\d+\].*(?:REPLACE|EDIT|NEW|BEGIN EDIT)|cron\[\d+\].*\(root\)', re.IGNORECASE), 'Cron Persistence Attempt', 'warning', 'Persistence Alert', 'CRON_PERSISTENCE'),
+        # Match ONLY user crontab editing — NOT system cron daemon (CRON CMD) execution
+        # crontab[pid]: (user) REPLACE/EDIT = user editing crontab ← suspicious
+        # CRON[pid]: (root) CMD = cron daemon running a scheduled job ← normal, ignore
+        (re.compile(r'crontab\s+-[er]|crontab\[\d+\]:\s+\([^)]+\)\s+(?:REPLACE|EDIT|NEW|BEGIN EDIT)', re.IGNORECASE), 'Cron Persistence Attempt', 'warning', 'Persistence Alert', 'CRON_PERSISTENCE'),
     ]
 
     # Setup/dashboard own URLs — never flag as suspicious
