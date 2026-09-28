@@ -1847,6 +1847,9 @@ async def api_agent_push(request: Request):
         data = await request.json()
     except Exception:
         data = {}
+    try:
+        logger.warning(f"DEBUG AGENT PUSH: rx={data.get('network_rx_bytes')} tx={data.get('network_tx_bytes')} agent_v={data.get('agent_version')}")
+    except: pass
     
     server_id = data.get("server_id")
     server_ip = (data.get("server_ip") or "").strip()
