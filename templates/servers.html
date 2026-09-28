@@ -4,6 +4,33 @@
 {% block page_sub %}Comprehensive visibility into managed infrastructure assets{% endblock %}
 
 {% block content %}
+<style>
+.i3-log-cat-btn {
+    background: transparent;
+    border: none;
+    color: var(--text2);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.i3-log-cat-btn:hover {
+    background: rgba(255,255,255,0.05);
+    color: var(--text);
+}
+.i3-log-cat-btn.active {
+    background: var(--cyan);
+    color: #000;
+    font-weight: 700;
+}
+.i3-log-cat-btn.cat-soar.active {
+    background: #ef4444;
+    color: #fff;
+}
+</style>
+
 <div class="fade-in">
     <!-- Action Bar -->
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px">
