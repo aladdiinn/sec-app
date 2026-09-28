@@ -1614,6 +1614,8 @@ _process_conn_baselines = {}
 
 def _check_network_and_connections(server_id, data):
     """Phase 4: Network Traffic Spikes & Process Connection Spikes."""
+    if "network_rx_bytes" not in data or "network_tx_bytes" not in data:
+        return
     rx_bytes = data.get("network_rx_bytes", 0)
     tx_bytes = data.get("network_tx_bytes", 0)
     proc_conns = data.get("process_connections", [])
