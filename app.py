@@ -1402,7 +1402,8 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
     if srv and srv.get("is_maintenance"):
         return  # Silently suppress alert to prevent spam during OS patching
         
-    cache_key = (server_id, alert_type)
+    cache_key = (int(server_id) if server_id else 0, str(alert_type))
+    # print(f"DEBUG dedup check: {cache_key} against cache keys: {list(_dedup_alerts_cache.keys())}")
     now = time.time()
     last_time = _dedup_alerts_cache.get(cache_key, 0)
     if now - last_time < 120:
@@ -1522,7 +1523,7 @@ def _check_sudo_misuse(server_id, data):
         line_low = line.lower()
         if any(w in line_low for w in [
             "sudo", "su:", "command=", "userdel", "deluser", "usermod",
-            "chmod", "chown", "dropdb", "dropuser", "createuser", "passwd", "useradd", "adduser", "psql"
+            "chmod", "chown", "dropdb", "dropuser", "createuser", "passwd", "useradd", "adduser", "psql", "cron", "crontab"
         ]):
             candidates.append(line)
 

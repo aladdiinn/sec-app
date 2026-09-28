@@ -3198,51 +3198,7 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                             cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
                         except Exception: pass
 
-                    # Real-Time Watchdog Anomaly & Incident Auto-Trigger (Only if valid server_id)
-                    if server_id:
-                        lower_line = line_str.lower()
-                        # 1. Watchdog AI Anomaly Detection
-                        if any(kw.lower() in lower_line for kw in ["[WATCHDOG-AI]", "Outlier Anomaly", "Root Cause Analysis", "Traffic Anomaly Alert", "CPU usage spiked", "pool exhaustion"]) or (level == "ERROR" and "watchdog" in lower_line):
-                            try:
-                                log_alert(server_id, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {line_str}", severity="critical", title="Watchdog AI Anomaly")
-                            except Exception as ex_wd_inc:
-                                logger.debug(f"Watchdog incident creation error: {ex_wd_inc}")
-
-                        # 2. SSH Authentication Failures & Security Anomalies
-                        elif any(kw.lower() in lower_line for kw in ["failed password", "invalid user", "authentication failure", "failed login"]):
-                            try:
-                                log_alert(server_id, "AUTH_FAILURE", f"Authentication Failure: {line_str}", severity="warning", title="Auth Fail Alert")
-                            except Exception as ex_auth_inc:
-                                logger.debug(f"Auth incident creation error: {ex_auth_inc}")
-
-                        # 3. Suspicious Commands & System Modifications
-                        elif any(kw in line_str for kw in ["chmod 777", "chown root", "nc -e", "/dev/tcp", "xmrig", "ufw disable", "iptables -F"]):
-                            try:
-                                log_alert(server_id, "SUSPICIOUS_ACTIVITY", f"Suspicious Activity Detected: {line_str}", severity="high", title="Suspicious Activity Alert")
-                            except Exception as ex_susp_inc:
-                                logger.debug(f"Suspicious activity incident error: {ex_susp_inc}")
-
-                        # 4. PostgreSQL Critical Operations (drop database, drop table, drop schema, alter user)
-                        elif row_log_type == 'postgres' and any(kw in lower_line for kw in ["drop database", "drop schema", "drop table", "truncate", "alter user", "alter role", "grant all", "with superuser"]):
-                            try:
-                                sev = "critical" if any(kw in lower_line for kw in ["drop database", "drop schema", "drop table", "truncate"]) else "warning"
-                                title = "PostgreSQL Database Deletion Alert" if sev == "critical" else "PostgreSQL Privilege Escalation Alert"
-                                atype = "PG_DB_DELETED" if sev == "critical" else "PG_PRIVILEGE_CHANGE"
-                                log_alert(server_id, atype, f"SOAR Detections [PostgreSQL]: {line_str[:250]}", severity=sev, title=title)
-                            except Exception as ex_pg_inc:
-                                logger.debug(f"PostgreSQL log alert creation error: {ex_pg_inc}")
-
-                        # 5. OS userdel and permission alterations
-                        elif any(kw in lower_line for kw in ["userdel", "deluser", "chmod 777", "chown root"]):
-                            try:
-                                sev = "critical" if "userdel" in lower_line or "deluser" in lower_line else "high"
-                                title = "User Account Deletion Alert (userdel)" if "userdel" in lower_line or "deluser" in lower_line else "Insecure Permission Grant"
-                                atype = "USER_DELETED" if "userdel" in lower_line or "deluser" in lower_line else "INSECURE_PERM_CHANGE"
-                                log_alert(server_id, atype, f"SOAR Detections [OS Security]: {line_str[:250]}", severity=sev, title=title)
-                            except Exception as ex_os_inc:
-                                logger.debug(f"OS security alert creation error: {ex_os_inc}")
-                
-                # 1. 24-Hour Expiration: Delete ALL logs older than 24 hours
+                    # 1. 24-Hour Expiration: Delete ALL logs older than 24 hours
                 try:
                     cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '1 day';")
                 except Exception: pass
