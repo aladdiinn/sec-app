@@ -2866,17 +2866,34 @@ def get_network_bytes():
     rx_bytes = 0
     tx_bytes = 0
     try:
-        with open("/proc/net/dev", "r") as f:
-            lines = f.readlines()
-            for line in lines[2:]:
-                parts = line.strip().split(":")
-                if len(parts) == 2:
-                    iface = parts[0].strip()
-                    if iface != "lo" and not iface.startswith("veth") and not iface.startswith("br-") and not iface.startswith("docker"):
-                        stats = parts[1].split()
-                        rx_bytes += int(stats[0])
-                        tx_bytes += int(stats[8])
-    except: pass
+        import os
+        for iface in os.listdir('/sys/class/net/'):
+            if iface != "lo" and not iface.startswith("veth") and not iface.startswith("br-") and not iface.startswith("docker"):
+                try:
+                    with open(f'/sys/class/net/{iface}/statistics/rx_bytes', 'r') as f:
+                        rx_bytes += int(f.read().strip())
+                    with open(f'/sys/class/net/{iface}/statistics/tx_bytes', 'r') as f:
+                        tx_bytes += int(f.read().strip())
+                except:
+                    pass
+    except:
+        pass
+    
+    # Fallback if sysfs fails
+    if rx_bytes == 0 and tx_bytes == 0:
+        try:
+            with open("/proc/net/dev", "r") as f:
+                lines = f.readlines()
+                for line in lines[2:]:
+                    parts = line.strip().split(":")
+                    if len(parts) == 2:
+                        iface = parts[0].strip()
+                        if iface != "lo" and not iface.startswith("veth") and not iface.startswith("br-") and not iface.startswith("docker"):
+                            stats = parts[1].split()
+                            rx_bytes += int(stats[0])
+                            tx_bytes += int(stats[8])
+        except: pass
+        
     return rx_bytes, tx_bytes
 
 def get_process_connections():
