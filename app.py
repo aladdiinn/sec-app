@@ -1304,6 +1304,54 @@ _recent_auth_failures = {}   # {server_id: [(timestamp, ip, user, line), ...]}
 _known_server_ports = {}     # {server_id: set(ports)}
 _dedup_alerts_cache = {}     # {(server_id, alert_type): last_timestamp}
 
+# ── Rule state cache (loaded from detection_rules table every 60s) ──
+_rule_cache = {}             # {event_type: {enabled: bool, threshold: int, ...}}
+_rule_cache_ts = 0.0         # last load timestamp
+
+def _get_rule_cache():
+    """Returns a fresh rule state dict, reloading from DB at most once per 60s."""
+    global _rule_cache, _rule_cache_ts
+    now = time.time()
+    if now - _rule_cache_ts < 60 and _rule_cache:
+        return _rule_cache
+    try:
+        rules = db.get_detection_rules()
+        cache = {}
+        for r in rules:
+            rd = dict(r)
+            key = rd.get('event_type') or rd.get('name', '')
+            cache[key] = rd
+            # also index by name for fuzzy lookup
+            cache[rd.get('name', '')] = rd
+        _rule_cache = cache
+        _rule_cache_ts = now
+    except Exception:
+        pass
+    return _rule_cache
+
+def _is_rule_enabled(event_type_or_name, default=True):
+    """Check if a detection rule is enabled. Returns default if rule not found in DB."""
+    cache = _get_rule_cache()
+    rule = cache.get(event_type_or_name)
+    if rule is None:
+        return default
+    return bool(rule.get('enabled', True))
+
+def _rule_threshold(event_type_or_name, default=5):
+    """Get the threshold value stored for a rule (stored in the pattern field as int if numeric)."""
+    cache = _get_rule_cache()
+    rule = cache.get(event_type_or_name)
+    if rule is None:
+        return default
+    # We store custom thresholds as a JSON-like string in the pattern field if it starts with digit
+    pattern = rule.get('pattern', '')
+    try:
+        if str(pattern).strip().isdigit():
+            return int(pattern)
+    except Exception:
+        pass
+    return default
+
 def _create_alert_dedup(server_id, alert_type, severity, title, message):
     """Create alert only if similar alert not created within last 2 minutes, and trigger SOAR audit."""
     
@@ -1332,6 +1380,8 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
 
 def _check_failed_logins(server_id, data):
     """Detection: SSH/VPN/App failed login threshold and brute force detection."""
+    if not _is_rule_enabled('AUTH_FAIL') and not _is_rule_enabled('SSH Brute Force Attempt'):
+        return
     auth_failures = data.get("auth_failures", [])
     log_lines = data.get("log_lines", []) or data.get("logs", [])
 
@@ -1367,7 +1417,9 @@ def _check_failed_logins(server_id, data):
 
     last_line = fail_events[-1][3] if fail_events else ""
 
-    if len(recent_5min) >= 10:
+    brute_thresh = _rule_threshold('SSH Brute Force Attempt', default=10)
+    fail_thresh  = _rule_threshold('AUTH_FAIL', default=5)
+    if len(recent_5min) >= brute_thresh:
         ips = list(set(ev[1] for ev in recent_5min if ev[1] != "unknown"))
         ip_str = ", ".join(ips[:3]) if ips else "external host"
         _create_alert_dedup(
@@ -1375,7 +1427,7 @@ def _check_failed_logins(server_id, data):
             'Auth Fail Alert',
             f'Detection Rule [SSH Brute Force Attempt]: {len(recent_5min)} failed attempts in 5m from {ip_str}. {last_line}'
         )
-    elif len(recent_10min) >= 5:
+    elif len(recent_10min) >= fail_thresh:
         ips = list(set(ev[1] for ev in recent_10min if ev[1] != "unknown"))
         ip_str = ", ".join(ips[:3]) if ips else "external host"
         _create_alert_dedup(
@@ -1443,6 +1495,8 @@ def _check_sudo_misuse(server_id, data):
                 break
 
 def _check_unified_fim(server_id, data):
+    if not _is_rule_enabled('FILE_INTEGRITY') and not _is_rule_enabled('File Integrity Monitoring (FIM)'):
+        return
     """Detection: Unified OS file modifications & Auditd kernel-level security events."""
     file_changes = data.get("file_changes", [])
     audit_events = data.get("audit_events", [])
@@ -1540,6 +1594,8 @@ def _check_unified_fim(server_id, data):
             )
 
 def _check_port_scan(server_id, data):
+    if not _is_rule_enabled('port_scan') and not _is_rule_enabled('New Open Port Detected'):
+        return
     """Phase 4: Port scan detection & unexpected open ports (including default infrastructure ports)."""
     open_ports = data.get("open_ports", [])
     if not open_ports:
@@ -1589,6 +1645,8 @@ def _check_port_scan(server_id, data):
 
 def _check_high_resource_processes(server_id, data):
     """Detection: Traffic & Resource anomalies (processes exceeding 85% CPU or RAM)."""
+    if not _is_rule_enabled('HIGH_CPU') and not _is_rule_enabled('High CPU Process (>85%)'):
+        return
     processes = data.get("processes", [])
     for proc in processes:
         if not isinstance(proc, dict): continue
@@ -1617,6 +1675,8 @@ _process_conn_baselines = {}
 def _check_network_and_connections(server_id, data):
     """Phase 4: Network Traffic Spikes & Process Connection Spikes."""
     if "network_rx_bytes" not in data or "network_tx_bytes" not in data:
+        return
+    if not _is_rule_enabled('NETWORK_RX_SPIKE') and not _is_rule_enabled('New Open Port Detected'):
         return
     rx_bytes = data.get("network_rx_bytes", 0)
     tx_bytes = data.get("network_tx_bytes", 0)
@@ -4206,10 +4266,40 @@ async def api_create_detection_rule(request: Request):
 async def api_toggle_detection_rule(id: int, request: Request):
     if not is_admin_user(request):
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    res = db.toggle_detection_rule(id)
-    uname = request.session.get('username', 'system')
-    db.log_audit(uname, 'TOGGLE_RULE', 'rule', id, f"Toggled rule {id} to {res}")
-    return {"ok": True, "enabled": res}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    conn = db.get_db_connection()
+    if not conn:
+        return JSONResponse(status_code=500, content={"ok": False})
+    try:
+        with conn.cursor() as cur:
+            updates = []
+            params = []
+            if 'enabled' in body:
+                updates.append("enabled = %s")
+                params.append(bool(body['enabled']))
+            if 'threshold' in body:
+                # Store threshold as the pattern field when it's a numeric rule
+                updates.append("pattern = %s")
+                params.append(str(int(body['threshold'])))
+            if updates:
+                params.append(id)
+                cur.execute(f"UPDATE detection_rules SET {', '.join(updates)} WHERE id = %s;", params)
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        action = 'TOGGLE_RULE' if 'enabled' in body else 'UPDATE_RULE_THRESHOLD'
+        detail = f"Rule {id}: enabled={body.get('enabled', 'unchanged')}, threshold={body.get('threshold', 'unchanged')}"
+        db.log_audit(uname, action, 'rule', id, detail)
+        # Invalidate cache so next detection cycle picks up the change immediately
+        global _rule_cache_ts
+        _rule_cache_ts = 0.0
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Toggle rule error: {e}")
+        return JSONResponse(status_code=500, content={"ok": False, "message": str(e)})
+    finally:
+        conn.close()
 
 @app.delete("/api/detection/rules/{id}")
 async def api_delete_detection_rule(id: int, request: Request):

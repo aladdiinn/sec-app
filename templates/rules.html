@@ -186,25 +186,59 @@ function renderCategories() {
     document.getElementById('stat-active-rules').innerText = activeRules;
 }
 
+// Map from UI rule id → DB event_type column value
+const RULE_ID_MAP = {
+    failed_login: 'AUTH_FAIL', brute_force: 'SSH Brute Force Attempt',
+    user_deleted: 'USER_DELETED', sudo_misuse: 'SUDO_MISUSE',
+    shadow_dump: 'CREDENTIAL_ACCESS', new_user: 'NEW_USER_CREATED', sudo_group: 'SUDO_GROUP',
+    fim_passwd: 'FILE_INTEGRITY', fim_shadow: 'FILE_INTEGRITY', fim_sudoers: 'FILE_INTEGRITY',
+    fim_sshd: 'FILE_INTEGRITY', chmod_insecure: 'PERM_CHANGE', fim_crontab: 'PERSISTENCE',
+    chmod_critical: 'PERM_CHANGE', port_scan: 'port_scan', high_cpu_proc: 'HIGH_CPU',
+    high_mem_proc: 'HIGH_MEM', firewall_disable: 'DEFENSE_EVASION', cron_persist: 'PERSISTENCE',
+    pg_destructive: 'PG_DB_DELETED', pg_priv_change: 'PG_PRIVILEGE_CHANGE',
+    pg_access_denied: 'PG_PERMISSION_DENIED', pg_auth_fail: 'PG_AUTH_FAIL',
+    tomcat_oom: 'TOMCAT_OOM', tomcat_500: 'TOMCAT_ERROR', os_kernel_err: 'OS_KERNEL_ERROR',
+};
+
 async function toggleRule(ruleId, ruleName, enabled) {
     if (!window.isAdmin()) { showToast('Access Denied: Admin privileges required.', 'error'); return; }
     try {
-        const existing = ruleStates[ruleId] || ruleStates[ruleName];
+        const eventType = RULE_ID_MAP[ruleId] || ruleId;
+        // Try to find existing DB record by event_type or name
+        let existing = ruleStates[eventType] || ruleStates[ruleName] || ruleStates[ruleId];
         if (existing && existing.id) {
             await apiFetch(`/api/detection/rules/${existing.id}`, { method: 'PUT', body: JSON.stringify({ enabled }) });
+            ruleStates[ruleId] = { ...existing, enabled };
         } else {
-            const res = await apiFetch('/api/detection/rules', { method: 'POST', body: JSON.stringify({ name: ruleName, event_type: ruleId, severity: 'warning', pattern: ruleId, enabled }) });
-            if (res && res.id) ruleStates[ruleId] = { ...ruleStates[ruleId], id: res.id, enabled };
+            // Create new DB record for this rule
+            const res = await apiFetch('/api/detection/rules', { method: 'POST', body: JSON.stringify({ name: ruleName, event_type: eventType, severity: 'warning', pattern: eventType, enabled }) });
+            if (res && res.id) ruleStates[ruleId] = { id: res.id, name: ruleName, event_type: eventType, enabled };
         }
-        ruleStates[ruleId] = { ...ruleStates[ruleId], enabled };
-        showToast(`Rule ${enabled ? 'enabled' : 'disabled'}: ${ruleName}`, enabled ? 'success' : 'info');
-    } catch(e) { showToast('Failed to update rule', 'error'); }
+        showToast(`Rule ${enabled ? '✅ enabled' : '⏸ disabled'}: ${ruleName}`, enabled ? 'success' : 'info');
+    } catch(e) { showToast('Failed to update rule: ' + e.message, 'error'); }
 }
 
-function saveThreshold(ruleId, value) {
-    ruleStates[ruleId] = { ...ruleStates[ruleId], threshold: parseInt(value) };
-    showToast(`Threshold updated to ${value}`, 'success');
+async function saveThreshold(ruleId, value) {
+    if (!window.isAdmin()) { showToast('Access Denied: Admin privileges required.', 'error'); return; }
+    const cache = _get_rule_cache_local();
+    const existing = ruleStates[ruleId] || ruleStates[Object.keys(ruleStates).find(k => k.includes(ruleId))] || {};
+    if (!existing.id) {
+        // Rule not yet in DB — create it first
+        try {
+            const res = await apiFetch('/api/detection/rules', { method: 'POST', body: JSON.stringify({ name: ruleId, event_type: ruleId, severity: 'warning', pattern: String(value), enabled: true }) });
+            if (res && res.id) { ruleStates[ruleId] = { ...ruleStates[ruleId], id: res.id }; }
+        } catch(e) { showToast('Failed to save threshold', 'error'); return; }
+    }
+    const id = (ruleStates[ruleId] || {}).id;
+    if (!id) { showToast('Rule not found in DB yet — toggle it once first', 'info'); return; }
+    try {
+        await apiFetch(`/api/detection/rules/${id}`, { method: 'PUT', body: JSON.stringify({ threshold: parseInt(value) }) });
+        ruleStates[ruleId] = { ...ruleStates[ruleId], threshold: parseInt(value) };
+        showToast(`Threshold updated to ${value} — active on next detection cycle`, 'success');
+    } catch(e) { showToast('Failed to save threshold: ' + e.message, 'error'); }
 }
+
+function _get_rule_cache_local() { return ruleStates; }
 
 window.addEventListener('DOMContentLoaded', () => { loadData(); setInterval(loadData, 30000); });
 </script>
