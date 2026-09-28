@@ -187,6 +187,7 @@ function renderCategories() {
 }
 
 async function toggleRule(ruleId, ruleName, enabled) {
+    if (!window.isAdmin()) { showToast('Access Denied: Admin privileges required.', 'error'); return; }
     try {
         const existing = ruleStates[ruleId] || ruleStates[ruleName];
         if (existing && existing.id) {

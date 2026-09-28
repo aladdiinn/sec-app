@@ -77,14 +77,14 @@
                     </td>
                     <td style="padding:14px 18px; color:var(--text3); font-size:11px">${a.requested_at ? new Date(a.requested_at).toLocaleString() : 'Just now'}</td>
                     <td style="padding:14px 18px; text-align:right">
-                        ${status === 'pending' ? `
+                        ${status === 'pending' && ['admin','superuser'].includes(window.USER_ROLE) ? `
                             <button onclick="approveAssetRequest(${id})" class="btn btn-primary" style="padding:4px 12px; font-size:11px; margin-right:6px">
                                 ✓ APPROVE ASSET
                             </button>
                             <button onclick="rejectAssetRequest(${id})" class="btn btn-glass" style="padding:4px 12px; font-size:11px; color:var(--red); border-color:rgba(255,59,92,0.4)">
                                 ✕ REJECT
                             </button>
-                        ` : '<span style="color:var(--text3); font-size:11px">Resolved</span>'}
+                        ` : status === 'pending' ? '<span style="color:var(--amber); font-size:11px; font-style:italic">⛔ Admin only</span>' : '<span style="color:var(--text3); font-size:11px">Resolved</span>'}
                     </td>
                 </tr>
                 `;

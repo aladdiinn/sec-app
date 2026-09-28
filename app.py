@@ -1135,6 +1135,8 @@ async def api_get_server_details(server_id: int):
 
 @app.post("/api/servers/add")
 async def api_add_server(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -4109,6 +4111,8 @@ async def api_get_approvals_count():
 
 @app.post("/api/approvals/{app_id}/approve")
 async def api_approve_request(app_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     if db.approve_request(app_id):
         uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
         db.log_audit(uname, 'APPROVE_ASSET', 'approval', app_id, f"Approved node asset request #{app_id}")
@@ -4117,6 +4121,8 @@ async def api_approve_request(app_id: int, request: Request):
 
 @app.post("/api/approvals/{app_id}/reject")
 async def api_reject_request(app_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     if db.reject_request(app_id):
         uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
         db.log_audit(uname, 'REJECT_ASSET', 'approval', app_id, f"Rejected node asset request #{app_id}")
@@ -4179,6 +4185,8 @@ async def api_get_detection_rules():
 
 @app.post("/api/detection/rules")
 async def api_create_detection_rule(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     body = await request.json()
     rid = db.create_detection_rule(
         body.get("name"),
@@ -4196,6 +4204,8 @@ async def api_create_detection_rule(request: Request):
 
 @app.put("/api/detection/rules/{id}")
 async def api_toggle_detection_rule(id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     res = db.toggle_detection_rule(id)
     uname = request.session.get('username', 'system')
     db.log_audit(uname, 'TOGGLE_RULE', 'rule', id, f"Toggled rule {id} to {res}")
@@ -4203,6 +4213,8 @@ async def api_toggle_detection_rule(id: int, request: Request):
 
 @app.delete("/api/detection/rules/{id}")
 async def api_delete_detection_rule(id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     if db.delete_detection_rule(id):
         uname = request.session.get('username', 'system')
         db.log_audit(uname, 'DELETE_RULE', 'rule', id, f"Deleted rule {id}")

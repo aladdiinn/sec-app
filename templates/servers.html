@@ -42,12 +42,14 @@
                 <option value="maintenance">Maintenance</option>
             </select>
         </div>
-        <button class="btn btn-primary" onclick="showAddServerModal()">
+        {% if is_admin or session.get('user_role') in ('superuser', 'admin') %}
+        <button class="btn btn-primary" onclick="guardAdminAction(showAddServerModal)">
             <svg viewBox="0 0 24 24" width="16" height="16" stroke="white" stroke-width="2.5" fill="none" style="margin-right:6px">
                 <line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>
             </svg>
             Add New Asset
         </button>
+        {% endif %}
     </div>
 
     <div id="servers-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:20px">
@@ -323,7 +325,7 @@
             <div style="background:var(--bg3); padding:20px; border-radius:8px">
                 <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:8px">🛡ï¸ VPN Subnet Detection</div>
                 <p style="font-size:12px; color:var(--text2); margin-bottom:16px">Optionally override the Project's VPN subnet tracking settings for this specific server.</p>
-                <form id="server-network-form" onsubmit="saveServerNetwork(event)">
+                <form id="server-network-form" onsubmit="if(!isAdmin()){event.preventDefault();showToast('Admin access required','error');return;}saveServerNetwork(event)">
                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:12px">
                         <input type="checkbox" id="serverVpnTracking" style="accent-color:var(--cyan); width:16px; height:16px">
                         <span style="font-size:13px; color:var(--text); font-weight:500">Enable Independent Server VPN Subnet Tracking</span>
@@ -332,7 +334,9 @@
                         <label style="display:block; font-size:11px; color:var(--text2); margin-bottom:6px">Authorized VPN Subnets (CIDR, comma-separated)</label>
                         <input type="text" id="serverVpnSubnet" placeholder="e.g., 10.0.0.0/24" style="width:100%; padding:8px 12px; font-size:13px; background:var(--bg2); border:1px solid var(--border); color:var(--text); border-radius:6px; outline:none">
                     </div>
+                    {% if is_admin or session.get('user_role') in ('superuser', 'admin') %}
                     <button type="submit" id="btn-save-network" class="btn" style="background:rgba(0, 229, 255,0.1); border:1px solid var(--cyan); color:var(--cyan); font-size:12px; padding:6px 12px">Save Network Settings</button>
+                    {% endif %}
                 </form>
             </div>
         </div>

@@ -82,6 +82,42 @@
     window.location.href = '/login';
   };
 
+  /* ── Role helpers ───────────────────────────────────────────────── */
+  window.isAdmin = function () {
+    return ['admin', 'superuser'].includes((window.USER_ROLE || '').toLowerCase());
+  };
+
+  /**
+   * guardAdminAction(callback)
+   * Shows an error toast and returns false if the user is not an admin.
+   */
+  window.guardAdminAction = function (callback) {
+    if (!window.isAdmin()) {
+      window.showToast('Access Denied: Admin privileges required.', 'error');
+      return false;
+    }
+    if (typeof callback === 'function') callback();
+    return true;
+  };
+
+  /* ── Auto-disable admin-only UI for normal users ─────────────────── */
+  document.addEventListener('DOMContentLoaded', function () {
+    if (!window.isAdmin()) {
+      document.querySelectorAll('[data-admin-only]').forEach(function (el) {
+        el.querySelectorAll('button, input, select, textarea').forEach(function (c) {
+          c.disabled = true;
+          c.style.opacity = '0.4';
+          c.style.cursor = 'not-allowed';
+          c.title = 'Admin access required';
+        });
+        // Also visually dim the container itself
+        el.style.opacity = '0.6';
+        el.style.pointerEvents = 'none';
+        el.title = 'Admin access required';
+      });
+    }
+  });
+
   /* ── Toast notifications ────────────────────────────────── */
   window.showToast = function (message, type = 'info') {
     let container = document.getElementById('toast-container');
