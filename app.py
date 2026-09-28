@@ -1845,6 +1845,12 @@ def run_detection_engine(server_id: int, data: dict):
 async def api_agent_push(request: Request):
     try:
         data = await request.json()
+    try:
+        logger.info(f"AGENT PUSH RECEIVED for {server_ip}: keys={list(data.keys())}")
+        if 'network_rx_bytes' in data:
+            logger.info(f"NETWORK STATS RECEIVED: rx={data['network_rx_bytes']} tx={data['network_tx_bytes']}")
+    except: pass
+
     except Exception:
         data = {}
     
