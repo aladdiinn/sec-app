@@ -1308,6 +1308,48 @@ _dedup_alerts_cache = {}     # {(server_id, alert_type): last_timestamp}
 _rule_cache = {}             # {event_type: {enabled: bool, threshold: int, ...}}
 _rule_cache_ts = 0.0         # last load timestamp
 
+def _extract_audit_actor(log_lines, filepath):
+    """Parse log lines to extract the real username who modified a file."""
+    import re as _re
+    fname = os.path.basename(filepath)
+    auid_p = _re.compile(r'auid=(\d+)')
+    uid_p  = _re.compile(r'\buid=(\d+)')
+    comm_p = _re.compile(r'comm="([^"]+)"')
+    exe_p  = _re.compile(r'exe="([^"]+)"')
+    
+    # Syslog cron/useradd patterns
+    cron_p = _re.compile(r'crontab\[\d+\]:\s+\(([^)]+)\)\s+(REPLACE|BEGIN EDIT)')
+    
+    uid_names = {'0':'root','1000':'ubuntu','1001':'ubuntu','500':'ec2-user','4294967295':None}
+    
+    for raw in (log_lines or []):
+        line = raw.get('line','') if isinstance(raw, dict) else str(raw)
+        
+        # 1. Try to catch syslog cron edits
+        if 'crontab' in line and ('REPLACE' in line or 'BEGIN EDIT' in line) and 'cron' in filepath:
+            m = cron_p.search(line)
+            if m:
+                return m.group(1), 'crontab'
+        
+        # 2. Try Auditd SYSCALL logs
+        if (filepath in line or fname in line) and ('type=SYSCALL' in line or 'type=PATH' in line):
+            m = auid_p.search(line)
+            auid = m.group(1) if m else None
+            m2 = uid_p.search(line)
+            uid  = m2.group(1) if m2 else None
+            comm_m = comm_p.search(line)
+            exe_m  = exe_p.search(line)
+            
+            tool = (comm_m.group(1) if comm_m else None) or (os.path.basename(exe_m.group(1)) if exe_m else 'unknown')
+            actor_id = auid if (auid and auid != '4294967295') else uid
+            
+            if actor_id:
+                name = uid_names.get(actor_id, f'uid:{actor_id}')
+                if name:
+                    return name, tool
+                    
+    return None, None
+
 def _get_rule_cache():
     """Returns a fresh rule state dict, reloading from DB at most once per 60s."""
     global _rule_cache, _rule_cache_ts
@@ -1500,6 +1542,7 @@ def _check_unified_fim(server_id, data):
     """Detection: Unified OS file modifications & Auditd kernel-level security events."""
     file_changes = data.get("file_changes", [])
     audit_events = data.get("audit_events", [])
+    log_lines = data.get("log_lines", []) or data.get("logs", [])
     
     # Noise Reduction: Check if package manager was active recently
     bash_cmds = data.get("commands", [])
@@ -1553,11 +1596,13 @@ def _check_unified_fim(server_id, data):
                 f"Detection Rule [Unified FIM & Audit]: '{path}' was maliciously modified by user '{actor}' (AUID: {auid_str})."
             )
         else:
-            # Standalone FIM alert (No auditd correlation)
+            # Standalone FIM alert — try to find actor from raw audit/syslog lines
+            actor, tool = _extract_audit_actor(log_lines, path)
+            actor_str = f" by user '{actor}' via {tool}" if actor else ""
             _create_alert_dedup(
                 server_id, f'FIM_{path.replace("/", "_")}', 'critical',
                 'OS File Modification Alert',
-                f'Detection Rule [File Integrity Monitor]: {change_type} at {path}. {detail}'
+                f'Detection Rule [File Integrity Monitor]: {change_type} at {path}{actor_str}. {detail}'
             )
 
     # Process leftover audit events that didn't have a matching FIM file change
