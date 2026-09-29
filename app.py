@@ -450,8 +450,8 @@ async def lifespan(app: FastAPI):
     yield
 
 # Initialize FastAPI App
-APP_VERSION = "0.3"
-AGENT_VERSION = "0.3"
+APP_VERSION = "0.5"
+AGENT_VERSION = "0.5"
 app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifespan)
 
 # Secret Key from Environment Variable
@@ -3029,7 +3029,7 @@ import os, sys, time, json, socket, subprocess, glob, re, hashlib
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "0.3"
+AGENT_VERSION = "0.5"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
