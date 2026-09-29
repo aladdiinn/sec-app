@@ -113,10 +113,11 @@
         <h3 class="card-title" style="margin-bottom:8px">Server Level Alert Report</h3>
         <p style="font-size:13px; color:var(--text-sub); margin-bottom:20px">Generate an alerts-only PDF report for a specific server instance across custom timeframes.</p>
 
-        <form id="srv-gen-form" onsubmit="generateServerReport(event)" style="display:grid; grid-template-columns: 2fr 1fr auto; gap:14px; align-items:flex-end; margin-bottom:0">
+        <form id="srv-gen-form" style="display:grid; grid-template-columns: 2fr 1fr auto; gap:14px; align-items:flex-end; margin-bottom:0">
             <div style="position:relative">
                 <label class="text-meta" style="display:block; margin-bottom:6px">Search Server (IP, Hostname, or ID)</label>
-                <input id="srv-search" type="text" class="mono" placeholder="Enter IP or Name e.g. 172.31.2.38" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px" required>
+                <input id="srv-search" type="text" class="mono" placeholder="Enter IP or Name e.g. 172.31.2.38" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px" required autocomplete="off">
+                <div id="srv-autocomplete" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--bg2); border:1px solid var(--border); border-top:none; z-index:100; max-height:200px; overflow-y:auto; border-bottom-left-radius:4px; border-bottom-right-radius:4px; box-shadow:0 4px 6px rgba(0,0,0,0.3);"></div>
             </div>
             <div>
                 <label class="text-meta" style="display:block; margin-bottom:6px">Time Period</label>
@@ -130,7 +131,10 @@
                     <option value="7d" selected>Last 7 Days</option>
                 </select>
             </div>
-            <button type="submit" class="btn btn-primary" id="btn-srv-gen" style="padding:9px 20px; font-size:12px; white-space:nowrap">Preview & Generate PDF</button>
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-glass" id="btn-srv-prev" style="padding:9px 16px; font-size:12px; white-space:nowrap" onclick="generateServerReport(event, true)">Preview</button>
+                <button type="button" class="btn btn-primary" id="btn-srv-gen" style="padding:9px 16px; font-size:12px; white-space:nowrap" onclick="generateServerReport(event, false)">Generate PDF</button>
+            </div>
         </form>
     </div>
 
@@ -139,7 +143,7 @@
         <h3 class="card-title" style="margin-bottom:8px">Custom Executive Report Generator</h3>
         <p style="font-size:13px; color:var(--text-sub); margin-bottom:20px">Query real alerts, servers, and command telemetry for any date range with instant PDF export.</p>
 
-        <form id="gen-form" onsubmit="generateCustomReport(event)" style="display:grid; grid-template-columns: 2fr 1fr 1fr auto; gap:14px; align-items:flex-end; margin-bottom:0">
+        <form id="gen-form" style="display:grid; grid-template-columns: 2fr 1fr 1fr auto; gap:14px; align-items:flex-end; margin-bottom:0">
             <div>
                 <label class="text-meta" style="display:block; margin-bottom:6px">Report Title</label>
                 <input id="title" type="text" class="mono" value="Executive Security Posture Audit" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px" required>
@@ -152,10 +156,23 @@
                 <label class="text-meta" style="display:block; margin-bottom:6px">Date To</label>
                 <input id="date_to" type="date" class="mono" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px" required>
             </div>
-            <button type="submit" class="btn btn-primary" id="btn-gen" style="padding:9px 20px; font-size:12px; white-space:nowrap">Generate PDF</button>
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-glass" id="btn-gen-prev" style="padding:9px 16px; font-size:12px; white-space:nowrap" onclick="generateCustomReport(event, true)">Preview</button>
+                <button type="button" class="btn btn-primary" id="btn-gen" style="padding:9px 16px; font-size:12px; white-space:nowrap" onclick="generateCustomReport(event, false)">Generate PDF</button>
+            </div>
         </form>
     </div>
 
+</div>
+
+
+<!-- PREVIEW MODAL -->
+<div id="preview-modal" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; padding:40px; overflow-y:auto; backdrop-filter: blur(4px);">
+    <div style="background:#ffffff; max-width:900px; margin:0 auto; padding:40px; border-radius:8px; position:relative; color:#0f172a; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
+        <button onclick="document.getElementById('preview-modal').style.display='none'" style="position:absolute; top:20px; right:20px; background:#e2e8f0; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; color:#0f172a; font-weight:bold; font-size:12px;">Close Preview</button>
+        <button id="btn-print-modal" onclick="window.print()" style="position:absolute; top:20px; right:140px; background:#3b82f6; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; color:#ffffff; font-weight:bold; font-size:12px;">Print / Save PDF</button>
+        <div id="preview-content"></div>
+    </div>
 </div>
 
 <!-- HIDDEN PDF RENDER CONTAINER (ONLY VISIBLE IN @media print) -->
@@ -177,6 +194,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script>
     async function loadKPIs() {
         try {
@@ -204,6 +222,64 @@
             // MTTD calculation
             document.getElementById('kpi-mttd').textContent = '< 1.5m';
 
+            // Populate Server Autocomplete
+            const srvs = await apiFetch('/api/servers').catch(() => ({items:[]}));
+            const srvItems = Array.isArray(srvs) ? srvs : (srvs.items || []);
+            const srvInput = document.getElementById('srv-search');
+            const srvDropdown = document.getElementById('srv-autocomplete');
+            
+            if (srvInput && srvDropdown) {
+                // Pre-render items
+                const renderItems = (query) => {
+                    const q = query.toLowerCase();
+                    const matches = srvItems.filter(s => 
+                        (s.hostname && s.hostname.toLowerCase().includes(q)) || 
+                        (s.ip && s.ip.includes(q)) || 
+                        (s.ip_address && s.ip_address.includes(q))
+                    );
+                    
+                    if (matches.length === 0) {
+                        srvDropdown.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:var(--text-sub);">No matches found</div>';
+                    } else {
+                        srvDropdown.innerHTML = matches.map(s => `
+                            <div class="autocomplete-item" style="padding:8px 12px; font-size:12px; cursor:pointer; border-bottom:1px solid var(--border); color:var(--text);"
+                                 onclick="document.getElementById('srv-search').value = '${s.hostname}'; document.getElementById('srv-autocomplete').style.display='none';">
+                                <strong>${s.hostname}</strong> <span style="color:var(--text-meta); margin-left:8px;">${s.ip_address || s.ip}</span>
+                            </div>
+                        `).join('');
+                        
+                        // Add hover effects manually
+                        document.querySelectorAll('.autocomplete-item').forEach(item => {
+                            item.addEventListener('mouseenter', e => e.target.style.background = 'var(--bg3)');
+                            item.addEventListener('mouseleave', e => e.target.style.background = 'transparent');
+                        });
+                    }
+                };
+                
+                srvInput.addEventListener('input', (e) => {
+                    if (e.target.value.trim().length > 0) {
+                        srvDropdown.style.display = 'block';
+                        renderItems(e.target.value);
+                    } else {
+                        srvDropdown.style.display = 'none';
+                    }
+                });
+                
+                srvInput.addEventListener('focus', (e) => {
+                    if (e.target.value.trim().length > 0) {
+                        srvDropdown.style.display = 'block';
+                        renderItems(e.target.value);
+                    }
+                });
+                
+                // Hide when clicking outside
+                document.addEventListener('click', (e) => {
+                    if (e.target !== srvInput && e.target !== srvDropdown && !srvDropdown.contains(e.target)) {
+                        srvDropdown.style.display = 'none';
+                    }
+                });
+            }
+            
             // Cases for evidence export
             const cases = await apiFetch('/api/cases');
             const caseItems = Array.isArray(cases) ? cases : [];
@@ -233,13 +309,48 @@
         }
     }
 
-    function renderPDF(title, subtitle, meta, htmlContent) {
-        document.getElementById('pdf-title').innerText = title;
-        document.getElementById('pdf-subtitle').innerText = subtitle;
-        document.getElementById('pdf-meta').innerText = meta;
-        document.getElementById('pdf-content').innerHTML = htmlContent;
-        // Trigger browser print dialog (Save as PDF)
-        setTimeout(() => window.print(), 100);
+    function renderPDF(title, subtitle, meta, htmlContent, isPreview=false) {
+        const out = `
+            <div class="pdf-header" style="border-bottom:2px solid #3b82f6; padding-bottom:20px; margin-bottom:30px;">
+                <h1 style="font-size:28px; color:#0f172a; margin:0 0 5px 0; font-weight:800;">${title}</h1>
+                <div style="font-size:16px; color:#3b82f6; font-weight:600;">${subtitle}</div>
+                <div style="margin-top:20px; color:#64748b; font-size:12px; white-space:pre-wrap;">${meta}</div>
+            </div>
+            ${htmlContent}
+            <div class="pdf-footer" style="margin-top:50px; padding-top:20px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; font-size:11px; color:#94a3b8;">
+                <div>SecurePulse SOC Platform - Executive Insights</div><div>${isPreview ? 'Preview Mode' : 'Page 1'}</div>
+            </div>
+        `;
+        document.getElementById('preview-content').innerHTML = out;
+        
+        // Apply inline styles for rendering exactly as seen
+        document.querySelectorAll('#preview-content .pdf-h2').forEach(el => { el.style.fontSize = '18px'; el.style.color = '#0f172a'; el.style.marginBottom = '15px'; el.style.fontWeight = '700'; });
+        document.querySelectorAll('#preview-content .pdf-card').forEach(el => { el.style.background = '#ffffff'; el.style.border = '2px solid #e2e8f0'; el.style.borderRadius = '12px'; el.style.padding = '20px'; el.style.marginBottom = '30px'; });
+        
+        if (isPreview) {
+            document.getElementById('preview-modal').style.display = 'block';
+            document.getElementById('btn-print-modal').style.display = 'none'; // hide print in preview
+        } else {
+            showToast('Generating PDF file...', 'info');
+            const element = document.getElementById('preview-content');
+            // Give a white background for PDF
+            element.style.padding = '20px';
+            element.style.background = '#ffffff';
+            element.style.color = '#0f172a';
+            
+            html2pdf().set({
+                margin: [10, 10, 10, 10],
+                filename: `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, useCORS: true },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            }).from(element).save().then(() => {
+                element.style.padding = '0';
+                showToast('PDF downloaded successfully!', 'success');
+            }).catch(e => {
+                showToast('PDF generation failed: ' + e, 'error');
+            });
+        }
     }
 
     async function generateComplianceReport(type) {
@@ -337,7 +448,8 @@
                 typeHeaders[type],
                 "Security Operations Posture & Control Assessment",
                 `Generated: ${now.toISOString()}\nReporting Scope: Monitored Production Assets\nIntegrity Hash: ${btoa(now.getTime() + alerts.length + type).substring(0, 64)}`,
-                content
+                content,
+                isPreview
             );
         } catch (e) {
             showToast('Report generation failed: ' + e.message, 'error');
@@ -395,14 +507,15 @@
                 "CHAIN OF CUSTODY FORENSICS EVIDENCE",
                 `Case #${c.id}: ${c.title}`,
                 `Export Timestamp: ${now.toISOString()}\nDocument SHA-256 Digest: ${btoa(c.id + now.getTime() + alerts.length).replace(/[^a-zA-Z0-9]/g, '').padEnd(64, 'a')}`,
-                content
+                content,
+                isPreview
             );
         } catch (e) {
             showToast('Evidence export failed: ' + e.message, 'error');
         }
     }
 
-    async function generateCustomReport(e) {
+    async function generateCustomReport(e, isPreview=false) {
         e.preventDefault();
         const btn = document.getElementById('btn-gen');
         btn.disabled = true;
@@ -461,7 +574,8 @@
                 res.title || 'Executive Security Posture Audit',
                 "Custom Executive Report",
                 `Date Range: ${payload.date_from} to ${payload.date_to}\nGenerated: ${new Date().toISOString()}`,
-                content
+                content,
+                isPreview
             );
 
         } catch (err) {
@@ -472,14 +586,16 @@
         }
     }
 
-    async function generateServerReport(e) {
+    async function generateServerReport(e, isPreview=false) {
         e.preventDefault();
-        const btn = document.getElementById('btn-srv-gen');
+        const btn = document.getElementById(isPreview ? 'btn-srv-prev' : 'btn-srv-gen');
+        const originalText = btn.innerText;
         btn.disabled = true;
-        btn.innerText = 'Searching & Generating...';
+        btn.innerText = isPreview ? 'Loading...' : 'Generating...';
         
         try {
             const query = document.getElementById('srv-search').value;
+            if (!query) { showToast('Please enter a server to search', 'error'); return; }
             const timeframe = document.getElementById('srv-timeframe').value;
             
             let hours = 24;
@@ -495,7 +611,7 @@
             const servers = Array.isArray(serversRes) ? serversRes : (serversRes.items || []);
             
             const q = query.toLowerCase();
-            const server = servers.find(s => s.ip === q || s.ip_address === q || s.hostname.toLowerCase() === q || String(s.id) === q || s.name.toLowerCase() === q);
+            const server = servers.find(s => s.ip === q || s.ip_address === q || (s.hostname && s.hostname.toLowerCase() === q) || String(s.id) === q || (s.name && s.name.toLowerCase() === q) || (s.hostname && s.hostname.toLowerCase().includes(q)));
             
             if (!server) {
                 showToast(`Server not found for query: ${query}`, 'error');
@@ -533,14 +649,15 @@
                 `Server Alert Report: ${server.hostname || server.name}`,
                 `Server IP: ${server.ip_address || server.ip || 'Unknown'} | Internal ID: ${server.id}`,
                 `Timeframe: Last ${hours} Hours\nTotal Alerts Logged: ${serverAlerts.length}\nGenerated: ${new Date().toISOString()}`,
-                content
+                content,
+                isPreview
             );
             
         } catch (err) {
             showToast(err.message || 'Generation failed', 'error');
         } finally {
             btn.disabled = false;
-            btn.innerText = 'Preview & Generate PDF';
+            btn.innerText = originalText;
         }
     }
 
