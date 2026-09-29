@@ -129,7 +129,7 @@
 /* Services Cards Grid (Image 2 style) */
 .services-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 16px;
     margin-bottom: 24px;
 }
@@ -382,6 +382,14 @@
                 <option value="down">Offline / Down</option>
             </select>
 
+            <div class="view-toggle" style="display:flex; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:6px; overflow:hidden;">
+                <button id="btn-view-grid" onclick="setDashboardView('grid')" style="background:var(--cyan); color:#000; border:none; padding:6px 10px; cursor:pointer;" title="Grid View">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                </button>
+                <button id="btn-view-list" onclick="setDashboardView('list')" style="background:transparent; color:var(--text2); border:none; padding:6px 10px; cursor:pointer;" title="List View">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                </button>
+            </div>
             <button class="btn btn-glass" style="padding:6px 12px; font-size:11px" onclick="loadDashboardData()">🔄 Refresh</button>
         </div>
     </div>
@@ -651,6 +659,31 @@
 
 {% block extra_js %}
 <script>
+
+let currentDashboardView = 'grid';
+
+function setDashboardView(view) {
+    currentDashboardView = view;
+    document.getElementById('btn-view-grid').style.background = view === 'grid' ? 'var(--cyan)' : 'transparent';
+    document.getElementById('btn-view-grid').style.color = view === 'grid' ? '#000' : 'var(--text2)';
+    
+    document.getElementById('btn-view-list').style.background = view === 'list' ? 'var(--cyan)' : 'transparent';
+    document.getElementById('btn-view-list').style.color = view === 'list' ? '#000' : 'var(--text2)';
+    
+    const container = document.getElementById('services-cards-grid');
+    if (view === 'list') {
+        container.style.display = 'flex';
+        container.style.flexDirection = 'column';
+        container.style.gap = '8px';
+    } else {
+        container.style.display = 'grid';
+        container.style.gridTemplateColumns = 'repeat(auto-fill, minmax(280px, 1fr))';
+        container.style.gap = '20px';
+    }
+    
+    renderServicesGrid();
+}
+
 function formatLocal(dateStr) {
         if (!dateStr) return 'recent';
         try {
@@ -745,11 +778,83 @@ function renderServicesGrid() {
         const isMaint = s.is_maintenance || s.status === 'maintenance';
 
         // Alert box content
-        let alertBox = '<div class="service-alert-box sab-normal">🟢 <strong>NORMAL</strong> — All checks operational</div>';
-        if (isMaint) {
-            alertBox = '<div class="service-alert-box sab-trouble">⚡ <strong>MAINTENANCE</strong> — Scheduled Maintenance Window</div>';
+        let alertBox = '<div class="service-alert-box sab-normal"> <strong>NORMAL</strong>  All checks operational</div>';
+        const isDown = s.status === 'offline' || s.status === 'down';
+        
+        if (isDown) {
+            alertBox = '<div class="service-alert-box" style="background:rgba(239, 68, 68, 0.1); color:var(--red); border:1px solid rgba(239, 68, 68, 0.3);"> <strong>OFFLINE / DOWN</strong>  Connection Lost</div>';
+        } else if (isMaint) {
+            alertBox = '<div class="service-alert-box sab-trouble"> <strong>MAINTENANCE</strong>  Scheduled Maintenance Window</div>';
         } else if (isCrit) {
-            alertBox = `<div class="service-alert-box">🔴 <strong>CRITICAL</strong> — ${alertCount} Alert(s) · CPU: ${cpu}%</div>`;
+            alertBox = `<div class="service-alert-box"> <strong>CRITICAL</strong>  ${alertCount} Alert(s)  CPU: ${cpu}%</div>`;
+        } else if (cpu > 85 || ram > 85) {
+            alertBox = `<div class="service-alert-box sab-trouble"> <strong>HIGH RESOURCE</strong>  CPU: ${cpu}% / RAM: ${ram}%</div>`;
+        }
+
+        // Border color based on status
+        const borderColor = isDown ? 'var(--red)' : (isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : 'rgba(255,255,255,0.08)')));
+
+        if (currentDashboardView === 'list') {
+            return `
+            <div class="service-card-list fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="border-left: 4px solid ${borderColor}; display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; background: rgba(255,255,255,0.02); margin-bottom: 8px; border-radius: 6px; cursor: pointer; border-right: 1px solid rgba(255,255,255,0.05); border-top: 1px solid rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <div style="flex: 1.5; min-width: 120px;">
+                    <div style="font-weight: 700; color: var(--text); font-size: 13px; margin-bottom: 2px;">${name}</div>
+                    <div style="font-size: 11px; color: var(--cyan); font-family: monospace;">${ip}</div>
+                </div>
+                <div style="flex: 1.5; font-size: 11px; transform: scale(0.9); transform-origin: left;">
+                    ${typeBadge}
+                </div>
+                <div style="flex: 2; display: flex; gap: 16px; font-size: 11px;">
+                    <div><span style="color:var(--text2)">CPU</span> <span style="color:${cpu>85?'var(--red)':cpu>70?'var(--amber)':'var(--text)'}; font-weight:600">${cpu}%</span></div>
+                    <div><span style="color:var(--text2)">RAM</span> <span style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--text)'}; font-weight:600">${ram}%</span></div>
+                    <div><span style="color:var(--text2)">Disk</span> <span style="color:var(--text); font-weight:600">${disk}%</span></div>
+                </div>
+                <div style="flex: 1; font-size: 12px; text-align: center;">
+                    <span style="color:${alertCount>0?'var(--red)':'var(--green)'}; font-weight:700;">${alertCount} Alerts</span>
+                </div>
+                <div style="flex: 1.5; transform: scale(0.9); transform-origin: right;">
+                    ${alertBox}
+                </div>
+            </div>
+            `;
+        } else {
+            return `
+            <div class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="border-color:${borderColor}; padding: 14px; transform: scale(0.95); margin: -8px;">
+                <div>
+                    <div class="service-header" style="margin-bottom: 12px;">
+                        <div>
+                            <h4 class="service-title" style="font-size: 14px;">${name}</h4>
+                            <div style="font-family:monospace; font-size:10px; color:var(--cyan)">${ip}</div>
+                        </div>
+                        <div style="transform: scale(0.85); transform-origin: right top;">${typeBadge}</div>
+                    </div>
+
+                    <div class="service-metrics" style="gap: 8px;">
+                        <div class="service-metrics-item">
+                            <span class="sm-label">CPU USAGE</span>
+                            <span class="sm-val" style="color:${cpu>85?'var(--red)':cpu>70?'var(--amber)':'var(--text)'}; font-size: 13px;">${cpu}%</span>
+                        </div>
+                        <div class="service-metrics-item">
+                            <span class="sm-label">RAM USAGE</span>
+                            <span class="sm-val" style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--text)'}; font-size: 13px;">${ram}%</span>
+                        </div>
+                        <div class="service-metrics-item" style="margin-top:6px">
+                            <span class="sm-label">DISK USAGE</span>
+                            <span class="sm-val" style="font-size: 13px;">${disk}%</span>
+                        </div>
+                        <div class="service-metrics-item" style="margin-top:6px">
+                            <span class="sm-label">ALERTS</span>
+                            <span class="sm-val" style="color:${alertCount>0?'var(--red)':'var(--green)'}; font-size: 13px;">${alertCount}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 12px;">
+                    ${alertBox}
+                </div>
+            </div>
+            `;
+        }
         } else if (cpu > 85 || ram > 85) {
             alertBox = `<div class="service-alert-box sab-trouble">⚠️ <strong>HIGH RESOURCE</strong> — CPU: ${cpu}% / RAM: ${ram}%</div>`;
         }
