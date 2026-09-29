@@ -375,9 +375,28 @@ body {
   <div class="login-sweep"></div>
 
   
-  <div id="center-logo" style="position:absolute; right: 10%; top: 50%; transform: translateY(-50%); opacity:0.9; pointer-events:none; z-index:1; display:flex; flex-direction:column; align-items:center; transition: opacity 0.6s ease;">
-    <img src="/static/img/logo.png" alt="BSmart SOC" style="height:220px; object-fit:contain; filter: drop-shadow(0 0 20px rgba(0, 229, 255, 0.4)); mix-blend-mode: screen;">
-  </div>
+  <div id="center-logo" style="position:absolute; right:10%; top:50%; transform:translateY(-50%); opacity:0.85; pointer-events:none; z-index:1; display:flex; align-items:center; gap:24px; transition: opacity 0.6s ease;">
+      <div style="width:140px; height:140px;">
+        <svg viewBox="0 0 24 24" style="width: 100%; height: 100%; fill: none; stroke: #00e5ff; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.6));">
+          <polygon points="12,2 22,7 22,17 12,22 2,17 2,7"></polygon>
+          <polygon points="12,5 19,9 19,15 12,19 5,15 5,9" stroke-opacity="0.5"></polygon>
+          <path d="M8 10 L12 14 L16 10"></path>
+          <path d="M12 14 L12 19"></path>
+          <path d="M12 5 L12 8"></path>
+        </svg>
+      </div>
+      <div style="display:flex; flex-direction:column; justify-content:center;">
+        <div style="font-family:'Orbitron', sans-serif; font-size:72px; font-weight:700; letter-spacing:2px; line-height:1.1; text-shadow:0 0 20px rgba(0,229,255,0.3);">
+          <span style="color:#00e5ff;">B</span><span style="color:#ffffff;">Smart</span>
+        </div>
+        <div style="font-family:'Orbitron', sans-serif; font-size:42px; font-weight:600; color:#00e5ff; letter-spacing:8px; margin-top:4px; text-shadow:0 0 15px rgba(0,229,255,0.4);">
+          SOC
+        </div>
+        <div style="font-family:'Share Tech Mono', monospace; font-size:20px; color:#00e5ff; letter-spacing:2px; margin-top:12px; opacity:0.9;">
+          BY Bcits - Smart Solution
+        </div>
+      </div>
+    </div>
 
   <!-- HUD decorative rings (right side) -->
   <div class="hud-ring hud-ring1"></div>
@@ -396,8 +415,28 @@ body {
     <div class="c bl"></div><div class="c br"></div>
 
     <!-- Logo -->
-    <div class="lp-logo-row" style="justify-content: center; margin-bottom: 24px;">
-      <img src="/static/img/logo.png" alt="BSmart SOC" style="max-height: 70px; max-width: 100%; object-fit: contain; mix-blend-mode: screen;">
+    <div class="lp-logo-row" style="display:flex; align-items:center; gap:12px; margin-bottom:28px;">
+      <div class="lp-logo-box" style="position:relative; width:48px; height:48px; display:flex; align-items:center; justify-content:center;">
+        <div class="lp-pulse" style="position:absolute; inset:0; border-radius:50%; box-shadow:0 0 15px rgba(0,229,255,0.4); animation: pulse 2s infinite;"></div>
+        <svg viewBox="0 0 24 24" style="width: 100%; height: 100%; fill: none; stroke: #00e5ff; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.6));">
+          <polygon points="12,2 22,7 22,17 12,22 2,17 2,7"></polygon>
+          <polygon points="12,5 19,9 19,15 12,19 5,15 5,9" stroke-opacity="0.5"></polygon>
+          <path d="M8 10 L12 14 L16 10"></path>
+          <path d="M12 14 L12 19"></path>
+          <path d="M12 5 L12 8"></path>
+        </svg>
+      </div>
+      <div style="display:flex; flex-direction:column; justify-content:center;">
+        <div style="font-family:'Orbitron', sans-serif; font-size:24px; font-weight:700; letter-spacing:1px; line-height:1.1;">
+          <span style="color:#00e5ff;">B</span><span style="color:#ffffff;">Smart</span>
+        </div>
+        <div style="font-family:'Orbitron', sans-serif; font-size:16px; font-weight:600; color:#00e5ff; letter-spacing:3px; margin-top:2px;">
+          SOC
+        </div>
+        <div style="font-family:'Share Tech Mono', monospace; font-size:9px; color:#00e5ff; letter-spacing:1px; margin-top:4px; opacity:0.8;">
+          BY Bcits - Smart Solution
+        </div>
+      </div>
     </div>
 
     <div class="lp-div"></div>
