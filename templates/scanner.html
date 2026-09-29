@@ -1047,6 +1047,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script>
 let lastScanData = null;
 let lastVaptData = null;
@@ -1245,39 +1246,93 @@ function renderHeaderResults(data) {
 }
 
 function downloadReport() {
-  if (!lastScanData) return;
-  const txt = [
-    `══════════════════════════════════════════════════════════════════════`,
-    `SECUREPULSE SHCHECK — HTTP SECURITY HEADER AUDIT REPORT`,
-    `══════════════════════════════════════════════════════════════════════`,
-    `Target URL:      ${lastScanData.target}`,
-    `Domain:          ${lastScanData.domain}`,
-    `Generated At:    ${new Date().toISOString()}`,
-    `Security Grade:  ${lastScanData.grade}`,
-    `Security Score:  ${lastScanData.score} / 100`,
-    `Present Headers: ${lastScanData.present}`,
-    `Missing Headers: ${lastScanData.missing}`,
-    `Status Code:     ${lastScanData.status_code}`,
-    `HTTPS Enforced:  ${lastScanData.https ? 'YES' : 'NO'}`,
-    ``,
-    `ASSESSMENT:`,
-    `${lastScanData.assessment}`,
-    ``,
-    `══════════════════════════════════════════════════════════════════════`,
-    `HEADER ANALYSIS:`,
-    `══════════════════════════════════════════════════════════════════════`,
-    ...(lastScanData.headers || []).map(h => `[${h.status.toUpperCase()}] [${h.criticality}] ${h.name}\n   Desc: ${h.description}\n   Val:  ${h.value || 'None'}\n`),
-    `══════════════════════════════════════════════════════════════════════`,
-    `RECOMMENDATIONS:`,
-    `══════════════════════════════════════════════════════════════════════`,
-    ...(lastScanData.recommendations || []).map(r => `→ ${r.header}:\n   ${r.recommendation}\n`),
-  ].join('\n');
+    if (!lastScanData) return;
+    
+    // Create a temporary element for PDF rendering
+    const element = document.createElement('div');
+    element.style.padding = '20px';
+    element.style.background = '#ffffff';
+    element.style.color = '#0f172a';
+    element.style.fontFamily = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+    
+    const now = new Date();
+    
+    element.innerHTML = `
+        <div style="border-bottom:2px solid #3b82f6; padding-bottom:20px; margin-bottom:30px;">
+            <h1 style="font-size:28px; color:#0f172a; margin:0 0 5px 0; font-weight:800;">DOMAIN VAPT REPORT</h1>
+            <div style="font-size:16px; color:#3b82f6; font-weight:600;">SHCHECK Security Header Audit</div>
+            <div style="margin-top:20px; color:#64748b; font-size:12px; white-space:pre-wrap;">Target Domain: ${lastScanData.domain || 'Unknown'}
+Generated: ${now.toISOString()}</div>
+        </div>
+        
+        <div style="margin-bottom: 30px;">
+            <h2 style="font-size:18px; color:#0f172a; margin-bottom:15px; font-weight:700;">Key Performance Indicators</h2>
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:20px; margin-bottom:20px;">
+                <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:20px; text-align:center;">
+                    <div style="font-size:24px; font-weight:bold; color:${lastScanData.score >= 80 ? '#16a34a' : lastScanData.score >= 50 ? '#f59e0b' : '#dc2626'};">${lastScanData.grade || 'F'}</div>
+                    <div style="font-size:12px; color:#64748b; margin-top:5px">Security Grade</div>
+                </div>
+                <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:20px; text-align:center;">
+                    <div style="font-size:24px; font-weight:bold; color:#0284c7;">${lastScanData.score || 0}/100</div>
+                    <div style="font-size:12px; color:#64748b; margin-top:5px">Security Score</div>
+                </div>
+                <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:20px; text-align:center;">
+                    <div style="font-size:24px; font-weight:bold; color:#16a34a;">${lastScanData.https ? 'ENFORCED' : 'NO'}</div>
+                    <div style="font-size:12px; color:#64748b; margin-top:5px">HTTPS Transport</div>
+                </div>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 30px;">
+            <h2 style="font-size:18px; color:#0f172a; margin-bottom:15px; font-weight:700;">Executive Assessment</h2>
+            <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:20px; font-size:13px; color:#334155;">
+                ${lastScanData.assessment || 'No assessment provided.'}
+            </div>
+        </div>
 
-  const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `SHCHECK_${lastScanData.domain || 'report'}_${new Date().toISOString().slice(0,10)}.txt`;
-  a.click();
+        <div style="margin-bottom: 30px;">
+            <h2 style="font-size:18px; color:#0f172a; margin-bottom:15px; font-weight:700;">Header Analysis</h2>
+            <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:20px;">
+                ${(lastScanData.headers || []).map(h => `
+                    <div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid #f1f5f9">
+                        <div style="font-weight:bold; color:#0f172a; font-size:13px">${h.name} <span style="font-size:10px; background:${h.status==='missing'?'#fee2e2':h.status==='present'?'#dcfce7':'#fef3c7'}; color:${h.status==='missing'?'#dc2626':h.status==='present'?'#16a34a':'#d97706'}; padding:2px 6px; border-radius:4px; margin-left:6px">${(h.status||'info').toUpperCase()}</span></div>
+                        <div style="font-size:11px; margin-top:6px; color:#334155; padding:6px; background:#f8fafc; border-radius:4px; border:1px solid #e2e8f0; font-family:monospace; overflow-wrap:anywhere">${h.value || 'None'}</div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+
+        <div style="margin-bottom: 30px;">
+            <h2 style="font-size:18px; color:#0f172a; margin-bottom:15px; font-weight:700;">Remediation Recommendations</h2>
+            <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:20px;">
+                ${(lastScanData.recommendations || []).map(r => `
+                    <div style="margin-bottom:12px; font-size:12px; color:#334155;">
+                        <strong>${r.header}:</strong> ${r.recommendation}
+                    </div>
+                `).join('') || '<div style="font-size:12px; color:#64748b;">No recommendations. Domain is well secured.</div>'}
+            </div>
+        </div>
+
+        <div style="margin-top:50px; padding-top:20px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; font-size:11px; color:#94a3b8;">
+            <div>SecurePulse SOC Platform - VAPT Scan</div><div>Page 1</div>
+        </div>
+    `;
+
+    // Only append to body temporarily so html2pdf can access styles if needed, though html2pdf accepts off-DOM elements
+    document.body.appendChild(element);
+    
+    // We can directly call html2pdf if we want to bypass dom entirely, 
+    // but sometimes passing a live DOM node works better for images/fonts
+    
+    html2pdf().set({
+        margin: [10, 10, 10, 10],
+        filename: `VAPT_${lastScanData.domain || 'report'}_${now.toISOString().slice(0,10)}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    }).from(element).save().then(() => {
+        document.body.removeChild(element);
+    });
 }
 
 function copyJSON() {
