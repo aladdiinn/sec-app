@@ -712,7 +712,7 @@ async def dashboard_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     
-    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
+    pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
     alerts = db.get_alerts()
     return render_template(request, "dashboard.html", {
         "servers": servers,
@@ -732,7 +732,7 @@ async def servers_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
+    pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
     return render_template(request, "servers.html", {"servers": servers})
 
 @app.get("/server/{server_id}", response_class=HTMLResponse)
@@ -1007,14 +1007,14 @@ async def scanner_page(request: Request):
 
 @app.get("/api/servers")
 async def api_get_servers(request: Request):
-    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
+    pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
     counts = db.get_server_counts()
     return {"servers": servers, "counts": counts}
 
 @app.get("/api/counts")
 @app.get("/api/servers/stats")
-async def api_get_counts():
-    counts = db.get_server_counts()
+async def api_get_counts(request: Request):
+    counts = db.get_server_counts(project_id=get_effective_project_id(request))
     total = counts.get("total", 0)
     secure = counts.get("secure", 0)
     warning = counts.get("warning", 0)
@@ -1027,8 +1027,8 @@ async def api_get_counts():
     return counts
 
 @app.get("/api/dashboard/geoip")
-async def api_get_geoip():
-    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
+async def api_get_geoip(request: Request):
+    pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
     points = []
     for s in servers:
         points.append({
@@ -1066,8 +1066,8 @@ async def api_get_brute_force():
     return []
 
 @app.get("/api/servers/maintenance")
-async def api_get_servers_maintenance():
-    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
+async def api_get_servers_maintenance(request: Request):
+    pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
     now = datetime.now(timezone.utc)
     res = []
     for s in servers:
@@ -1089,8 +1089,8 @@ async def api_get_servers_maintenance():
     return res
 
 @app.get("/api/system/health")
-async def api_get_system_health():
-    pid = request.query_params.get("project_id") or request.session.get("project_id"); servers = db.get_servers(project_id=pid)
+async def api_get_system_health(request: Request):
+    pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
     nodes = []
     for s in servers:
         nodes.append({
@@ -2237,6 +2237,13 @@ async def api_get_alerts(request: Request = None, limit: int = 100, severity: st
         with conn.cursor() as cur:
             query = "SELECT a.*, s.hostname FROM alerts a LEFT JOIN servers s ON a.server_id = s.id WHERE 1=1"
             params = []
+            
+            if request:
+                pid = get_effective_project_id(request)
+                sql_clause, p_params = db._build_pid_filter("s.project_id", pid)
+                if sql_clause:
+                    query += sql_clause
+                    params.extend(p_params)
             if server_id:
                 query += " AND a.server_id = %s"
                 params.append(server_id)
@@ -2377,8 +2384,9 @@ async def api_exit_project(request: Request):
     return {"ok": True, "redirect": "/dashboard"}
 
 @app.get("/api/projects")
-async def api_get_projects():
-    return db.get_projects()
+async def api_get_projects(request: Request):
+    pid = get_effective_project_id(request)
+    return db.get_projects(allowed_project_ids=pid)
 
 @app.post("/api/projects")
 async def api_create_project(request: Request):
@@ -4379,7 +4387,7 @@ async def api_reject_request(app_id: int, request: Request):
 # Incidents
 @app.get("/api/incidents")
 async def api_get_incidents(request: Request, status: str = None, severity: str = None):
-    pid = request.query_params.get("project_id") or request.session.get("project_id")
+    pid = get_effective_project_id(request)
     return db.get_incidents(status=status, severity=severity, project_id=pid)
 
 @app.post("/api/incidents/clean-false-positives")
@@ -4543,12 +4551,12 @@ async def api_generate_report(request: Request):
 
 # Dashboard
 @app.get("/api/dashboard/counts")
-async def api_dashboard_counts_new():
-    return db.get_dashboard_counts()
+async def api_dashboard_counts_new(request: Request):
+    return db.get_dashboard_counts(project_id=get_effective_project_id(request))
 
 @app.get("/api/dashboard/live-activity")
-async def api_dashboard_live_activity():
-    return db.get_activity_feed(10)
+async def api_dashboard_live_activity(request: Request):
+    return db.get_activity_feed(10, project_id=get_effective_project_id(request))
 
 @app.get("/api/dashboard/severity")
 async def api_dashboard_severity():
@@ -4873,7 +4881,7 @@ async def view_log_monitor_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    pid = request.query_params.get("project_id") or request.session.get("project_id")
+    pid = get_effective_project_id(request)
     servers = db.get_servers(project_id=pid)
     configs = db.get_log_configs()
     return render_template(request, "log_monitor.html", {
@@ -5398,7 +5406,7 @@ async def api_fetch_log_lines(request: Request):
 
     # Calculate real dynamic counts across all service categories
     all_cfgs = db.get_log_configs()
-    all_feed_events = db.get_activity_feed(limit=100, project_id=request.session.get("project_id"))
+    all_feed_events = db.get_activity_feed(limit=100, project_id=get_effective_project_id(request))
     all_lines_combined = lines + [{
         "time": str(ev.get("created_at", "")).replace("T", " ")[:19],
         "level": str(ev.get("severity", "INFO")).upper(),
@@ -5523,6 +5531,7 @@ async def api_watchdog_push(request: Request):
 
 @app.get("/api/log-monitor/streams")
 async def api_log_streams(
+    request: Request,
     server_id: Optional[int] = None,
     log_type: Optional[str] = None,
     source: Optional[str] = None,
@@ -5542,6 +5551,11 @@ async def api_log_streams(
                 WHERE 1=1
             """
             params = []
+            pid = get_effective_project_id(request)
+            sql_clause, p_params = db._build_pid_filter("s.project_id", pid)
+            if sql_clause:
+                query += sql_clause
+                params.extend(p_params)
             if server_id:
                 query += " AND pl.server_id = %s"
                 params.append(server_id)
@@ -5700,8 +5714,9 @@ async def api_server_log_files(server_id: int):
 
 
 @app.get("/api/detections/summary")
-async def api_detections_summary():
+async def api_detections_summary(request: Request):
     """Summary counts of active alerts categorized by SIEM use cases."""
+    pid = get_effective_project_id(request)
     conn = db.get_db_connection()
     if not conn:
         return {
@@ -5710,12 +5725,16 @@ async def api_detections_summary():
         }
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT alert_type, severity, COUNT(*) as cnt
+            sql_clause, params = db._build_pid_filter("s.project_id", pid)
+            join_clause = "JOIN servers s ON alerts.server_id = s.id" if sql_clause else ""
+            where_clause = "WHERE alerts.is_resolved = FALSE" + sql_clause
+            cur.execute(f"""
+                SELECT alerts.alert_type, alerts.severity, COUNT(*) as cnt
                 FROM alerts
-                WHERE is_resolved = FALSE
-                GROUP BY alert_type, severity;
-            """)
+                {join_clause}
+                {where_clause}
+                GROUP BY alerts.alert_type, alerts.severity;
+            """, params)
             rows = cur.fetchall()
             summary = {
                 "identity_access": 0,
