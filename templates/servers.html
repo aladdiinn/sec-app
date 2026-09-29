@@ -393,7 +393,7 @@ function formatLocal(dateStr) {
                 const alertCount = s.alert_count || 0;
                 const isCrit = s.severity === 'critical' || alertCount > 0;
                 
-                const typeBadge = '<span class="service-type-badge st-server">LINUX SERVER</span>';
+                const typeBadge = `<div style="text-align:right"><span class="service-type-badge st-server">LINUX SERVER</span><div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${s.agent_version || '0.5'}</div></div>`;
                 
                 let alertBox = '<div class="service-alert-box sab-normal"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>NORMAL</strong> – All checks operational</div>';
                 if (isMaint) {
