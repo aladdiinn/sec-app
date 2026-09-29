@@ -808,8 +808,8 @@ def fingerprint_technologies(raw_url: str):
             port in (8080, 8443)
         )
         if is_tomcat:
-            techs.append({"name": f"Apache Tomcat (Port {port})", "category": "Java Servlet Application Container", "version": "10.x / 9.x", "risk": "MEDIUM"})
-            techs.append({"name": "Java / JVM Runtime", "category": "Backend Execution Platform", "version": "OpenJDK 17/21", "risk": "LOW"})
+            techs.append({"name": f"Apache Tomcat (Port {port})", "category": "Java Servlet Application Container", "version": "Unknown (Suppressed)", "risk": "MEDIUM"})
+            techs.append({"name": "Java / JVM Runtime", "category": "Backend Execution Platform", "version": "Unknown", "risk": "LOW"})
             implications.append({"header": "Tomcat Session Security", "recommendation": "Enforce HttpOnly and Secure flags on JSESSIONID. Block public access to /manager."})
 
         # 3. Nginx
@@ -832,8 +832,8 @@ def fingerprint_technologies(raw_url: str):
     except Exception:
         techs = [
             {"name": "AWS Application Load Balancer (ALB)", "category": "Cloud Load Balancer & SSL Termination", "version": "AWS", "risk": "LOW"},
-            {"name": f"Apache Tomcat (Port {port})", "category": "Java Application Container", "version": "10.1", "risk": "MEDIUM"},
-            {"name": "Java / JVM Runtime", "category": "Backend Runtime Platform", "version": "OpenJDK 17", "risk": "LOW"}
+            {"name": f"Apache Tomcat (Port {port})", "category": "Java Application Container", "version": "Unknown", "risk": "MEDIUM"},
+            {"name": "Java / JVM Runtime", "category": "Backend Runtime Platform", "version": "Unknown", "risk": "LOW"}
         ]
 
     return {"target": target_url, "technologies": techs, "implications": implications}
