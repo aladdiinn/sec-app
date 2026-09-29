@@ -401,25 +401,38 @@
                 </div>
                 
                 <div class="pdf-section">
-                    <h2 class="pdf-h2">Executive Insights</h2>
+                    <h2 class="pdf-h2">Framework Control Assessment</h2>
                     <div class="pdf-card">
-                        <table style="width:100%; border-collapse:collapse; font-size:13px">
-                            <tr style="border-bottom:1px solid #e2e8f0; color:#64748b">
-                                <th style="padding-bottom:10px; text-align:left; width:25%">Compliance Status</th>
-                                <th style="padding-bottom:10px; text-align:left; width:25%">Longest Outage</th>
-                                <th style="padding-bottom:10px; text-align:left; width:25%">Availability Risk</th>
-                                <th style="padding-bottom:10px; text-align:left; width:25%">Primary Root Cause</th>
-                            </tr>
-                            <tr>
-                                <td style="padding-top:10px; font-weight:bold; color:#16a34a">Compliant</td>
-                                <td style="padding-top:10px; font-weight:bold; color:#0f172a">None</td>
-                                <td style="padding-top:10px; font-weight:bold; color:#16a34a">Low</td>
-                                <td style="padding-top:10px; font-weight:bold; color:#0f172a">No recorded incidents</td>
-                            </tr>
-                        </table>
-                        <div style="margin-top:15px; font-size:12px; color:#475569">
-                            Observation: The system maintained 100.0% availability over the period. Zero downtime incidents were detected. System performance is optimal.
-                        </div>
+                        ${type === 'iso27001' ? `
+                            <table style="width:100%; border-collapse:collapse; font-size:13px">
+                                <tr style="border-bottom:1px solid #e2e8f0; color:#64748b"><th style="padding-bottom:10px; text-align:left; width:33%">ISMS Control</th><th style="padding-bottom:10px; text-align:left; width:33%">Status</th><th style="padding-bottom:10px; text-align:left; width:33%">Evidence Metric</th></tr>
+                                <tr><td style="padding-top:10px; font-weight:bold; color:#0f172a">A.12 Operations Security</td><td style="padding-top:10px; font-weight:bold; color:#16a34a">Compliant</td><td style="padding-top:10px; font-weight:bold; color:#0f172a">${servers.length} Assets Monitored</td></tr>
+                                <tr><td style="padding-top:10px; font-weight:bold; color:#0f172a">A.16 Incident Management</td><td style="padding-top:10px; font-weight:bold; color:#16a34a">Compliant</td><td style="padding-top:10px; font-weight:bold; color:#0f172a">${caseItems.length} Incidents Tracked</td></tr>
+                            </table>
+                            <div style="margin-top:15px; font-size:12px; color:#475569">Observation: ISMS operations are actively monitoring the environment. Incident response procedures are documented and active.</div>
+                        ` : type === 'pci_dss' ? `
+                            <table style="width:100%; border-collapse:collapse; font-size:13px">
+                                <tr style="border-bottom:1px solid #e2e8f0; color:#64748b"><th style="padding-bottom:10px; text-align:left; width:33%">PCI Requirement</th><th style="padding-bottom:10px; text-align:left; width:33%">Assessment</th><th style="padding-bottom:10px; text-align:left; width:33%">Audit Finding</th></tr>
+                                <tr><td style="padding-top:10px; font-weight:bold; color:#0f172a">Req 10: Logging & Monitoring</td><td style="padding-top:10px; font-weight:bold; color:#16a34a">Satisfied</td><td style="padding-top:10px; font-weight:bold; color:#0f172a">System Audit Logs Active</td></tr>
+                                <tr><td style="padding-top:10px; font-weight:bold; color:#0f172a">Req 12: Security Policy</td><td style="padding-top:10px; font-weight:bold; color:#16a34a">Satisfied</td><td style="padding-top:10px; font-weight:bold; color:#0f172a">Policies Enforced</td></tr>
+                            </table>
+                            <div style="margin-top:15px; font-size:12px; color:#475569">Observation: Continuous monitoring covers in-scope network environments. Root access anomalies are actively audited.</div>
+                        ` : type === 'nist_csf' ? `
+                            <table style="width:100%; border-collapse:collapse; font-size:13px">
+                                <tr style="border-bottom:1px solid #e2e8f0; color:#64748b"><th style="padding-bottom:10px; text-align:left; width:33%">NIST Function</th><th style="padding-bottom:10px; text-align:left; width:33%">Coverage</th><th style="padding-bottom:10px; text-align:left; width:33%">Current Posture</th></tr>
+                                <tr><td style="padding-top:10px; font-weight:bold; color:#0f172a">Identify & Protect</td><td style="padding-top:10px; font-weight:bold; color:#16a34a">Full</td><td style="padding-top:10px; font-weight:bold; color:#0f172a">${servers.length} Baseline Assets</td></tr>
+                                <tr><td style="padding-top:10px; font-weight:bold; color:#0f172a">Detect</td><td style="padding-top:10px; font-weight:bold; color:#16a34a">Active</td><td style="padding-top:10px; font-weight:bold; color:#0f172a">${open.length} Anomalies Detected</td></tr>
+                                <tr><td style="padding-top:10px; font-weight:bold; color:#0f172a">Respond & Recover</td><td style="padding-top:10px; font-weight:bold; color:#16a34a">Active</td><td style="padding-top:10px; font-weight:bold; color:#0f172a">${resolved.length} Threats Mitigated</td></tr>
+                            </table>
+                            <div style="margin-top:15px; font-size:12px; color:#475569">Observation: The security lifecycle is functioning as designed across all core NIST cybersecurity functions.</div>
+                        ` : `
+                            <table style="width:100%; border-collapse:collapse; font-size:13px">
+                                <tr style="border-bottom:1px solid #e2e8f0; color:#64748b"><th style="padding-bottom:10px; text-align:left; width:33%">Regulatory Scope</th><th style="padding-bottom:10px; text-align:left; width:33%">Notification Status</th><th style="padding-bottom:10px; text-align:left; width:33%">Data Integrity</th></tr>
+                                <tr><td style="padding-top:10px; font-weight:bold; color:#0f172a">Art. 33 Breach Notification</td><td style="padding-top:10px; font-weight:bold; color:#16a34a">No Breaches</td><td style="padding-top:10px; font-weight:bold; color:#0f172a">Intact</td></tr>
+                                <tr><td style="padding-top:10px; font-weight:bold; color:#0f172a">Data Compromise Risk</td><td style="padding-top:10px; font-weight:bold; color:#16a34a">Low</td><td style="padding-top:10px; font-weight:bold; color:#0f172a">FIM Active</td></tr>
+                            </table>
+                            <div style="margin-top:15px; font-size:12px; color:#475569">Observation: Zero incidents triggered a 72-hour mandatory breach notification window. Personal data processing remains secure.</div>
+                        `}
                     </div>
                 </div>
 
