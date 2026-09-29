@@ -504,7 +504,7 @@
                         ${caseAlerts.slice(0, 20).map((a, i) => `
                             <div style="margin-bottom:10px">
                                 <strong>[${i+1}] ${a.title || a.alert_type}</strong> (${(a.severity||'info').toUpperCase()})<br>
-                                <span style="color:#64748b">Host: ${a.hostname || 'Server'} | Date: ${a.created_at} | MITRE: ${a.mitre_tactic || 'Execution'} (${a.mitre_technique || 'T1059'})</span>
+                                <span style="color:#64748b">Host: ${a.hostname || 'Server'} ${a.ip || a.ip_address ? '(' + (a.ip || a.ip_address) + ')' : ''} | Date: ${a.created_at} | MITRE: ${a.mitre_tactic || 'Execution'} (${a.mitre_technique || 'T1059'})</span>
                             </div>
                         `).join('') || 'No telemetry alerts linked.'}
                     </div>

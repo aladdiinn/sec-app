@@ -2253,7 +2253,7 @@ async def api_get_alerts(request: Request = None, limit: int = 100, severity: st
     if not conn: return {"items": [], "total": 0}
     try:
         with conn.cursor() as cur:
-            query = "SELECT a.*, s.hostname FROM alerts a LEFT JOIN servers s ON a.server_id = s.id WHERE 1=1"
+            query = "SELECT a.*, s.hostname, s.ip, s.ip_address FROM alerts a LEFT JOIN servers s ON a.server_id = s.id WHERE 1=1"
             params = []
             
             if request:
