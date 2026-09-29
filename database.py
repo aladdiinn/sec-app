@@ -3716,9 +3716,6 @@ def get_user_allowed_project_ids(user_id: int):
                 WHERE ug.user_id = %s;
             """, (user_id,))
             pids = [r["project_id"] for r in cur.fetchall()]
-            if not pids and role == "normal":
-                cur.execute("SELECT id FROM projects;")
-                return [r["id"] for r in cur.fetchall()]
             return pids
     except Exception as e:
         logger.error(f"Error in get_user_allowed_project_ids: {e}")
