@@ -511,9 +511,10 @@
                 </div>
 
                 <div class="pdf-section">
-                    <h2 class="pdf-h2">System Audit Trail Logs</h2>
-                    <div class="pdf-card" style="font-size:12px; font-family:monospace; line-height:1.6">
-                        ${caseLogs.slice(0, 30).map(l => `<div>[${l.timestamp || l.created_at || now.toISOString()}] <strong>${l.username || 'system'}</strong>: ${l.action} -&gt; ${l.detail || ''}</div>`).join('') || 'No audit trail logs linked directly to this case.'}
+                    <h2 class="pdf-h2">Alert Analysis & Threat Summary</h2>
+                    <div class="pdf-card" style="font-size:13px; line-height:1.6">
+                        <strong style="display:block; margin-bottom:8px; color:var(--accent-cyan)">Incident Status: ${c.status || 'Open'} | Severity: ${c.severity || 'High'}</strong>
+                        ${c.description ? `<p style="margin:0; white-space:pre-wrap;">${c.description}</p>` : `<p style="margin:0; color:var(--text-sub)">No detailed threat analysis was provided for this incident. Review the raw telemetry logs above to determine root cause and required mitigation steps.</p>`}
                     </div>
                 </div>
             `;

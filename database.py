@@ -2058,6 +2058,11 @@ def get_reports():
 
 def create_report(title, date_from, date_to):
     import json
+    
+    # Ensure full day coverage for the end date
+    if len(date_from) <= 10: date_from = f"{date_from} 00:00:00"
+    if len(date_to) <= 10: date_to = f"{date_to} 23:59:59"
+    
     conn = get_db_connection()
     if not conn: return None
     try:
