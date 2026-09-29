@@ -449,7 +449,7 @@
                 "Security Operations Posture & Control Assessment",
                 `Generated: ${now.toISOString()}\nReporting Scope: Monitored Production Assets\nIntegrity Hash: ${btoa(now.getTime() + alerts.length + type).substring(0, 64)}`,
                 content,
-                isPreview
+                false
             );
         } catch (e) {
             showToast('Report generation failed: ' + e.message, 'error');
@@ -508,7 +508,7 @@
                 `Case #${c.id}: ${c.title}`,
                 `Export Timestamp: ${now.toISOString()}\nDocument SHA-256 Digest: ${btoa(c.id + now.getTime() + alerts.length).replace(/[^a-zA-Z0-9]/g, '').padEnd(64, 'a')}`,
                 content,
-                isPreview
+                false
             );
         } catch (e) {
             showToast('Evidence export failed: ' + e.message, 'error');
