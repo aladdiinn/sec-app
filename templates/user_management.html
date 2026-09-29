@@ -719,6 +719,27 @@
         `);
     }
 
+    async function execSubmitWizard() {
+        const errBanner = document.getElementById('wizard-error-banner');
+        errBanner.style.display = 'none';
+        try {
+            const btn = document.querySelector('button[onclick="execSubmitWizard()"]');
+            if(btn) { btn.innerText = 'SUBMITTING...'; btn.disabled = true; }
+
+            await apiFetch('/api/groups/wizard', {
+                method: 'POST',
+                body: JSON.stringify(wizardData)
+            });
+            wizardCurrentStep = 5;
+            renderWizardModal();
+        } catch (e) {
+            errBanner.innerText = e.message || 'An error occurred during submission.';
+            errBanner.style.display = 'block';
+            const btn = document.querySelector('button[onclick="execSubmitWizard()"]');
+            if(btn) { btn.innerHTML = '&#9889; FINALIZE & SUBMIT'; btn.disabled = false; }
+        }
+    }
+
     function wizardNext() {
         const errBanner = document.getElementById('wizard-error-banner');
         errBanner.style.display = 'none';
