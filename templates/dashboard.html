@@ -855,47 +855,6 @@ function renderServicesGrid() {
             </div>
             `;
         }
-        } else if (cpu > 85 || ram > 85) {
-            alertBox = `<div class="service-alert-box sab-trouble">⚠️ <strong>HIGH RESOURCE</strong> — CPU: ${cpu}% / RAM: ${ram}%</div>`;
-        }
-
-        // Border color based on status
-        const borderColor = isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : 'rgba(255,255,255,0.08)'));
-
-        return `
-        <div class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="border-color:${borderColor}">
-            <div>
-                <div class="service-header">
-                    <div>
-                        <h4 class="service-title">${name}</h4>
-                        <div style="font-family:monospace; font-size:11px; color:var(--cyan)">${ip}</div>
-                    </div>
-                    ${typeBadge}
-                </div>
-
-                <div class="service-metrics">
-                    <div class="service-metrics-item">
-                        <span class="sm-label">CPU USAGE</span>
-                        <span class="sm-val" style="color:${cpu>85?'var(--red)':cpu>70?'var(--amber)':'var(--text)'}">${cpu}%</span>
-                    </div>
-                    <div class="service-metrics-item">
-                        <span class="sm-label">RAM USAGE</span>
-                        <span class="sm-val" style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--text)'}">${ram}%</span>
-                    </div>
-                    <div class="service-metrics-item" style="margin-top:6px">
-                        <span class="sm-label">DISK USAGE</span>
-                        <span class="sm-val">${disk}%</span>
-                    </div>
-                    <div class="service-metrics-item" style="margin-top:6px">
-                        <span class="sm-label">ALERTS</span>
-                        <span class="sm-val" style="color:${alertCount>0?'var(--red)':'var(--green)'}">${alertCount}</span>
-                    </div>
-                </div>
-            </div>
-
-            ${alertBox}
-        </div>
-        `;
     }).join('');
 }
 
