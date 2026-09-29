@@ -1486,6 +1486,102 @@ function renderVAPTDemo(url) {
   renderVAPT(demoData);
 }
 
+function downloadVaptReportPdf() {
+    if (!lastVaptData) return;
+    
+    const element = document.createElement('div');
+    element.style.padding = '20px';
+    element.style.background = '#ffffff';
+    element.style.color = '#0f172a';
+    element.style.fontFamily = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+    
+    const now = new Date();
+    const url = document.getElementById('vapt-url').value || 'Unknown Target';
+    const sum = lastVaptData.summary || {};
+    
+    element.innerHTML = `
+        <div style="border-bottom:2px solid #3b82f6; padding-bottom:20px; margin-bottom:30px;">
+            <h1 style="font-size:28px; color:#0f172a; margin:0 0 5px 0; font-weight:800;">FULL DOMAIN VAPT REPORT</h1>
+            <div style="font-size:16px; color:#3b82f6; font-weight:600;">Vulnerability Assessment & Penetration Audit</div>
+            <div style="margin-top:20px; color:#64748b; font-size:12px; white-space:pre-wrap;">Target Domain: ${url}
+Generated: ${now.toISOString()}</div>
+        </div>
+        
+        <div style="margin-bottom: 30px;">
+            <h2 style="font-size:18px; color:#0f172a; margin-bottom:15px; font-weight:700;">Executive Summary</h2>
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:10px; margin-bottom:20px;">
+                <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:15px; text-align:center;">
+                    <div style="font-size:20px; font-weight:bold; color:#dc2626;">${sum.critical || 0}</div>
+                    <div style="font-size:10px; color:#64748b; margin-top:5px">Critical</div>
+                </div>
+                <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:15px; text-align:center;">
+                    <div style="font-size:20px; font-weight:bold; color:#f97316;">${sum.high || 0}</div>
+                    <div style="font-size:10px; color:#64748b; margin-top:5px">High</div>
+                </div>
+                <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:15px; text-align:center;">
+                    <div style="font-size:20px; font-weight:bold; color:#f59e0b;">${sum.medium || 0}</div>
+                    <div style="font-size:10px; color:#64748b; margin-top:5px">Medium</div>
+                </div>
+                <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:15px; text-align:center;">
+                    <div style="font-size:20px; font-weight:bold; color:#3b82f6;">${sum.low || 0}</div>
+                    <div style="font-size:10px; color:#64748b; margin-top:5px">Low</div>
+                </div>
+                <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:15px; text-align:center;">
+                    <div style="font-size:20px; font-weight:bold; color:#10b981;">${lastVaptData.vapt_score || 0}/100</div>
+                    <div style="font-size:10px; color:#64748b; margin-top:5px">Score</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 30px;">
+            <h2 style="font-size:18px; color:#0f172a; margin-bottom:15px; font-weight:700;">Discovered Architecture (Attack Surface)</h2>
+            <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:20px;">
+                ${(lastVaptData.architecture && lastVaptData.architecture.flow) ? lastVaptData.architecture.flow.map(f => `
+                    <div style="margin-bottom:10px; border-bottom:1px solid #f1f5f9; padding-bottom:10px;">
+                        <strong style="color:#3b82f6; font-size:11px">${f.tier}</strong>
+                        <div style="font-size:13px; font-weight:bold; margin:4px 0">${f.title}</div>
+                        <div style="font-size:12px; color:#475569">${f.detail}</div>
+                    </div>
+                `).join('') : '<div style="font-size:12px; color:#64748b">No specific architecture mapped.</div>'}
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 30px;">
+            <h2 style="font-size:18px; color:#0f172a; margin-bottom:15px; font-weight:700;">Vulnerability Findings Log</h2>
+            <div style="background:#ffffff; border:2px solid #e2e8f0; border-radius:12px; padding:20px;">
+                ${(lastVaptData.findings || []).map(f => {
+                    let color = '#3b82f6';
+                    if (f.severity === 'Critical') color = '#dc2626';
+                    else if (f.severity === 'High') color = '#f97316';
+                    else if (f.severity === 'Medium') color = '#f59e0b';
+                    return `
+                    <div style="margin-bottom:15px; padding-bottom:15px; border-bottom:1px solid #f1f5f9">
+                        <div style="font-weight:bold; color:#0f172a; font-size:13px">${f.title} <span style="font-size:10px; border:1px solid ${color}; color:${color}; padding:2px 6px; border-radius:4px; margin-left:6px">${(f.severity||'Info').toUpperCase()}</span></div>
+                        <div style="font-size:11px; margin-top:6px; color:#334155; padding:6px; background:#f8fafc; border-radius:4px; border:1px solid #e2e8f0; font-family:monospace; white-space:pre-wrap;">[EVIDENCE] ${f.evidence || 'N/A'}</div>
+                        <div style="font-size:11px; margin-top:6px; color:#16a34a; padding:6px; background:#f0fdf4; border-radius:4px; border:1px solid #bbf7d0;">[REMEDIATION] ${f.remediation || 'N/A'}</div>
+                    </div>
+                `}).join('')}
+            </div>
+        </div>
+
+        <div style="margin-top:50px; padding-top:20px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; font-size:11px; color:#94a3b8;">
+            <div>SecurePulse SOC Platform - Domain VAPT</div><div>Page 1</div>
+        </div>
+    `;
+
+    document.body.appendChild(element);
+    
+    html2pdf().set({
+        margin: [10, 10, 10, 10],
+        filename: `VAPT_${url.replace(/[^a-zA-Z0-9]/g,'_') || 'report'}_${now.toISOString().slice(0,10)}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    }).from(element).save().then(() => {
+        document.body.removeChild(element);
+    });
+}
+
 function copyVAPTJSON() {
   if (!lastVaptData) return;
   navigator.clipboard.writeText(JSON.stringify(lastVaptData, null, 2))
