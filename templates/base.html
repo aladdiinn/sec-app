@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{% block title %}SecurePulse{% endblock %} — SOC Command Center</title>
+    <title>{% block title %}BSmart SOC{% endblock %} — SOC Command Center</title>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet"/>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300c8ff'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>" />
     <link rel="stylesheet" href="/static/css/main.css?v=2" />
@@ -28,10 +28,7 @@
             <!-- Brand -->
             <div class="sb-brand" style="justify-content: space-between;">
                 <div style="display:flex; align-items:center; gap:9px;">
-                    <div class="sb-logo">
-                        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-                    </div>
-                    <div class="sb-title">SECURE<br>PULSE</div>
+                    <img src="/static/img/logo.png" alt="BSmart SOC" style="height: 38px; object-fit: contain; padding: 4px;">
                 </div>
                 <div id="sb-app-version" style="font-family:'Share Tech Mono', monospace; font-size:10px; color:var(--cyan); opacity:0.5; font-weight:bold;">v...</div>
             </div>
@@ -194,7 +191,7 @@
         <div style="background:var(--bg3); padding:12px 14px; border-radius:6px; font-size:11px; color:var(--text2); line-height:1.6; border-left:3px solid var(--amber)">
             <strong>📌 What this command automatically does on your targeted server:</strong>
             <ol style="margin:6px 0 0 18px; padding:0">
-                <li>Installs lightweight background log shipper daemon at <code style="color:var(--cyan)">/opt/securepulse/</code>.</li>
+                <li>Installs lightweight background log shipper daemon at <code style="color:var(--cyan)">/opt/bsmart/</code>.</li>
                 <li>Streams application log lines via outbound HTTP POST directly to SOC Center.</li>
                 <li><strong>Zero SSH credentials or SSH keys required</strong> — 100% secure push architecture.</li>
             </ol>

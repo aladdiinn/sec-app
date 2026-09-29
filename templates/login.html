@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set hide_nav = true %}
-{% block title %}Secure Access{% endblock %}
+{% block title %}BSmart SOC Login{% endblock %}
 
 {% block extra_css %}
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
@@ -374,6 +374,11 @@ body {
   <div class="login-grid"></div>
   <div class="login-sweep"></div>
 
+  
+  <div style="position:absolute; right: 10%; top: 50%; transform: translateY(-50%); opacity:0.9; pointer-events:none; z-index:1; display:flex; flex-direction:column; align-items:center;">
+    <img src="/static/img/logo.png" alt="BSmart SOC" style="height:220px; object-fit:contain; filter: drop-shadow(0 0 20px rgba(0, 229, 255, 0.4));">
+  </div>
+
   <!-- HUD decorative rings (right side) -->
   <div class="hud-ring hud-ring1"></div>
   <div class="hud-ring hud-ring2"></div>
@@ -391,15 +396,8 @@ body {
     <div class="c bl"></div><div class="c br"></div>
 
     <!-- Logo -->
-    <div class="lp-logo-row">
-      <div class="lp-logo-box">
-        <div class="lp-pulse"></div>
-        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-      </div>
-      <div>
-        <div class="lp-logo-name">SECUREPULSE</div>
-        <div class="lp-logo-sub">SECURE ACCESS</div>
-      </div>
+    <div class="lp-logo-row" style="justify-content: center; margin-bottom: 24px;">
+      <img src="/static/img/logo.png" alt="BSmart SOC" style="max-height: 70px; max-width: 100%; object-fit: contain;">
     </div>
 
     <div class="lp-div"></div>
