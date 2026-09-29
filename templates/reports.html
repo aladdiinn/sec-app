@@ -224,7 +224,7 @@
 
             // Populate Server Autocomplete
             const srvs = await apiFetch('/api/servers').catch(() => ({items:[]}));
-            const srvItems = Array.isArray(srvs) ? srvs : (srvs.items || []);
+            const srvItems = Array.isArray(srvs) ? srvs : (srvs.servers || srvs.items || []);
             const srvInput = document.getElementById('srv-search');
             const srvDropdown = document.getElementById('srv-autocomplete');
             
@@ -470,14 +470,8 @@
             const now = new Date();
             const c = caseDetails.case || { id: caseId, title: 'Security Incident', server_id: null };
             
-            // Generate realistic looking SHA-256 digest
-            async function generateHash(message) {
-                const msgBuffer = new TextEncoder().encode(message);
-                const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-                const hashArray = Array.from(new Uint8Array(hashBuffer));
-                return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-            }
-            const fakeDigest = await generateHash(c.id + now.getTime() + c.title);
+            // Generate realistic looking SHA-256 digest (without relying on crypto.subtle for HTTP support)
+            const fakeDigest = Array.from({length: 32}, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 
             // Filter alerts specifically to this case or incident title
             let caseAlerts = alerts.filter(a => a.case_id == caseId || a.id == caseId);
@@ -629,7 +623,7 @@
             else if (timeframe === '7d') hours = 168;
             
             const serversRes = await apiFetch('/api/servers');
-            const servers = Array.isArray(serversRes) ? serversRes : (serversRes.items || []);
+            const servers = Array.isArray(serversRes) ? serversRes : (serversRes.servers || serversRes.items || []);
             
             const q = query.toLowerCase();
             const server = servers.find(s => s.ip === q || s.ip_address === q || (s.hostname && s.hostname.toLowerCase() === q) || String(s.id) === q || (s.name && s.name.toLowerCase() === q) || (s.hostname && s.hostname.toLowerCase().includes(q)));

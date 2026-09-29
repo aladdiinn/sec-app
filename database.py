@@ -2076,7 +2076,8 @@ def create_report(title, date_from, date_to):
             top_commands = [{'command': r['command'], 'count': r['cnt']} for r in cur.fetchall()]
 
             cur.execute("SELECT COUNT(*) as total FROM login_history WHERE success = FALSE AND timestamp >= %s AND timestamp <= %s", (date_from, date_to))
-            failed_logins_total = cur.fetchone()['total'] if cur.fetchone() else 0
+            row = cur.fetchone()
+            failed_logins_total = row['total'] if row else 0
 
             content = {
                 'total_alerts': total_alerts,
