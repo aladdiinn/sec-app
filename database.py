@@ -2204,6 +2204,9 @@ def get_dashboard_counts(project_id=None):
         with conn.cursor() as cur:
             # Auto-mark servers offline if no contact for 3 minutes (180s)
             cur.execute("UPDATE servers SET status = 'offline' WHERE (last_seen < NOW() - INTERVAL '3 minutes' OR last_seen IS NULL) AND status = 'online' AND is_maintenance IS NOT TRUE;")
+            
+            # Rotate alerts older than 7 days
+            cur.execute("DELETE FROM alerts WHERE created_at < NOW() - INTERVAL '7 days';")
             conn.commit()
             
             sql_clause, params = _build_pid_filter("project_id", project_id)

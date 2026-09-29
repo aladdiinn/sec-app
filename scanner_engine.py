@@ -271,6 +271,23 @@ def analyze_http_headers(raw_url: str, follow_redirects: bool = True):
             "header": "Remove X-Powered-By Header",
             "recommendation": f"Technology stack exposed via X-Powered-By: '{powered_by}'. In PHP, set 'expose_php = Off' in php.ini. In Node.js/Express, use 'app.disable(\"x-powered-by\");'. In IIS, remove the custom header in web.config."
         })
+    for extra_hdr in ["x-aspnet-version", "x-aspnetmvc-version", "x-generator"]:
+        val = headers_dict.get(extra_hdr)
+        if val:
+            has_ver = bool(re.search(r'\d+\.\d+', val))
+            badge = "EXACT VERSION DISCLOSED" if has_ver else "SOFTWARE BANNER EXPOSED"
+            info_disclosure.append({
+                "key": extra_hdr,
+                "value": val,
+                "badge": badge,
+                "has_version": has_ver
+            })
+            current_score -= (10 if has_ver else 5)
+            recommendations.append({
+                "header": f"Remove {extra_hdr} Header",
+                "recommendation": f"Application version exposed via {extra_hdr}: '{val}'. This aids attackers in footprinting known vulnerabilities. Disable it in the server or application configuration."
+            })
+
 
     aspnet_version = headers_dict.get("x-aspnet-version")
     if aspnet_version:

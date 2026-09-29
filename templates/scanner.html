@@ -756,7 +756,6 @@
       <div class="scan-label">TARGET URL — HTTP SECURITY HEADER ANALYZER</div>
       <div class="scan-row">
         <input class="scan-input" id="hdr-url" type="text"
-               value="https://apraava-mdm.apdcl.co/login"
                placeholder="https://example.com/login"
                onkeydown="if(event.key==='Enter')scanHeaders()"/>
         <button class="scan-btn" id="hdr-btn" onclick="scanHeaders()">SCAN →</button>
@@ -859,7 +858,6 @@
       <div class="scan-label">DOMAIN VAPT — FULL VULNERABILITY ASSESSMENT & PENETRATION AUDIT</div>
       <div class="scan-row">
         <input class="scan-input" id="vapt-url" type="text"
-               value="https://apraava-mdm.apdcl.co/login"
                placeholder="https://example.com"
                onkeydown="if(event.key==='Enter')scanVAPT()"/>
         <button class="scan-btn" id="vapt-btn" onclick="scanVAPT()">RUN FULL VAPT →</button>
@@ -946,7 +944,7 @@
     <div class="scan-input-wrap">
       <div class="scan-label">SSL / TLS CERTIFICATE & CIPHER SUITE AUDIT</div>
       <div class="scan-row">
-        <input class="scan-input" id="ssl-url" placeholder="https://example.com" value="https://apraava-mdm.apdcl.co/login" onkeydown="if(event.key==='Enter')scanSSL()"/>
+        <input class="scan-input" id="ssl-url" placeholder="https://example.com" onkeydown="if(event.key==='Enter')scanSSL()"/>
         <button class="scan-btn" onclick="scanSSL()">SCAN →</button>
       </div>
     </div>
@@ -968,7 +966,7 @@
     <div class="scan-input-wrap">
       <div class="scan-label">COMMON SERVICE PORT SCANNER (TOP 30 PORTS)</div>
       <div class="scan-row">
-        <input class="scan-input" id="port-host" placeholder="apraava-mdm.apdcl.co" value="apraava-mdm.apdcl.co" onkeydown="if(event.key==='Enter')scanPorts()"/>
+        <input class="scan-input" id="port-host" placeholder="apraava-mdm.apdcl.co" onkeydown="if(event.key==='Enter')scanPorts()"/>
         <button class="scan-btn" onclick="scanPorts()">SCAN →</button>
       </div>
     </div>
@@ -989,7 +987,7 @@
     <div class="scan-input-wrap">
       <div class="scan-label">DNS RECONNAISSANCE & EMAIL SECURITY (SPF, DMARC, DKIM)</div>
       <div class="scan-row">
-        <input class="scan-input" id="dns-domain" placeholder="apdcl.co" value="apdcl.co" onkeydown="if(event.key==='Enter')scanDNS()"/>
+        <input class="scan-input" id="dns-domain" placeholder="apdcl.co" onkeydown="if(event.key==='Enter')scanDNS()"/>
         <button class="scan-btn" onclick="scanDNS()">LOOKUP →</button>
       </div>
     </div>
@@ -1013,7 +1011,7 @@
     <div class="scan-input-wrap">
       <div class="scan-label">WHOIS & RDAP DOMAIN REGISTRATION DATA</div>
       <div class="scan-row">
-        <input class="scan-input" id="whois-domain" placeholder="apdcl.co" value="apdcl.co" onkeydown="if(event.key==='Enter')scanWhois()"/>
+        <input class="scan-input" id="whois-domain" placeholder="apdcl.co" onkeydown="if(event.key==='Enter')scanWhois()"/>
         <button class="scan-btn" onclick="scanWhois()">LOOKUP →</button>
       </div>
     </div>
@@ -1031,7 +1029,7 @@
     <div class="scan-input-wrap">
       <div class="scan-label">TECHNOLOGY STACK & RUNTIME FINGERPRINTING</div>
       <div class="scan-row">
-        <input class="scan-input" id="tech-url" placeholder="https://example.com" value="https://apraava-mdm.apdcl.co/login" onkeydown="if(event.key==='Enter')scanTech()"/>
+        <input class="scan-input" id="tech-url" placeholder="https://example.com" onkeydown="if(event.key==='Enter')scanTech()"/>
         <button class="scan-btn" onclick="scanTech()">DETECT →</button>
       </div>
     </div>
