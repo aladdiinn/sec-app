@@ -512,6 +512,19 @@ def is_admin_user(request: Request) -> bool:
     role = (user.get("role") or "").lower()
     return bool(user.get("is_admin") or role in ("superuser", "admin"))
 
+
+def get_effective_project_id(request: Request):
+    pid = request.query_params.get("project_id") or request.session.get("project_id")
+    if pid:
+        try: return int(pid)
+        except: pass
+    if not is_admin_user(request):
+        uid = request.session.get("user_id")
+        if uid:
+            allowed = db.get_user_allowed_project_ids(uid)
+            return allowed if allowed else [-9999]
+    return None
+
 def render_template(request: Request, name: str, context: dict = None):
     """Safe template renderer providing request, session, project_id, user, and is_admin context."""
     if context is None:
