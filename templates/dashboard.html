@@ -697,11 +697,11 @@ async function loadDashboardData() {
         document.getElementById('noc-c-trouble').innerText = counts.trouble_servers ?? 0;
         document.getElementById('noc-c-maint').innerText = counts.maintenance_servers ?? 0;
         document.getElementById('noc-c-up').innerText = counts.online_servers ?? 0;
-        document.getElementById('noc-c-suspended').innerText = 0;
+        
 
         document.getElementById('sum-servers').innerText = counts.total_servers ?? 0;
-        document.getElementById('sum-apps').innerText = counts.total_apps ?? 0;
-        document.getElementById('sum-db').innerText = counts.total_db ?? 0;
+        
+        
 
         document.getElementById('sum-monitored').innerText = counts.total_servers ?? 0;
         document.getElementById('sum-active-issues').innerText = (counts.critical_alerts ?? 0) + (counts.trouble_servers ?? 0);
