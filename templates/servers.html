@@ -353,6 +353,18 @@
 
 {% block extra_js %}
 <script>
+function formatLocal(dateStr) {
+        if (!dateStr) return 'recent';
+        try {
+            let d = new Date(dateStr + (dateStr.endsWith('Z') || dateStr.includes('+') ? '' : 'Z'));
+            if (isNaN(d)) return dateStr;
+            return d.toLocaleString(undefined, {
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+        } catch(e) { return dateStr; }
+    }
+
     async function loadServers() {
         const grid = document.getElementById('servers-grid');
         grid.innerHTML = '<div style="grid-column:1/-1; display:flex; flex-direction:column; align-items:center; padding:100px; color:var(--cyan); font-family:var(--mono); letter-spacing:1px;" class="fade-in"><div class="loader-spinner" style="margin-bottom:20px;"></div><div>ESTABLISHING SECURE CONNECTION...</div></div>';
@@ -683,6 +695,16 @@
                 infStat.innerText = status.toUpperCase();
                 infStat.style.color = status === 'online' ? 'var(--green)' : 'var(--red)';
             }
+            const agentStat = document.getElementById('i3-info-agent');
+            if (agentStat) {
+                if (status === 'online') {
+                    agentStat.innerText = 'Agent Alive (Python Push Daemon)';
+                    agentStat.style.color = 'var(--green)';
+                } else {
+                    agentStat.innerText = 'Disconnected';
+                    agentStat.style.color = 'var(--red)';
+                }
+            }
 
             const cpu = srv.cpu_percent || 0;
             const ram = srv.memory_percent || 0;
@@ -723,7 +745,7 @@
                         <div style="background:rgba(255,255,255,0.03); border-left:3px solid ${isCrit?'var(--red)':'var(--amber)'}; padding:10px 14px; margin-bottom:8px; border-radius:4px">
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
                                 <strong style="color:var(--text); font-size:12px">${escapeHtml(a.title || a.alert_type)}</strong>
-                                <span style="font-size:10px; color:#64748b">${a.created_at_formatted || 'recent'}</span>
+                                <span style="font-size:10px; color:#64748b"></span>
                             </div>
                             <div style="font-size:11px; color:var(--text2)">${escapeHtml(a.message || '')}</div>
                         </div>`;
@@ -840,7 +862,7 @@
 
         if (relevantAlerts.length > 0) {
             const top = relevantAlerts[0];
-            modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:var(--text2); font-size:9px">(${top.created_at_formatted || 'recent'})</span>`;
+            modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:var(--text2); font-size:9px">()</span>`;
             modalBanner.style.display = 'flex';
         } else {
             modalBanner.style.display = 'none';

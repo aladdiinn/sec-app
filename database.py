@@ -975,7 +975,7 @@ def get_servers(project_id=None):
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE servers SET status = 'offline' WHERE last_seen < NOW() - INTERVAL '3 minutes' AND status = 'online' AND is_maintenance IS NOT TRUE;")
+            cur.execute("UPDATE servers SET status = 'offline' WHERE (last_seen < NOW() - INTERVAL '3 minutes' OR last_seen IS NULL) AND status = 'online' AND is_maintenance IS NOT TRUE;")
             conn.commit()
             sql_clause, params = _build_pid_filter("s.project_id", project_id)
             where_parts = []
@@ -1031,7 +1031,7 @@ def get_server_by_id(server_id: int):
         return None
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE servers SET status = 'offline' WHERE id = %s AND last_seen < NOW() - INTERVAL '3 minutes' AND status = 'online' AND is_maintenance IS NOT TRUE;", (server_id,))
+            cur.execute("UPDATE servers SET status = 'offline' WHERE id = %s AND (last_seen < NOW() - INTERVAL '3 minutes' OR last_seen IS NULL) AND status = 'online' AND is_maintenance IS NOT TRUE;", (server_id,))
             conn.commit()
             cur.execute("SELECT * FROM servers WHERE id = %s;", (server_id,))
             row = cur.fetchone()
@@ -2203,7 +2203,7 @@ def get_dashboard_counts(project_id=None):
     try:
         with conn.cursor() as cur:
             # Auto-mark servers offline if no contact for 3 minutes (180s)
-            cur.execute("UPDATE servers SET status = 'offline' WHERE last_seen < NOW() - INTERVAL '3 minutes' AND status = 'online' AND is_maintenance IS NOT TRUE;")
+            cur.execute("UPDATE servers SET status = 'offline' WHERE (last_seen < NOW() - INTERVAL '3 minutes' OR last_seen IS NULL) AND status = 'online' AND is_maintenance IS NOT TRUE;")
             conn.commit()
             
             sql_clause, params = _build_pid_filter("project_id", project_id)

@@ -651,6 +651,18 @@
 
 {% block extra_js %}
 <script>
+function formatLocal(dateStr) {
+        if (!dateStr) return 'recent';
+        try {
+            let d = new Date(dateStr + (dateStr.endsWith('Z') || dateStr.includes('+') ? '' : 'Z'));
+            if (isNaN(d)) return dateStr;
+            return d.toLocaleString(undefined, {
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+        } catch(e) { return dateStr; }
+    }
+
 let globalServersList = [];
 let activeModalServerId = null;
 
@@ -839,8 +851,23 @@ async function openImage3Modal(serverId) {
         document.getElementById('i3-info-db').innerText = srv.name || name;
         document.getElementById('i3-info-status').innerText = status.toUpperCase();
         document.getElementById('i3-info-status').style.color = status === 'online' ? 'var(--green)' : 'var(--red)';
-        document.getElementById('i3-info-agent').innerText = 'Agent Alive (Python Push Daemon)';
-        document.getElementById('i3-info-lastseen').innerText = srv.last_seen || srv.last_sudo_ago || 'Just now';
+        if (status === 'online') {
+            document.getElementById('i3-info-agent').innerText = 'Agent Alive (Python Push Daemon)';
+            document.getElementById('i3-info-agent').style.color = 'var(--green)';
+        } else {
+            document.getElementById('i3-info-agent').innerText = 'Disconnected';
+            document.getElementById('i3-info-agent').style.color = 'var(--red)';
+        }
+        let lsText = 'Just now';
+        if (srv.last_seen) {
+            try {
+                let d = new Date(srv.last_seen + (srv.last_seen.endsWith('Z') || srv.last_seen.includes('+') ? '' : 'Z'));
+                lsText = d.toLocaleString();
+            } catch(e) { lsText = srv.last_seen; }
+        } else if (srv.last_sudo_ago) {
+            lsText = srv.last_sudo_ago;
+        }
+        document.getElementById('i3-info-lastseen').innerText = lsText;
 
         // Metrics
         const cpu = srv.cpu_percent || 0;
@@ -898,7 +925,7 @@ async function openImage3Modal(serverId) {
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
                         <strong style="color:var(--text); font-size:13px; font-weight:700">${a.title || a.alert_type || 'Security Alert'}</strong>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <span style="font-size:10px; color:var(--text3); font-family:monospace">${a.created_at_formatted || 'recent'}</span>
+                            <span style="font-size:10px; color:var(--text3); font-family:monospace"></span>
                             <input type="checkbox" title="Mark Closed" style="cursor:pointer;" onchange="resolveSingleAlert(${a.id}, this)">
                         </div>
                     </div>
@@ -1035,7 +1062,7 @@ function updateModalSoarBanner() {
 
     if (relevantAlerts.length > 0) {
         const top = relevantAlerts[0];
-        modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:var(--text2); font-size:9px">(${top.created_at_formatted || 'recent'})</span>`;
+        modalBannerText.innerHTML = `<strong>${escapeHtml(top.title || top.alert_type)}</strong>: ${escapeHtml(top.message || '')} <span style="color:var(--text2); font-size:9px">()</span>`;
         modalBanner.style.display = 'flex';
     } else {
         modalBanner.style.display = 'none';
@@ -1243,7 +1270,7 @@ function renderModalLogs() {
                                 <strong style="color:var(--text); margin-left:8px">${escapeHtml(a.title || a.alert_type)}</strong>
                                 <div style="color:#cbd5e1; font-size:11px; margin-top:4px">${escapeHtml(a.message || '')}</div>
                             </div>
-                            <span style="color:var(--text2); font-size:9px; white-space:nowrap">${a.created_at_formatted || 'recent'}</span>
+                            <span style="color:var(--text2); font-size:9px; white-space:nowrap"></span>
                         </div>
                     `).join('')}
                 </div>`;
