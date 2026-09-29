@@ -28,20 +28,37 @@
             <!-- Brand -->
             <div class="sb-brand" style="justify-content: space-between;">
                   <div style="display:flex; align-items:center; gap:9px;">
-                      <div style="display:flex; align-items:center; justify-content:center; width:34px; height:34px; border:1px solid rgba(0,229,255,0.3); border-radius:6px; background:rgba(0,229,255,0.05); margin-right:4px;">
-          <svg viewBox="0 0 24 24" style="width: 20px; height: 20px; fill: none; stroke: #00e5ff; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.6));">
-  <polygon points="12,2 21,7 21,17 12,22 3,17 3,7"></polygon>
-  <path d="M12 2 L12 5 M21 7 L18 8.5 M21 17 L18 15.5 M12 22 L12 19 M3 17 L6 15.5 M3 7 L6 8.5" stroke-opacity="0.4"></path>
-  <path d="M 15 9 L 10 9 L 8 12 L 14 13 L 14 16 L 9 16" stroke-width="2"></path>
-  <circle cx="15" cy="9" r="0.5" fill="#00e5ff"></circle>
-  <circle cx="9" cy="16" r="0.5" fill="#00e5ff"></circle>
+                      <div style="display:flex; align-items:center; justify-content:center; width:38px; height:38px; border:1px solid rgba(0,191,255,0.3); border-radius:6px; background:rgba(0,191,255,0.05); margin-right:4px;">
+          <div style="width:32px; height:32px; display:flex; align-items:center; justify-content:center;">
+            <svg viewBox="0 0 100 100" style="width: 100%; height: 100%; filter: drop-shadow(0 0 10px rgba(0, 191, 255, 0.6));">
+    <defs>
+        <linearGradient id="padlockGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#00ffff" />
+            <stop offset="100%" stop-color="#0055ff" />
+        </linearGradient>
+    </defs>
+    <circle cx="50" cy="50" r="44" fill="none" stroke="#00bfff" stroke-width="1.5" stroke-dasharray="8 4 2 4 12 4" stroke-linecap="round" stroke-opacity="0.6">
+        <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="20s" repeatCount="indefinite" />
+    </circle>
+    <circle cx="50" cy="50" r="37" fill="none" stroke="#00bfff" stroke-width="0.75" stroke-opacity="0.4"></circle>
+    <circle cx="50" cy="50" r="31" fill="none" stroke="#00bfff" stroke-width="2.5" stroke-dasharray="20 10 40 10" stroke-linecap="round" stroke-opacity="0.8">
+        <animateTransform attributeName="transform" type="rotate" from="360 50 50" to="0 50 50" dur="15s" repeatCount="indefinite" />
+    </circle>
+    <circle cx="50" cy="13" r="2" fill="#00ffff"><animate attributeName="opacity" values="0.2;1;0.2" dur="3s" repeatCount="indefinite"/></circle>
+    <circle cx="87" cy="50" r="2" fill="#00ffff"><animate attributeName="opacity" values="0.2;1;0.2" dur="4s" repeatCount="indefinite"/></circle>
+    <circle cx="13" cy="50" r="2" fill="#00ffff"><animate attributeName="opacity" values="0.2;1;0.2" dur="5s" repeatCount="indefinite"/></circle>
+    <path d="M37 45 V 36 A 13 13 0 0 1 63 36 V 45" fill="none" stroke="url(#padlockGrad)" stroke-width="7" stroke-linecap="round"></path>
+    <rect x="27" y="44" width="46" height="34" rx="7" ry="7" fill="url(#padlockGrad)"></rect>
+    <circle cx="50" cy="55" r="4.5" fill="#020a17"></circle>
+    <path d="M48 57 L46 66 L54 66 L52 57 Z" fill="#020a17"></path>
 </svg>
+          </div>
       </div>
       <div style="display:flex; flex-direction:column; justify-content:center; line-height:1.2;">
           <div style="font-family:'Orbitron', sans-serif; font-size:16px; font-weight:700; letter-spacing:1px;">
-              <span style="color:#00e5ff;">B</span><span style="color:#ffffff;">Smart</span>
+              <span style="color:#00bfff;">B</span><span style="color:#ffffff;">Smart</span>
           </div>
-          <div style="font-family:'Share Tech Mono', monospace; font-size:8px; color:#00e5ff; letter-spacing:1px; opacity:0.8; white-space:nowrap;">
+          <div style="font-family:'Share Tech Mono', monospace; font-size:8px; color:#00bfff; letter-spacing:1px; opacity:0.8; white-space:nowrap;">
               BY BCITS SMARTER SOLUTIONS
           </div>
       </div>
