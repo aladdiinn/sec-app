@@ -1663,6 +1663,11 @@ def _check_unified_fim(server_id, data):
     # Process leftover audit events that didn't have a matching FIM file change
     for key, events in audit_map.items():
         if key in alerted_keys: continue
+        
+        # Noise Reduction: Skip extremely noisy kernel events that don't correlate to FIM
+        if key in ["session", "perm_mod", "logins", "mounts"]:
+            continue
+            
         last_event = events[-1]
         auid_str = last_event.get("auid", "unknown")
         actor = last_event.get("username", "unknown")
@@ -1763,11 +1768,11 @@ def _check_high_resource_processes(server_id, data):
         if 'ps aux' in pname.lower() or 'ps ' in pname.lower() or pname.lower().strip() == 'ps':
             continue
 
-        if cpu > 85.0:
+        if cpu > 350.0:
             _create_alert_dedup(
                 server_id, f'HIGH_CPU_{pid}', 'warning',
                 'Traffic Anomaly Alert',
-                f'Detection Rule [High Resource Anomaly]: Process {pname} (PID: {pid}) CPU at {cpu:.1f}% (>85% threshold).'
+                f'Detection Rule [High Resource Anomaly]: Process {pname} (PID: {pid}) CPU at {cpu:.1f}% (>350% threshold on multi-core).'
             )
         if mem > 85.0:
             _create_alert_dedup(
