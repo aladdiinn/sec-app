@@ -1363,6 +1363,101 @@ def _extract_audit_actor(log_lines, filepath):
                     
     return None, None
 
+# ── Maps syscall numbers to human-readable action verbs ──────────────────────
+_SYSCALL_ACTIONS = {
+    "2": "opened", "3": "closed", "4": "wrote to", "5": "read from",
+    "6": "linked", "7": "unlinked (deleted)", "8": "symlinked",
+    "9": "memory-mapped", "10": "modified protection of",
+    "11": "executed", "12": "changed directory to", "14": "modified permissions of",
+    "15": "changed owner of", "16": "modified attrs of",
+    "20": "accessed info of", "21": "accessed", "38": "renamed/moved",
+    "39": "deleted directory", "40": "created hardlink to",
+    "56": "cloned process", "57": "forked process", "59": "executed program",
+    "62": "sent signal to", "82": "renamed", "83": "created directory",
+    "84": "created device file", "85": "unlinked (deleted)",
+    "87": "deleted", "88": "removed directory", "105": "set UID to",
+    "106": "set GID to", "133": "created pipe", "257": "opened",
+    "258": "created directory", "259": "created device file", "260": "unlinked (deleted)",
+    "261": "renamed", "263": "deleted (unlinked)", "264": "renamed/moved",
+    "265": "created link to", "280": "opened", "316": "copied file range",
+    "35": "waited for",
+}
+
+_AUDIT_KEY_DESCRIPTIONS = {
+    "delete":          "File/Directory Deletion",
+    "scheduled_tasks": "Scheduled Task (Cron) Modification",
+    "identity":        "User Identity File Modification",
+    "priv_esc":        "Sudoers / Privilege Escalation File Modified",
+    "remote_access":   "SSH Configuration Modified",
+    "modules":         "Kernel Module Loaded/Unloaded",
+    "MAC-policy":      "Mandatory Access Control Policy Changed",
+    "time-change":     "System Time Modified",
+    "system-locale":   "System Locale/Hostname Changed",
+    "perm_mod":        "File Permission or Ownership Changed",
+    "logins":          "User Login Event",
+    "mounts":          "Filesystem Mount/Unmount",
+    "session":         "User Session Opened/Closed",
+    "scope":           "System Scope Change",
+    "actions":         "Admin Action Performed",
+}
+
+def _humanize_audit_event(key, actor, auid_str, raw_line):
+    """Convert a raw kernel audit event into a plain-English human-readable message."""
+    import re as _re
+
+    # Extract syscall number → action verb
+    sc_m = _re.search(r'syscall=(\d+)', raw_line)
+    action = _SYSCALL_ACTIONS.get(sc_m.group(1), "performed an action on") if sc_m else "triggered an event on"
+
+    # Extract the file/path being acted on (proctitle or CWD+OBJPATH)
+    path_m = _re.search(r'name="([^"]+)"', raw_line)
+    obj_path = path_m.group(1) if path_m else None
+
+    # Extract executed command (comm or exe)
+    comm_m = _re.search(r'comm="([^"]+)"', raw_line)
+    exe_m  = _re.search(r'exe="([^"]+)"', raw_line)
+    cmd_name = (comm_m.group(1) if comm_m else None) or \
+               (os.path.basename(exe_m.group(1)) if exe_m else None)
+
+    # Extract proctitle (full command including args) — hex or text
+    ptitle_m = _re.search(r'proctitle=([^\s]+)', raw_line)
+    proctitle = None
+    if ptitle_m:
+        pt = ptitle_m.group(1)
+        if pt.startswith('"'):
+            proctitle = pt.strip('"')
+        elif _re.match(r'^[0-9A-Fa-f]+$', pt):
+            try:
+                proctitle = bytes.fromhex(pt).decode('utf-8', errors='replace').replace('\x00', ' ').strip()
+            except Exception:
+                pass
+
+    # Get a clean key description
+    key_desc = _AUDIT_KEY_DESCRIPTIONS.get(key, key.replace('_', ' ').title())
+
+    # Build the human sentence
+    subject = f"User '{actor}'" if actor and actor not in ("unknown", "Unknown User") else "An unknown user"
+
+    if proctitle and len(proctitle) < 120:
+        cmd_part = f" using command `{proctitle}`"
+    elif cmd_name:
+        cmd_part = f" using `{cmd_name}`"
+    else:
+        cmd_part = ""
+
+    if obj_path:
+        obj_part = f" '{obj_path}'"
+    else:
+        obj_part = ""
+
+    # Compose final message
+    msg = f"{subject} {action}{obj_part}{cmd_part}."
+
+    # Add context about what the key means
+    msg = f"[{key_desc}] {msg}"
+
+    return msg
+
 def _get_rule_cache():
     """Returns a fresh rule state dict, reloading from DB at most once per 60s."""
     global _rule_cache, _rule_cache_ts
@@ -1481,18 +1576,24 @@ def _check_failed_logins(server_id, data):
     if len(recent_5min) >= brute_thresh:
         ips = list(set(ev[1] for ev in recent_5min if ev[1] != "unknown"))
         ip_str = ", ".join(ips[:3]) if ips else "external host"
+        users_hit = list(set(ev[2] for ev in recent_5min if ev[2] != "unknown"))[:3]
+        user_str = f" targeting account(s): {', '.join(users_hit)}" if users_hit else ""
         _create_alert_dedup(
             server_id, 'SSH_BRUTE_FORCE', 'critical',
-            'Auth Fail Alert',
-            f'Detection Rule [SSH Brute Force Attempt]: {len(recent_5min)} failed attempts in 5m from {ip_str}. {last_line}'
+            'SSH Brute Force Attack Detected',
+            f"{len(recent_5min)} failed SSH login attempts in the last 5 minutes from {ip_str}{user_str}. "
+            f"This pattern indicates an automated brute-force attack in progress. Consider blocking this IP immediately."
         )
     elif len(recent_10min) >= fail_thresh:
         ips = list(set(ev[1] for ev in recent_10min if ev[1] != "unknown"))
         ip_str = ", ".join(ips[:3]) if ips else "external host"
+        users_hit = list(set(ev[2] for ev in recent_10min if ev[2] != "unknown"))[:3]
+        user_str = f" targeting account(s): {', '.join(users_hit)}" if users_hit else ""
         _create_alert_dedup(
             server_id, 'AUTH_FAIL_THRESHOLD', 'warning',
-            'Auth Fail Alert',
-            f'Detection Rule [SSH Brute Force Attempt]: {len(recent_10min)} failed logins from {ip_str}. {last_line}'
+            'Multiple Failed SSH Logins',
+            f"{len(recent_10min)} failed SSH login attempts in the last 10 minutes from {ip_str}{user_str}. "
+            f"This may indicate a password-guessing attack or misconfigured service."
         )
 
 def _check_sudo_misuse(server_id, data):
@@ -1584,10 +1685,23 @@ def _check_sudo_misuse(server_id, data):
                     actor_str = f" by user '{real_actor}'"
                 else:
                     actor_str = ""
+                # Build a clean, plain-English message — no raw log dump
+                clean_text = text.strip()
+                # Try to extract the actual command/path from the text
+                cmd_match = re.search(r'COMMAND=(.+)', clean_text)
+                if cmd_match:
+                    clean_text = cmd_match.group(1).strip()
+                elif len(clean_text) > 120:
+                    clean_text = clean_text[:120] + "..."
+
+                human_msg = (
+                    f"{actor_str.strip() or 'A user'} executed: `{clean_text}`. "
+                    f"This matches the detection rule '{rule_name}'."
+                ).strip()
                 _create_alert_dedup(
                     server_id, atype, sev,
                     title,
-                    f'SOAR Detections [{rule_name}]{actor_str}: {text[:250]}'
+                    human_msg
                 )
                 break
 
@@ -1647,17 +1761,20 @@ def _check_unified_fim(server_id, data):
             
             _create_alert_dedup(
                 server_id, f'CORRELATED_FIM_{path.replace("/", "_")}', 'critical',
-                'Correlated File Modification Alert',
-                f"Detection Rule [Unified FIM & Audit]: '{path}' was maliciously modified by user '{actor}' (AUID: {auid_str})."
+                f'Critical File Tampered — {os.path.basename(path)}',
+                f"User '{actor}' modified the protected system file '{path}'. "
+                f"This file controls {'user identities' if 'passwd' in path or 'shadow' in path else 'sudo privileges' if 'sudoers' in path else 'scheduled tasks' if 'cron' in path else 'SSH access' if 'ssh' in path else 'system security'} "
+                f"and should never be changed outside of planned maintenance. Correlated with kernel audit event."
             )
         else:
             # Standalone FIM alert — try to find actor from raw audit/syslog lines
             actor, tool = _extract_audit_actor(log_lines, path)
-            actor_str = f" by user '{actor}' via {tool}" if actor else ""
+            actor_str = f" by user '{actor}' via `{tool}`" if actor else ""
+            change_verb = {"modified": "was modified", "created": "was created", "deleted": "was deleted"}.get(change_type.lower(), f"was {change_type}")
             _create_alert_dedup(
                 server_id, f'FIM_{path.replace("/", "_")}', 'critical',
-                'OS File Modification Alert',
-                f'Detection Rule [File Integrity Monitor]: {change_type} at {path}{actor_str}. {detail}'
+                f'File System Change — {os.path.basename(path)}',
+                f"The file '{path}' {change_verb}{actor_str}. {detail if detail else 'No additional context available.'}"
             )
 
     # Process leftover audit events that didn't have a matching FIM file change
@@ -1685,12 +1802,17 @@ def _check_unified_fim(server_id, data):
         else:
             severity = "warning"  # session, logins, mounts, perm_mod
         
-        title = f"{key.replace('_', ' ').title()} Alert by {actor}"
-        
+        # Map audit key → human-readable alert title
+        key_desc = _AUDIT_KEY_DESCRIPTIONS.get(key, key.replace('_', ' ').title())
+        title = f"{key_desc} Detected — {actor}"
+
+        # Build a plain-English correlated message (no raw log dump)
+        human_msg = _humanize_audit_event(key, actor, auid_str, line)
+
         _create_alert_dedup(
             server_id, f'AUDIT_{key}_{auid_str}', severity,
             title,
-            f"Detection Rule [Kernel Audit]: {key} event triggered by user '{actor}' (AUID: {auid_str}). {line[:200]}"
+            human_msg
         )
 
     log_lines = data.get("log_lines", []) or data.get("logs", [])
@@ -1698,10 +1820,19 @@ def _check_unified_fim(server_id, data):
     for item in log_lines:
         line = item.get("line", "") if isinstance(item, dict) else str(item)
         if fim_cmd_pat.search(line):
+            # Extract what was changed
+            perm_m = re.search(r'chmod\s+(\S+)\s+(\S+)', line)
+            own_m  = re.search(r'chown\s+(\S+)\s+(\S+)', line)
+            if perm_m:
+                human_perm_msg = f"File permissions changed to `{perm_m.group(1)}` on `{perm_m.group(2)}`. Broad permissions on system paths are a common attack vector for privilege escalation."
+            elif own_m:
+                human_perm_msg = f"File ownership changed to `{own_m.group(1)}` on `{own_m.group(2)}`. Changing ownership of system files can be a sign of privilege escalation."
+            else:
+                human_perm_msg = f"A permission or ownership change was detected on a critical system path."
             _create_alert_dedup(
                 server_id, 'FIM_COMMAND', 'warning',
-                'OS File Modification Alert',
-                f'Detection Rule [File Permission Modification]: {line[:250]}'
+                'System File Permission Changed',
+                human_perm_msg
             )
 
 def _check_port_scan(server_id, data):
