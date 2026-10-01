@@ -2,7 +2,10 @@ import os
 import logging
 import boto3
 from botocore.exceptions import ClientError
-import google.generativeai as genai
+try:
+    from google import genai
+except ImportError:
+    genai = None
 
 logger = logging.getLogger("ses_mailer")
 logger.setLevel(logging.INFO)
@@ -14,11 +17,13 @@ SES_SENDER_EMAIL = os.environ.get("SES_SENDER_EMAIL", "security@yourcompany.com"
 SES_RECIPIENT_EMAIL = os.environ.get("SES_RECIPIENT_EMAIL", "soc-team@yourcompany.com")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    llm_model = genai.GenerativeModel('gemini-1.5-flash')
-else:
-    llm_model = None
+_gemini_client = None
+if GEMINI_API_KEY and genai:
+    try:
+        # Use stable v1 API for Free Tier accounts
+        _gemini_client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1"})
+    except Exception as e:
+        logger.error(f"Failed to configure Gemini Client: {e}")
 
 def get_ses_client():
     key_id = os.environ.get("AWS_ACCESS_KEY_ID")
@@ -30,7 +35,7 @@ def get_ses_client():
 
 def generate_alert_analysis(alert_title: str, alert_type: str, message: str, server_ip: str, username: str = "root"):
     """Uses Gemini to generate the Analysis, Risk, and Recommendation for the email."""
-    if not llm_model:
+    if not _gemini_client:
         return {
             "analysis": "LLM API Key missing. Analysis unavailable.",
             "risk": "Unknown",
@@ -55,7 +60,7 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
     """
     
     try:
-        response = llm_model.generate_content(prompt)
+        response = _gemini_client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
         text = response.text.replace("```json", "").replace("```", "").strip()
         import json
         data = json.loads(text)
