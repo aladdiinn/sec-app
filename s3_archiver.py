@@ -68,7 +68,7 @@ def archive_logs_to_s3(db_conn):
             # 1. Group old logs by server_id, day, and log_type
             cur.execute("""
                 SELECT server_id, DATE(created_at) as log_date, log_type, COUNT(*) as count 
-                FROM logs 
+                FROM pushed_logs 
                 WHERE created_at < %s
                 GROUP BY server_id, DATE(created_at), log_type
             """, (cutoff_time,))
@@ -96,7 +96,7 @@ def archive_logs_to_s3(db_conn):
                 # 2. Fetch the actual logs for this specific type
                 cur.execute("""
                     SELECT id, log_type, source, message, created_at 
-                    FROM logs 
+                    FROM pushed_logs 
                     WHERE server_id = %s AND DATE(created_at) = %s AND (log_type = %s OR (log_type IS NULL AND %s IS NULL)) AND created_at < %s
                 """, (server_id, log_date, log_type, log_type, cutoff_time))
                 logs = cur.fetchall()
@@ -144,7 +144,7 @@ def archive_logs_to_s3(db_conn):
                 chunk_size = 1000
                 for i in range(0, len(log_ids_to_delete), chunk_size):
                     chunk = log_ids_to_delete[i:i + chunk_size]
-                    cur.execute("DELETE FROM logs WHERE id = ANY(%s)", (chunk,))
+                    cur.execute("DELETE FROM pushed_logs WHERE id = ANY(%s)", (chunk,))
                 
                 db_conn.commit()
                 logger.info(f"Successfully archived and deleted {len(log_dicts)} logs for {server_ip}.")
