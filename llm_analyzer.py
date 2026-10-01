@@ -22,18 +22,25 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # ── Gemini Client (new google-genai SDK) ─────────────────────────────────────
 _gemini_client = None
+
+# Free-tier confirmed models in priority order.
+# v1 API is the stable channel - free tier accounts must use this.
 _GEMINI_MODELS = [
-    "gemini-3.6-flash",
     "gemini-2.0-flash",
     "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-1.5-flash-8b",
+    "gemini-1.0-pro",
 ]
 
 def _get_client():
     global _gemini_client
     if _gemini_client is None and GEMINI_API_KEY:
         from google import genai
-        _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        # Use stable v1 API — v1beta causes 404s on free-tier accounts
+        _gemini_client = genai.Client(
+            api_key=GEMINI_API_KEY,
+            http_options={"api_version": "v1"}
+        )
     return _gemini_client
 
 
