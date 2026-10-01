@@ -290,20 +290,20 @@ Analyse it for security threats, errors, anomalies, and performance issues.
 Be specific: reference actual error messages and timestamps you see.
 Be concise: maximum 8 bullet points per section.
 
-IMPORTANT: When discussing an error, anomaly, or threat, YOU MUST include a short snippet of the actual log line (e.g. `[time] ERROR: connection refused...`) so the user can see exactly what happened.
-
 Output STRICT HTML (no markdown, no backticks):
 
 <div style="color: #c9d1d9; font-family: sans-serif; font-size: 13px; line-height: 1.7;">
     <h4 style="color: #58a6ff; margin-bottom: 5px; margin-top: 0;">🔍 Key Observations</h4>
     <ul style="margin-top: 5px; padding-left: 20px;">
-        <li>Observation text... <br><span style="color:#8b949e;font-family:monospace;font-size:11px;background:rgba(255,255,255,0.05);padding:2px 4px;border-radius:3px;">[10:23:11] example log snippet...</span></li>
+        <li>...</li>
     </ul>
 
     <h4 style="color: #ff7b72; margin-bottom: 5px; margin-top: 15px;">⚠️ Security & Risk Findings</h4>
-    <p style="margin-top: 5px;">Description of the risk...</p>
-    <div style="color:#8b949e;font-family:monospace;font-size:11px;background:rgba(255,255,255,0.05);padding:6px;border-radius:4px;margin-top:4px;margin-bottom:10px;">
-        Evidence: [10:25:00] failed password for root
+    <p style="margin-top: 5px;">...</p>
+
+    <h4 style="color: #d2a8ff; margin-bottom: 5px; margin-top: 15px;">🔥 Critical Log Snippets (Evidence)</h4>
+    <div style="background: rgba(0,0,0,0.3); padding: 8px; border-left: 3px solid #d2a8ff; font-family: monospace; font-size: 11px; margin-top: 5px;">
+        Quote the 1 to 3 most critical exact log lines here, including timestamps. If none, say "No critical errors found."
     </div>
 
     <h4 style="color: #3fb950; margin-bottom: 5px; margin-top: 15px;">✅ Recommendations</h4>
