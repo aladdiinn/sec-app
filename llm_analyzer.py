@@ -23,10 +23,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 # ── Gemini Client (new google-genai SDK) ─────────────────────────────────────
 _gemini_client = None
 _GEMINI_MODELS = [
+    "gemini-3.6-flash",
     "gemini-2.0-flash",
     "gemini-1.5-flash",
     "gemini-1.5-pro",
-    "gemini-2.5-flash",
 ]
 
 def _get_client():
