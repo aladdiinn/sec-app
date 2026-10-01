@@ -5408,17 +5408,21 @@ async def api_fetch_log_lines(request: Request):
                 logger.warning(f"Error fetching remote SSH logs from {host}: {ex_ssh}")
 
     # 4. Priority 4: Read REAL Linux system log files & systemd journalctl directly from server disk (LOCAL SERVER ONLY)
-    is_local_target = False
-    if sid:
-        srv_target = db.get_server_by_id(sid)
-        if srv_target:
-            t_ip = srv_target.get("ip_address") or srv_target.get("ip") or ""
-            if t_ip in ("127.0.0.1", "localhost", "0.0.0.0"):
-                is_local_target = True
-    else:
-        is_local_target = True
+    def _fetch_local_logs():
+        local_lines = []
+        is_local_target = False
+        if sid:
+            srv_target = db.get_server_by_id(sid)
+            if srv_target:
+                t_ip = srv_target.get("ip_address") or srv_target.get("ip") or ""
+                if t_ip in ("127.0.0.1", "localhost", "0.0.0.0"):
+                    is_local_target = True
+        else:
+            is_local_target = True
 
-    if not lines and is_local_target and (not log_path or (log_type and log_type.lower() in ["syslog", "sys", "auth"])):
+        if not is_local_target or (log_path and log_type and log_type.lower() not in ["syslog", "sys", "auth", "tomcat", "nginx", "haproxy", "other", "custom"]):
+            return local_lines
+
         sys_paths = []
         lt = (log_type or "").lower()
         if not lt or lt in ["syslog", "sys"]:
@@ -5461,7 +5465,7 @@ async def api_fetch_log_lines(request: Request):
                                 except Exception:
                                     pass
 
-                            lines.append({
+                            local_lines.append({
                                 "time": log_time,
                                 "level": lvl,
                                 "source": f"{stype}/{os.path.basename(filepath)}",
@@ -5495,7 +5499,7 @@ async def api_fetch_log_lines(request: Request):
                         except Exception:
                             pass
 
-                    lines.append({
+                    local_lines.append({
                         "time": log_time,
                         "level": lvl,
                         "source": "syslog/journalctl",
@@ -5503,6 +5507,11 @@ async def api_fetch_log_lines(request: Request):
                     })
             except Exception:
                 pass
+        
+        return local_lines
+
+    if not lines and (not log_path or (log_type and log_type.lower() in ["syslog", "sys", "auth", "tomcat", "nginx", "haproxy", "other", "custom"])):
+        lines.extend(await run_in_threadpool(_fetch_local_logs))
 
     # 5. DataDog Live Telemetry Stream fallback if no real log files exist on dev environment
     if not lines and not log_path:
