@@ -5162,6 +5162,7 @@ async def api_delete_log_config(config_id: int):
 @app.post("/api/agent/push-logs")
 @app.post("/api/logs/push")
 async def api_push_agent_logs(request: Request):
+    from fastapi.concurrency import run_in_threadpool
     try:
         body = await request.json()
     except Exception:
@@ -5173,27 +5174,31 @@ async def api_push_agent_logs(request: Request):
     client_ip = request.client.host if request.client else None
     
     if server_id:
-        srv = db.get_server_by_id(server_id)
+        srv = await run_in_threadpool(db.get_server_by_id, server_id)
         if not srv: server_id = None
 
     if not server_id and server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
-        srv = db.get_server_by_ip(server_ip)
+        srv = await run_in_threadpool(db.get_server_by_ip, server_ip)
         if srv: server_id = srv.get("id")
 
     if not server_id and client_ip and client_ip not in ("127.0.0.1", "localhost"):
-        srv = db.get_server_by_ip(client_ip)
+        srv = await run_in_threadpool(db.get_server_by_ip, client_ip)
         if srv: server_id = srv.get("id")
 
     if not server_id and hostname and hostname.lower() not in ("localhost", "target-node"):
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (hostname, hostname))
-                    r = cur.fetchone()
-                    if r: server_id = r["id"] if isinstance(r, dict) else r[0]
-            except Exception: pass
-            finally: conn.close()
+        def _get_server_id_by_host():
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (hostname, hostname))
+                        r = cur.fetchone()
+                        if r: return r["id"] if isinstance(r, dict) else r[0]
+                except Exception: pass
+                finally: conn.close()
+            return None
+        fetched_id = await run_in_threadpool(_get_server_id_by_host)
+        if fetched_id: server_id = fetched_id
 
     raw_lines = body.get("lines") or body.get("logs") or []
     if isinstance(raw_lines, str):
@@ -5205,7 +5210,7 @@ async def api_push_agent_logs(request: Request):
     if not raw_lines:
         return {"ok": True, "count": 0}
 
-    saved_count = db.push_log_entries(config_id=config_id, server_id=server_id, lines=raw_lines)
+    saved_count = await run_in_threadpool(db.push_log_entries, config_id=config_id, server_id=server_id, lines=raw_lines)
 
     # Run real-time SIEM / IDS / IPS Detection Engine on inbound pushed logs
     if server_id:
@@ -5236,6 +5241,7 @@ async def api_push_agent_logs(request: Request):
 
 @app.post("/api/logs/fetch")
 async def api_fetch_log_lines(request: Request):
+    from fastapi.concurrency import run_in_threadpool
     try:
         body = await request.json()
     except Exception:
@@ -5253,8 +5259,8 @@ async def api_fetch_log_lines(request: Request):
         limit = 100
     limit = max(10, min(1000, limit))
 
+    configs = await run_in_threadpool(db.get_log_configs, server_id=sid) if sid else await run_in_threadpool(db.get_log_configs)
     lines = []
-    configs = db.get_log_configs(server_id=sid) if sid else db.get_log_configs()
 
     matching_cfg = None
     if log_path:
@@ -5266,7 +5272,7 @@ async def api_fetch_log_lines(request: Request):
     # 1. First priority: Fetch logs pushed by push agents from pushed_logs table
     cfg_id = matching_cfg.get("id") if matching_cfg else None
     db_limit = 3000 if (preset or search) else limit
-    pushed = db.get_pushed_logs(config_id=cfg_id, server_id=sid, limit=db_limit, source=log_path, log_type=log_type)
+    pushed = await run_in_threadpool(db.get_pushed_logs, config_id=cfg_id, server_id=sid, limit=db_limit, source=log_path, log_type=log_type)
     if pushed:
         for pl in pushed:
             msg = pl.get("msg", "")
@@ -5366,7 +5372,7 @@ async def api_fetch_log_lines(request: Request):
                     logger.warning(f"Error reading local log file {lp}: {ex_read}")
 
     # 3. Third priority: Remote SSH log tailing if configured
-    srv = db.get_server_by_id(sid) if sid else None
+    srv = await run_in_threadpool(db.get_server_by_id, sid) if sid else None
     if not lines and (srv or matching_cfg or log_path):
         host = (srv.get("ip_address") or srv.get("ip")) if srv else (matching_cfg.get("ip") if matching_cfg else None)
         if host and host not in ["127.0.0.1", "localhost", "172.31.6.247"]:

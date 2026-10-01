@@ -3208,21 +3208,6 @@ def get_pushed_logs(config_id=None, server_id=None, limit=100, source=None, log_
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS pushed_logs (
-                    id SERIAL PRIMARY KEY,
-                    config_id INT,
-                    server_id INT,
-                    log_level VARCHAR(16) DEFAULT 'INFO',
-                    source VARCHAR(255),
-                    message TEXT NOT NULL,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_server_id ON pushed_logs(server_id);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_source ON pushed_logs(source);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_srv_src ON pushed_logs(server_id, source);")
-            
             where_clauses = []
             params = []
             if config_id:
