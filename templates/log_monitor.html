@@ -318,13 +318,21 @@
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:10px">
                 <div style="display:flex; align-items:center; gap:16px;">
                     <h3 style="margin:0; color:#c9d1d9; font-family:var(--orbitron); font-size:16px; letter-spacing:2px">✨ AI LOG ANALYZER</h3>
-                    <span id="llm-target-label" style="font-size:10px; color:var(--text3); font-family:var(--mono); background:var(--bg3); padding:4px 8px; border-radius:4px;">Target: Global / All Logs</span>
+                    <span id="llm-target-label" style="font-size:10px; color:var(--text3); font-family:var(--mono); background:var(--bg3); padding:4px 8px; border-radius:4px;">Log Type Filter: ALL</span>
                 </div>
                 <button class="btn btn-ghost" onclick="closeLlmModal()" style="padding:4px 12px; font-size:16px; color:var(--red); border:1px solid rgba(255,59,92,0.4)">✕</button>
             </div>
             
-            <div style="display:flex; gap:12px; align-items:center; margin-bottom:16px">
-                <label style="font-size:11px; color:var(--cyan); font-weight:bold;">SELECT TIME PERIOD:</label>
+            <div style="display:flex; gap:12px; align-items:center; margin-bottom:16px; flex-wrap:wrap;">
+                <label style="font-size:11px; color:var(--cyan); font-weight:bold;">TARGET SERVER:</label>
+                <select id="llm-server-selector" class="glass mono" style="padding:6px 12px; font-size:12px; border-radius:4px; color:white; max-width:280px;">
+                    <option value="0">Global Stream (All Servers)</option>
+                    {% for srv in servers %}
+                    <option value="{{ srv.id }}">{{ srv.hostname }} ({{ srv.ip_address }})</option>
+                    {% endfor %}
+                </select>
+                
+                <label style="font-size:11px; color:var(--cyan); font-weight:bold; margin-left:12px;">TIME PERIOD:</label>
                 <select id="llm-time-period" class="glass mono" style="padding:6px 12px; font-size:12px; border-radius:4px; color:white;">
                     <option value="1hr">Last 1 Hour</option>
                     <option value="3hr">Last 3 Hours</option>
@@ -1282,19 +1290,21 @@ function openLlmModal() {
     document.getElementById('llm-modal-overlay').style.display = 'block';
     document.getElementById('llm-analyzer-modal').style.display = 'block';
     
-    // Update target label so the user knows exactly what they are analyzing
+    // Pre-select the server from the outside state if possible
     const sId = selectedServerId || 0;
-    const logType = currentServiceType || 'all';
-    
-    let targetText = "Global Stream";
-    if (sId) {
-        const activeSrv = document.querySelector(`.server-item-row[onclick="selectServerFilter('${sId}', this)"]`);
-        if (activeSrv) {
-            const hostDiv = activeSrv.querySelector('div:nth-child(2) > div:nth-child(1)');
-            if (hostDiv) targetText = hostDiv.innerText.trim();
+    const srvSelect = document.getElementById('llm-server-selector');
+    if (srvSelect) {
+        // Only set it if the option exists
+        const opt = srvSelect.querySelector(`option[value="${sId}"]`);
+        if (opt) {
+            srvSelect.value = sId;
+        } else {
+            srvSelect.value = "0";
         }
     }
-    document.getElementById('llm-target-label').innerText = `Target: ${targetText} | Log Type: ${logType.toUpperCase()}`;
+    
+    const logType = currentServiceType || 'all';
+    document.getElementById('llm-target-label').innerText = `Log Type Filter: ${logType.toUpperCase()}`;
 }
 
 function closeLlmModal() {
@@ -1305,19 +1315,18 @@ function closeLlmModal() {
 async function analyzeWithLlm() {
     const timePeriod = document.getElementById('llm-time-period').value;
     const container = document.getElementById('llm-result-container');
+    const srvSelect = document.getElementById('llm-server-selector');
     
-    // We get the server and type from the global state in log_monitor.js
-    const sId = selectedServerId || 0; // 0 means global
+    // Get the server from the modal dropdown
+    const sId = srvSelect ? parseInt(srvSelect.value) : 0;
     const logType = currentServiceType || '';
     
-    // Find the ip from the selected server item
+    // Find the ip from the selected option text
     let sIp = "";
-    if (sId) {
-        const activeSrv = document.querySelector(`.server-item-row[onclick="selectServerFilter('${sId}', this)"]`);
-        if (activeSrv) {
-            const ipDiv = activeSrv.querySelector('div:nth-child(2) > div:nth-child(2)');
-            if (ipDiv) sIp = ipDiv.innerText.trim();
-        }
+    if (sId && srvSelect && srvSelect.selectedIndex >= 0) {
+        const txt = srvSelect.options[srvSelect.selectedIndex].text;
+        const match = txt.match(/\(([^)]+)\)/);
+        if (match) sIp = match[1];
     }
     
     container.innerHTML = `<div style="text-align:center; padding:40px; color:#8957e5; font-family:var(--orbitron);">✨ AI is analyzing ${timePeriod} of logs... Please wait...</div>`;
