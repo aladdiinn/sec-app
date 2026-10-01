@@ -313,7 +313,7 @@
         </div>
 
         <!-- LLM Analyzer Modal -->
-        <div id="llm-modal-overlay" onclick="closeLlmModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:998; backdrop-filter:blur(4px)"></div>
+        <div id="llm-modal-overlay" onclick="closeLlmModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:998;"></div>
         <div id="llm-analyzer-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:24px 28px; border-radius:var(--radius-lg); z-index:999; width:1000px; max-width:95vw; min-height:400px; max-height:88vh; overflow-y:auto; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid #8957e5">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:10px">
                 <div style="display:flex; align-items:center; gap:16px;">
@@ -343,7 +343,7 @@
                     <option value="15days">Last 15 Days</option>
                     <option value="1month">Last 1 Month</option>
                 </select>
-                <button class="btn btn-primary" onclick="analyzeWithLlm()" style="padding:6px 16px; font-size:11px; font-weight:600; background: linear-gradient(45deg, #1f6feb, #8957e5); border:none;">
+                <button id="llm-analyze-btn" class="btn btn-primary" onclick="analyzeWithLlm()" style="padding:6px 16px; font-size:11px; font-weight:600; background: linear-gradient(45deg, #1f6feb, #8957e5); border:none;">
                     ANALYZE NOW
                 </button>
             </div>
@@ -1330,6 +1330,13 @@ async function analyzeWithLlm() {
         if (match) sIp = match[1];
     }
     
+    const analyzeBtn = document.getElementById('llm-analyze-btn');
+    if (analyzeBtn) {
+        analyzeBtn.disabled = true;
+        analyzeBtn.innerHTML = "ANALYZING...";
+        analyzeBtn.style.opacity = "0.7";
+    }
+    
     container.innerHTML = `<div style="text-align:center; padding:40px; color:#8957e5; font-family:var(--orbitron);">✨ AI is analyzing ${timePeriod} of logs... Please wait...</div>`;
     
     try {
@@ -1358,6 +1365,12 @@ async function analyzeWithLlm() {
         }
     } catch (e) {
         container.innerHTML = `<div style="color:var(--red); padding:20px;">Failed to connect to AI analyzer: ${e}</div>`;
+    } finally {
+        if (analyzeBtn) {
+            analyzeBtn.disabled = false;
+            analyzeBtn.innerHTML = "ANALYZE NOW";
+            analyzeBtn.style.opacity = "1";
+        }
     }
 }
 
