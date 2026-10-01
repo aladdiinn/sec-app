@@ -10,7 +10,7 @@ except ImportError:
 logger = logging.getLogger("ses_mailer")
 logger.setLevel(logging.INFO)
 
-AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+AWS_REGION = os.environ.get("SES_AWS_REGION") or os.environ.get("AWS_REGION", "us-east-1")
 # For SES to work, the sender email MUST be verified in the AWS SES console.
 SES_SENDER_EMAIL = os.environ.get("SES_SENDER_EMAIL", "security@yourcompany.com")
 # Where the alerts should be sent
@@ -26,8 +26,8 @@ if GEMINI_API_KEY and genai:
         logger.error(f"Failed to configure Gemini Client: {e}")
 
 def get_ses_client():
-    key_id = os.environ.get("AWS_ACCESS_KEY_ID")
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+    key_id = os.environ.get("SES_AWS_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
+    secret_key = os.environ.get("SES_AWS_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY")
     if key_id and secret_key:
         return boto3.client('ses', region_name=AWS_REGION, aws_access_key_id=key_id, aws_secret_access_key=secret_key)
     else:

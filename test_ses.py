@@ -5,7 +5,7 @@ from botocore.exceptions import ClientError
 
 load_dotenv()
 
-AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+AWS_REGION = os.environ.get("SES_AWS_REGION") or os.environ.get("AWS_REGION", "us-east-1")
 SES_SENDER_EMAIL = os.environ.get("SES_SENDER_EMAIL")
 SES_RECIPIENT_EMAIL = os.environ.get("SES_RECIPIENT_EMAIL")
 
@@ -21,8 +21,8 @@ if not SES_SENDER_EMAIL or not SES_RECIPIENT_EMAIL:
 try:
     print("\nAttempting to connect to AWS SES...")
     # Explicitly pull keys in case Boto3 is missing them
-    key_id = os.environ.get("AWS_ACCESS_KEY_ID")
-    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+    key_id = os.environ.get("SES_AWS_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
+    secret_key = os.environ.get("SES_AWS_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY")
     
     if not key_id or not secret_key:
         print("❌ ERROR: AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY is missing in .env")
