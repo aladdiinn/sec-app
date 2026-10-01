@@ -22,7 +22,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 # Initialize Gemini
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    llm_model = genai.GenerativeModel('gemini-1.5-flash')
+    llm_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 else:
     llm_model = None
 
@@ -191,6 +191,23 @@ def analyze_logs(server_id: int, server_ip: str, log_type: str, time_period_str:
     
     try:
         response = llm_model.generate_content(prompt)
+    except Exception as e:
+        if "404" in str(e) or "not found" in str(e).lower():
+            # Fallback 1: gemini-1.5-pro-latest
+            try:
+                fallback_model = genai.GenerativeModel('gemini-1.5-pro-latest')
+                response = fallback_model.generate_content(prompt)
+            except Exception as e2:
+                if "404" in str(e2) or "not found" in str(e2).lower():
+                    # Fallback 2: Legacy gemini-pro
+                    legacy_model = genai.GenerativeModel('gemini-pro')
+                    response = legacy_model.generate_content(prompt)
+                else:
+                    raise e2
+        else:
+            raise e
+            
+    try:
         # Strip any markdown code blocks if the model ignores the strict instruction
         html_content = response.text.replace("```html", "").replace("```", "").strip()
         
