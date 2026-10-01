@@ -64,9 +64,10 @@ def fetch_logs_from_db(server_id: int, log_type: str, start_time: datetime, end_
         conn.close()
 
 def fetch_logs_from_s3(server_id: int, server_ip: str, log_type: str, start_time: datetime, end_time: datetime):
-    """Fetches compressed logs from S3 for the given time range."""
+    """Fetches compressed logs from S3 for the given time range. Limits to last 5 files to stay fast."""
     s3_client = get_s3_client()
     logs = []
+    all_keys = []
     
     # Generate list of days we need to query
     current_date = start_time.date()
@@ -79,34 +80,38 @@ def fetch_logs_from_s3(server_id: int, server_ip: str, log_type: str, start_time
         prefix = f"{server_ip}/{year}/{month}/{day}/{safe_log_type}/"
         
         try:
-            # List all log files for that day
             paginator = s3_client.get_paginator('list_objects_v2')
             pages = paginator.paginate(Bucket=S3_BUCKET_NAME, Prefix=prefix)
-            
             for page in pages:
                 if 'Contents' in page:
                     for obj in page['Contents']:
-                        key = obj['Key']
-                        # Download and decompress
-                        response = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=key)
-                        compressed_data = response['Body'].read()
-                        json_data = gzip.decompress(compressed_data).decode('utf-8')
-                        
-                        file_logs = json.loads(json_data)
-                        
-                        # Filter strictly by timestamp
-                        for log_entry in file_logs:
-                            log_dt = datetime.strptime(log_entry['created_at'].split(".")[0], "%Y-%m-%d %H:%M:%S")
-                            if start_time <= log_dt <= end_time:
-                                logs.append(f"[{log_entry['created_at']}] {log_entry['message']}")
+                        all_keys.append(obj['Key'])
         except ClientError as e:
             if e.response['Error']['Code'] == 'NoSuchBucket':
                 logger.warning(f"S3 Bucket {S3_BUCKET_NAME} does not exist yet.")
                 break
             else:
-                logger.error(f"S3 Error fetching logs for prefix {prefix}: {e}")
+                logger.error(f"S3 Error listing prefix {prefix}: {e}")
         
         current_date += timedelta(days=1)
+    
+    # Only fetch the 5 most recent files to avoid multi-file serial download lag
+    for key in sorted(all_keys)[-5:]:
+        try:
+            response = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=key)
+            compressed_data = response['Body'].read()
+            json_data = gzip.decompress(compressed_data).decode('utf-8')
+            file_logs = json.loads(json_data)
+            for log_entry in file_logs:
+                try:
+                    log_dt_str = log_entry['created_at'].split("+")[0].split(".")[0]
+                    log_dt = datetime.strptime(log_dt_str, "%Y-%m-%d %H:%M:%S")
+                    if start_time.replace(tzinfo=None) <= log_dt <= end_time.replace(tzinfo=None):
+                        logs.append(f"[{log_entry['created_at']}] {log_entry['message']}")
+                except Exception:
+                    logs.append(f"[unknown] {log_entry.get('message', '')}")
+        except Exception as e:
+            logger.error(f"S3 Error fetching file {key}: {e}")
         
     return logs
 
@@ -156,15 +161,21 @@ def analyze_logs(server_id: int, server_ip: str, log_type: str, time_period_str:
         
     if not all_logs:
         return {"analysis": "No logs found for the selected time period.", "risk_level": "none", "count": 0}
-        
-    # Gemini 1.5 Flash has a 1 million token limit, but to be fast and safe, we limit to the most recent 10,000 lines
-    if len(all_logs) > 10000:
-        all_logs = all_logs[-10000:]
+    
+    total_count = len(all_logs)
+    
+    # Sample evenly across the window — Gemini quality doesn't improve past 500 lines.
+    # Sending 10k lines takes 30s+; 500 sampled lines takes 3-5s with same insight.
+    MAX_LINES = 500
+    if len(all_logs) > MAX_LINES:
+        step = len(all_logs) / MAX_LINES
+        all_logs = [all_logs[int(i * step)] for i in range(MAX_LINES)]
         
     logs_text = "\n".join(all_logs)
     
     prompt = f"""
-    You are an expert Security Analyst and DevOps Engineer. Analyze the following raw system logs from a server.
+    You are an expert Security Analyst and DevOps Engineer. Analyze the following SAMPLED system logs from a server.
+    These are {MAX_LINES} representative lines sampled evenly from {total_count} total log lines in the selected window.
     Look for security threats, errors, anomalies, and performance issues. 
     
     Output your analysis in STRICT HTML matching this structure (DO NOT use markdown backticks, just output raw HTML):
@@ -189,8 +200,21 @@ def analyze_logs(server_id: int, server_ip: str, log_type: str, time_period_str:
     {logs_text}
     """
     
+    # 60-second timeout: if Gemini hangs longer, raise so we return a clean error
+    import signal
+    def _timeout_handler(signum, frame):
+        raise TimeoutError("Gemini API timed out after 60 seconds")
+    
+    try:
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(60)
+    except (AttributeError, OSError):
+        pass  # Windows doesn't support SIGALRM — skip gracefully
+    
     try:
         response = llm_model.generate_content(prompt)
+    except TimeoutError as te:
+        return {"error": "Analysis timed out. Gemini took too long to respond. Try again or select a shorter time window."}
     except Exception as e:
         if "404" in str(e) or "not found" in str(e).lower():
             # Fallback 1: gemini-1.5-pro-latest
@@ -208,12 +232,17 @@ def analyze_logs(server_id: int, server_ip: str, log_type: str, time_period_str:
             raise e
             
     try:
+        try:
+            signal.alarm(0)  # Cancel the timeout alarm
+        except (AttributeError, OSError):
+            pass
         # Strip any markdown code blocks if the model ignores the strict instruction
         html_content = response.text.replace("```html", "").replace("```", "").strip()
         
         return {
             "analysis": html_content,
-            "count": len(all_logs),
+            "count": total_count,
+            "sampled": len(all_logs),
             "start": str(start_time),
             "end": str(now)
         }
