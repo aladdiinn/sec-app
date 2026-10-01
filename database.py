@@ -3159,38 +3159,40 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                             cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
                         except Exception: pass
 
-                    # 1. 24-Hour Expiration: Delete ALL logs older than 24 hours
-                try:
-                    cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '1 day';")
-                except Exception: pass
-                
-                # 2. Strict Limit: Keep exactly latest 1000 lines per log type.
-                if config_id:
-                    try:
-                        cur.execute("""
-                            DELETE FROM pushed_logs 
-                            WHERE config_id = %s 
-                              AND id NOT IN (
-                                  SELECT id FROM (
-                                      SELECT id, row_number() OVER (PARTITION BY COALESCE(log_type, 'other') ORDER BY id DESC) as rn 
-                                      FROM pushed_logs WHERE config_id = %s
-                                  ) t WHERE t.rn <= 1000
-                              );
-                        """, (config_id, config_id))
-                    except Exception: pass
-                elif server_id:
-                    try:
-                        cur.execute("""
-                            DELETE FROM pushed_logs 
-                            WHERE server_id = %s 
-                              AND id NOT IN (
-                                  SELECT id FROM (
-                                      SELECT id, row_number() OVER (PARTITION BY COALESCE(log_type, 'other') ORDER BY id DESC) as rn 
-                                      FROM pushed_logs WHERE server_id = %s
-                                  ) t WHERE t.rn <= 1000
-                              );
-                        """, (server_id, server_id))
-                    except Exception: pass
+                    # Prune old logs randomly (approx 2% of the time) to save massive CPU during ingest
+                    if random.randint(1, 50) == 1:
+                        # 1. 24-Hour Expiration: Delete ALL logs older than 24 hours
+                        try:
+                            cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '1 day';")
+                        except Exception: pass
+                        
+                        # 2. Strict Limit: Keep exactly latest 1000 lines per log type.
+                        if config_id:
+                            try:
+                                cur.execute("""
+                                    DELETE FROM pushed_logs 
+                                    WHERE config_id = %s 
+                                      AND id NOT IN (
+                                          SELECT id FROM (
+                                              SELECT id, row_number() OVER (PARTITION BY COALESCE(log_type, 'other') ORDER BY id DESC) as rn 
+                                              FROM pushed_logs WHERE config_id = %s
+                                          ) t WHERE t.rn <= 1000
+                                      );
+                                """, (config_id, config_id))
+                            except Exception: pass
+                        elif server_id:
+                            try:
+                                cur.execute("""
+                                    DELETE FROM pushed_logs 
+                                    WHERE server_id = %s 
+                                      AND id NOT IN (
+                                          SELECT id FROM (
+                                              SELECT id, row_number() OVER (PARTITION BY COALESCE(log_type, 'other') ORDER BY id DESC) as rn 
+                                              FROM pushed_logs WHERE server_id = %s
+                                          ) t WHERE t.rn <= 1000
+                                      );
+                                """, (server_id, server_id))
+                            except Exception: pass
                 
                 if hasattr(conn, 'commit'):
                     conn.commit()
@@ -3219,6 +3221,7 @@ def get_pushed_logs(config_id=None, server_id=None, limit=100, source=None, log_
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_server_id ON pushed_logs(server_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_source ON pushed_logs(source);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_srv_src ON pushed_logs(server_id, source);")
             
             where_clauses = []
             params = []
