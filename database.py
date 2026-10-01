@@ -752,17 +752,29 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 logger.debug(f"Incident insert error: {ex_inc}")
                 
             # --- NEW: SES Smart Email Integration ---
-            # Check if emails are globally enabled
+            # Check if emails are globally enabled (cached to prevent DB slowness on every alert)
             email_enabled = True # default
-            try:
-                cur.execute("SELECT value FROM settings WHERE key = 'email_notifications_enabled';")
-                s_row = cur.fetchone()
-                if s_row:
-                    val = s_row["value"] if isinstance(s_row, dict) else s_row[0]
-                    if val.lower() == "false":
-                        email_enabled = False
-            except Exception as ex_set:
-                logger.debug(f"Settings check error: {ex_set}")
+            
+            # Simple global cache check to prevent slamming the settings table on every alert
+            global _CACHED_EMAIL_SETTING, _CACHED_EMAIL_TIME
+            import time
+            if '_CACHED_EMAIL_SETTING' not in globals():
+                _CACHED_EMAIL_SETTING = True
+                _CACHED_EMAIL_TIME = 0
+                
+            current_time = time.time()
+            if current_time - _CACHED_EMAIL_TIME > 60: # Cache for 60 seconds
+                try:
+                    cur.execute("SELECT value FROM settings WHERE key = 'email_notifications_enabled';")
+                    s_row = cur.fetchone()
+                    if s_row:
+                        val = s_row["value"] if isinstance(s_row, dict) else s_row[0]
+                        _CACHED_EMAIL_SETTING = (val.lower() != "false")
+                    _CACHED_EMAIL_TIME = current_time
+                except Exception as ex_set:
+                    logger.debug(f"Settings check error: {ex_set}")
+            
+            email_enabled = _CACHED_EMAIL_SETTING
                 
             if email_enabled and (severity.lower() == "critical" or "audit" in alert_type.lower() or "audit" in final_title.lower()):
                 # Get hostname and IP for the email
