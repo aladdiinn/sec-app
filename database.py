@@ -763,7 +763,7 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 _CACHED_EMAIL_TIME = 0
                 
             current_time = time.time()
-            if current_time - _CACHED_EMAIL_TIME > 60: # Cache for 60 seconds
+            if current_time - _CACHED_EMAIL_TIME > 180: # Cache for 3 minutes
                 try:
                     cur.execute("SELECT value FROM settings WHERE key = 'email_notifications_enabled';")
                     s_row = cur.fetchone()
