@@ -11,6 +11,9 @@ import database
 logger = logging.getLogger("llm_analyzer")
 logger.setLevel(logging.INFO)
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # Configuration
 S3_BUCKET_NAME = os.environ.get("S3_LOG_ARCHIVE_BUCKET", "securepulse-logs-archive-bucket-2026")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")

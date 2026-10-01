@@ -4,6 +4,8 @@
 # Continuously monitors SSH logs, shell commands, process execution, and FIM
 # ══════════════════════════════════════════════════════════════════════════════
 import time, subprocess, glob, threading, os, re, socket, json
+from dotenv import load_dotenv
+load_dotenv()
 
 _watcher_auth_pos = 0
 _watcher_hist_positions = {}
