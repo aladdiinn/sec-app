@@ -403,6 +403,11 @@ def init_db():
                 ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS source VARCHAR(512);
             """)
 
+            # Optimal composite indices to prevent "backward sequence scan" during ORDER BY id DESC LIMIT 100
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_srv_id_desc ON pushed_logs (server_id, id DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_cfg_id_desc ON pushed_logs (config_id, id DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_created_at ON pushed_logs (created_at);")
+
             # Backfill existing pushed_logs so categories (postgres, tomcat, os) display immediately
             try:
                 cur.execute("""
@@ -3087,44 +3092,8 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS pushed_logs (
-                        id SERIAL PRIMARY KEY,
-                        config_id INT,
-                        server_id INT,
-                        log_level VARCHAR(16) DEFAULT 'INFO',
-                        source VARCHAR(512),
-                        log_type VARCHAR(32),
-                        message TEXT NOT NULL,
-                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-                cur.execute("""
-                    ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS log_type VARCHAR(32);
-                """)
-                # Automatically sanitize existing rotated log sources and log_types in database
-                try:
-                    cur.execute("""
-                        UPDATE pushed_logs 
-                        SET source = REGEXP_REPLACE(source, '(catalina|localhost|manager|host-manager)\\.\\d{4}-\\d{2}-\\d{2}\\.log$', 'catalina.out') 
-                        WHERE source ~* '(catalina|localhost|manager|host-manager)\\.\\d{4}-\\d{2}-\\d{2}\\.log$';
-                    """)
-                    cur.execute("""
-                        UPDATE pushed_logs 
-                        SET source = REGEXP_REPLACE(source, 'postgresql-[A-Za-z0-9_-]+\\.log$', 'postgresql.log') 
-                        WHERE source ~* 'postgresql-[A-Za-z0-9_-]+\\.log$';
-                    """)
-                    cur.execute("""
-                        UPDATE pushed_logs SET log_type = 'tomcat' WHERE source ILIKE '%catalina%' OR source ILIKE '%tomcat%' OR source ILIKE '%nohup%';
-                    """)
-                    cur.execute("""
-                        UPDATE pushed_logs SET log_type = 'os' WHERE source = 'systemd/journal' OR source ILIKE '%syslog%' OR source ILIKE '%auth.log%' OR source ILIKE '%secure%';
-                    """)
-                    cur.execute("""
-                        UPDATE pushed_logs SET log_type = 'postgres' WHERE (source ILIKE '%postgres%' OR source ILIKE '%pgsql%') AND source NOT ILIKE '%catalina%' AND source NOT ILIKE '%journal%' AND source NOT ILIKE '%syslog%';
-                    """)
-                except Exception:
-                    pass
+                # Redundant DDL and full-table UPDATEs have been removed for high-throughput ingestion.
+                # Inbound logs are already classified via classify_log_entry.
 
                 for line in lines:
                     # Support both plain strings and structured dicts from the agent
@@ -3159,40 +3128,13 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                             cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
                         except Exception: pass
 
-                    # Prune old logs randomly (approx 2% of the time) to save massive CPU during ingest
+                    # Prune old logs randomly (approx 2% of the time) to prevent table bloat
                     if random.randint(1, 50) == 1:
-                        # 1. 24-Hour Expiration: Delete ALL logs older than 24 hours
                         try:
-                            cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '1 day';")
+                            # Failsafe: since S3 archiver handles long-term storage, 
+                            # we aggressively drop DB logs older than 3 hours to keep the hot-tier lightning fast.
+                            cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '3 hours';")
                         except Exception: pass
-                        
-                        # 2. Strict Limit: Keep exactly latest 1000 lines per log type.
-                        if config_id:
-                            try:
-                                cur.execute("""
-                                    DELETE FROM pushed_logs 
-                                    WHERE config_id = %s 
-                                      AND id NOT IN (
-                                          SELECT id FROM (
-                                              SELECT id, row_number() OVER (PARTITION BY COALESCE(log_type, 'other') ORDER BY id DESC) as rn 
-                                              FROM pushed_logs WHERE config_id = %s
-                                          ) t WHERE t.rn <= 1000
-                                      );
-                                """, (config_id, config_id))
-                            except Exception: pass
-                        elif server_id:
-                            try:
-                                cur.execute("""
-                                    DELETE FROM pushed_logs 
-                                    WHERE server_id = %s 
-                                      AND id NOT IN (
-                                          SELECT id FROM (
-                                              SELECT id, row_number() OVER (PARTITION BY COALESCE(log_type, 'other') ORDER BY id DESC) as rn 
-                                              FROM pushed_logs WHERE server_id = %s
-                                          ) t WHERE t.rn <= 1000
-                                      );
-                                """, (server_id, server_id))
-                            except Exception: pass
                 
                 if hasattr(conn, 'commit'):
                     conn.commit()
