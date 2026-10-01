@@ -39,13 +39,13 @@ def fetch_logs_from_db(server_id: int, log_type: str, start_time: datetime, end_
         with conn.cursor() as cur:
             if log_type:
                 cur.execute("""
-                    SELECT message, created_at FROM logs 
+                    SELECT message, created_at FROM pushed_logs 
                     WHERE server_id = %s AND log_type = %s AND created_at >= %s AND created_at <= %s
                     ORDER BY created_at ASC
                 """, (server_id, log_type, start_time, end_time))
             else:
                 cur.execute("""
-                    SELECT message, created_at FROM logs 
+                    SELECT message, created_at FROM pushed_logs 
                     WHERE server_id = %s AND created_at >= %s AND created_at <= %s
                     ORDER BY created_at ASC
                 """, (server_id, start_time, end_time))

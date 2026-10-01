@@ -3205,7 +3205,7 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
     return saved
 
 
-def get_pushed_logs(config_id=None, server_id=None, limit=100):
+def get_pushed_logs(config_id=None, server_id=None, limit=100, source=None, log_type=None):
     conn = get_db_connection()
     if not conn: return []
     try:
@@ -3222,21 +3222,31 @@ def get_pushed_logs(config_id=None, server_id=None, limit=100):
                 );
             """)
             
+            where_clauses = []
+            params = []
             if config_id:
-                cur.execute("""
-                    SELECT id, config_id, server_id, log_level as level, source, COALESCE(log_type, '') as log_type, message as msg, created_at
-                    FROM pushed_logs WHERE config_id = %s ORDER BY id DESC LIMIT %s;
-                """, (config_id, limit))
+                where_clauses.append("config_id = %s")
+                params.append(config_id)
             elif server_id:
-                cur.execute("""
-                    SELECT id, config_id, server_id, log_level as level, source, COALESCE(log_type, '') as log_type, message as msg, created_at
-                    FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT %s;
-                """, (server_id, limit))
-            else:
-                cur.execute("""
-                    SELECT id, config_id, server_id, log_level as level, source, COALESCE(log_type, '') as log_type, message as msg, created_at
-                    FROM pushed_logs ORDER BY id DESC LIMIT %s;
-                """, (limit,))
+                where_clauses.append("server_id = %s")
+                params.append(server_id)
+                
+            if source:
+                where_clauses.append("source LIKE %s")
+                params.append(f"%{source}%")
+                
+            if log_type and log_type.lower() != 'all':
+                where_clauses.append("log_type = %s")
+                params.append(log_type.lower())
+
+            where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+            
+            query = f"""
+                SELECT id, config_id, server_id, log_level as level, source, COALESCE(log_type, '') as log_type, message as msg, created_at
+                FROM pushed_logs {where_sql} ORDER BY id DESC LIMIT %s;
+            """
+            params.append(limit)
+            cur.execute(query, tuple(params))
             
             rows = cur.fetchall()
             result = []
