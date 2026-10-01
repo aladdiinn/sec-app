@@ -21,7 +21,12 @@ else:
     llm_model = None
 
 def get_ses_client():
-    return boto3.client('ses', region_name=AWS_REGION)
+    key_id = os.environ.get("AWS_ACCESS_KEY_ID")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+    if key_id and secret_key:
+        return boto3.client('ses', region_name=AWS_REGION, aws_access_key_id=key_id, aws_secret_access_key=secret_key)
+    else:
+        return boto3.client('ses', region_name=AWS_REGION)
 
 def generate_alert_analysis(alert_title: str, alert_type: str, message: str, server_ip: str, username: str = "root"):
     """Uses Gemini to generate the Analysis, Risk, and Recommendation for the email."""
