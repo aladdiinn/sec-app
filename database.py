@@ -3164,14 +3164,12 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                     cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '1 day';")
                 except Exception: pass
                 
-                # 2. Smart Tiering: Keep latest 800 lines. Delete older noise, but keep errors/criticals.
+                # 2. Strict Limit: Keep exactly latest 1000 lines per log type.
                 if config_id:
                     try:
                         cur.execute("""
                             DELETE FROM pushed_logs 
                             WHERE config_id = %s 
-                              AND (log_level IS NULL OR log_level NOT IN ('ERROR', 'CRITICAL', 'FATAL', 'CRIT', 'SEVERE', 'HIGH'))
-                              AND message !~* '\\y(error|fatal|exception|fail|severe|denied|crit|panic)\\y'
                               AND id NOT IN (
                                   SELECT id FROM (
                                       SELECT id, row_number() OVER (PARTITION BY COALESCE(log_type, 'other') ORDER BY id DESC) as rn 
@@ -3185,8 +3183,6 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                         cur.execute("""
                             DELETE FROM pushed_logs 
                             WHERE server_id = %s 
-                              AND (log_level IS NULL OR log_level NOT IN ('ERROR', 'CRITICAL', 'FATAL', 'CRIT', 'SEVERE', 'HIGH'))
-                              AND message !~* '\\y(error|fatal|exception|fail|severe|denied|crit|panic)\\y'
                               AND id NOT IN (
                                   SELECT id FROM (
                                       SELECT id, row_number() OVER (PARTITION BY COALESCE(log_type, 'other') ORDER BY id DESC) as rn 
@@ -3221,6 +3217,8 @@ def get_pushed_logs(config_id=None, server_id=None, limit=100, source=None, log_
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_server_id ON pushed_logs(server_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_source ON pushed_logs(source);")
             
             where_clauses = []
             params = []

@@ -5265,7 +5265,7 @@ async def api_fetch_log_lines(request: Request):
 
     # 1. First priority: Fetch logs pushed by push agents from pushed_logs table
     cfg_id = matching_cfg.get("id") if matching_cfg else None
-    db_limit = 3000 if (preset or search or log_path or log_type) else limit
+    db_limit = 3000 if (preset or search) else limit
     pushed = db.get_pushed_logs(config_id=cfg_id, server_id=sid, limit=db_limit, source=log_path, log_type=log_type)
     if pushed:
         for pl in pushed:
