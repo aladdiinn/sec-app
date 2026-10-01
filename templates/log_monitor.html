@@ -1150,6 +1150,7 @@ function isLogSecurityThreat(msg, src) {
 
 let lastRenderedHash = '';
 function renderLogLines(lines) {
+    if (lines && lines.length > 1000) lines = lines.slice(0, 1000);
     const term = document.getElementById('log-terminal-output');
     if (!lines || !lines.length) {
         if (activePresetKey === 'soar') {

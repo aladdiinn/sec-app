@@ -1339,7 +1339,8 @@ async def api_llm_analyze_logs(request: Request):
         time_period = body.get("time_period", "1hr")
         
         import llm_analyzer
-        result = llm_analyzer.analyze_logs(server_id, server_ip, log_type, time_period)
+        from fastapi.concurrency import run_in_threadpool
+        result = await run_in_threadpool(llm_analyzer.analyze_logs, server_id, server_ip, log_type, time_period)
         return result
     except Exception as e:
         logger.error(f"Error in LLM log analyzer API: {e}")
