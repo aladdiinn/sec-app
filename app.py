@@ -431,10 +431,39 @@ import database as db
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("security_monitor.app")
 
+def run_s3_archiver_loop():
+    """Background thread to archive old logs to S3 every 15 minutes."""
+    try:
+        import s3_archiver
+    except ImportError:
+        logger.warning("s3_archiver module not found. S3 archival disabled.")
+        return
+        
+    while True:
+        try:
+            # Sleep first so it doesn't run immediately on boot while DB is starting
+            time.sleep(15 * 60)
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    s3_archiver.archive_logs_to_s3(conn)
+                finally:
+                    conn.close()
+        except Exception as e:
+            logger.error(f"Error in S3 archiver loop: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing Database schema...")
     db.init_db()
+    
+    try:
+        t_s3 = threading.Thread(target=run_s3_archiver_loop, daemon=True)
+        t_s3.start()
+        logger.info("S3 Background Archiver started.")
+    except Exception as e:
+        logger.warning(f"Could not start S3 archiver: {e}")
+        
     try:
         t = threading.Thread(target=run_background_host_watcher, daemon=True)
         t.start()
@@ -1299,6 +1328,22 @@ async def api_get_server_commands_endpoint(server_id: int):
 async def api_get_tracking_endpoint(server_id: int):
     logs = db.get_tracking_data(server_id)
     return {"server_id": server_id, "logs": logs}
+
+@app.post("/api/llm/analyze_logs")
+async def api_llm_analyze_logs(request: Request):
+    try:
+        body = await request.json()
+        server_id = int(body.get("server_id", 0))
+        server_ip = body.get("server_ip", "")
+        log_type = body.get("log_type", "")
+        time_period = body.get("time_period", "1hr")
+        
+        import llm_analyzer
+        result = llm_analyzer.analyze_logs(server_id, server_ip, log_type, time_period)
+        return result
+    except Exception as e:
+        logger.error(f"Error in LLM log analyzer API: {e}")
+        return {"error": str(e), "analysis": None}
 
 @app.post("/api/servers/{server_id}/block-ip")
 async def api_block_ip(server_id: int, request: Request):

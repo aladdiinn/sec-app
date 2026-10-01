@@ -750,6 +750,53 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 """, (final_title, severity, message, valid_server_id))
             except Exception as ex_inc:
                 logger.debug(f"Incident insert error: {ex_inc}")
+                
+            # --- NEW: SES Smart Email Integration ---
+            # Check if emails are globally enabled
+            email_enabled = True # default
+            try:
+                cur.execute("SELECT value FROM settings WHERE key = 'email_notifications_enabled';")
+                s_row = cur.fetchone()
+                if s_row:
+                    val = s_row["value"] if isinstance(s_row, dict) else s_row[0]
+                    if val.lower() == "false":
+                        email_enabled = False
+            except Exception as ex_set:
+                logger.debug(f"Settings check error: {ex_set}")
+                
+            if email_enabled and (severity.lower() == "critical" or "audit" in alert_type.lower() or "audit" in final_title.lower()):
+                # Get hostname and IP for the email
+                hostname = "Unknown Host"
+                server_ip = "Unknown IP"
+                if valid_server_id:
+                    try:
+                        cur.execute("SELECT hostname, ip FROM servers WHERE id = %s;", (valid_server_id,))
+                        srv_row = cur.fetchone()
+                        if srv_row:
+                            hostname = srv_row["hostname"] if isinstance(srv_row, dict) else srv_row[0]
+                            server_ip = srv_row["ip"] if isinstance(srv_row, dict) else srv_row[1]
+                    except: pass
+                
+                # We need the inserted alert ID for the email
+                try:
+                    cur.execute("SELECT id, created_at FROM alerts WHERE server_id = %s AND message = %s ORDER BY created_at DESC LIMIT 1;", (valid_server_id, message))
+                    al_row = cur.fetchone()
+                    if al_row:
+                        alert_id = al_row["id"] if isinstance(al_row, dict) else al_row[0]
+                        timestamp = str(al_row["created_at"] if isinstance(al_row, dict) else al_row[1])
+                        
+                        # Fire and forget (in a thread to not block DB transaction)
+                        import threading
+                        import ses_mailer
+                        t = threading.Thread(
+                            target=ses_mailer.send_smart_alert_email,
+                            args=(alert_id, final_title, alert_type, message, severity, timestamp, server_ip, hostname),
+                            daemon=True
+                        )
+                        t.start()
+                except Exception as ex_mail:
+                    logger.error(f"Error launching SES mailer thread: {ex_mail}")
+
     except Exception as e:
         logger.error(f"Error in log_alert: {e}")
     finally:

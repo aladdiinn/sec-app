@@ -4,6 +4,15 @@
 {% block page_sub %}Configure platform behavior and integrations{% endblock %}
 
 {% block content %}
+<style>
+/* Toggle Switch CSS */
+.switch { position: relative; display: inline-block; width: 34px; height: 20px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,59,92,0.3); transition: .4s; border-radius: 34px; border: 1px solid var(--red); }
+.slider:before { position: absolute; content: ""; height: 12px; width: 12px; left: 3px; bottom: 3px; background-color: var(--red); transition: .4s; border-radius: 50%; }
+input:checked + .slider { background-color: rgba(0,255,136,0.2); border-color: var(--green); }
+input:checked + .slider:before { transform: translateX(14px); background-color: var(--green); }
+</style>
 <div class="fade-in" style="max-width:800px; margin:0 auto; display:flex; flex-direction:column; gap:24px">
 
     <!-- Admin Password -->
@@ -73,9 +82,32 @@
             </div>
             <div style="display:flex; justify-content:flex-end">
                 <button type="submit" class="btn btn-primary" id="btn-web">Save Webhook</button>
+    </div>
+    
+    {% if user and (user.role == 'admin' or user.role == 'superuser') %}
+    <!-- Email Notifications (Admin Only) -->
+    <div class="card glass">
+        <h3 class="card-title" style="margin-bottom:16px">Smart Email Alerts (SES)</h3>
+        <form onsubmit="saveSettings(event, 'btn-email')">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; padding:12px; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:6px;">
+                <div>
+                    <strong style="color:var(--cyan); font-size:12px;">Global Email Notifications</strong>
+                    <div class="text-meta" style="margin-top:4px;">Sends Critical and Audit alerts to the SOC team using AWS SES and Gemini AI. Filtered for noise (sudo, session, etc).</div>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <label class="switch">
+                        <input type="checkbox" id="email_notifications_enabled">
+                        <span class="slider round"></span>
+                    </label>
+                    <span id="email_status_label" style="font-size:11px; font-weight:bold;">ENABLED</span>
+                </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end">
+                <button type="submit" class="btn btn-primary" id="btn-email">Save Email Settings</button>
             </div>
         </form>
     </div>
+    {% endif %}
 
 </div>
 {% endblock %}
@@ -89,6 +121,18 @@ async function loadSettings() {
         if (data.failed_logins_critical) document.getElementById('failed_logins_critical').value = data.failed_logins_critical;
         if (data.webhook_url) document.getElementById('webhook_url').value = data.webhook_url;
         if (data.webhook_type) document.getElementById('webhook_type').value = data.webhook_type;
+        
+        const emailToggle = document.getElementById('email_notifications_enabled');
+        if (emailToggle) {
+            emailToggle.checked = (data.email_notifications_enabled !== 'false');
+            document.getElementById('email_status_label').innerText = emailToggle.checked ? 'ENABLED' : 'DISABLED';
+            document.getElementById('email_status_label').style.color = emailToggle.checked ? 'var(--green)' : 'var(--red)';
+            
+            emailToggle.addEventListener('change', function() {
+                document.getElementById('email_status_label').innerText = this.checked ? 'ENABLED' : 'DISABLED';
+                document.getElementById('email_status_label').style.color = this.checked ? 'var(--green)' : 'var(--red)';
+            });
+        }
     } catch (err) {
         showToast('Failed to load settings', 'error');
     }
@@ -129,11 +173,20 @@ async function saveSettings(e, btnId) {
     btn.innerText = 'Saving...';
     try {
         const payload = {
-            failed_logins_warning: parseInt(document.getElementById('failed_logins_warning').value),
-            failed_logins_critical: parseInt(document.getElementById('failed_logins_critical').value),
-            webhook_url: document.getElementById('webhook_url').value,
-            webhook_type: document.getElementById('webhook_type').value
+            failed_logins_warning: document.getElementById('failed_logins_warning') ? parseInt(document.getElementById('failed_logins_warning').value) : undefined,
+            failed_logins_critical: document.getElementById('failed_logins_critical') ? parseInt(document.getElementById('failed_logins_critical').value) : undefined,
+            webhook_url: document.getElementById('webhook_url') ? document.getElementById('webhook_url').value : undefined,
+            webhook_type: document.getElementById('webhook_type') ? document.getElementById('webhook_type').value : undefined,
         };
+        
+        const emailToggle = document.getElementById('email_notifications_enabled');
+        if (emailToggle) {
+            payload.email_notifications_enabled = emailToggle.checked ? 'true' : 'false';
+        }
+        
+        // Remove undefined values
+        Object.keys(payload).forEach(key => payload[key] === undefined && delete payload[key]);
+
         await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
         showToast('Settings saved successfully', 'success');
     } catch (err) {
