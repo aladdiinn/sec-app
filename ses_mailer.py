@@ -60,7 +60,7 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
     """
     
     try:
-        response = _gemini_client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+        response = _gemini_client.models.generate_content(model='gemini-3.8-flash', contents=prompt)
         text = response.text.replace("```json", "").replace("```", "").strip()
         import json
         data = json.loads(text)
