@@ -22,21 +22,20 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # ── Gemini Client (new google-genai SDK) ─────────────────────────────────────
 _gemini_client = None
+_discovered_models = []   # populated lazily on first call
 
-# Free-tier confirmed models in priority order.
-# v1 API is the stable channel - free tier accounts must use this.
-_GEMINI_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    "gemini-1.0-pro",
+# Preferred model keywords in priority order (flash first = cheaper + faster)
+_MODEL_PREFERENCE = [
+    "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro",
+    "gemini-2.0-pro",   "gemini-1.5-flash", "gemini-1.5-pro",
+    "gemini-1.0-pro",   "gemini-pro",
 ]
 
 def _get_client():
     global _gemini_client
     if _gemini_client is None and GEMINI_API_KEY:
         from google import genai
-        # Use stable v1 API — v1beta causes 404s on free-tier accounts
+        # Stable v1 API — v1beta causes 404s on free-tier accounts
         _gemini_client = genai.Client(
             api_key=GEMINI_API_KEY,
             http_options={"api_version": "v1"}
@@ -44,21 +43,73 @@ def _get_client():
     return _gemini_client
 
 
+def _get_models() -> list:
+    """
+    Auto-discovers which Gemini models are available on this API key.
+    Results are cached after the first call.
+    Returns a sorted list of model names (flash/fast first).
+    """
+    global _discovered_models
+    if _discovered_models:
+        return _discovered_models
+
+    client = _get_client()
+    if not client:
+        return []
+
+    try:
+        all_models = list(client.models.list())
+        usable = []
+        for m in all_models:
+            name = getattr(m, "name", "") or ""
+            # Strip the "models/" prefix if present
+            short = name.replace("models/", "")
+            methods = getattr(m, "supported_generation_methods", None) or []
+            # Include if it explicitly supports generateContent OR if no method list
+            if "generateContent" in methods or not methods:
+                if "gemini" in short.lower():
+                    usable.append(short)
+
+        # Sort by preference: put preferred ones first, rest alphabetically after
+        def sort_key(n):
+            for i, pref in enumerate(_MODEL_PREFERENCE):
+                if pref in n:
+                    return i
+            return len(_MODEL_PREFERENCE)
+
+        _discovered_models = sorted(usable, key=sort_key)
+        logger.info(f"Gemini auto-discovered models: {_discovered_models}")
+
+        if not _discovered_models:
+            # Hard fallback in case list_models returns nothing
+            _discovered_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+
+    except Exception as e:
+        logger.warning(f"Could not auto-discover Gemini models ({e}), using fallback list")
+        _discovered_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+
+    return _discovered_models
+
+
 def _generate(prompt: str) -> str:
-    """Try each model in order until one works."""
+    """Try each available model in priority order until one works."""
     client = _get_client()
     if not client:
         raise RuntimeError("GEMINI_API_KEY is not set in .env")
 
+    models = _get_models()
     last_err = None
-    for model_name in _GEMINI_MODELS:
+    for model_name in models:
         try:
+            logger.info(f"Trying Gemini model: {model_name}")
             response = client.models.generate_content(model=model_name, contents=prompt)
+            logger.info(f"Success with model: {model_name}")
             return response.text
         except Exception as e:
             logger.warning(f"Model {model_name} failed: {e}")
             last_err = e
-    raise RuntimeError(f"All Gemini models failed. Last error: {last_err}")
+
+    raise RuntimeError(f"All {len(models)} Gemini models failed. Last error: {last_err}")
 
 
 # ── S3 helpers ───────────────────────────────────────────────────────────────
