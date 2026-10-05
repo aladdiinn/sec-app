@@ -24,9 +24,6 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 _gemini_client = None
 _discovered_models = []   # populated lazily on first call
 
-# Preferred model keywords in priority order (flash first = cheaper + faster)
-_MODEL_PREFERENCE = [
-    "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro",
 import gemini_client
 
 def _generate(prompt: str) -> str:
