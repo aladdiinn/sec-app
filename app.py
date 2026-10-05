@@ -1682,7 +1682,7 @@ def _check_sudo_misuse(server_id, data):
         (re.compile(r'psql\s+.*-(?:c|command)\s+.*(drop\s+database|drop\s+schema|drop\s+table|truncate)', re.IGNORECASE), 'PostgreSQL CLI Data Deletion', 'critical', 'PostgreSQL Database Deletion Alert', 'PG_DB_DELETED'),
         (re.compile(r'psql\s+.*-(?:c|command)\s+.*(alter\s+user|alter\s+role|grant\s+all|with\s+superuser)', re.IGNORECASE), 'PostgreSQL CLI Privilege Escalation', 'critical', 'PostgreSQL Privilege Escalation Alert', 'PG_PRIVILEGE_CHANGE'),
         # Account creation / management
-        (re.compile(r'\b(useradd|adduser)\s+', re.IGNORECASE), 'New User Account Created', 'warning', 'Identity Management Alert', 'USER_CREATED'),
+        (re.compile(r'\b(useradd|adduser)\b', re.IGNORECASE), 'New User Account Created', 'warning', 'Identity Management Alert', 'USER_CREATED'),
         (re.compile(r'passwd\s+(?:root|\S+)', re.IGNORECASE), 'User Password Modified', 'warning', 'Credential Modification Alert', 'PASSWD_CHANGED'),
         # Failed Root Escalation (Replaced successful su/sudo rule)
         (re.compile(r'(FAILED su for root|incorrect password attempt|sudo:.*authentication failure)', re.IGNORECASE), 'Failed Root Escalation Attempt', 'critical', 'Privilege Escalation Alert', 'SUDO_ROOT_ESCALATION'),
@@ -1862,6 +1862,11 @@ def _check_unified_fim(server_id, data):
             continue
             
         last_event = events[-1]
+        line = last_event.get("line", "")
+        
+        # Drop system cron daemons running as root
+        if any(noise in line for noise in ["debian-sa1", "sysstat", "logrotate", "systemd-tmpfiles"]):
+            continue
         auid_str = last_event.get("auid", "unknown")
         actor = last_event.get("username", "unknown")
         if actor == "unknown" and auid_str == "1000":
