@@ -1914,9 +1914,13 @@ def _check_unified_fim(server_id, data):
         import re as _re
         c_m = _re.search(r'comm="?([^"\s]+)"?', line)
         e_m = _re.search(r'exe="?([^"\s]+)"?', line)
+        f_m = _re.search(r'filename="?([^"\s]+)"?', line)
+        
         comm_str = f" using '{c_m.group(1)}'" if c_m else ""
         exe_str = f" ({e_m.group(1)})" if e_m else ""
-        human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}){comm_str}{exe_str}."
+        file_str = f" on file '{f_m.group(1)}'" if f_m else ""
+        
+        human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}){comm_str}{exe_str}{file_str}."
 
         _create_alert_dedup(
             server_id, f'AUDIT_{key}_{auid_str}', severity,
@@ -3625,10 +3629,23 @@ def get_auditd_events():
         size = os.path.getsize(path)
         pos = audit_log_positions.get(path, max(0, size - 8000))
         if size < pos: pos = 0
+        
+        parsed_syscalls = {}
+        paths = {}
+        
         with open(path, 'r', errors='ignore') as f:
             f.seek(pos)
             for line in f:
-                if "type=SYSCALL" in line or "type=PATH" in line:
+                msg_id_m = re.search(r'msg=audit\(([\d\.:]+)\)', line)
+                if not msg_id_m: continue
+                msg_id = msg_id_m.group(1)
+                
+                if "type=PATH" in line:
+                    name_m = re.search(r'name="?([^"\s]+)"?', line)
+                    if name_m:
+                        paths[msg_id] = name_m.group(1)
+                        
+                elif "type=SYSCALL" in line:
                     auid_m = re.search(r'auid=(\d+)', line)
                     key_m = re.search(r'key="?([^"\s]+)"?', line)
                     if auid_m and auid_m.group(1) != "4294967295":
@@ -3636,7 +3653,14 @@ def get_auditd_events():
                         uname = user_mapping.get(auid, "unknown")
                         key = key_m.group(1) if key_m else "unknown"
                         if key != "unknown":
-                            events.append({{"auid": auid, "username": uname, "key": key, "line": line.strip()[:2000]}})
+                            parsed_syscalls[msg_id] = {{"auid": auid, "username": uname, "key": key, "line": line.strip()[:2000]}}
+                            
+            # Correlate paths into syscalls
+            for msg_id, sys_event in parsed_syscalls.items():
+                if msg_id in paths:
+                    sys_event["line"] += f" filename={{paths[msg_id]}}"
+                events.append(sys_event)
+                
             audit_log_positions[path] = f.tell()
     except: pass
     return events[-200:]
