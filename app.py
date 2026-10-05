@@ -1908,7 +1908,8 @@ def _check_unified_fim(server_id, data):
                 sudo_actor_map[m.group(2).strip(';')] = m.group(1).strip(';')
         real_actor = sudo_actor_map.get(actor, actor)
 
-        title = f"{key.replace('_', ' ').title()} Alert by {real_actor}"
+        display_key = "System Config" if key == "(null)" else key.replace('_', ' ').title()
+        title = f"{display_key} Alert by {real_actor}"
 
         # Build a plain-English correlated message (no raw log dump)
         import re as _re
