@@ -1575,7 +1575,7 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
     # print(f"DEBUG dedup check: {cache_key} against cache keys: {list(_dedup_alerts_cache.keys())}")
     now = time.time()
     last_time = _dedup_alerts_cache.get(cache_key, 0)
-    if now - last_time < 120:
+    if now - last_time < 15:
         return
     _dedup_alerts_cache[cache_key] = now
     try:
@@ -1799,18 +1799,6 @@ def _check_unified_fim(server_id, data):
     file_changes = data.get("file_changes", [])
     audit_events = data.get("audit_events", [])
     log_lines = data.get("log_lines", []) or data.get("logs", [])
-    
-    # Noise Reduction: Check if package manager is actively running right now
-    procs = data.get("processes", [])
-    is_maintenance = False
-    for p in procs:
-        p_name = p.get("name", "").lower()
-        if p_name in ["apt", "apt-get", "dpkg", "yum", "dnf", "rpm"]:
-            is_maintenance = True
-            break
-            
-    if is_maintenance:
-        return
 
     # Map audit events by key
     audit_map = {}
