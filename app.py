@@ -1675,7 +1675,7 @@ def _check_sudo_misuse(server_id, data):
         # Passwd dumping / tampering
         (re.compile(r'cat\s+/etc/shadow', re.IGNORECASE), 'Shadow File Dumping', 'critical', 'Credential Access Alert', 'SUDO_SHADOW_FILE_DUMPING'),
         (re.compile(r'cat\s+/etc/passwd', re.IGNORECASE), 'Passwd File Access', 'warning', 'Credential Access Alert', 'SUDO_PASSWD_FILE_ACCESS'),
-        (re.compile(r'(visudo|sudoedit|tee.*sudoers|>>.*sudoers)', re.IGNORECASE), 'Sudoers Modification', 'critical', 'Privilege Escalation Alert', 'SUDO_SUDOERS_MODIFICATION'),
+        (re.compile(r'(visudo|sudoedit|tee.*sudoers|>>.*sudoers|(?:vi|vim|nano)\s+/etc/sudoers)', re.IGNORECASE), 'Sudoers Modification', 'critical', 'Privilege Escalation Alert', 'SUDO_SUDOERS_MODIFICATION'),
         # PostgreSQL CLI Deletions and Privilege grants via command line
         (re.compile(r'\b(dropdb|dropuser)\b', re.IGNORECASE), 'PostgreSQL CLI Deletion', 'critical', 'PostgreSQL Database Deletion Alert', 'PG_DB_DELETED'),
         (re.compile(r'\b(createuser\s+.*(?:-s|--superuser))\b', re.IGNORECASE), 'PostgreSQL Superuser Creation', 'critical', 'PostgreSQL Privilege Escalation Alert', 'PG_PRIVILEGE_CHANGE'),
