@@ -1826,6 +1826,9 @@ def _check_unified_fim(server_id, data):
         elif "sudoers" in path: matched_key = "priv_esc"
         elif "cron" in path: matched_key = "scheduled_tasks"
         elif "ssh" in path: matched_key = "remote_access"
+        elif "application" in path: matched_key = "app_mod"
+        elif "data" in path: matched_key = "data_mod"
+        elif "home" in path: matched_key = "home_mod"
         
         actor = "Unknown User"
         auid_str = "unknown"
@@ -1893,10 +1896,10 @@ def _check_unified_fim(server_id, data):
         
         if key in ["identity", "priv_esc", "remote_access", "modules"]:
             severity = "critical"
-        elif key in ["scheduled_tasks", "MAC-policy", "time-change", "system-locale", "delete"]:
+        elif key in ["scheduled_tasks", "MAC-policy", "time-change", "system-locale", "delete", "app_mod", "data_mod", "home_mod"]:
             severity = "high"
         else:
-            severity = "warning"  # session, logins, mounts, perm_mod
+            severity = "warning"  # session, logins, mounts, perm_mod, commands, etc.
         
         # Resolve real sudoer: if actor=root but vinay did sudo, show vinay
         sudo_actor_map = {}
@@ -3556,7 +3559,8 @@ fim_state = {{}}
 fim_paths = [
     "/etc/passwd", "/etc/shadow", "/etc/sudoers", "/etc/sudoers.d",
     "/etc/ssh/sshd_config", "/etc/crontab", "/etc/hosts",
-    "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/var/spool/cron"
+    "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/var/spool/cron",
+    "/application", "/data", "/home"
 ]
 
 def check_fim():
