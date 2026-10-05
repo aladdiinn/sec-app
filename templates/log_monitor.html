@@ -1241,7 +1241,7 @@ function renderLogLines(lines) {
               `</div>`
             : (activePresetKey === 'soar'
                 ? '<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:24px;margin-bottom:8px">🛡️</div><div style="font-weight:600;color:#f8fafc">No Log-Based SOAR Threats Found in Current Stream Window</div><div style="font-size:11px;margin-top:4px">Monitored: PostgreSQL deletions/privileges, OS userdel, chmod 777, Tomcat errors.</div></div>'
-                : '<div style="text-align:center;padding:30px;color:var(--text3)">No matching log entries found.</div>');
+                : '<div style="text-align:center;padding:30px;color:var(--text3)">No log lines in this file / last N lines are empty.</div>');
         virt_allFiltered = [];
         lastRenderedHash = '';
         return;

@@ -2473,9 +2473,17 @@ async def api_agent_push(request: Request):
     discovered = data.get("discovered_log_paths", [])
     if discovered and server_id:
         try:
+            import re
             for p in discovered:
-                p_str = str(p).strip()
+                p_str = str(p).strip().rstrip('/')
                 if not p_str: continue
+
+                # Ignore rotated, compressed, or dated files (e.g. catalina.2026-10-05.log, syslog.1, access.log.gz)
+                if p_str.endswith('.gz') or p_str.endswith('.zip') or p_str.endswith('.tar'):
+                    continue
+                if re.search(r'\.\d{4}-\d{2}-\d{2}(\.log|\.txt)?$', p_str) or re.search(r'\.\d+$', p_str):
+                    continue
+
                 lt = "os"
                 plow = p_str.lower()
                 if "postgres" in plow or "pgsql" in plow: lt = "postgres"
@@ -5422,7 +5430,8 @@ async def api_fetch_log_lines(request: Request):
     # 1. First priority: Fetch logs pushed by push agents from pushed_logs table
     cfg_id = matching_cfg.get("id") if matching_cfg else None
     db_limit = 3000 if (preset or search) else limit
-    pushed = await run_in_threadpool(db.get_pushed_logs, config_id=cfg_id, server_id=sid, limit=db_limit, source=log_path, log_type=log_type)
+    db_log_type = None if log_path else log_type  # Do not strictly filter DB by log_type if querying a specific file path
+    pushed = await run_in_threadpool(db.get_pushed_logs, config_id=cfg_id, server_id=sid, limit=db_limit, source=log_path, log_type=db_log_type)
     if pushed:
         for pl in pushed:
             msg = pl.get("msg", "")
@@ -5707,12 +5716,14 @@ async def api_fetch_log_lines(request: Request):
                 "msg": tmpl["msg"]
             })
 
-    # Deduplicate log lines by core message payload to avoid syslog vs journalctl duplicates
+    # Deduplicate log lines by exact timestamp + payload to allow identical stack trace lines if they are distinct events
     seen_payloads = set()
     deduped_lines = []
     for l in lines:
         raw_m = l.get("msg", "")
-        clean_key = re.sub(r'^\d{2,4}[-/]\d{2}[-/]\d{2,4}[ T]?\d{2}:\d{2}:\d{2}(\.\d+)?|^\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}|ip-\d+-\d+-\d+-\d+|\[\d+\]', '', raw_m).strip()
+        time_m = l.get("time", "")
+        src_m = l.get("source", "")
+        clean_key = f"{time_m}|{src_m}|{raw_m.strip()}"
         if clean_key in seen_payloads:
             continue
         seen_payloads.add(clean_key)
