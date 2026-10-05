@@ -1746,14 +1746,25 @@ def _check_sudo_misuse(server_id, data):
             continue
         for pat, rule_name, sev, title, atype in suspicious_patterns:
             if pat.search(text):
-                # Resolve real user: if actor is root but vinay did sudo su, show vinay→root
+                # Resolve real user: if actor is root but vinay did sudo su, show vinay
                 real_actor = sudo_actor_map.get(actor, actor) if actor else ""
-                if real_actor and real_actor != actor and actor:
-                    actor_str = f" by user '{real_actor}'→'{actor}' (via sudo)"
-                elif real_actor:
-                    actor_str = f" by user '{real_actor}'"
-                else:
-                    actor_str = ""
+                
+                if real_actor in ("root", "unknown", "") or actor in ("root", "unknown", ""):
+                    for ae in data.get("audit_events", []):
+                        raw_line = ae.get("line", "")
+                        import re as _re
+                        comm_m = _re.search(r'comm="([^"]+)"', raw_line)
+                        exe_m  = _re.search(r'exe="([^"]+)"', raw_line)
+                        cmd_name = (comm_m.group(1) if comm_m else "") or (os.path.basename(exe_m.group(1)) if exe_m else "")
+                        
+                        if cmd_name and (cmd_name.lower() in text.lower() or cmd_name.lower() in rule_name.lower()):
+                            real_u = ae.get("username", "")
+                            if real_u and real_u not in ("unknown", "root", ""):
+                                actor = real_u
+                                real_actor = real_u
+                                break
+
+                actor_str = f" by user '{real_actor}'" if real_actor else (f" by user '{actor}'" if actor else "")
                 # Build a clean, plain-English message — no raw log dump
                 clean_text = text.strip()
                 # Try to extract the actual command/path from the text
