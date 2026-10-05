@@ -43,73 +43,21 @@ def _get_client():
     return _gemini_client
 
 
-def _get_models() -> list:
-    """
-    Auto-discovers which Gemini models are available on this API key.
-    Results are cached after the first call.
-    Returns a sorted list of model names (flash/fast first).
-    """
-    global _discovered_models
-    if _discovered_models:
-        return _discovered_models
-
-    client = _get_client()
-    if not client:
-        return []
-
-    try:
-        all_models = list(client.models.list())
-        usable = []
-        for m in all_models:
-            name = getattr(m, "name", "") or ""
-            # Strip the "models/" prefix if present
-            short = name.replace("models/", "")
-            methods = getattr(m, "supported_generation_methods", None) or []
-            # Include if it explicitly supports generateContent OR if no method list
-            if "generateContent" in methods or not methods:
-                if "gemini" in short.lower():
-                    usable.append(short)
-
-        # Sort by preference: put preferred ones first, rest alphabetically after
-        def sort_key(n):
-            for i, pref in enumerate(_MODEL_PREFERENCE):
-                if pref in n:
-                    return i
-            return len(_MODEL_PREFERENCE)
-
-        _discovered_models = sorted(usable, key=sort_key)
-        logger.info(f"Gemini auto-discovered models: {_discovered_models}")
-
-        if not _discovered_models:
-            # Hard fallback in case list_models returns nothing
-            _discovered_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-
-    except Exception as e:
-        logger.warning(f"Could not auto-discover Gemini models ({e}), using fallback list")
-        _discovered_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-
-    return _discovered_models
-
-
 def _generate(prompt: str) -> str:
-    """Try each available model in priority order until one works."""
+    """Generate content directly using the cheapest/fastest model to save rate limits."""
     client = _get_client()
     if not client:
         raise RuntimeError("GEMINI_API_KEY is not set in .env")
 
-    models = _get_models()
-    last_err = None
-    for model_name in models:
-        try:
-            logger.info(f"Trying Gemini model: {model_name}")
-            response = client.models.generate_content(model=model_name, contents=prompt)
-            logger.info(f"Success with model: {model_name}")
-            return response.text
-        except Exception as e:
-            logger.warning(f"Model {model_name} failed: {e}")
-            last_err = e
-
-    raise RuntimeError(f"All {len(models)} Gemini models failed. Last error: {last_err}")
+    model_name = "gemini-1.5-flash"
+    try:
+        logger.info(f"Sending prompt to Gemini model: {model_name}")
+        response = client.models.generate_content(model=model_name, contents=prompt)
+        logger.info(f"Success with model: {model_name}")
+        return response.text
+    except Exception as e:
+        logger.warning(f"Model {model_name} failed: {e}")
+        raise RuntimeError(f"Gemini API request failed: {e}")
 
 
 # ── S3 helpers ───────────────────────────────────────────────────────────────

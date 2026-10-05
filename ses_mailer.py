@@ -80,36 +80,12 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
     
     try:
         if sdk_type == "new":
-            # Auto-discover models
-            best_model = "gemini-2.0-flash"
-            try:
-                models = [m.name for m in client.models.list() if "flash" in m.name.lower() and "gemini" in m.name.lower()]
-                if models: best_model = sorted(models)[-1].replace("models/", "")
-            except: pass
-            response = client.models.generate_content(model=best_model, contents=prompt)
+            response = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
             text = response.text
         else:
-            # Old SDK dynamic discovery
-            text = None
-            last_err = None
-            try:
-                available_models = []
-                for m in client.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        if 'gemini' in m.name.lower():
-                            available_models.append(m.name.replace("models/", ""))
-                            
-                m_name = "gemini-pro"
-                if available_models:
-                    # try to pick the best one
-                    flash_models = [m for m in available_models if 'flash' in m.lower()]
-                    m_name = sorted(flash_models)[-1] if flash_models else available_models[-1]
-                    
-                model = client.GenerativeModel(m_name)
-                response = model.generate_content(prompt)
-                text = response.text
-            except Exception as ex:
-                raise Exception(f"Dynamic discovery failed for old SDK. Last error: {ex}")
+            model = client.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(prompt)
+            text = response.text
             
         text = text.replace("```json", "").replace("```", "").strip()
         import json
