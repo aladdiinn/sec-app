@@ -27,37 +27,15 @@ _discovered_models = []   # populated lazily on first call
 # Preferred model keywords in priority order (flash first = cheaper + faster)
 _MODEL_PREFERENCE = [
     "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro",
-    "gemini-2.0-pro",   "gemini-1.5-flash", "gemini-1.5-pro",
-    "gemini-1.0-pro",   "gemini-pro",
-]
-
-def _get_client():
-    global _gemini_client
-    if _gemini_client is None and GEMINI_API_KEY:
-        from google import genai
-        # Stable v1 API — v1beta causes 404s on free-tier accounts
-        _gemini_client = genai.Client(
-            api_key=GEMINI_API_KEY,
-            http_options={"api_version": "v1"}
-        )
-    return _gemini_client
-
+import gemini_client
 
 def _generate(prompt: str) -> str:
-    """Generate content directly using the cheapest/fastest model to save rate limits."""
-    client = _get_client()
-    if not client:
-        raise RuntimeError("GEMINI_API_KEY is not set in .env")
-
-    model_name = "gemini-1.5-flash"
+    """Generate content directly using the shared client to handle SDK abstractions and fallback models."""
     try:
-        logger.info(f"Sending prompt to Gemini model: {model_name}")
-        response = client.models.generate_content(model=model_name, contents=prompt)
-        logger.info(f"Success with model: {model_name}")
-        return response.text
+        return gemini_client.generate_content(prompt)
     except Exception as e:
-        logger.warning(f"Model {model_name} failed: {e}")
-        raise RuntimeError(f"Gemini API request failed: {e}")
+        logger.error(f"LLM Analyzer failed to generate content: {e}")
+        raise RuntimeError(f"AI Log Analysis Failed: {e}")
 
 
 # ── S3 helpers ───────────────────────────────────────────────────────────────

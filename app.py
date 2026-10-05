@@ -459,6 +459,37 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Database schema...")
     db.init_db()
     
+    # --- Gemini Startup Diagnostics ---
+    import gemini_client
+    try:
+        client, sdk_type = gemini_client.get_gemini_client()
+        if client:
+            logger.info(f"Gemini API configured using SDK: {sdk_type}")
+            supported_models = []
+            if sdk_type == "new":
+                for m in client.models.list():
+                    methods = getattr(m, "supported_generation_methods", []) or []
+                    if "generateContent" in methods or not methods:
+                        supported_models.append(m.name.replace("models/", ""))
+            else:
+                for m in client.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        supported_models.append(m.name.replace("models/", ""))
+            
+            logger.info(f"Available Gemini models supporting generateContent: {supported_models}")
+            primary = gemini_client.PRIMARY_MODEL
+            fallback = gemini_client.FALLBACK_MODEL
+            
+            if primary not in supported_models:
+                logger.warning(f"WARNING: Configured primary model '{primary}' is NOT in the supported list!")
+            if fallback not in supported_models:
+                logger.warning(f"WARNING: Configured fallback model '{fallback}' is NOT in the supported list!")
+        else:
+            logger.warning("Gemini API Key missing or SDK not installed. AI features will be disabled.")
+    except Exception as e:
+        logger.error(f"Failed to check Gemini models on startup: {e}")
+    # ----------------------------------
+    
     try:
         t_s3 = threading.Thread(target=run_s3_archiver_loop, daemon=True)
         t_s3.start()

@@ -22,26 +22,7 @@ SES_SENDER_EMAIL = os.environ.get("SES_SENDER_EMAIL", "security@yourcompany.com"
 # Where the alerts should be sent
 SES_RECIPIENT_EMAIL = os.environ.get("SES_RECIPIENT_EMAIL", "soc-team@yourcompany.com")
 
-def _get_gemini_client():
-    """Build Gemini client lazily so it picks up GEMINI_API_KEY even if loaded after module import."""
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-    except Exception:
-        pass
-        
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key or not genai:
-        return None, None
-    try:
-        if _sdk == "new":
-            return genai.Client(api_key=api_key, http_options={"api_version": "v1"}), _sdk
-        else:
-            genai.configure(api_key=api_key)
-            return genai, _sdk
-    except Exception as e:
-        logger.error(f"Failed to configure Gemini Client: {e}")
-        return None, None
+import gemini_client
 
 def get_ses_client():
     key_id = os.environ.get("SES_AWS_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
@@ -53,14 +34,6 @@ def get_ses_client():
 
 def generate_alert_analysis(alert_title: str, alert_type: str, message: str, server_ip: str, username: str = "root"):
     """Uses Gemini to generate the Analysis, Risk, and Recommendation for the email."""
-    client, sdk_type = _get_gemini_client()
-    if not client:
-        return {
-            "analysis": "<li>LLM API Key missing or google-generativeai module not installed. Analysis unavailable.</li>",
-            "risk": "<p>Unknown. Please configure GEMINI_API_KEY and pip install google-generativeai.</p>",
-            "recommendations": "<li>Check server environment variables.</li>"
-        }
-    
     prompt = f"""
     You are an expert SOC Analyst. Analyze this specific security alert that just occurred on a Linux server.
     
@@ -79,24 +52,18 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
     """
     
     try:
-        if sdk_type == "new":
-            response = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
-            text = response.text
-        else:
-            model = client.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-            text = response.text
-            
+        text = gemini_client.generate_content(prompt)
         text = text.replace("```json", "").replace("```", "").strip()
         import json
         data = json.loads(text)
         return data
     except Exception as e:
         logger.error(f"Gemini API Error during alert analysis: {e}")
+        # Graceful fallback to rule-based description if AI fails
         return {
-            "analysis": f"<li>Failed to analyze alert using AI. Error: {str(e)}</li>",
-            "risk": "<p>Unable to determine risk due to AI failure.</p>",
-            "recommendations": "<li>Investigate manually via the dashboard.</li>"
+            "analysis": f"<li>Event Type: {alert_type}</li><li>Target Server: {server_ip}</li><li>User: {username}</li><li>Raw Event: {message}</li>",
+            "risk": f"<p>A security event matching rule '{alert_title}' was triggered. Immediate manual review is recommended.</p>",
+            "recommendations": "<li>Investigate the raw event logs via the SecurePulse dashboard.</li><li>Verify the user's authorization to perform this action.</li><li>Check the affected server for related anomalous activity.</li>"
         }
 
 def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, message: str, severity: str, timestamp: str, server_ip: str, hostname: str):
