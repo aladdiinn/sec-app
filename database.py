@@ -700,9 +700,6 @@ def categorize_command(cmd_str: str) -> str:
 
 def log_alert(server_id: int, alert_type: str, message: str, severity: str = "warning", title: str = None):
     """Log alert, auto-resolving valid server_id, and creating both alert and incident."""
-    if any(tmp_kw in message.lower() for tmp_kw in ["/tmp/", "/var/tmp/", "crontab."]):
-        logger.debug(f"Suppressed temporary file alert/incident noise: {message}")
-        return
     conn = get_db_connection()
     if not conn:
         return

@@ -1574,9 +1574,7 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
     cache_key = (int(server_id) if server_id else 0, str(alert_type))
     # print(f"DEBUG dedup check: {cache_key} against cache keys: {list(_dedup_alerts_cache.keys())}")
     now = time.time()
-    last_time = _dedup_alerts_cache.get(cache_key, 0)
-    if now - last_time < 15:
-        return
+    # 15s deduplication completely removed as requested
     _dedup_alerts_cache[cache_key] = now
     try:
         db.log_alert(server_id, alert_type, message, severity=severity, title=title)
