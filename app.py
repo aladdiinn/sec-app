@@ -1369,10 +1369,20 @@ _dedup_alerts_cache = {}     # {(server_id, alert_type): last_timestamp}
 _rule_cache = {}             # {event_type: {enabled: bool, threshold: int, ...}}
 _rule_cache_ts = 0.0         # last load timestamp
 
-def _extract_audit_actor(log_lines, filepath):
-    """Parse log lines to extract the real username who modified a file."""
+def _extract_audit_actor(log_lines, filepath, bash_cmds=None):
+    """Parse log lines and concurrent shell commands to extract the real username who modified a file."""
     import re as _re
     fname = os.path.basename(filepath)
+    
+    # 0. Try to perfectly correlate with tracked shell commands (Highest Confidence)
+    if bash_cmds:
+        for cmd_obj in bash_cmds:
+            c = cmd_obj.get("command", "") if isinstance(cmd_obj, dict) else str(cmd_obj)
+            u = cmd_obj.get("user", "Unknown") if isinstance(cmd_obj, dict) else "Unknown"
+            # If the file path or name is explicitly in the command that was just run
+            if filepath in c or fname in c:
+                return u, "shell_command"
+
     auid_p = _re.compile(r'auid=(\d+)')
     uid_p  = _re.compile(r'\buid=(\d+)')
     comm_p = _re.compile(r'comm="([^"]+)"')
@@ -1497,6 +1507,9 @@ def _humanize_audit_event(key, actor, auid_str, raw_line):
         obj_part = f" '{obj_path}'"
     else:
         obj_part = ""
+
+    if not obj_part and action == "performed an action on":
+        action = "executed a monitored command"
 
     # Compose final message
     msg = f"{subject} {action}{obj_part}{cmd_part}."
@@ -1816,7 +1829,7 @@ def _check_unified_fim(server_id, data):
             )
         else:
             # Standalone FIM alert — try to find actor from raw audit/syslog lines
-            actor, tool = _extract_audit_actor(log_lines, path)
+            actor, tool = _extract_audit_actor(log_lines, path, bash_cmds)
             actor_str = f" by user '{actor}' via `{tool}`" if actor else ""
             change_verb = {"modified": "was modified", "created": "was created", "deleted": "was deleted"}.get(change_type.lower(), f"was {change_type}")
             _create_alert_dedup(
