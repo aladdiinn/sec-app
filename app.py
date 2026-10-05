@@ -1683,7 +1683,7 @@ def _check_sudo_misuse(server_id, data):
         (re.compile(r'psql\s+.*-(?:c|command)\s+.*(alter\s+user|alter\s+role|grant\s+all|with\s+superuser)', re.IGNORECASE), 'PostgreSQL CLI Privilege Escalation', 'critical', 'PostgreSQL Privilege Escalation Alert', 'PG_PRIVILEGE_CHANGE'),
         # Account creation / management
         (re.compile(r'\b(useradd|adduser)\b', re.IGNORECASE), 'New User Account Created', 'warning', 'Identity Management Alert', 'USER_CREATED'),
-        (re.compile(r'passwd\s+(?:root|\S+)', re.IGNORECASE), 'User Password Modified', 'warning', 'Credential Modification Alert', 'PASSWD_CHANGED'),
+        (re.compile(r'\bpasswd(?:\[\d+\])?:\s+password\s+for\b', re.IGNORECASE), 'User Password Modified', 'warning', 'Credential Modification Alert', 'PASSWD_CHANGED'),
         # Failed Root Escalation (Replaced successful su/sudo rule)
         (re.compile(r'(FAILED su for root|incorrect password attempt|sudo:.*authentication failure)', re.IGNORECASE), 'Failed Root Escalation Attempt', 'critical', 'Privilege Escalation Alert', 'SUDO_ROOT_ESCALATION'),
         (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'warning', 'Host Anomaly Alert', 'MASS_PROCESS_KILL'),
