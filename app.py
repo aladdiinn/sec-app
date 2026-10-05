@@ -1758,8 +1758,8 @@ def _check_sudo_misuse(server_id, data):
                     for ae in data.get("audit_events", []):
                         raw_line = ae.get("line", "")
                         import re as _re
-                        comm_m = _re.search(r'comm="([^"]+)"', raw_line)
-                        exe_m  = _re.search(r'exe="([^"]+)"', raw_line)
+                        comm_m = _re.search(r'comm="?([^"\s]+)"?', raw_line)
+                        exe_m  = _re.search(r'exe="?([^"\s]+)"?', raw_line)
                         cmd_name = (comm_m.group(1) if comm_m else "") or (os.path.basename(exe_m.group(1)) if exe_m else "")
                         
                         if cmd_name and (cmd_name.lower() in text.lower() or cmd_name.lower() in rule_name.lower()):
@@ -1914,8 +1914,8 @@ def _check_unified_fim(server_id, data):
 
         # Build a plain-English correlated message (no raw log dump)
         import re as _re
-        c_m = _re.search(r'comm="([^"]+)"', line)
-        e_m = _re.search(r'exe="([^"]+)"', line)
+        c_m = _re.search(r'comm="?([^"\s]+)"?', line)
+        e_m = _re.search(r'exe="?([^"\s]+)"?', line)
         comm_str = f" using '{c_m.group(1)}'" if c_m else ""
         exe_str = f" ({e_m.group(1)})" if e_m else ""
         human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}){comm_str}{exe_str}."
@@ -3633,7 +3633,7 @@ def get_auditd_events():
             for line in f:
                 if "type=SYSCALL" in line or "type=PATH" in line:
                     auid_m = re.search(r'auid=(\d+)', line)
-                    key_m = re.search(r'key="([^"]+)"', line)
+                    key_m = re.search(r'key="?([^"\s]+)"?', line)
                     if auid_m and auid_m.group(1) != "4294967295":
                         auid = auid_m.group(1)
                         uname = user_mapping.get(auid, "unknown")
