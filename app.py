@@ -3206,7 +3206,15 @@ elif command -v dnf >/dev/null 2>&1; then
 fi
 
 if [ -d /etc/audit/rules.d/ ]; then
+    # Remove default package boilerplate to prevent "Rule exists" duplicate compiler errors
+    rm -f /etc/audit/rules.d/audit.rules 2>/dev/null || true
+    
     cat << 'AUDIT_EOF' > /etc/audit/rules.d/securepulse.rules
+# 0. Buffer and Rate Limiting
+-D
+-b 8192
+-f 1
+
 # 1. Identity and Privilege Escalation
 -w /etc/passwd -p wa -k identity
 -w /etc/shadow -p wa -k identity
