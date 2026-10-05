@@ -1817,12 +1817,6 @@ def _check_unified_fim(server_id, data):
         change_type = fc.get("type", "modified") if isinstance(fc, dict) else "modified"
         detail = fc.get("detail", "") if isinstance(fc, dict) else ""
         
-        # Suppress agent's own watchdog crontab edits
-        if 'cron' in path and 'root' in path:
-            actor, tool = _extract_audit_actor(log_lines, path, bash_cmds)
-            if actor == 'root' and tool in ('python3', 'python'):
-                continue
-        
         matched_key = None
         if "passwd" in path or "shadow" in path: matched_key = "identity"
         elif "sudoers" in path: matched_key = "priv_esc"
@@ -1839,12 +1833,23 @@ def _check_unified_fim(server_id, data):
                 actor = "ubuntu"
             elif actor == "unknown" and auid_str == "0":
                 actor = "root"
+                
+            # Resolve real sudoer: if actor=root but vinay did sudo, show vinay
+            sudo_actor_map = {}
+            for se in data.get("sudo_events", []):
+                raw = se.get("line", "") if isinstance(se, dict) else str(se)
+                m = re.search(r'sudo:\s+(\S+)\s.*?USER=(\S+)', raw)
+                if m:
+                    sudo_actor_map[m.group(2).strip(';')] = m.group(1).strip(';')
+            real_actor = sudo_actor_map.get(actor, actor)
+            
             alerted_keys.add(matched_key)
             
+            display_actor = real_actor if real_actor else actor
             _create_alert_dedup(
                 server_id, f'CORRELATED_FIM_{path.replace("/", "_")}', 'critical',
                 f'Critical File Tampered — {os.path.basename(path)}',
-                f"User '{actor}' modified the protected system file '{path}'. "
+                f"User '{display_actor}' modified the protected system file '{path}'. "
                 f"This file controls {'user identities' if 'passwd' in path or 'shadow' in path else 'sudo privileges' if 'sudoers' in path else 'scheduled tasks' if 'cron' in path else 'SSH access' if 'ssh' in path else 'system security'} "
                 f"and should never be changed outside of planned maintenance. Correlated with kernel audit event."
             )
