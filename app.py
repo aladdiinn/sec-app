@@ -1744,6 +1744,11 @@ def _check_sudo_misuse(server_id, data):
         # Never alert on setup/dashboard own scripts
         if any(own in text for own in _OWN_URLS):
             continue
+            
+        # Skip raw kernel audit events (handled properly by _check_unified_fim)
+        if "type=SYSCALL" in text or "type=PATH" in text:
+            continue
+            
         for pat, rule_name, sev, title, atype in suspicious_patterns:
             if pat.search(text):
                 # Resolve real user: if actor is root but vinay did sudo su, show vinay
@@ -1905,7 +1910,12 @@ def _check_unified_fim(server_id, data):
         title = f"{key.replace('_', ' ').title()} Alert by {real_actor}"
 
         # Build a plain-English correlated message (no raw log dump)
-        human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}). {line[:200]}"
+        import re as _re
+        c_m = _re.search(r'comm="([^"]+)"', line)
+        e_m = _re.search(r'exe="([^"]+)"', line)
+        comm_str = f" using '{c_m.group(1)}'" if c_m else ""
+        exe_str = f" ({e_m.group(1)})" if e_m else ""
+        human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}){comm_str}{exe_str}."
 
         _create_alert_dedup(
             server_id, f'AUDIT_{key}_{auid_str}', severity,
