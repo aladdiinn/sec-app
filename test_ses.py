@@ -36,9 +36,12 @@ try:
     )
     
     print("Connected! Attempting to send a test email...")
+    
+    recipients = [r.strip() for r in SES_RECIPIENT_EMAIL.replace(";", ",").split(",") if r.strip()]
+    
     response = client.send_email(
         Source=SES_SENDER_EMAIL,
-        Destination={'ToAddresses': [SES_RECIPIENT_EMAIL]},
+        Destination={'ToAddresses': recipients},
         Message={
             'Subject': {'Data': 'SOC Dashboard - SES Test'},
             'Body': {'Text': {'Data': 'If you receive this, SES is configured correctly!'}}

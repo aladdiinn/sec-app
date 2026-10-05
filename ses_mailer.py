@@ -158,11 +158,15 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
     
     subject = f"[SOC ALERT] {severity.upper()} - {alert_title} on {hostname}"
     
+    # Parse multiple comma-separated recipients
+    recipient_str = os.environ.get("SES_RECIPIENT_EMAIL", "soc-team@yourcompany.com")
+    recipients = [r.strip() for r in recipient_str.replace(";", ",").split(",") if r.strip()]
+    
     try:
         ses = get_ses_client()
         response = ses.send_email(
             Source=SES_SENDER_EMAIL,
-            Destination={'ToAddresses': [SES_RECIPIENT_EMAIL]},
+            Destination={'ToAddresses': recipients},
             Message={
                 'Subject': {'Data': subject},
                 'Body': {'Html': {'Data': html_body}}

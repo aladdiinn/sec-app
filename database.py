@@ -781,7 +781,8 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
             
             email_enabled = _CACHED_EMAIL_SETTING
                 
-            if email_enabled and (severity.lower() == "critical" or "audit" in alert_type.lower() or "audit" in final_title.lower()):
+            # Trigger emails for Critical severity, or specific high-interest security alerts (Audit, FIM, Commands)
+            if email_enabled and (severity.lower() == "critical" or "audit" in alert_type.lower() or "audit" in final_title.lower() or "fim" in alert_type.lower() or "command" in final_title.lower()):
                 # Get hostname and IP for the email
                 hostname = "Unknown Host"
                 server_ip = "Unknown IP"
