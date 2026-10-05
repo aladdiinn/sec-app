@@ -1789,12 +1789,12 @@ def _check_unified_fim(server_id, data):
     audit_events = data.get("audit_events", [])
     log_lines = data.get("log_lines", []) or data.get("logs", [])
     
-    # Noise Reduction: Check if package manager was active recently
-    bash_cmds = data.get("commands", [])
+    # Noise Reduction: Check if package manager is actively running right now
+    procs = data.get("processes", [])
     is_maintenance = False
-    for cmd in bash_cmds:
-        c = cmd.get("command", "") if isinstance(cmd, dict) else str(cmd)
-        if any(k in c.lower() for k in ["apt-get", "apt install", "apt update", "apt upgrade", "yum", "dnf"]):
+    for p in procs:
+        p_name = p.get("name", "").lower()
+        if p_name in ["apt", "apt-get", "dpkg", "yum", "dnf", "rpm"]:
             is_maintenance = True
             break
             
