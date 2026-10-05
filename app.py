@@ -1864,10 +1864,6 @@ def _check_unified_fim(server_id, data):
     # Process leftover audit events that didn't have a matching FIM file change
     for key, events in audit_map.items():
         if key in alerted_keys: continue
-        
-        # Noise Reduction: Skip extremely noisy kernel events that don't correlate to FIM
-        if key in ["session", "perm_mod", "logins", "mounts"]:
-            continue
             
         last_event = events[-1]
         line = last_event.get("line", "")
