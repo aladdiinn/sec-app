@@ -5506,17 +5506,17 @@ async def api_fetch_log_lines(request: Request):
                     for rl in raw_lines:
                         rl = rl.strip()
                         if not rl: continue
-                            if search and search not in rl.lower(): continue
+                        if search and search not in rl.lower(): continue
 
-                            ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?)', rl)
-                            log_time = ts_match.group(1)[:19] if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                        ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?)', rl)
+                        log_time = ts_match.group(1)[:19] if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-                            lines.append({
-                                "time": log_time,
-                                "level": "CRITICAL" if "crit" in rl.lower() else ("ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO")),
-                                "source": f"{st}/local-node",
-                                "msg": rl
-                            })
+                        lines.append({
+                            "time": log_time,
+                            "level": "CRITICAL" if "crit" in rl.lower() else ("ERROR" if any(w in rl.lower() for w in ["error","fail","exception","fatal"]) else ("WARN" if "warn" in rl.lower() else "INFO")),
+                            "source": f"{st}/local-node",
+                            "msg": rl
+                        })
                 except Exception as ex_read:
                     logger.warning(f"Error reading local log file {lp}: {ex_read}")
 
@@ -5594,31 +5594,31 @@ async def api_fetch_log_lines(request: Request):
                     for rl in file_lines:
                         rl = rl.strip()
                         if not rl: continue
-                            if search and search.lower() not in rl.lower(): continue
+                        if search and search.lower() not in rl.lower(): continue
 
-                            ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?|[A-Za-z]{3}\s+\d+\s+\d{2}:\d{2}:\d{2})', rl)
-                            log_time = ts_match.group(1) if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                        ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?|[A-Za-z]{3}\s+\d+\s+\d{2}:\d{2}:\d{2})', rl)
+                        log_time = ts_match.group(1) if ts_match else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-                            lvl = "INFO"
-                            rl_low = rl.lower()
-                            if "crit" in rl_low or "fatal" in rl_low: lvl = "CRITICAL"
-                            elif "error" in rl_low or "fail" in rl_low or "failed" in rl_low: lvl = "ERROR"
-                            elif "warn" in rl_low or "warning" in rl_low: lvl = "WARN"
+                        lvl = "INFO"
+                        rl_low = rl.lower()
+                        if "crit" in rl_low or "fatal" in rl_low: lvl = "CRITICAL"
+                        elif "error" in rl_low or "fail" in rl_low or "failed" in rl_low: lvl = "ERROR"
+                        elif "warn" in rl_low or "warning" in rl_low: lvl = "WARN"
 
-                            if any(kw in rl for kw in ["[WATCHDOG-AI]", "Outlier Anomaly", "Root Cause Analysis", "Traffic Anomaly Alert", "CPU usage spiked"]):
-                                try:
-                                    db.log_alert(sid or 1, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {rl}", severity="critical")
-                                    inc_title = f"Watchdog AI Anomaly: {rl[:50]}..." if len(rl) > 50 else f"Watchdog AI: {rl}"
-                                    db.create_incident(inc_title, "critical", f"Watchdog AI Detection: {rl}", "SOC Analyst", server_id=sid or 1)
-                                except Exception:
-                                    pass
+                        if any(kw in rl for kw in ["[WATCHDOG-AI]", "Outlier Anomaly", "Root Cause Analysis", "Traffic Anomaly Alert", "CPU usage spiked"]):
+                            try:
+                                db.log_alert(sid or 1, "WATCHDOG_AI_ANOMALY", f"Watchdog AI: {rl}", severity="critical")
+                                inc_title = f"Watchdog AI Anomaly: {rl[:50]}..." if len(rl) > 50 else f"Watchdog AI: {rl}"
+                                db.create_incident(inc_title, "critical", f"Watchdog AI Detection: {rl}", "SOC Analyst", server_id=sid or 1)
+                            except Exception:
+                                pass
 
-                            local_lines.append({
-                                "time": log_time,
-                                "level": lvl,
-                                "source": f"{stype}/{os.path.basename(filepath)}",
-                                "msg": rl
-                            })
+                        local_lines.append({
+                            "time": log_time,
+                            "level": lvl,
+                            "source": f"{stype}/{os.path.basename(filepath)}",
+                            "msg": rl
+                        })
                 except Exception as e:
                     logger.warning(f"Could not read real log file {filepath}: {e}")
 
