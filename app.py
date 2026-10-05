@@ -1878,7 +1878,7 @@ def _check_unified_fim(server_id, data):
         if key in alerted_keys: continue
         
         # Noise Reduction: Skip extremely noisy kernel events that don't correlate to FIM
-        if key in ["session", "perm_mod", "logins", "mounts"]:
+        if key in ["session", "perm_mod", "logins", "mounts", "commands"]:
             continue
             
         last_event = events[-1]
