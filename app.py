@@ -3257,6 +3257,11 @@ if [ -d /etc/audit/rules.d/ ]; then
 
 # 9. System Mounts
 -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=-1 -k mounts
+
+# 10. Custom Directory Monitoring
+-w /application -p wa -k app_mod
+-w /data -p wa -k data_mod
+-w /home -p wa -k home_mod
 AUDIT_EOF
     augenrules --load >/dev/null 2>&1 || true
     systemctl restart auditd >/dev/null 2>&1 || true
