@@ -3621,7 +3621,7 @@ def get_auditd_events():
                         uname = user_mapping.get(auid, "unknown")
                         key = key_m.group(1) if key_m else "unknown"
                         if key != "unknown":
-                            events.append({{"auid": auid, "username": uname, "key": key, "line": line.strip()[:300]}})
+                            events.append({{"auid": auid, "username": uname, "key": key, "line": line.strip()[:2000]}})
             audit_log_positions[path] = f.tell()
     except: pass
     return events[-30:]
@@ -3651,7 +3651,7 @@ def get_auth_failures():
                         failures.append({{
                             "ip": ip_m.group(1) if ip_m else "unknown",
                             "user": usr_m.group(1) if usr_m else "unknown",
-                            "line": line.strip()[:300]
+                            "line": line.strip()[:2000]
                         }})
                 auth_log_positions[path] = f.tell()
         except: pass
@@ -3673,7 +3673,7 @@ def get_sudo_events():
                 f.seek(pos)
                 for line in f:
                     if sudo_pattern.search(line):
-                        events.append({{"line": line.strip()[:300], "path": path}})
+                        events.append({{"line": line.strip()[:2000], "path": path}})
                 sudo_log_positions[path] = f.tell()
         except: pass
     return events[-30:]
