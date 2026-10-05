@@ -1776,8 +1776,8 @@ def _check_sudo_misuse(server_id, data):
                 ).strip()
                 _create_alert_dedup(
                     server_id, atype, sev,
-                    display_title,
-                    human_msg
+                    title,
+                    f'SOAR Detections [{rule_name}]{actor_str}: {text[:250]}'
                 )
                 break
 
@@ -1848,10 +1848,8 @@ def _check_unified_fim(server_id, data):
             display_actor = real_actor if real_actor else actor
             _create_alert_dedup(
                 server_id, f'CORRELATED_FIM_{path.replace("/", "_")}', 'critical',
-                f'Critical File Tampered — {os.path.basename(path)}',
-                f"User '{display_actor}' modified the protected system file '{path}'. "
-                f"This file controls {'user identities' if 'passwd' in path or 'shadow' in path else 'sudo privileges' if 'sudoers' in path else 'scheduled tasks' if 'cron' in path else 'SSH access' if 'ssh' in path else 'system security'} "
-                f"and should never be changed outside of planned maintenance. Correlated with kernel audit event."
+                'Correlated File Modification Alert',
+                f"Detection Rule [Unified FIM & Audit]: '{path}' was maliciously modified by user '{display_actor}' (AUID: {auid_str})."
             )
         else:
             # Standalone FIM alert — try to find actor from raw audit/syslog lines
@@ -1860,8 +1858,8 @@ def _check_unified_fim(server_id, data):
             change_verb = {"modified": "was modified", "created": "was created", "deleted": "was deleted"}.get(change_type.lower(), f"was {change_type}")
             _create_alert_dedup(
                 server_id, f'FIM_{path.replace("/", "_")}', 'critical',
-                f'File System Change — {os.path.basename(path)}',
-                f"The file '{path}' {change_verb}{actor_str}. {detail if detail else 'No additional context available.'}"
+                'OS File Modification Alert',
+                f'Detection Rule [File Integrity Monitor]: {change_type} at {path}{actor_str}. {detail}'
             )
 
     # Process leftover audit events that didn't have a matching FIM file change
@@ -1927,16 +1925,10 @@ def _check_unified_fim(server_id, data):
             # Extract what was changed
             perm_m = re.search(r'chmod\s+(\S+)\s+(\S+)', line)
             own_m  = re.search(r'chown\s+(\S+)\s+(\S+)', line)
-            if perm_m:
-                human_perm_msg = f"File permissions changed to `{perm_m.group(1)}` on `{perm_m.group(2)}`. Broad permissions on system paths are a common attack vector for privilege escalation."
-            elif own_m:
-                human_perm_msg = f"File ownership changed to `{own_m.group(1)}` on `{own_m.group(2)}`. Changing ownership of system files can be a sign of privilege escalation."
-            else:
-                human_perm_msg = f"A permission or ownership change was detected on a critical system path."
             _create_alert_dedup(
                 server_id, 'FIM_COMMAND', 'warning',
-                'System File Permission Changed',
-                human_perm_msg
+                'OS File Modification Alert',
+                f'Detection Rule [File Permission Modification]: {line[:250]}'
             )
 
 def _check_port_scan(server_id, data):
