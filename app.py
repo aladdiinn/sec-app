@@ -1695,7 +1695,15 @@ def _check_sudo_misuse(server_id, data):
     ]
 
     # Setup/dashboard own URLs — never flag as suspicious
-    _OWN_URLS = ["setup_node.sh", "setup_app.sh", "securepulse", "/api/agent/"]
+    # Also includes Linux system daemons that run as root but are NOT user actions
+    _OWN_URLS = [
+        "setup_node.sh", "setup_app.sh", "securepulse", "/api/agent/",
+        # sysstat performance accounting daemon (runs as root via cron, NOT a user)
+        "debian-sa1", "/usr/lib/sysstat/sa1", "/usr/lib/sysstat/sa2",
+        "sysstat", "/usr/lib64/sa/sa1", "/usr/lib64/sa/sa2",
+        # logrotate / systemd internals (routine system processes)
+        "logrotate", "systemd-tmpfiles", "run-parts",
+    ]
 
     # Build real user map from sudo_events: {effective_user -> original_user}
     # When vinay does sudo su → root, sudo log shows "sudo: vinay ... USER=root"
@@ -1755,13 +1763,20 @@ def _check_sudo_misuse(server_id, data):
                 elif len(clean_text) > 120:
                     clean_text = clean_text[:120] + "..."
 
+                # Build title: use real_actor (vinay) not effective actor (root)
+                display_actor = real_actor if real_actor else (actor or "Unknown")
+                if real_actor and real_actor != actor and actor:
+                    display_title = f"{rule_name} — {real_actor} (as {actor})"
+                else:
+                    display_title = f"{rule_name} — {display_actor}"
+
                 human_msg = (
                     f"{actor_str.strip() or 'A user'} executed: `{clean_text}`. "
                     f"This matches the detection rule '{rule_name}'."
                 ).strip()
                 _create_alert_dedup(
                     server_id, atype, sev,
-                    title,
+                    display_title,
                     human_msg
                 )
                 break
@@ -1863,12 +1878,24 @@ def _check_unified_fim(server_id, data):
         else:
             severity = "warning"  # session, logins, mounts, perm_mod
         
+        # Resolve real sudoer: if actor=root but vinay did sudo, show vinay
+        sudo_actor_map = {}
+        for se in data.get("sudo_events", []):
+            raw = se.get("line", "") if isinstance(se, dict) else str(se)
+            m = re.search(r'sudo:\s+(\S+)\s.*?USER=(\S+)', raw)
+            if m:
+                sudo_actor_map[m.group(2).strip(';')] = m.group(1).strip(';')
+        real_actor = sudo_actor_map.get(actor, actor)
+
         # Map audit key → human-readable alert title
         key_desc = _AUDIT_KEY_DESCRIPTIONS.get(key, key.replace('_', ' ').title())
-        title = f"{key_desc} Detected — {actor}"
+        if real_actor and real_actor != actor:
+            title = f"{key_desc} Detected — {real_actor} (as {actor} via sudo)"
+        else:
+            title = f"{key_desc} Detected — {real_actor}"
 
         # Build a plain-English correlated message (no raw log dump)
-        human_msg = _humanize_audit_event(key, actor, auid_str, line)
+        human_msg = _humanize_audit_event(key, real_actor, auid_str, line)
 
         _create_alert_dedup(
             server_id, f'AUDIT_{key}_{auid_str}', severity,
