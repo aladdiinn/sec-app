@@ -1946,9 +1946,15 @@ def _check_unified_fim(server_id, data):
         e_m = _re.search(r'exe="?([^"\s]+)"?', line)
         f_m = _re.search(r'filename="?([^"\s]+)"?', line)
         
+        # Specific noise suppression: Ignore bash background history saves on logout
+        filename_str = f_m.group(1) if f_m else ""
+        exe_str_val = e_m.group(1) if e_m else ""
+        if ".bash_history" in filename_str and "bash" in exe_str_val:
+            return
+            
         comm_str = f" using '{c_m.group(1)}'" if c_m else ""
-        exe_str = f" ({e_m.group(1)})" if e_m else ""
-        file_str = f" on file '{f_m.group(1)}'" if f_m else ""
+        exe_str = f" ({exe_str_val})" if e_m else ""
+        file_str = f" on file '{filename_str}'" if f_m else ""
         
         human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}){comm_str}{exe_str}{file_str}."
 
