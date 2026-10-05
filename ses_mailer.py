@@ -89,10 +89,19 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
             response = client.models.generate_content(model=best_model, contents=prompt)
             text = response.text
         else:
-            # Old SDK
-            model = client.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(prompt)
-            text = response.text
+            # Old SDK fallback loop
+            text = None
+            last_err = None
+            for m_name in ['gemini-1.5-pro', 'gemini-1.0-pro', 'gemini-pro', 'gemini-1.5-flash']:
+                try:
+                    model = client.GenerativeModel(m_name)
+                    response = model.generate_content(prompt)
+                    text = response.text
+                    break
+                except Exception as ex:
+                    last_err = ex
+            if not text:
+                raise Exception(f"All old SDK models failed. Last error: {last_err}")
             
         text = text.replace("```json", "").replace("```", "").strip()
         import json
