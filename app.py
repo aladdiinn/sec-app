@@ -3207,8 +3207,8 @@ elif command -v dnf >/dev/null 2>&1; then
 fi
 
 if [ -d /etc/audit/rules.d/ ]; then
-    # Remove default package boilerplate to prevent "Rule exists" duplicate compiler errors
-    rm -f /etc/audit/rules.d/audit.rules 2>/dev/null || true
+    # Wipe any existing or default OS rules to prevent "Rule exists" compiler crashes during augenrules
+    find /etc/audit/rules.d/ -type f -not -name 'securepulse.rules' -delete 2>/dev/null || true
     
     cat << 'AUDIT_EOF' > /etc/audit/rules.d/securepulse.rules
 # 0. Buffer and Rate Limiting
