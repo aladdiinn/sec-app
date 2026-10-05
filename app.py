@@ -1823,7 +1823,7 @@ def _check_unified_fim(server_id, data):
         
         matched_key = None
         if "passwd" in path or "shadow" in path: matched_key = "identity"
-        elif "sudoers" in path: matched_key = "priv_esc"
+        elif "sudoers" in path: matched_key = "scope"
         elif "cron" in path: matched_key = "scheduled_tasks"
         elif "ssh" in path: matched_key = "remote_access"
         elif "application" in path: matched_key = "app_mod"
@@ -1894,7 +1894,7 @@ def _check_unified_fim(server_id, data):
             
         line = last_event.get("line", "")
         
-        if key in ["identity", "priv_esc", "remote_access", "modules"]:
+        if key in ["identity", "priv_esc", "scope", "remote_access", "modules"]:
             severity = "critical"
         elif key in ["scheduled_tasks", "MAC-policy", "time-change", "system-locale", "delete", "app_mod", "data_mod", "home_mod"]:
             severity = "high"
