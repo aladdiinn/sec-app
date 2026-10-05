@@ -89,19 +89,27 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
             response = client.models.generate_content(model=best_model, contents=prompt)
             text = response.text
         else:
-            # Old SDK fallback loop
+            # Old SDK dynamic discovery
             text = None
             last_err = None
-            for m_name in ['gemini-1.5-pro', 'gemini-1.0-pro', 'gemini-pro', 'gemini-1.5-flash']:
-                try:
-                    model = client.GenerativeModel(m_name)
-                    response = model.generate_content(prompt)
-                    text = response.text
-                    break
-                except Exception as ex:
-                    last_err = ex
-            if not text:
-                raise Exception(f"All old SDK models failed. Last error: {last_err}")
+            try:
+                available_models = []
+                for m in client.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        if 'gemini' in m.name.lower():
+                            available_models.append(m.name.replace("models/", ""))
+                            
+                m_name = "gemini-pro"
+                if available_models:
+                    # try to pick the best one
+                    flash_models = [m for m in available_models if 'flash' in m.lower()]
+                    m_name = sorted(flash_models)[-1] if flash_models else available_models[-1]
+                    
+                model = client.GenerativeModel(m_name)
+                response = model.generate_content(prompt)
+                text = response.text
+            except Exception as ex:
+                raise Exception(f"Dynamic discovery failed for old SDK. Last error: {ex}")
             
         text = text.replace("```json", "").replace("```", "").strip()
         import json
