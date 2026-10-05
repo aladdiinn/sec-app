@@ -3616,7 +3616,7 @@ def get_auditd_events():
                             events.append({{"auid": auid, "username": uname, "key": key, "line": line.strip()[:2000]}})
             audit_log_positions[path] = f.tell()
     except: pass
-    return events[-30:]
+    return events[-200:]
 
 # Auth failure tracking
 auth_log_positions = {{}}
