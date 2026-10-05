@@ -3630,8 +3630,8 @@ def get_auditd_events():
         pos = audit_log_positions.get(path, max(0, size - 8000))
         if size < pos: pos = 0
         
-        parsed_syscalls = {}
-        paths = {}
+        parsed_syscalls = {{}}
+        paths = {{}}
         
         with open(path, 'r', errors='ignore') as f:
             f.seek(pos)
