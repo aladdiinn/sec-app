@@ -1878,11 +1878,17 @@ def _check_unified_fim(server_id, data):
         if key in alerted_keys: continue
         
         # Noise Reduction: Skip extremely noisy kernel events that don't correlate to FIM
-        if key in ["session", "perm_mod", "logins", "mounts", "commands"]:
+        if key in ["session", "perm_mod", "logins", "mounts"]:
             continue
             
         last_event = events[-1]
         line = last_event.get("line", "")
+        
+        # Drop extremely noisy benign commands
+        if key == "commands":
+            raw_line_lower = line.lower()
+            if any(noise in raw_line_lower for noise in ["exe=\"/usr/bin/sleep\"", "exe=\"/bin/sleep\"", "exe=\"/usr/bin/htop\"", "exe=\"/usr/bin/top\""]):
+                continue
         
         # Drop system cron daemons running as root
         if any(noise in line for noise in ["debian-sa1", "sysstat", "logrotate", "systemd-tmpfiles"]):
@@ -1912,15 +1918,10 @@ def _check_unified_fim(server_id, data):
                 sudo_actor_map[m.group(2).strip(';')] = m.group(1).strip(';')
         real_actor = sudo_actor_map.get(actor, actor)
 
-        # Map audit key → human-readable alert title
-        key_desc = _AUDIT_KEY_DESCRIPTIONS.get(key, key.replace('_', ' ').title())
-        if real_actor and real_actor != actor:
-            title = f"{key_desc} Detected — {real_actor} (as {actor} via sudo)"
-        else:
-            title = f"{key_desc} Detected — {real_actor}"
+        title = f"{key.replace('_', ' ').title()} Alert by {real_actor}"
 
         # Build a plain-English correlated message (no raw log dump)
-        human_msg = _humanize_audit_event(key, real_actor, auid_str, line)
+        human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}). {line[:200]}"
 
         _create_alert_dedup(
             server_id, f'AUDIT_{key}_{auid_str}', severity,
