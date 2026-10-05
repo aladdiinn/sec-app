@@ -3576,8 +3576,19 @@ def check_fim():
             sig = f"{{h}}:{{mode}}:{{uid}}:{{gid}}"
             if path in fim_state and fim_state[path] != sig:
                 changes.append({{"path": path, "type": "modified", "detail": "Content or metadata changed"}})
+            elif bool(fim_state) and path not in fim_state:
+                changes.append({{"path": path, "type": "created", "detail": "New file created"}})
             fim_state[path] = sig
         except: pass
+        
+    # Check for deletions
+    if bool(fim_state):
+        current_paths = set(target_files)
+        for old_path in list(fim_state.keys()):
+            if old_path not in current_paths:
+                changes.append({{"path": old_path, "type": "deleted", "detail": "File was deleted"}})
+                del fim_state[old_path]
+                
     return changes
 
 def get_user_mapping():
