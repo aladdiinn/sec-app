@@ -4,8 +4,14 @@ import boto3
 from botocore.exceptions import ClientError
 try:
     from google import genai
+    _sdk = "new"
 except ImportError:
-    genai = None
+    try:
+        import google.generativeai as genai
+        _sdk = "old"
+    except ImportError:
+        genai = None
+        _sdk = None
 
 logger = logging.getLogger("ses_mailer")
 logger.setLevel(logging.INFO)
@@ -18,14 +24,24 @@ SES_RECIPIENT_EMAIL = os.environ.get("SES_RECIPIENT_EMAIL", "soc-team@yourcompan
 
 def _get_gemini_client():
     """Build Gemini client lazily so it picks up GEMINI_API_KEY even if loaded after module import."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
+        
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key or not genai:
-        return None
+        return None, None
     try:
-        return genai.Client(api_key=api_key, http_options={"api_version": "v1"})
+        if _sdk == "new":
+            return genai.Client(api_key=api_key, http_options={"api_version": "v1"}), _sdk
+        else:
+            genai.configure(api_key=api_key)
+            return genai, _sdk
     except Exception as e:
         logger.error(f"Failed to configure Gemini Client: {e}")
-        return None
+        return None, None
 
 def get_ses_client():
     key_id = os.environ.get("SES_AWS_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
@@ -37,22 +53,13 @@ def get_ses_client():
 
 def generate_alert_analysis(alert_title: str, alert_type: str, message: str, server_ip: str, username: str = "root"):
     """Uses Gemini to generate the Analysis, Risk, and Recommendation for the email."""
-    client = _get_gemini_client()
+    client, sdk_type = _get_gemini_client()
     if not client:
         return {
-            "analysis": "LLM API Key missing. Analysis unavailable.",
-            "risk": "Unknown",
-            "recommendations": "Please configure GEMINI_API_KEY to enable smart analysis."
+            "analysis": "<li>LLM API Key missing or google-generativeai module not installed. Analysis unavailable.</li>",
+            "risk": "<p>Unknown. Please configure GEMINI_API_KEY and pip install google-generativeai.</p>",
+            "recommendations": "<li>Check server environment variables.</li>"
         }
-    
-    # Auto-discover the best available model (flash variant)
-    best_model = "gemini-2.0-flash"
-    try:
-        models = [m.name for m in client.models.list() if "flash" in m.name.lower() and "gemini" in m.name.lower()]
-        if models:
-            best_model = sorted(models)[-1].replace("models/", "")
-    except Exception:
-        pass
     
     prompt = f"""
     You are an expert SOC Analyst. Analyze this specific security alert that just occurred on a Linux server.
@@ -64,16 +71,30 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
     Raw Message/Event: {message}
     
     Output your response STRICTLY as a JSON object with exactly these three keys:
-    "analysis" (A concise, numbered list summarizing what happened, formatted in HTML `<li>` tags)
-    "risk" (A concise paragraph explaining the potential risk in HTML `<p>` tags)
-    "recommendations" (A concise, numbered list of actions to take, formatted in HTML `<li>` tags)
+    "analysis" (A concise, numbered list summarizing what happened, formatted in HTML <li> tags)
+    "risk" (A concise paragraph explaining the potential risk in HTML <p> tags)
+    "recommendations" (A concise, numbered list of actions to take, formatted in HTML <li> tags)
     
     Do NOT wrap the response in markdown code blocks. Output pure JSON only.
     """
     
     try:
-        response = client.models.generate_content(model=best_model, contents=prompt)
-        text = response.text.replace("```json", "").replace("```", "").strip()
+        if sdk_type == "new":
+            # Auto-discover models
+            best_model = "gemini-2.0-flash"
+            try:
+                models = [m.name for m in client.models.list() if "flash" in m.name.lower() and "gemini" in m.name.lower()]
+                if models: best_model = sorted(models)[-1].replace("models/", "")
+            except: pass
+            response = client.models.generate_content(model=best_model, contents=prompt)
+            text = response.text
+        else:
+            # Old SDK
+            model = client.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            text = response.text
+            
+        text = text.replace("```json", "").replace("```", "").strip()
         import json
         data = json.loads(text)
         return data
