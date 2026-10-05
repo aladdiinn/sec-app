@@ -15,15 +15,17 @@ AWS_REGION = os.environ.get("SES_AWS_REGION") or os.environ.get("AWS_REGION", "u
 SES_SENDER_EMAIL = os.environ.get("SES_SENDER_EMAIL", "security@yourcompany.com")
 # Where the alerts should be sent
 SES_RECIPIENT_EMAIL = os.environ.get("SES_RECIPIENT_EMAIL", "soc-team@yourcompany.com")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-_gemini_client = None
-if GEMINI_API_KEY and genai:
+def _get_gemini_client():
+    """Build Gemini client lazily so it picks up GEMINI_API_KEY even if loaded after module import."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key or not genai:
+        return None
     try:
-        # Use stable v1 API for Free Tier accounts
-        _gemini_client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1"})
+        return genai.Client(api_key=api_key, http_options={"api_version": "v1"})
     except Exception as e:
         logger.error(f"Failed to configure Gemini Client: {e}")
+        return None
 
 def get_ses_client():
     key_id = os.environ.get("SES_AWS_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
@@ -35,12 +37,22 @@ def get_ses_client():
 
 def generate_alert_analysis(alert_title: str, alert_type: str, message: str, server_ip: str, username: str = "root"):
     """Uses Gemini to generate the Analysis, Risk, and Recommendation for the email."""
-    if not _gemini_client:
+    client = _get_gemini_client()
+    if not client:
         return {
             "analysis": "LLM API Key missing. Analysis unavailable.",
             "risk": "Unknown",
             "recommendations": "Please configure GEMINI_API_KEY to enable smart analysis."
         }
+    
+    # Auto-discover the best available model (flash variant)
+    best_model = "gemini-2.0-flash"
+    try:
+        models = [m.name for m in client.models.list() if "flash" in m.name.lower() and "gemini" in m.name.lower()]
+        if models:
+            best_model = sorted(models)[-1].replace("models/", "")
+    except Exception:
+        pass
     
     prompt = f"""
     You are an expert SOC Analyst. Analyze this specific security alert that just occurred on a Linux server.
@@ -60,7 +72,7 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
     """
     
     try:
-        response = _gemini_client.models.generate_content(model='gemini-3.8-flash', contents=prompt)
+        response = client.models.generate_content(model=best_model, contents=prompt)
         text = response.text.replace("```json", "").replace("```", "").strip()
         import json
         data = json.loads(text)

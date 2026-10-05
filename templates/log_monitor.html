@@ -1033,6 +1033,9 @@ function exportLogs(format) {
 }
 
 async function fetchLogsNow(isAutoRefreshCall = false) {
+    // Guard: prevent overlapping requests which cause browser lag
+    if (window._logFetchInFlight) return;
+    window._logFetchInFlight = true;
     const tailLimit = parseInt(document.getElementById('log-tail-limit') ? document.getElementById('log-tail-limit').value : 100);
     const term = document.getElementById('log-terminal-output');
     if (!isAutoRefreshCall && term) {
@@ -1052,6 +1055,7 @@ async function fetchLogsNow(isAutoRefreshCall = false) {
             method: 'POST',
             body: JSON.stringify(payload)
         });
+        window._logFetchInFlight = false;
 
         if (res && res.lines) {
             allLogLines = res.lines;
@@ -1086,6 +1090,7 @@ async function fetchLogsNow(isAutoRefreshCall = false) {
             }
         }
     } catch (e) {
+        window._logFetchInFlight = false;
         console.warn("Log fetch error", e);
     }
 
@@ -1484,11 +1489,10 @@ function filterLogLines() {
 
 function startAutoRefresh() {
     if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-    // Reduced from 1s to 5s and only fires when stream is actually LIVE
-    // This cuts DB/backend requests by ~80% while keeping stream responsive
+    // 8s interval — balances freshness vs server load; isFetching guard prevents pileup
     autoRefreshTimer = setInterval(() => {
-        if (isAutoRefresh) fetchLogsNow(true);
-    }, 5000);
+        if (isAutoRefresh && !window._logFetchInFlight) fetchLogsNow(true);
+    }, 8000);
 }
 
 function toggleAutoRefresh() {
