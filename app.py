@@ -647,6 +647,30 @@ def get_soc_public_key() -> str:
                 pass
     return ""
 
+def tail_file(filepath: str, lines: int = 100) -> list:
+    """Read the last N lines of a file securely by seeking backwards, avoiding gigabyte RAM spikes."""
+    try:
+        import os
+        with open(filepath, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            filesize = f.tell()
+            block_size = 4096
+            blocks = []
+            lines_found = 0
+            position = filesize
+
+            while position > 0 and lines_found <= lines:
+                read_size = min(block_size, position)
+                position -= read_size
+                f.seek(position)
+                block = f.read(read_size)
+                lines_found += block.count(b'\n')
+                blocks.insert(0, block)
+
+            return b''.join(blocks).decode('utf-8', errors='ignore').splitlines()[-lines:]
+    except Exception:
+        return []
+
 async def run_ssh_command(host: str, port: int, user: str, password: Optional[str], key_path: Optional[str], command: str) -> Optional[str]:
     """Execute SSH command using asyncssh with timeout, fallback users, and auto key discovery."""
     if not host or host in ["127.0.0.1", "localhost"]:
@@ -5478,11 +5502,10 @@ async def api_fetch_log_lines(request: Request):
         for lp, st in target_sources:
             if os.path.exists(lp):
                 try:
-                    with open(lp, 'r', encoding='utf-8', errors='ignore') as f:
-                        raw_lines = f.readlines()[-limit:]
-                        for rl in raw_lines:
-                            rl = rl.strip()
-                            if not rl: continue
+                    raw_lines = tail_file(lp, limit)
+                    for rl in raw_lines:
+                        rl = rl.strip()
+                        if not rl: continue
                             if search and search not in rl.lower(): continue
 
                             ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?)', rl)
@@ -5567,11 +5590,10 @@ async def api_fetch_log_lines(request: Request):
         for filepath, stype in sys_paths:
             if os.path.exists(filepath):
                 try:
-                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                        file_lines = f.readlines()[-limit:]
-                        for rl in file_lines:
-                            rl = rl.strip()
-                            if not rl: continue
+                    file_lines = tail_file(filepath, limit)
+                    for rl in file_lines:
+                        rl = rl.strip()
+                        if not rl: continue
                             if search and search.lower() not in rl.lower(): continue
 
                             ts_match = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}(\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?|[A-Za-z]{3}\s+\d+\s+\d{2}:\d{2}:\d{2})', rl)

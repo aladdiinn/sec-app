@@ -2953,11 +2953,21 @@ def get_log_configs(server_id=None):
         conn.close()
 
 def add_log_config(server_id, server_ip, app_name, service_type, log_file_path, ssh_user=None, ssh_password=None, ssh_key_path=None):
+    """Add a new log configuration, strictly preventing duplicates."""
     conn = get_db_connection()
     if not conn: return None
     try:
         with conn:
             with conn.cursor() as cur:
+                # Deduplicate: check if config already exists for this server and path
+                cur.execute("""
+                    SELECT id FROM server_log_configs 
+                    WHERE server_id = %s AND log_file_path = %s LIMIT 1;
+                """, (server_id, log_file_path))
+                existing = cur.fetchone()
+                if existing:
+                    return existing["id"] if isinstance(existing, dict) else existing[0]
+
                 cur.execute("""
                     INSERT INTO server_log_configs (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW()) RETURNING id;
