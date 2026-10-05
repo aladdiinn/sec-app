@@ -1923,12 +1923,10 @@ def _check_unified_fim(server_id, data):
             
         line = last_event.get("line", "")
         
-        if key in ["identity", "priv_esc", "scope", "remote_access", "modules"]:
+        if key in ["identity", "priv_esc", "scope", "remote_access", "modules", "scheduled_tasks", "MAC-policy", "time-change", "system-locale", "delete", "app_mod", "data_mod", "home_mod", "perm_mod"]:
             severity = "critical"
-        elif key in ["scheduled_tasks", "MAC-policy", "time-change", "system-locale", "delete", "app_mod", "data_mod", "home_mod"]:
-            severity = "high"
         else:
-            severity = "warning"  # session, logins, mounts, perm_mod, commands, etc.
+            severity = "warning"  # session, logins, mounts, etc.
         
         # Resolve real sudoer: if actor=root but vinay did sudo, show vinay
         sudo_actor_map = {}

@@ -794,21 +794,22 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 
                 # We need the inserted alert ID for the email
                 try:
-                    cur.execute("SELECT id, created_at FROM alerts WHERE server_id = %s AND message = %s ORDER BY created_at DESC LIMIT 1;", (valid_server_id, message))
-                    al_row = cur.fetchone()
-                    if al_row:
-                        alert_id = al_row["id"] if isinstance(al_row, dict) else al_row[0]
-                        timestamp = str(al_row["created_at"] if isinstance(al_row, dict) else al_row[1])
-                        
-                        # Fire and forget (in a thread to not block DB transaction)
-                        import threading
-                        import ses_mailer
-                        t = threading.Thread(
-                            target=ses_mailer.send_smart_alert_email,
-                            args=(alert_id, final_title, alert_type, message, severity, timestamp, server_ip, hostname),
-                            daemon=True
-                        )
-                        t.start()
+                    if severity == 'critical':
+                        cur.execute("SELECT id, created_at FROM alerts WHERE server_id = %s AND message = %s ORDER BY created_at DESC LIMIT 1;", (valid_server_id, message))
+                        al_row = cur.fetchone()
+                        if al_row:
+                            alert_id = al_row["id"] if isinstance(al_row, dict) else al_row[0]
+                            timestamp = str(al_row["created_at"] if isinstance(al_row, dict) else al_row[1])
+                            
+                            # Fire and forget (in a thread to not block DB transaction)
+                            import threading
+                            import ses_mailer
+                            t = threading.Thread(
+                                target=ses_mailer.send_smart_alert_email,
+                                args=(alert_id, final_title, alert_type, message, severity, timestamp, server_ip, hostname),
+                                daemon=True
+                            )
+                            t.start()
                 except Exception as ex_mail:
                     logger.error(f"Error launching SES mailer thread: {ex_mail}")
 
