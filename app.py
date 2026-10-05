@@ -1817,6 +1817,12 @@ def _check_unified_fim(server_id, data):
         change_type = fc.get("type", "modified") if isinstance(fc, dict) else "modified"
         detail = fc.get("detail", "") if isinstance(fc, dict) else ""
         
+        # Suppress agent's own watchdog crontab edits
+        if 'cron' in path and 'root' in path:
+            actor, tool = _extract_audit_actor(log_lines, path, bash_cmds)
+            if actor == 'root' and tool in ('python3', 'python'):
+                continue
+        
         matched_key = None
         if "passwd" in path or "shadow" in path: matched_key = "identity"
         elif "sudoers" in path: matched_key = "priv_esc"
