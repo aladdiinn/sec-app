@@ -3564,8 +3564,7 @@ fim_state = {{}}
 fim_paths = [
     "/etc/passwd", "/etc/shadow", "/etc/sudoers", "/etc/sudoers.d",
     "/etc/ssh/sshd_config", "/etc/crontab", "/etc/hosts",
-    "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/var/spool/cron",
-    "/application", "/data", "/home"
+    "/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/var/spool/cron"
 ]
 
 def check_fim():
