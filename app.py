@@ -3449,19 +3449,6 @@ def auto_discover_log_paths():
                     nohup_dir = os.path.dirname(m2.group(1))
                     nohup_path = os.path.join(nohup_dir, "nohup.out")
                     if os.path.exists(nohup_path): paths[nohup_path] = "tomcat"
-            elif any(k in line_l for k in ["java", "spring", "mdm", "jar"]):
-                parts = line.split(None, 10)
-                if len(parts) > 1:
-                    pid = parts[1]
-                    fd_dir = f"/proc/{{pid}}/fd"
-                    if os.path.exists(fd_dir):
-                        try:
-                            for fd in os.listdir(fd_dir):
-                                target = os.readlink(os.path.join(fd_dir, fd))
-                                if (target.endswith(".log") or target.endswith(".out")) and not is_rotated_archive(target):
-                                    if os.path.exists(target):
-                                        paths[target] = "tomcat"
-                        except: pass
     except: pass
 
     # If no catalina.out found yet for tomcat, pick ONLY the single newest .log file in tomcat log directory
@@ -5270,7 +5257,7 @@ async def api_fetch_log_lines(request: Request):
         limit = int(body.get("limit") or body.get("tail_lines") or 100)
     except (ValueError, TypeError):
         limit = 100
-    limit = max(10, min(1000, limit))
+    limit = max(10, min(500, limit))
 
     configs = await run_in_threadpool(db.get_log_configs, server_id=sid) if sid else await run_in_threadpool(db.get_log_configs)
     lines = []
