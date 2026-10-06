@@ -417,7 +417,6 @@
     <div class="i3-nav-tabs">
         <div class="i3-tab active" onclick="switchI3Tab('overview', this)">Overview</div>
         <div class="i3-tab" onclick="switchI3Tab('incidents', this)">Incidents / Outages</div>
-        <div class="i3-tab" onclick="switchI3Tab('resources', this)">Resource Usage (&gt;85%)</div>
         <div class="i3-tab" onclick="switchI3Tab('logs', this)">Log Streams</div>
         <div class="i3-tab" onclick="switchI3Tab('ports', this)">Ports</div>
         <div class="i3-tab" onclick="switchI3Tab('network', this)">Network</div>
@@ -487,47 +486,6 @@
                 <div id="i3-incidents-list">
                     <div style="text-align:center; padding:20px; color:var(--text2)">Loading incidents...</div>
                 </div>
-            </div>
-        </div>
-
-        <!-- TAB 3: RESOURCE USAGE & PROCESSES (>85%) -->
-        <div id="i3t-resources" style="display:none">
-            <div class="i3-card">
-                <div class="i3-card-title">⚡ Resource Utilization</div>
-                <div class="i3-grid-2" style="margin-bottom:20px">
-                    <div>
-                        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px">
-                            <span>CPU Usage</span><strong id="i3-cpu-val">0%</strong>
-                        </div>
-                        <div style="height:8px; background:var(--bg2); border-radius:4px; overflow:hidden">
-                            <div id="i3-cpu-bar" style="width:0%; height:100%; background:var(--cyan); transition:width 0.5s"></div>
-                        </div>
-                    </div>
-                    <div>
-                        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px">
-                            <span>RAM Usage</span><strong id="i3-ram-val">0%</strong>
-                        </div>
-                        <div style="height:8px; background:var(--bg2); border-radius:4px; overflow:hidden">
-                            <div id="i3-ram-bar" style="width:0%; height:100%; background:var(--green); transition:width 0.5s"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div style="font-size:13px; font-weight:700; margin-bottom:10px; color:var(--cyan)">Running Processes (&gt;85% CPU / RAM Highlighted)</div>
-                <table style="width:100%; border-collapse:collapse; text-align:left; font-size:12px">
-                    <thead>
-                        <tr style="border-bottom:1px solid rgba(255,255,255,0.1); color:var(--text2)">
-                            <th style="padding:8px">PID</th>
-                            <th style="padding:8px">PROCESS NAME</th>
-                            <th style="padding:8px">CPU %</th>
-                            <th style="padding:8px">RAM %</th>
-                            <th style="padding:8px">USER</th>
-                        </tr>
-                    </thead>
-                    <tbody id="i3-procs-body">
-                        <tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text2)">Loading process list...</td></tr>
-                    </tbody>
-                </table>
             </div>
         </div>
 
@@ -873,7 +831,7 @@ function filterServicesByStatus(st) {
 function switchI3Tab(tabName, btn) {
     document.querySelectorAll('.i3-tab').forEach(t => t.classList.remove('active'));
     btn.classList.add('active');
-    ['overview', 'incidents', 'resources', 'logs', 'ports', 'network', 'settings'].forEach(t => {
+    ['overview', 'incidents', 'logs', 'ports', 'network', 'settings'].forEach(t => {
         document.getElementById(`i3t-${t}`).style.display = (t === tabName) ? 'block' : 'none';
     });
 }
@@ -948,32 +906,6 @@ async function openImage3Modal(serverId) {
         document.getElementById('i3-m-ram').style.color = ram > 85 ? 'var(--red)' : 'var(--text)';
         document.getElementById('i3-m-disk').innerText = disk + '%';
 
-        // Resources tab
-        document.getElementById('i3-cpu-val').innerText = cpu + '%';
-        document.getElementById('i3-cpu-bar').style.width = Math.min(cpu, 100) + '%';
-        document.getElementById('i3-cpu-bar').style.background = cpu > 85 ? 'var(--red)' : 'var(--cyan)';
-        document.getElementById('i3-ram-val').innerText = ram + '%';
-        document.getElementById('i3-ram-bar').style.width = Math.min(ram, 100) + '%';
-        document.getElementById('i3-ram-bar').style.background = ram > 85 ? 'var(--red)' : 'var(--green)';
-
-        const procs = details.processes || [];
-        const procBody = document.getElementById('i3-procs-body');
-        if (!procs.length) {
-            procBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text2)">No high-resource processes detected</td></tr>';
-        } else {
-            procBody.innerHTML = procs.map(p => {
-                const high = p.cpu > 85 || p.memory > 85;
-                return `
-                <tr style="border-bottom:1px solid rgba(255,255,255,0.05); background:${high?'rgba(239,68,68,0.15)':''}">
-                    <td style="padding:8px; font-family:monospace; color:var(--cyan)">${p.pid}</td>
-                    <td style="padding:8px; font-weight:600; color:var(--text)">${p.name} ${high?'<span style="color:var(--red); font-size:10px">🔥 >85% ALERT</span>':''}</td>
-                    <td style="padding:8px; color:${p.cpu>85?'var(--red)':'var(--text)'}">${p.cpu}%</td>
-                    <td style="padding:8px; color:${p.memory>85?'var(--red)':'var(--text)'}">${p.memory}%</td>
-                    <td style="padding:8px; color:var(--text2)">${p.user}</td>
-                </tr>
-                `;
-            }).join('');
-        }
 
         // Incidents tab (Matching Image 1)
         const alerts = details.alerts || [];
