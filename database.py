@@ -396,6 +396,18 @@ def init_db():
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS logs_eviction_queue (
+                    id SERIAL PRIMARY KEY,
+                    config_id INT,
+                    server_id INT,
+                    log_level VARCHAR(16),
+                    source VARCHAR(512),
+                    log_type VARCHAR(32),
+                    message TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE
+                );
+            """)
             # Migrate existing tables that may be missing the new columns
             cur.execute("""
                 ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS log_type VARCHAR(32);
@@ -3172,14 +3184,36 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                             cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
                         except Exception: pass
 
-                    # Prune old logs randomly (approx 2% of the time) to prevent table bloat
-                    if random.randint(1, 50) == 1:
-                        try:
-                            # Failsafe: since S3 archiver handles long-term storage, 
-                            # we aggressively drop DB logs older than 3 hours to keep the hot-tier lightning fast.
-                            cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '3 hours';")
-                        except Exception: pass
-                
+                # Bulk evict logs beyond the 500-line hot cap per file directly into the S3 eviction queue
+                if server_id:
+                    try:
+                        cur.execute("""
+                            WITH ranked AS (
+                                SELECT id, 
+                                    ROW_NUMBER() OVER(PARTITION BY source ORDER BY id DESC) as rn
+                                FROM pushed_logs
+                                WHERE server_id = %s
+                            )
+                            INSERT INTO logs_eviction_queue (id, config_id, server_id, log_level, source, log_type, message, created_at)
+                            SELECT p.id, p.config_id, p.server_id, p.log_level, p.source, p.log_type, p.message, p.created_at
+                            FROM pushed_logs p
+                            JOIN ranked r ON p.id = r.id
+                            WHERE r.rn > 500;
+                        """, (server_id,))
+                        
+                        cur.execute("""
+                            WITH ranked AS (
+                                SELECT id, 
+                                    ROW_NUMBER() OVER(PARTITION BY source ORDER BY id DESC) as rn
+                                FROM pushed_logs
+                                WHERE server_id = %s
+                            )
+                            DELETE FROM pushed_logs
+                            WHERE id IN (SELECT id FROM ranked WHERE rn > 500);
+                        """, (server_id,))
+                    except Exception as evict_e:
+                        logger.error(f"Error evicting logs to queue: {evict_e}")
+                        
                 if hasattr(conn, 'commit'):
                     conn.commit()
     except Exception as e:

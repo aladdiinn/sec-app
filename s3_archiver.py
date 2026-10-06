@@ -47,8 +47,8 @@ def ensure_bucket_exists(s3_client):
 
 def archive_logs_to_s3(db_conn):
     """
-    Finds all logs in the DB older than 1 hour, uploads them to S3, 
-    and then deletes them from the local database.
+    Finds all logs in the eviction queue, batches them by server_id and source (file_id),
+    uploads them to S3, and then deletes them from the queue.
     """
     s3_client = get_s3_client()
     try:
@@ -57,54 +57,51 @@ def archive_logs_to_s3(db_conn):
         logger.error("Could not ensure S3 bucket exists. Aborting archival.")
         return
 
-    # Calculate the cutoff time (1 hour ago)
-    cutoff_time = datetime.now() - timedelta(hours=1)
-    cutoff_timestamp = cutoff_time.timestamp()
-
-    logger.info(f"Starting S3 log archival. Cutoff time: {cutoff_time}")
+    logger.info("Starting S3 log archival from eviction queue.")
 
     try:
         with db_conn.cursor() as cur:
-            # 1. Group old logs by server_id, day, and log_type
+            # 1. Group eviction logs by server_id, log_type, and source
             cur.execute("""
-                SELECT server_id, DATE(created_at) as log_date, log_type, COUNT(*) as count 
-                FROM pushed_logs 
-                WHERE created_at < %s
-                GROUP BY server_id, DATE(created_at), log_type
-            """, (cutoff_time,))
+                SELECT server_id, log_type, source, DATE(created_at) as log_date, COUNT(*) as count 
+                FROM logs_eviction_queue 
+                GROUP BY server_id, log_type, source, DATE(created_at)
+            """)
             
             batches = cur.fetchall()
             
             if not batches:
-                logger.info("No logs older than 1 hour found to archive.")
+                logger.info("No logs in eviction queue to archive.")
                 return
 
-            # Process each batch (per server, per day, per log_type)
             for batch in batches:
                 server_id = batch["server_id"] if isinstance(batch, dict) else batch[0]
-                log_date = batch["log_date"] if isinstance(batch, dict) else batch[1]
-                log_type = batch["log_type"] if isinstance(batch, dict) else batch[2]
+                log_type = batch["log_type"] if isinstance(batch, dict) else batch[1]
+                source = batch["source"] if isinstance(batch, dict) else batch[2]
+                log_date = batch["log_date"] if isinstance(batch, dict) else batch[3]
                 
-                # Default log type folder if null
                 safe_log_type = (log_type or "system").replace("/", "_").replace("\\", "_")
                 
-                # Get the server IP to use in the S3 path
+                # Sanitize source path to act as file_id in S3 key (replace slashes with underscores)
+                file_id = (source or "unknown_file").strip().replace("/", "_").replace("\\", "_")
+                if file_id.startswith("_"):
+                    file_id = file_id[1:]
+                
                 cur.execute("SELECT ip FROM servers WHERE id = %s", (server_id,))
                 server_row = cur.fetchone()
                 server_ip = server_row["ip"] if server_row and isinstance(server_row, dict) else (server_row[0] if server_row else f"unknown-server-{server_id}")
 
-                # 2. Fetch the actual logs for this specific type
+                # 2. Fetch the actual logs for this specific batch
                 cur.execute("""
                     SELECT id, log_type, source, message, created_at 
-                    FROM pushed_logs 
-                    WHERE server_id = %s AND DATE(created_at) = %s AND (log_type = %s OR (log_type IS NULL AND %s IS NULL)) AND created_at < %s
-                """, (server_id, log_date, log_type, log_type, cutoff_time))
+                    FROM logs_eviction_queue 
+                    WHERE server_id = %s AND DATE(created_at) = %s AND (log_type = %s OR (log_type IS NULL AND %s IS NULL)) AND (source = %s OR (source IS NULL AND %s IS NULL))
+                """, (server_id, log_date, log_type, log_type, source, source))
                 logs = cur.fetchall()
                 
                 if not logs:
                     continue
 
-                # Convert to dicts for JSON serialization
                 log_dicts = []
                 log_ids_to_delete = []
                 for row in logs:
@@ -118,20 +115,21 @@ def archive_logs_to_s3(db_conn):
                         })
                         log_ids_to_delete.append(row[0])
 
-                # 3. Create compressed JSON payload
                 json_data = json.dumps(log_dicts, default=str)
                 compressed_data = gzip.compress(json_data.encode('utf-8'))
 
-                # 4. Determine S3 Path Structure
-                # Format: s3://bucket/server_ip/YYYY/MM/DD/log_type/logs_HH_MM_SS.json.gz
+                # 4. Determine S3 Path Structure matching user requirements:
+                # logs/{server_id}/{type}/{file_id}/{yyyy}/{mm}/{dd}/{hh}/{ts}.jsonl.gz
                 dt_obj = log_date if isinstance(log_date, datetime) else datetime.strptime(str(log_date), "%Y-%m-%d")
                 year, month, day = str(dt_obj.year), f"{dt_obj.month:02d}", f"{dt_obj.day:02d}"
-                timestamp_str = datetime.now().strftime("%H_%M_%S")
+                now = datetime.now()
+                hour = f"{now.hour:02d}"
+                timestamp_str = now.strftime("%H_%M_%S")
                 
-                s3_key = f"{server_ip}/{year}/{month}/{day}/{safe_log_type}/logs_{timestamp_str}.json.gz"
+                s3_key = f"logs/{server_id}/{safe_log_type}/{file_id}/{year}/{month}/{day}/{hour}/{timestamp_str}.jsonl.gz"
 
                 # 5. Upload to S3
-                logger.info(f"Uploading {len(log_dicts)} logs to s3://{S3_BUCKET_NAME}/{s3_key}")
+                logger.info(f"Uploading {len(log_dicts)} evicted logs to s3://{S3_BUCKET_NAME}/{s3_key}")
                 s3_client.put_object(
                     Bucket=S3_BUCKET_NAME,
                     Key=s3_key,
@@ -139,15 +137,14 @@ def archive_logs_to_s3(db_conn):
                     ContentType='application/x-gzip'
                 )
 
-                # 6. Delete the uploaded logs from the local database
-                # Delete in chunks to avoid locking issues
+                # 6. Delete the uploaded logs from the local eviction queue
                 chunk_size = 1000
                 for i in range(0, len(log_ids_to_delete), chunk_size):
                     chunk = log_ids_to_delete[i:i + chunk_size]
-                    cur.execute("DELETE FROM pushed_logs WHERE id = ANY(%s)", (chunk,))
+                    cur.execute("DELETE FROM logs_eviction_queue WHERE id = ANY(%s)", (chunk,))
                 
                 db_conn.commit()
-                logger.info(f"Successfully archived and deleted {len(log_dicts)} logs for {server_ip}.")
+                logger.info(f"Successfully archived and deleted {len(log_dicts)} evicted logs for file {file_id}.")
 
     except Exception as e:
         logger.error(f"Error during S3 archival: {e}")

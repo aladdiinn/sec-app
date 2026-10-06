@@ -971,8 +971,37 @@ function formatLocal(dateStr) {
     function filterModalLogsByFile() {
         const sel = document.getElementById('modal-log-file-select');
         modalActiveFile = sel ? sel.value : '';
-        // Client-side file filter only — do NOT re-fetch from server
-        renderModalLogs();
+        
+        // As requested: Never fetch one global buffer and filter it in the browser when a specific file is selected
+        if (modalActiveFile && activeModalServerId) {
+            apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=500&source=${encodeURIComponent(modalActiveFile)}`)
+                .then(fileLogs => {
+                    if (Array.isArray(fileLogs)) {
+                        currentModalLogs = fileLogs;
+                        renderModalLogs();
+                    }
+                })
+                .catch(() => {});
+        } else {
+            // "All Discovered Files" selected -> Refetch category logs
+            if (activeModalServerId && modalActiveCategory !== 'all') {
+                apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=5000&log_type=${encodeURIComponent(modalActiveCategory)}`)
+                    .then(catLogs => {
+                        if (Array.isArray(catLogs)) {
+                            currentModalLogs = catLogs;
+                            renderModalLogs();
+                        }
+                    }).catch(() => {});
+            } else if (activeModalServerId) {
+                apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=5000`)
+                    .then(allLogs => {
+                        if (Array.isArray(allLogs)) {
+                            currentModalLogs = allLogs;
+                            renderModalLogs();
+                        }
+                    }).catch(() => {});
+            }
+        }
     }
 
     function isModalLogSecurityThreat(text, src) {

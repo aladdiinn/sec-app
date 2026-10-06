@@ -434,7 +434,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger("security_monitor.app")
 
 def run_s3_archiver_loop():
-    """Background thread to archive old logs to S3 every 15 minutes."""
+    """Background thread to archive old logs to S3 every 5 minutes."""
     try:
         import s3_archiver
     except ImportError:
@@ -444,7 +444,7 @@ def run_s3_archiver_loop():
     while True:
         try:
             # Sleep first so it doesn't run immediately on boot while DB is starting
-            time.sleep(15 * 60)
+            time.sleep(5 * 60)
             conn = db.get_db_connection()
             if conn:
                 try:
@@ -1976,8 +1976,12 @@ def _check_unified_fim(server_id, data):
         if ".bash_history" in filename_str and "bash" in exe_str_val:
             return
             
-        # Specific noise suppression: Ignore Tomcat temp/work/webapps FIM noise
+        # Specific noise suppression: Ignore FIM noise inside /application/ and /data/
         f_lower = filename_str.lower()
+        if f_lower.startswith("/application/") or f_lower.startswith("/data/"):
+            return
+            
+        # Specific noise suppression: Ignore Tomcat temp/work/webapps FIM noise (for any other paths)
         if ("apache" in f_lower or "tomcat" in f_lower) and any(x in f_lower for x in ["/temp/", "/work/", "/webapps/"]):
             return
             
@@ -6007,8 +6011,10 @@ async def api_log_streams(
                 elif lt == 'userdel':
                     query += " AND (pl.message ILIKE '%userdel%' OR pl.message ILIKE '%deluser%' OR pl.message ILIKE '%chmod%' OR pl.message ILIKE '%chown%' OR pl.message ILIKE '%usermod%' OR pl.message ILIKE '%useradd%' OR pl.message ILIKE '%adduser%' OR pl.message ILIKE '%sudo:%' OR pl.message ILIKE '%su:%')"
 
+            # Increase global limit because the DB is now strictly capped at 500 lines per file
+            # This allows the frontend to receive the full 500 lines for each file in the category
             query += " ORDER BY pl.id DESC LIMIT %s"
-            params.append(min(limit, 500))
+            params.append(min(limit, 5000) if not source else min(limit, 500))
 
             cur.execute(query, params)
             rows = cur.fetchall()
