@@ -5912,22 +5912,39 @@ async def api_watchdog_push(request: Request):
 # REAL-TIME LOG STREAMS & DISCOVERED LOG FILES API
 # ══════════════════════════════════════════════════════════════════════════════
 
-@app.get("/api/log-monitor/streams")
-async def api_log_streams(
-    request: Request,
-    server_id: Optional[int] = None,
-    log_type: Optional[str] = None,
-    source: Optional[str] = None,
-    source_b64: Optional[str] = None,
-    limit: int = 200
-):
+@app.post("/api/log-monitor/streams")
+async def api_log_streams(request: Request):
     """Fetch live streamed logs with type filtering (os, tomcat, postgres) and file path selection."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+        
+    server_id = body.get("server_id")
+    log_type = body.get("log_type")
+    source = body.get("source")
+    
+    # Keep support for query params for backward compatibility if needed, but prioritize body
+    if server_id is None and request.query_params.get("server_id"):
+        server_id = int(request.query_params.get("server_id"))
+    if not log_type and request.query_params.get("log_type"):
+        log_type = request.query_params.get("log_type")
+    if not source and request.query_params.get("source"):
+        source = request.query_params.get("source")
+    
+    # decode base64 if it comes from query (old frontend)
+    source_b64 = request.query_params.get("source_b64")
     import base64
-    if source_b64:
+    if source_b64 and not source:
         try:
             source = base64.b64decode(source_b64).decode('utf-8')
         except Exception:
             pass
+
+    try:
+        limit = int(body.get("limit") or request.query_params.get("limit") or 200)
+    except (ValueError, TypeError):
+        limit = 200
 
     conn = db.get_db_connection()
     if not conn:
