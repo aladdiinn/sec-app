@@ -1685,7 +1685,9 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
     cache_key = (int(server_id) if server_id else 0, str(alert_type))
     # print(f"DEBUG dedup check: {cache_key} against cache keys: {list(_dedup_alerts_cache.keys())}")
     now = time.time()
-    # 15s deduplication completely removed as requested
+    last_time = _dedup_alerts_cache.get(cache_key, 0)
+    if now - last_time < 120:
+        return
     _dedup_alerts_cache[cache_key] = now
     try:
         db.log_alert(server_id, alert_type, message, severity=severity, title=title)
@@ -1885,7 +1887,12 @@ def _check_sudo_misuse(server_id, data):
                 cmd_match = re.search(r'COMMAND=(.+)', clean_text)
                 if cmd_match:
                     clean_text = cmd_match.group(1).strip()
-                elif len(clean_text) > 120:
+                elif "SYSCALL" in clean_text or "audit" in clean_text.lower():
+                    exe_match = re.search(r'exe="?([^"\s]+)"?', clean_text)
+                    if exe_match:
+                        clean_text = f"Executed {exe_match.group(1)}"
+                
+                if len(clean_text) > 120:
                     clean_text = clean_text[:120] + "..."
 
                 # Build title: use real_actor (vinay) not effective actor (root)
@@ -1901,8 +1908,8 @@ def _check_sudo_misuse(server_id, data):
                 ).strip()
                 _create_alert_dedup(
                     server_id, atype, sev,
-                    title,
-                    f'SOAR Detections [{rule_name}]{actor_str}: {text[:250]}'
+                    display_title,
+                    human_msg
                 )
                 break
 
