@@ -902,7 +902,7 @@ async def logout(request: Request):
 
 @app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_page(request: Request):
+def dashboard_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
@@ -1201,7 +1201,7 @@ async def scanner_page(request: Request):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/servers")
-async def api_get_servers(request: Request):
+def api_get_servers(request: Request):
     pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
     counts = db.get_server_counts()
     return {"servers": servers, "counts": counts}
@@ -2725,7 +2725,7 @@ async def api_agent_status_update(request: Request):
         return {"ok": False}
 
 @app.get("/api/alerts")
-async def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False, log_type: Optional[str] = None):
+def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False, log_type: Optional[str] = None):
     conn = db.get_db_connection()
     if not conn: return {"items": [], "total": 0}
     try:
@@ -2855,7 +2855,7 @@ async def api_resolve_all_server_alerts(server_id: int, request: Request):
         conn.close()
 
 @app.get("/api/notifications")
-async def api_get_notifications():
+def api_get_notifications():
     alerts = db.get_alerts()
     return {"notifications": alerts, "unseen_count": len(alerts)}
 
@@ -5136,15 +5136,15 @@ async def api_generate_report(request: Request):
 
 # Dashboard
 @app.get("/api/dashboard/counts")
-async def api_dashboard_counts_new(request: Request):
+def api_dashboard_counts_new(request: Request):
     return db.get_dashboard_counts(project_id=get_effective_project_id(request))
 
 @app.get("/api/dashboard/live-activity")
-async def api_dashboard_live_activity(request: Request):
+def api_dashboard_live_activity(request: Request):
     return db.get_activity_feed(10, project_id=get_effective_project_id(request))
 
 @app.get("/api/dashboard/severity")
-async def api_dashboard_severity():
+def api_dashboard_severity():
     return db.get_severity_distribution()
 
 
