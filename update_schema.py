@@ -23,21 +23,7 @@ conn = psycopg2.connect(
 
 try:
     with conn.cursor() as cur:
-        # Add missing columns to servers table
-        print("Updating tables and constraints...")
-        cur.execute("ALTER TABLE servers ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'primary';")
-        cur.execute("ALTER TABLE servers ADD COLUMN IF NOT EXISTS site VARCHAR(50) DEFAULT 'DC';")
-        cur.execute("ALTER TABLE servers ADD COLUMN IF NOT EXISTS cluster_id VARCHAR(50);")
-        cur.execute("ALTER TABLE servers ADD COLUMN IF NOT EXISTS is_maintenance BOOLEAN DEFAULT FALSE;")
-        cur.execute("ALTER TABLE playbooks ADD COLUMN IF NOT EXISTS description TEXT;")
-        cur.execute("ALTER TABLE servers ADD COLUMN IF NOT EXISTS maintenance_until TIMESTAMP WITH TIME ZONE;")
-        cur.execute("ALTER TABLE servers ADD COLUMN IF NOT EXISTS managed_services TEXT;")
-        cur.execute("ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS playbook_id INTEGER REFERENCES playbooks(id);")
-        
-        # Make email nullable in users table
-        cur.execute("ALTER TABLE users ALTER COLUMN email DROP NOT NULL;")
-        
-        # Ensure notification_routes table exists (handled by app but let's be sure)
+        # Ensure notification_routes table exists
         print("Ensuring 'notification_routes' exists...")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS notification_routes (
@@ -48,19 +34,51 @@ try:
                 is_active BOOLEAN DEFAULT TRUE
             );
         """)
-
-        print("Adding performance indexes for dashboard loading...")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_alerts_server_id_resolved ON alerts(server_id, is_resolved);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_alerts_severity_resolved ON alerts(server_id, severity, is_resolved);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_feed_created_at ON activity_feed(created_at DESC);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_approvals_hostname ON approvals(LOWER(hostname));")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_approvals_ip ON approvals(ip_address);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_servers_status ON servers(status);")
-
         conn.commit()
-        print("Database schema updated successfully.")
 except Exception as e:
-    print(f"Error updating database: {e}")
-finally:
-    conn.close()
+    print(f"Error creating notification_routes: {e}")
+    conn.rollback()
+
+print("Updating tables and constraints...")
+alters = [
+    "ALTER TABLE IF EXISTS servers ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'primary';",
+    "ALTER TABLE IF EXISTS servers ADD COLUMN IF NOT EXISTS site VARCHAR(50) DEFAULT 'DC';",
+    "ALTER TABLE IF EXISTS servers ADD COLUMN IF NOT EXISTS cluster_id VARCHAR(50);",
+    "ALTER TABLE IF EXISTS servers ADD COLUMN IF NOT EXISTS is_maintenance BOOLEAN DEFAULT FALSE;",
+    "ALTER TABLE IF EXISTS playbooks ADD COLUMN IF NOT EXISTS description TEXT;",
+    "ALTER TABLE IF EXISTS servers ADD COLUMN IF NOT EXISTS maintenance_until TIMESTAMP WITH TIME ZONE;",
+    "ALTER TABLE IF EXISTS servers ADD COLUMN IF NOT EXISTS managed_services TEXT;",
+    "ALTER TABLE IF EXISTS alert_rules ADD COLUMN IF NOT EXISTS playbook_id INTEGER REFERENCES playbooks(id);",
+    "ALTER TABLE IF EXISTS users ALTER COLUMN email DROP NOT NULL;"
+]
+
+for alt_sql in alters:
+    try:
+        with conn.cursor() as cur:
+            cur.execute(alt_sql)
+        conn.commit()
+    except Exception as e:
+        print(f"Skipping alter (maybe table doesn't exist): {e}")
+        conn.rollback()
+
+print("Adding performance indexes for dashboard loading...")
+indexes = [
+    "CREATE INDEX IF NOT EXISTS idx_alerts_server_id_resolved ON alerts(server_id, is_resolved);",
+    "CREATE INDEX IF NOT EXISTS idx_alerts_severity_resolved ON alerts(server_id, severity, is_resolved);",
+    "CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);",
+    "CREATE INDEX IF NOT EXISTS idx_activity_feed_created_at ON activity_feed(created_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_approvals_hostname ON approvals(LOWER(hostname));",
+    "CREATE INDEX IF NOT EXISTS idx_approvals_ip ON approvals(ip_address);",
+    "CREATE INDEX IF NOT EXISTS idx_servers_status ON servers(status);"
+]
+for idx_sql in indexes:
+    try:
+        with conn.cursor() as cur:
+            cur.execute(idx_sql)
+        conn.commit()
+    except Exception as e:
+        print(f"Skipping index creation (maybe table doesn't exist): {e}")
+        conn.rollback()
+
+print("Database schema and indexes updated successfully.")
+conn.close()
