@@ -1286,29 +1286,48 @@ def delete_server(server_id: int):
             except Exception:
                 pass
 
-            # Cascade delete all related records across all tables referencing server_id
-            tables = [
-                "events", "alerts", "project_endpoints", "commands", "login_history",
-                "tracking_logs", "incidents", "managed_services", "fim_baselines",
-                "fim_logs", "open_ports", "processes", "installed_packages",
-                "system_users", "user_sessions", "network_connections"
-            ]
+            # Dynamically discover all tables with a server_id column to cascade delete
+            try:
+                cur.execute("""
+                    SELECT table_name 
+                    FROM information_schema.columns 
+                    WHERE column_name = 'server_id' 
+                      AND table_schema = 'public'
+                """)
+                rows = cur.fetchall()
+                tables = [r["table_name"] if isinstance(r, dict) else r[0] for r in rows]
+            except Exception:
+                # Fallback list if discovery fails
+                tables = [
+                    "events", "alerts", "project_endpoints", "commands", "login_history",
+                    "tracking_logs", "incidents", "managed_services", "fim_baselines",
+                    "fim_logs", "open_ports", "processes", "installed_packages",
+                    "system_users", "user_sessions", "network_connections",
+                    "pushed_logs", "server_log_configs", "reports"
+                ]
+
             for table in tables:
                 try:
+                    cur.execute(f"SAVEPOINT del_{table}")
                     cur.execute(f"DELETE FROM {table} WHERE server_id = %s;", (server_id,))
+                    cur.execute(f"RELEASE SAVEPOINT del_{table}")
                 except Exception:
-                    pass
+                    cur.execute(f"ROLLBACK TO SAVEPOINT del_{table}")
 
             if hname or ip_addr:
                 try:
+                    cur.execute("SAVEPOINT del_approvals")
                     cur.execute("DELETE FROM approvals WHERE LOWER(hostname) = LOWER(%s) OR ip_address = %s OR ip_address = %s;", (hname or '', ip_addr or '', ip_addr or ''))
+                    cur.execute("RELEASE SAVEPOINT del_approvals")
                 except Exception:
-                    pass
+                    cur.execute("ROLLBACK TO SAVEPOINT del_approvals")
 
             try:
+                cur.execute("SAVEPOINT del_servers")
                 cur.execute("DELETE FROM servers WHERE id = %s;", (server_id,))
+                cur.execute("RELEASE SAVEPOINT del_servers")
             except Exception:
-                pass
+                cur.execute("ROLLBACK TO SAVEPOINT del_servers")
         return True
     except Exception as e:
         logger.error(f"Error in delete_server: {e}")
