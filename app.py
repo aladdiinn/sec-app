@@ -237,6 +237,21 @@ def scan_fim_changes():
 
 def run_port_5522_ssh_honeypot():
     """Listens on port 5522 for test SSH connections and reports AUTH_FAIL immediately."""
+    import database as __db
+    __lock_conn = __db.get_db_connection()
+    if not __lock_conn: return
+    try:
+        __cur = __lock_conn.cursor()
+        __cur.execute("SELECT pg_try_advisory_lock(1003);")
+        if not __cur.fetchone()[0]:
+            __cur.close()
+            __lock_conn.close()
+            return
+        __cur.close()
+    except Exception:
+        __lock_conn.close()
+        return
+
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -279,6 +294,21 @@ def run_port_5522_ssh_honeypot():
 
 def run_background_host_watcher():
     """Background daemon thread that monitors real SSH failures, bash commands, processes, and FIM."""
+    import database as __db
+    __lock_conn = __db.get_db_connection()
+    if not __lock_conn: return
+    try:
+        __cur = __lock_conn.cursor()
+        __cur.execute("SELECT pg_try_advisory_lock(1002);")
+        if not __cur.fetchone()[0]:
+            __cur.close()
+            __lock_conn.close()
+            return
+        __cur.close()
+    except Exception:
+        __lock_conn.close()
+        return
+
     global _watcher_auth_pos, _watcher_hist_positions, _seen_event_signatures
     logger.info("Host security watcher + FIM starting...")
     time.sleep(3)
@@ -435,6 +465,21 @@ logger = logging.getLogger("security_monitor.app")
 
 def run_s3_archiver_loop():
     """Background thread to archive old logs to S3 every 5 minutes."""
+    import database as __db
+    __lock_conn = __db.get_db_connection()
+    if not __lock_conn: return
+    try:
+        __cur = __lock_conn.cursor()
+        __cur.execute("SELECT pg_try_advisory_lock(1001);")
+        if not __cur.fetchone()[0]:
+            __cur.close()
+            __lock_conn.close()
+            return
+        __cur.close()
+    except Exception:
+        __lock_conn.close()
+        return
+
     try:
         import s3_archiver
     except ImportError:
@@ -862,8 +907,8 @@ async def dashboard_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     
-    pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
-    alerts = db.get_alerts()
+    servers = []
+    alerts = []
     return render_template(request, "dashboard.html", {
         "servers": servers,
         "alerts": alerts,

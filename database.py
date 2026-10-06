@@ -624,7 +624,7 @@ def init_db():
                 try:
                     cur.execute("""
                         INSERT INTO detection_rules (name, pattern, severity, enabled, event_type, mitre_tactic, mitre_technique)
-                        VALUES (%s, %s, %s, TRUE, %s, %s, %s);
+                        VALUES (%s, %s, %s, TRUE, %s, %s, %s) ON CONFLICT (name) DO NOTHING;
                     """, (r_name, r_pat, r_sev, r_type, r_tac, r_tech))
                 except Exception:
                     pass
@@ -1898,7 +1898,7 @@ def get_detection_rules():
                     try:
                         cur.execute("""
                             INSERT INTO detection_rules (name, pattern, severity, enabled, event_type, mitre_tactic, mitre_technique)
-                            VALUES (%s, %s, %s, TRUE, %s, %s, %s);
+                            VALUES (%s, %s, %s, TRUE, %s, %s, %s) ON CONFLICT (name) DO NOTHING;
                         """, (r_name, r_pat, r_sev, r_type, r_tac, r_tech))
                     except Exception:
                         pass

@@ -52,6 +52,19 @@ alters = [
     "ALTER TABLE IF EXISTS users ALTER COLUMN email DROP NOT NULL;"
 ]
 
+alters.extend([
+    # Deduplicate detection_rules before adding unique constraint
+    """
+    DELETE FROM detection_rules
+    WHERE id NOT IN (
+        SELECT MIN(id)
+        FROM detection_rules
+        GROUP BY name
+    );
+    """,
+    "ALTER TABLE IF EXISTS detection_rules ADD CONSTRAINT unique_rule_name UNIQUE (name);"
+])
+
 for alt_sql in alters:
     try:
         with conn.cursor() as cur:
