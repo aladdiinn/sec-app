@@ -46,7 +46,16 @@ try:
                 is_active BOOLEAN DEFAULT TRUE
             );
         """)
-        
+
+        print("Adding performance indexes for dashboard loading...")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_alerts_server_id_resolved ON alerts(server_id, is_resolved);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_alerts_severity_resolved ON alerts(server_id, severity, is_resolved);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_activity_feed_created_at ON activity_feed(created_at DESC);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_approvals_hostname ON approvals(LOWER(hostname));")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_approvals_ip ON approvals(ip_address);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_servers_status ON servers(status);")
+
         conn.commit()
         print("Database schema updated successfully.")
 except Exception as e:

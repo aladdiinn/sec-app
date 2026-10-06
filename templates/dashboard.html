@@ -681,6 +681,11 @@ async function loadDashboardData() {
         renderServicesGrid();
     } catch(e) {
         console.error('Error loading dashboard data:', e);
+        // Remove spinner and show error message
+        const grid = document.getElementById('services-cards-grid');
+        if (grid) {
+            grid.innerHTML = `<div style="grid-column:1/-1; padding:40px; color:var(--red); text-align:center;">Failed to load dashboard data. Please check connection and try again.</div>`;
+        }
     }
 }
 

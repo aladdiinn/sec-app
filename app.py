@@ -1724,12 +1724,20 @@ def _check_failed_logins(server_id, data):
     log_lines = data.get("log_lines", []) or data.get("logs", [])
 
     fail_events = []
+    # Only keep core password/user failure events. Exclude PAM 'authentication failure' and 'Failed publickey' 
+    # to avoid double counting a single login attempt.
+    valid_auth = re.compile(r'(Failed password|AUTH_FAIL)', re.IGNORECASE)
+    
     for af in auth_failures:
         if isinstance(af, dict):
-            fail_events.append((time.time(), af.get("ip", "unknown"), af.get("user", "unknown"), af.get("line", "")))
+            line = af.get("line", "")
+            if valid_auth.search(line):
+                fail_events.append((time.time(), af.get("ip", "unknown"), af.get("user", "unknown"), line))
 
     if log_lines:
-        auth_patterns = re.compile(r'(Failed password|Invalid user|authentication failure|AUTH_FAIL|Failed publickey)', re.IGNORECASE)
+        # We only match 'Failed password' to avoid double-counting 
+        # sshd's 'Invalid user' lines, PAM's 'authentication failure', or ssh client's 'Failed publickey' spam.
+        auth_patterns = re.compile(r'(Failed password|AUTH_FAIL)', re.IGNORECASE)
         ip_pattern = re.compile(r'from (\d+\.\d+\.\d+\.\d+)')
         user_pattern = re.compile(r'(?:for invalid user|for user|invalid user)\s+(\S+)', re.IGNORECASE)
         for item in log_lines:
@@ -1749,7 +1757,15 @@ def _check_failed_logins(server_id, data):
     if server_id not in _recent_auth_failures:
         _recent_auth_failures[server_id] = []
 
-    _recent_auth_failures[server_id].extend(fail_events)
+    # Deduplicate by log line to prevent agent push spam from double-counting
+    existing_lines = set(ev[3] for ev in _recent_auth_failures[server_id] if ev[3])
+    for ev in fail_events:
+        if ev[3] and ev[3] in existing_lines:
+            continue
+        _recent_auth_failures[server_id].append(ev)
+        if ev[3]:
+            existing_lines.add(ev[3])
+            
     # Retain only last 15 minutes
     _recent_auth_failures[server_id] = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 900]
 
@@ -1760,7 +1776,7 @@ def _check_failed_logins(server_id, data):
 
     brute_thresh = _rule_threshold('SSH Brute Force Attempt', default=10)
     fail_thresh  = _rule_threshold('AUTH_FAIL', default=5)
-    if len(recent_5min) >= brute_thresh:
+    if _is_rule_enabled('SSH Brute Force Attempt') and len(recent_5min) >= brute_thresh:
         ips = list(set(ev[1] for ev in recent_5min if ev[1] != "unknown"))
         ip_str = ", ".join(ips[:3]) if ips else "external host"
         users_hit = list(set(ev[2] for ev in recent_5min if ev[2] != "unknown"))[:3]
@@ -1771,7 +1787,7 @@ def _check_failed_logins(server_id, data):
             f"{len(recent_5min)} failed SSH login attempts in the last 5 minutes from {ip_str}{user_str}. "
             f"This pattern indicates an automated brute-force attack in progress. Consider blocking this IP immediately."
         )
-    elif len(recent_10min) >= fail_thresh:
+    elif _is_rule_enabled('AUTH_FAIL') and len(recent_10min) >= fail_thresh:
         ips = list(set(ev[1] for ev in recent_10min if ev[1] != "unknown"))
         ip_str = ", ".join(ips[:3]) if ips else "external host"
         users_hit = list(set(ev[2] for ev in recent_10min if ev[2] != "unknown"))[:3]
@@ -3918,7 +3934,8 @@ def get_auth_failures():
         if 'auth' not in path and 'secure' not in path and 'syslog' not in path: continue
         try:
             size = os.path.getsize(path)
-            pos = auth_log_positions.get(path, max(0, size - 8000))
+            pos = auth_log_positions.get(path)
+            if pos is None: pos = size # Start at end of file on first run to avoid historical alerts
             if size < pos: pos = 0
             with open(path, 'r', errors='ignore') as f:
                 f.seek(pos)
@@ -3945,7 +3962,8 @@ def get_sudo_events():
         if ltype != 'os': continue
         try:
             size = os.path.getsize(path)
-            pos = sudo_log_positions.get(path, max(0, size - 4000))
+            pos = sudo_log_positions.get(path)
+            if pos is None: pos = size
             if size < pos: pos = 0
             with open(path, 'r', errors='ignore') as f:
                 f.seek(pos)
@@ -4963,11 +4981,15 @@ async def api_create_detection_rule(request: Request):
         body.get("severity", "warning"),
         body.get("event_type", "GENERAL"),
         body.get("mitre_tactic"),
-        body.get("mitre_technique")
+        body.get("mitre_technique"),
+        body.get("enabled", True)
     )
     if rid:
         uname = request.session.get('username', 'system')
         db.log_audit(uname, 'CREATE_RULE', 'rule', rid, f"Created rule: {body.get('name')}")
+        # Invalidate cache so next detection cycle picks up the change immediately
+        global _rule_cache_ts
+        _rule_cache_ts = 0.0
         return {"ok": True, "id": rid}
     return JSONResponse(status_code=400, content={"ok": False})
 

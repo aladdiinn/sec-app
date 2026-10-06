@@ -1873,7 +1873,8 @@ def get_detection_rules():
             rules = cur.fetchall()
             if not rules or len(rules) < 5:
                 default_rules = [
-                    ('SSH Brute Force Attempt', 'Failed password|authentication failure|AUTH_FAIL|Invalid user', 'critical', 'AUTH_FAIL', 'Credential Access', 'T1110.001'),
+                    ('Failed Login Threshold', 'Failed password|authentication failure|AUTH_FAIL', 'warning', 'AUTH_FAIL', 'Credential Access', 'T1110.001'),
+                    ('SSH Brute Force Detection', 'Rapid SSH failures >= 10', 'critical', 'SSH Brute Force Attempt', 'Credential Access', 'T1110.001'),
                     ('Recursive Root Deletion', 'rm -rf /', 'critical', 'DESTRUCTIVE', 'Impact', 'T1485'),
                     ('Fork Bomb Denial of Service', r':\(\)\s*\{\s*:\|:&\s*\};:|:(){:|:&};:|:(){ :|:& };:', 'critical', 'FORK_BOMB', 'Impact', 'T1499'),
                     ('Shadow File Dumping', '/etc/shadow', 'critical', 'CREDENTIAL_ACCESS', 'Credential Access', 'T1003.008'),
@@ -1910,15 +1911,15 @@ def get_detection_rules():
     finally:
         conn.close()
 
-def create_detection_rule(name, pattern, severity, event_type, mitre_tactic=None, mitre_technique=None):
+def create_detection_rule(name, pattern, severity, event_type, mitre_tactic=None, mitre_technique=None, enabled=True):
     conn = get_db_connection()
     if not conn: return None
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO detection_rules (name, pattern, severity, event_type, mitre_tactic, mitre_technique, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW()) RETURNING id;
-            """, (name, pattern, severity, event_type, mitre_tactic, mitre_technique))
+                INSERT INTO detection_rules (name, pattern, severity, event_type, mitre_tactic, mitre_technique, enabled, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW()) RETURNING id;
+            """, (name, pattern, severity, event_type, mitre_tactic, mitre_technique, enabled))
             return cur.fetchone()['id']
     except Exception as e:
         logger.error(f"Error in create_detection_rule: {e}")
