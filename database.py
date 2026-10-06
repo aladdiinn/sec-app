@@ -370,7 +370,8 @@ def init_db():
                     service_type VARCHAR(64) DEFAULT 'nginx',
                     log_file_path VARCHAR(512) NOT NULL,
                     status VARCHAR(32) DEFAULT 'active',
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (server_id, log_file_path)
                 );
             """)
             cur.execute("""
@@ -2956,6 +2957,12 @@ def add_log_config(server_id, server_ip, app_name, service_type, log_file_path, 
     """Add a new log configuration, strictly preventing duplicates."""
     conn = get_db_connection()
     if not conn: return None
+    
+    # Normalize log path
+    if log_file_path:
+        log_file_path = re.sub(r'/+$', '', log_file_path)
+        log_file_path = re.sub(r'//+', '/', log_file_path)
+        
     try:
         with conn:
             with conn.cursor() as cur:
@@ -2970,10 +2977,19 @@ def add_log_config(server_id, server_ip, app_name, service_type, log_file_path, 
 
                 cur.execute("""
                     INSERT INTO server_log_configs (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW()) RETURNING id;
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW()) 
+                    ON CONFLICT (server_id, log_file_path) DO NOTHING
+                    RETURNING id;
                 """, (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path))
                 row = cur.fetchone()
-                cid = row["id"] if isinstance(row, dict) else row[0]
+                
+                if row:
+                    cid = row["id"] if isinstance(row, dict) else row[0]
+                else:
+                    cur.execute("SELECT id FROM server_log_configs WHERE server_id = %s AND log_file_path = %s LIMIT 1;", (server_id, log_file_path))
+                    existing = cur.fetchone()
+                    cid = existing["id"] if isinstance(existing, dict) else existing[0]
+                    
                 if hasattr(conn, 'commit'):
                     conn.commit()
                 return cid
