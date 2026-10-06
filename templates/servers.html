@@ -1051,8 +1051,15 @@ function formatLocal(dateStr) {
                 if (!isUser) return false;
             }
 
-            // The backend strictly filters the logs by 'source' when a specific file is selected.
-            // There is no need for client-side filtering which was causing substring matching bugs.
+            // Client-side strict file filtering to prevent substring matching bugs
+            if (modalActiveFile) {
+                const activeClean = cleanLogSource(modalActiveFile).toLowerCase();
+                const cleanSrc = cleanLogSource(l.source || l.log_path).toLowerCase();
+                if (cleanSrc !== activeClean) {
+                    return false;
+                }
+            }
+
             if (query && !line.includes(query) && !src.includes(query)) return false;
             return true;
         });

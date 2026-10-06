@@ -1234,12 +1234,11 @@ function renderModalLogs() {
             if (!isUser) return false;
         }
 
-        // File filter using flexible source matching
+        // File filter using strict source matching
         if (modalActiveFile) {
             const activeClean = cleanLogSource(modalActiveFile).toLowerCase();
-            const activeBase = activeClean.split('/').pop();
             const cleanSrc = cleanLogSource(l.source || l.log_path).toLowerCase();
-            if (cleanSrc !== activeClean && !src.includes(activeClean) && !cleanSrc.includes(activeBase) && !src.includes(activeBase)) {
+            if (cleanSrc !== activeClean) {
                 return false;
             }
         }
