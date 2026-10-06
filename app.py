@@ -518,11 +518,12 @@ app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifesp
 
 # Secret Key from Environment Variable
 SECRET_KEY = os.getenv("SECRET_KEY", "ec2-security-monitor-production-secret-key-2026")
+SECURE_COOKIES = os.getenv("SECURE_COOKIES", "false").lower() == "true"
 app.add_middleware(
     SessionMiddleware, 
     secret_key=SECRET_KEY,
     max_age=28800,
-    https_only=True,
+    https_only=SECURE_COOKIES,
     same_site="lax"
 )
 
