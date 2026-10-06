@@ -59,7 +59,7 @@
     };
     if (token) headers['Authorization'] = 'Bearer ' + token;
 
-    const res = await fetch(path, { ...options, headers });
+    const res = await fetch(path, { cache: 'no-store', ...options, headers });
 
     if (res.status === 401) {
       clearAuth();
