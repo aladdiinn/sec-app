@@ -5428,7 +5428,8 @@ async def api_fetch_log_lines(request: Request):
                 break
 
     # 1. First priority: Fetch logs pushed by push agents from pushed_logs table
-    cfg_id = matching_cfg.get("id") if matching_cfg else None
+    # Do NOT strictly bind cfg_id if log_path is provided, to catch logs pushed by agents with config_id=NULL
+    cfg_id = None if log_path else (matching_cfg.get("id") if matching_cfg else None)
     db_limit = 3000 if (preset or search) else limit
     db_log_type = None if log_path else log_type  # Do not strictly filter DB by log_type if querying a specific file path
     pushed = await run_in_threadpool(db.get_pushed_logs, config_id=cfg_id, server_id=sid, limit=db_limit, source=log_path, log_type=db_log_type)
@@ -5533,7 +5534,9 @@ async def api_fetch_log_lines(request: Request):
     srv = await run_in_threadpool(db.get_server_by_id, sid) if sid else None
     if not lines and (srv or matching_cfg or log_path):
         host = (srv.get("ip_address") or srv.get("ip")) if srv else (matching_cfg.get("ip") if matching_cfg else None)
-        if host and host not in ["127.0.0.1", "localhost", "172.31.6.247"]:
+        # Skip SSH completely if the node uses an agent, preventing the 10-second hang on missing files
+        has_agent = srv and srv.get("agent_token") and str(srv.get("agent_token")).strip()
+        if host and host not in ["127.0.0.1", "localhost", "172.31.6.247"] and not has_agent:
             try:
                 ssh_user = (matching_cfg.get("ssh_user") if matching_cfg else None) or (srv.get("ssh_user") if srv else None) or "ubuntu"
                 ssh_pwd = (matching_cfg.get("ssh_password") if matching_cfg else None) or (srv.get("ssh_password") if srv else None)

@@ -3177,7 +3177,10 @@ def get_pushed_logs(config_id=None, server_id=None, limit=100, source=None, log_
         with conn.cursor() as cur:
             where_clauses = []
             params = []
-            if config_id:
+            if config_id and server_id:
+                where_clauses.append("(config_id = %s OR server_id = %s)")
+                params.extend([config_id, server_id])
+            elif config_id:
                 where_clauses.append("config_id = %s")
                 params.append(config_id)
             elif server_id:
