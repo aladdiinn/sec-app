@@ -402,11 +402,44 @@ def init_db():
             cur.execute("""
                 ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS source VARCHAR(512);
             """)
+            cur.execute("""
+                ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS line_hash VARCHAR(64);
+            """)
 
-            # Optimal composite indices to prevent "backward sequence scan" during ORDER BY id DESC LIMIT 100
+            # Optimal composite indices
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_srv_id_desc ON pushed_logs (server_id, id DESC);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_cfg_id_desc ON pushed_logs (config_id, id DESC);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_created_at ON pushed_logs (created_at);")
+            # Idempotency unique index for hash-based dedup
+            try:
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_pushed_logs_cfg_hash ON pushed_logs (config_id, line_hash) WHERE line_hash IS NOT NULL AND config_id IS NOT NULL;")
+            except Exception: pass
+
+            # Hot-buffer metadata tables (v2 ingestion model)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS log_file_baselines (
+                    id           SERIAL PRIMARY KEY,
+                    config_id    INT UNIQUE,
+                    file_path    VARCHAR(512) NOT NULL,
+                    inode        BIGINT DEFAULT 0,
+                    byte_offset  BIGINT DEFAULT 0,
+                    onboarded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_lfb_config ON log_file_baselines (config_id);")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS log_file_segments (
+                    id         SERIAL PRIMARY KEY,
+                    config_id  INT,
+                    s3_key     VARCHAR(1024) NOT NULL,
+                    first_ts   TIMESTAMP WITH TIME ZONE,
+                    last_ts    TIMESTAMP WITH TIME ZONE,
+                    line_count INT DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_lfs_config_ts ON log_file_segments (config_id, last_ts DESC);")
 
             # Backfill existing pushed_logs so categories (postgres, tomcat, os) display immediately
             try:
@@ -2953,33 +2986,170 @@ def get_log_configs(server_id=None):
         conn.close()
 
 def add_log_config(server_id, server_ip, app_name, service_type, log_file_path, ssh_user=None, ssh_password=None, ssh_key_path=None):
-    """Add a new log configuration, strictly preventing duplicates."""
+    """Add a new log configuration using INSERT ... ON CONFLICT DO NOTHING to guarantee idempotency."""
+    import os as _os
+    # Normalize path: strip trailing slashes, resolve double-slashes
+    if log_file_path:
+        log_file_path = _os.path.normpath(log_file_path.strip())
     conn = get_db_connection()
     if not conn: return None
     try:
         with conn:
             with conn.cursor() as cur:
-                # Deduplicate: check if config already exists for this server and path
-                cur.execute("""
-                    SELECT id FROM server_log_configs 
-                    WHERE server_id = %s AND log_file_path = %s LIMIT 1;
-                """, (server_id, log_file_path))
-                existing = cur.fetchone()
-                if existing:
-                    return existing["id"] if isinstance(existing, dict) else existing[0]
-
-                cur.execute("""
-                    INSERT INTO server_log_configs (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW()) RETURNING id;
-                """, (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path))
-                row = cur.fetchone()
-                cid = row["id"] if isinstance(row, dict) else row[0]
-                if hasattr(conn, 'commit'):
-                    conn.commit()
-                return cid
+                # Try INSERT ... ON CONFLICT first (requires UNIQUE constraint uq_server_log_path)
+                try:
+                    cur.execute("""
+                        INSERT INTO server_log_configs
+                            (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        ON CONFLICT (server_id, log_file_path) DO NOTHING
+                        RETURNING id;
+                    """, (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path))
+                    row = cur.fetchone()
+                    if row:
+                        cid = row["id"] if isinstance(row, dict) else row[0]
+                        if hasattr(conn, 'commit'): conn.commit()
+                        return cid
+                    # ON CONFLICT triggered — fetch existing id
+                    cur.execute("SELECT id FROM server_log_configs WHERE server_id = %s AND log_file_path = %s LIMIT 1;", (server_id, log_file_path))
+                    existing = cur.fetchone()
+                    return (existing["id"] if isinstance(existing, dict) else existing[0]) if existing else None
+                except Exception:
+                    # UNIQUE constraint may not exist yet — fall back to SELECT-then-INSERT
+                    cur.execute("SELECT id FROM server_log_configs WHERE server_id = %s AND log_file_path = %s LIMIT 1;", (server_id, log_file_path))
+                    existing = cur.fetchone()
+                    if existing:
+                        return existing["id"] if isinstance(existing, dict) else existing[0]
+                    cur.execute("""
+                        INSERT INTO server_log_configs (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW()) RETURNING id;
+                    """, (server_id, server_ip, app_name, service_type, log_file_path, ssh_user, ssh_password, ssh_key_path))
+                    row = cur.fetchone()
+                    cid = row["id"] if isinstance(row, dict) else row[0]
+                    if hasattr(conn, 'commit'): conn.commit()
+                    return cid
     except Exception as e:
         logger.error(f"Error in add_log_config: {e}")
         return None
+    finally:
+        conn.close()
+
+
+def get_or_set_baseline(config_id: int, file_path: str, inode: int, byte_offset: int):
+    """Return the stored baseline offset for a config, or create one at the given offset."""
+    conn = get_db_connection()
+    if not conn: return byte_offset
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT byte_offset FROM log_file_baselines WHERE config_id = %s;", (config_id,))
+            row = cur.fetchone()
+            if row:
+                return row["byte_offset"] if isinstance(row, dict) else row[0]
+            cur.execute("""
+                INSERT INTO log_file_baselines (config_id, file_path, inode, byte_offset, onboarded_at)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON CONFLICT (config_id) DO NOTHING;
+            """, (config_id, file_path, inode, byte_offset))
+            if hasattr(conn, 'commit'): conn.commit()
+            return byte_offset
+    except Exception as e:
+        logger.error(f"Error in get_or_set_baseline: {e}")
+        return byte_offset
+    finally:
+        conn.close()
+
+
+def get_hot_logs(config_id: int, limit: int = 500, after_id: int = 0):
+    """Fetch from the hot buffer for a single config_id, newest-last. Returns at most `limit` rows."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            params = [config_id, limit]
+            after_clause = ""
+            if after_id:
+                after_clause = "AND id > %s"
+                params = [config_id, after_id, limit]
+            cur.execute(f"""
+                SELECT id, config_id, server_id, log_level as level, source, COALESCE(log_type,'') as log_type, message as msg, created_at
+                FROM pushed_logs
+                WHERE config_id = %s {after_clause}
+                ORDER BY id DESC LIMIT %s;
+            """, params)
+            rows = cur.fetchall()
+            result = []
+            for r in reversed(rows):
+                ct = r.get("created_at")
+                result.append({
+                    "id": r.get("id"), "config_id": r.get("config_id"),
+                    "time": str(ct)[:19].replace("T", " ") if ct else "",
+                    "level": r.get("level") or "INFO",
+                    "source": r.get("source") or "",
+                    "log_type": r.get("log_type") or "",
+                    "msg": r.get("msg") or ""
+                })
+            return result
+    except Exception as e:
+        logger.error(f"Error in get_hot_logs: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_hot_logs_by_type(server_id: int, log_type: str, limit: int = 500, after_id: int = 0):
+    """Fetch merged hot-buffer logs for all configs of the same type on a server."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            after_clause = "AND pl.id > %s" if after_id else ""
+            params = [server_id, log_type, limit] if not after_id else [server_id, log_type, after_id, limit]
+            cur.execute(f"""
+                SELECT pl.id, pl.config_id, pl.server_id,
+                       pl.log_level as level, pl.source,
+                       COALESCE(pl.log_type,'') as log_type,
+                       pl.message as msg, pl.created_at
+                FROM pushed_logs pl
+                WHERE pl.server_id = %s AND pl.log_type = %s {after_clause}
+                ORDER BY pl.id DESC LIMIT %s;
+            """, params)
+            rows = cur.fetchall()
+            result = []
+            for r in reversed(rows):
+                ct = r.get("created_at")
+                result.append({
+                    "id": r.get("id"), "config_id": r.get("config_id"),
+                    "time": str(ct)[:19].replace("T", " ") if ct else "",
+                    "level": r.get("level") or "INFO",
+                    "source": r.get("source") or "",
+                    "log_type": r.get("log_type") or "",
+                    "msg": r.get("msg") or ""
+                })
+            return result
+    except Exception as e:
+        logger.error(f"Error in get_hot_logs_by_type: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_file_counts(server_id: int):
+    """Return per-config_id log row counts (capped display at 500) for the server."""
+    conn = get_db_connection()
+    if not conn: return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT config_id, COUNT(*) as cnt
+                FROM pushed_logs
+                WHERE server_id = %s AND config_id IS NOT NULL
+                GROUP BY config_id;
+            """, (server_id,))
+            rows = cur.fetchall()
+            return {r["config_id"]: min(r["cnt"], 500) for r in rows}
+    except Exception as e:
+        logger.error(f"Error in get_file_counts: {e}")
+        return {}
     finally:
         conn.close()
 
@@ -3093,7 +3263,12 @@ def classify_log_entry(message: str, source: str = "", log_type: str = None) -> 
     return lt if lt else "os", clean_src, level
 
 
+HOT_BUFFER_CAP = 500  # Maximum rows kept per config_id in the hot buffer
+
+
 def push_log_entries(config_id=None, server_id=None, lines=None):
+    """Ingest log lines with idempotency dedup and 500-line hot-buffer cap per config."""
+    import hashlib as _hashlib
     if not lines: return 0
     conn = get_db_connection()
     if not conn: return 0
@@ -3101,9 +3276,6 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
     try:
         with conn:
             with conn.cursor() as cur:
-                # Redundant DDL and full-table UPDATEs have been removed for high-throughput ingestion.
-                # Inbound logs are already classified via classify_log_entry.
-
                 for line in lines:
                     # Support both plain strings and structured dicts from the agent
                     if isinstance(line, dict) and 'line' in line:
@@ -3118,35 +3290,88 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
 
                     row_log_type, row_source, level = classify_log_entry(line_str, raw_source, raw_log_type)
 
-                    # Normalize date-stamped rotated source paths to single main source names
+                    # Normalize date-stamped rotated source paths
                     if row_source:
                         if re.search(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', row_source, re.I):
                             row_source = re.sub(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', 'catalina.out', row_source, flags=re.I)
                         elif re.search(r'postgresql-[A-Za-z0-9_-]+\.log$', row_source, re.I):
                             row_source = re.sub(r'postgresql-[A-Za-z0-9_-]+\.log$', 'postgresql.log', row_source, flags=re.I)
 
-                    cur.execute("""
-                        INSERT INTO pushed_logs (config_id, server_id, log_level, source, log_type, message, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, NOW());
-                    """, (config_id, server_id, level, row_source, row_log_type, line_str))
-                    saved += 1
+                    # Compute idempotency hash: sha1(config_id|message)
+                    hash_key = f"{config_id}|{line_str}"
+                    line_hash = _hashlib.sha1(hash_key.encode('utf-8', errors='ignore')).hexdigest()[:32] if config_id else None
 
-                    # Touch server status on log push
+                    try:
+                        if line_hash:
+                            cur.execute("""
+                                INSERT INTO pushed_logs (config_id, server_id, log_level, source, log_type, message, line_hash, created_at)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                                ON CONFLICT (config_id, line_hash) DO NOTHING;
+                            """, (config_id, server_id, level, row_source, row_log_type, line_str, line_hash))
+                        else:
+                            cur.execute("""
+                                INSERT INTO pushed_logs (config_id, server_id, log_level, source, log_type, message, created_at)
+                                VALUES (%s, %s, %s, %s, %s, %s, NOW());
+                            """, (config_id, server_id, level, row_source, row_log_type, line_str))
+                        saved += 1
+                    except Exception:
+                        # Fallback if unique index doesn't exist yet
+                        try:
+                            cur.execute("""
+                                INSERT INTO pushed_logs (config_id, server_id, log_level, source, log_type, message, created_at)
+                                VALUES (%s, %s, %s, %s, %s, %s, NOW());
+                            """, (config_id, server_id, level, row_source, row_log_type, line_str))
+                            saved += 1
+                        except Exception: pass
+
+                    # Touch server last_seen
                     if server_id:
                         try:
                             cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
                         except Exception: pass
 
-                    # Prune old logs randomly (approx 2% of the time) to prevent table bloat
-                    if random.randint(1, 50) == 1:
-                        try:
-                            # Failsafe: since S3 archiver handles long-term storage, 
-                            # we aggressively drop DB logs older than 3 hours to keep the hot-tier lightning fast.
-                            cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '3 hours';")
-                        except Exception: pass
-                
                 if hasattr(conn, 'commit'):
                     conn.commit()
+
+                # Enforce 500-line hot-buffer cap per config — evict oldest rows beyond cap
+                if config_id and saved > 0:
+                    try:
+                        cur.execute("""
+                            SELECT COUNT(*) as cnt FROM pushed_logs WHERE config_id = %s;
+                        """, (config_id,))
+                        cnt_row = cur.fetchone()
+                        total = (cnt_row["cnt"] if isinstance(cnt_row, dict) else cnt_row[0]) if cnt_row else 0
+                        excess = total - HOT_BUFFER_CAP
+                        if excess > 0:
+                            # Fetch oldest rows to evict (for S3 archival)
+                            cur.execute("""
+                                SELECT id, config_id, server_id, log_type, source, message, created_at
+                                FROM pushed_logs WHERE config_id = %s
+                                ORDER BY id ASC LIMIT %s;
+                            """, (config_id, excess))
+                            evicted = cur.fetchall()
+                            evicted_ids = [(r["id"] if isinstance(r, dict) else r[0]) for r in evicted]
+                            if evicted_ids:
+                                # Async S3 archive (best-effort, non-blocking)
+                                try:
+                                    import threading
+                                    evicted_dicts = [dict(r) if isinstance(r, dict) else {"id": r[0], "config_id": r[1], "server_id": r[2], "log_type": r[3], "source": r[4], "message": r[5], "created_at": str(r[6])} for r in evicted]
+                                    def _archive_async(rows, cid, sid, lt):
+                                        try:
+                                            from s3_archiver import upload_evicted_batch
+                                            upload_evicted_batch(cid, rows, sid, lt)
+                                        except Exception as _e:
+                                            logger.debug(f"S3 eviction skipped: {_e}")
+                                    _lt = evicted_dicts[0].get("log_type") if evicted_dicts else "os"
+                                    _sid = evicted_dicts[0].get("server_id") if evicted_dicts else server_id
+                                    threading.Thread(target=_archive_async, args=(evicted_dicts, config_id, _sid, _lt), daemon=True).start()
+                                except Exception: pass
+
+                                # Delete evicted rows from hot buffer
+                                cur.execute("DELETE FROM pushed_logs WHERE id = ANY(%s);", (evicted_ids,))
+                                if hasattr(conn, 'commit'): conn.commit()
+                    except Exception as ex_cap:
+                        logger.debug(f"Hot-cap enforcement error: {ex_cap}")
     except Exception as e:
         logger.error(f"Error in push_log_entries: {e}")
     finally:
@@ -3748,4 +3973,33 @@ def change_user_password(user_id: int, new_password: str):
     finally:
         conn.close()
 
+
+
+
+def get_older_segments(config_id: int, before_ts=None, limit: int = 5):
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            if before_ts:
+                cur.execute("""
+                    SELECT s3_key, first_ts, last_ts, line_count 
+                    FROM log_file_segments 
+                    WHERE config_id = %s AND last_ts < %s
+                    ORDER BY last_ts DESC LIMIT %s;
+                """, (config_id, before_ts, limit))
+            else:
+                cur.execute("""
+                    SELECT s3_key, first_ts, last_ts, line_count 
+                    FROM log_file_segments 
+                    WHERE config_id = %s 
+                    ORDER BY last_ts DESC LIMIT %s;
+                """, (config_id, limit))
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"Error getting segments for {config_id}: {e}")
+        return []
+    finally:
+        conn.close()
 

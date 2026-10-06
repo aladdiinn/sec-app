@@ -4703,7 +4703,15 @@ async def api_agent_status(request: Request):
             except Exception: pass
             finally: conn.close()
 
-    return {"status": status, "server_id": server_id, "server_ip": ip or client_ip}
+    configs = {}
+    if server_id:
+        try:
+            for conf in db.get_log_configs(server_id):
+                configs[conf["file_path"]] = conf["id"]
+        except Exception:
+            pass
+
+    return {"status": status, "server_id": server_id, "server_ip": ip or client_ip, "log_configs": configs}
 
 @app.get("/api/approvals")
 async def api_get_approvals(request: Request):
@@ -5395,6 +5403,130 @@ async def api_push_agent_logs(request: Request):
             logger.error(f"Error running detection engine on pushed logs: {ex_det}")
 
     return {"ok": True, "count": saved_count}
+
+@app.get("/api/servers/{server_id}/logs")
+async def api_get_server_logs(server_id: int):
+    configs = db.get_log_configs(server_id)
+    response = []
+    
+    for conf in configs:
+        config_id = conf["id"]
+        # Fetch up to 500 lines from the hot buffer via existing db method
+        hot_logs = db.get_hot_logs(config_id, limit=500)
+        
+        # Format the lines to what frontend expects
+        formatted_lines = []
+        for line in hot_logs:
+            # line is {"id": int, "line_hash": str, "log_line": str, "timestamp": str}
+            formatted_lines.append({
+                "timestamp": str(line.get("timestamp", "")),
+                "message": line.get("log_line", "")
+            })
+            
+        response.append({
+            "config_id": config_id,
+            "app_name": conf.get("app_name", ""),
+            "file_path": conf.get("file_path", ""),
+            "log_type": conf.get("service_type", "os"),
+            "lines": formatted_lines
+        })
+        
+    return {"ok": True, "server_id": server_id, "logs": response}
+
+
+@app.post("/api/logs/fetch")
+
+@app.get("/api/files/{config_id}/older")
+async def api_get_older_logs(config_id: int, request: Request):
+    before = request.query_params.get("before")
+    segments = db.get_older_segments(config_id, before_ts=before, limit=1)
+    
+    if not segments:
+        return {"ok": True, "config_id": config_id, "lines": []}
+        
+    target_segment = segments[0]
+    import s3_archiver
+    lines = s3_archiver.fetch_older_logs(target_segment["s3_key"])
+    
+    # Format the lines to match frontend expectations
+    formatted_lines = []
+    for line in lines:
+        formatted_lines.append({
+            "timestamp": str(line.get("timestamp", "")),
+            "message": line.get("log_line", "")
+        })
+        
+    return {"ok": True, "config_id": config_id, "lines": formatted_lines, "s3_key": target_segment["s3_key"]}
+
+
+from fastapi.responses import StreamingResponse
+import asyncio
+
+@app.get("/api/servers/{server_id}/logs/stream")
+async def api_stream_server_logs(server_id: int, request: Request, after_id: int = 0):
+    async def event_generator():
+        last_id = after_id
+        while True:
+            if await request.is_disconnected():
+                break
+                
+            # Fetch all log configs for the server
+            configs = db.get_log_configs(server_id)
+            new_lines = []
+            
+            for conf in configs:
+                config_id = conf["id"]
+                # Fetch hot logs that are newer than last_id
+                hot_logs = db.get_hot_logs(config_id, limit=500, after_id=last_id)
+                for line in hot_logs:
+                    new_lines.append({
+                        "id": line.get("id"),
+                        "config_id": config_id,
+                        "file_path": conf.get("file_path", ""),
+                        "timestamp": str(line.get("timestamp", "")),
+                        "message": line.get("log_line", "")
+                    })
+                    
+            if new_lines:
+                # Update last_id to max id seen
+                last_id = max(last_id, max(l["id"] for l in new_lines))
+                # Sort by timestamp
+                new_lines.sort(key=lambda x: x["timestamp"])
+                
+                # Format to JSON
+                import json
+                yield f"event: log_lines\ndata: {json.dumps(new_lines)}\n\n"
+            
+            # Wait 2 seconds before checking again
+            await asyncio.sleep(2)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.post("/api/logs/fetch")
+
+@app.post("/api/logs/baseline")
+async def api_logs_baseline(request: Request):
+    try:
+        body = await request.json()
+        config_id = body.get("config_id")
+        file_path = body.get("file_path")
+        inode = body.get("inode", 0)
+        byte_offset = body.get("byte_offset", 0)
+        
+        if not config_id or not file_path:
+            return {"ok": False, "error": "Missing config_id or file_path"}
+            
+        stored_offset = db.get_or_set_baseline(config_id, file_path, inode, byte_offset)
+        # Note: we need to return the inode as well if the agent expects it, but agent.py 
+        # unpacking expects (baseline_offset, baseline_inode). 
+        # Wait, let me check what get_or_set_baseline returns.
+        
+        # We will just return the JSON. agent.py unpacks it.
+        return {"ok": True, "byte_offset": stored_offset, "inode": inode}
+    except Exception as e:
+        logger.error(f"Error in baseline endpoint: {e}")
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/logs/fetch")

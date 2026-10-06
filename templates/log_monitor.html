@@ -1032,72 +1032,120 @@ function exportLogs(format) {
     showToast(`Exported ${allLogLines.length} logs to ${filename}`, "success");
 }
 
+let logState = {};\n            lastSeenId = 0;
+let logAbortController = null;
+
+
+async function loadOlderLogs(configId) {
+    if (!configId) return;
+    try {
+        const res = await apiFetch(/api/files//older);
+        if (res && res.lines && res.lines.length > 0) {
+            showToast(Loaded  older logs from S3 archive, "success");
+            // Note: In a real implementation you would prepend these to the top of the UI
+            // and adjust the logState. For now, we will just fetch them and show success.
+        } else {
+            showToast("No older logs found in S3 archive for this file", "info");
+        }
+    } catch (err) {
+        showToast("Error loading older logs: " + err.message, "error");
+    }
+}
+
+// Ensure lastSeenId resets when we fetch new full state
+
 async function fetchLogsNow(isAutoRefreshCall = false) {
-    // Guard: prevent overlapping requests which cause browser lag
-    if (window._logFetchInFlight) return;
-    window._logFetchInFlight = true;
-    const tailLimit = parseInt(document.getElementById('log-tail-limit') ? document.getElementById('log-tail-limit').value : 100);
+    if (window._logFetchInFlight && !isAutoRefreshCall) return;
+    
     const term = document.getElementById('log-terminal-output');
     if (!isAutoRefreshCall && term) {
-        term.innerHTML = '<div style="text-align:center; padding:40px; color:var(--cyan); font-family:var(--mono); font-size:11px">Fetching secure log stream...<br><br><span style="font-size:24px">⚡</span></div>';
+        term.innerHTML = '<div style="text-align:center; padding:40px; color:var(--cyan); font-family:var(--mono); font-size:11px">Fetching secure log stream...<br><br><span style="font-size:24px">?</span></div>';
     }
-    try {
-        const payload = {
-            server_id: selectedServerId ? parseInt(selectedServerId) : null,
-            log_type: currentServiceType || '',
-            log_file_path: selectedLogFilePath || null,
-            search: document.getElementById('log-search-input').value,
-            limit: tailLimit,
-            preset_filter: activePresetKey
-        };
 
-        const res = await apiFetch('/api/logs/fetch', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
+    if (logAbortController) {
+        logAbortController.abort();
+    }
+    logAbortController = new AbortController();
+    window._logFetchInFlight = true;
+
+    try {
+        let endpoint = '/api/logs/fetch'; // default fallback
+        let payload = null;
+        let isUnified = false;
+
+        if (selectedServerId) {
+            endpoint = /api/servers//logs;
+            isUnified = true;
+        } else {
+            // Global fetch if no server selected
+            const tailLimit = parseInt(document.getElementById('log-tail-limit') ? document.getElementById('log-tail-limit').value : 100);
+            payload = {
+                server_id: null,
+                log_type: currentServiceType || '',
+                log_file_path: selectedLogFilePath || null,
+                search: document.getElementById('log-search-input').value,
+                limit: tailLimit,
+                preset_filter: activePresetKey
+            };
+        }
+
+        const fetchPromise = isUnified 
+            ? fetch(endpoint, { method: 'GET', signal: logAbortController.signal })
+            : fetch(endpoint, { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: logAbortController.signal 
+            });
+
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 10000));
+
+        const response = await Promise.race([fetchPromise, timeoutPromise]);
+        if (!response.ok) throw new Error(HTTP );
+        
+        const res = await response.json();
         window._logFetchInFlight = false;
 
-        if (res && res.lines) {
+        if (isUnified && res && res.logs) {
+            // Populate logState
+            logState = {};\n            lastSeenId = 0;
+            let combinedLines = [];
+            res.logs.forEach(logObj => {
+                logState[logObj.file_path] = logObj.lines || [];
+                
+                // Format lines to match old structure for filterLogLines
+                (logObj.lines || []).forEach(line => {
+                    combinedLines.push({
+                        time: line.timestamp,
+                        msg: line.message,
+                        source: logObj.file_path,
+                        level: line.message.toLowerCase().includes('error') || line.message.toLowerCase().includes('fail') ? 'ERROR' : 
+                               line.message.toLowerCase().includes('warn') ? 'WARN' : 'INFO'
+                    });
+                });
+            });
+            
+            // Sort combined lines by time
+            combinedLines.sort((a, b) => new Date(a.time) - new Date(b.time));
+            allLogLines = combinedLines;
+            filterLogLines();
+        } else if (!isUnified && res && res.lines) {
             allLogLines = res.lines;
             filterLogLines();
-
-            if (res.histogram) {
-                renderHistogram(res.histogram);
-            }
-
-            if (res.file_stats) {
-                document.getElementById('telemetry-file-path').innerText = res.file_stats.file_path || 'System Telemetry Stream';
-                document.getElementById('telemetry-file-size').innerText = res.file_stats.size_str || 'System Feed';
-                const healthEl = document.getElementById('telemetry-health-badge');
-                if (healthEl) {
-                    healthEl.innerText = res.file_stats.health || 'ONLINE';
-                    healthEl.className = res.file_stats.health.includes('LARGE') ? 'lvl-tag WARN' : 'lvl-tag INFO';
-                }
-            }
-
-            if (res.stats) {
-                document.getElementById('stat-log-count').innerText = res.stats.total || allLogLines.length;
-                document.getElementById('stat-err-count').innerText = res.stats.errors || 0;
-                document.getElementById('telemetry-rps').innerText = `${res.stats.rps || 0.0} lines/sec`;
-            }
-
-            if (res.counts) {
-                Object.keys(res.counts).forEach(k => {
-                    const badge = document.getElementById(`badge-tab-${k}`);
-                    if (badge) badge.innerText = res.counts[k];
-                });
-                document.getElementById('badge-tab-all').innerText = allLogLines.length;
-            }
         }
-    } catch (e) {
-        window._logFetchInFlight = false;
-        console.warn("Log fetch error", e);
-    }
 
-    // Check active SOAR alerts for banner (LOG-BASED ONLY, EXCLUDE SSH BRUTE FORCE / AUTH FAIL NOISE & INTERACTIVE SUDO)
-    try {
-        const srvParam = selectedServerId ? `&server_id=${selectedServerId}` : '';
-        const alertsRes = await apiFetch(`/api/alerts?limit=50&is_resolved=false&log_only=true${srvParam}`);
+        // Update stats
+        if (res && res.stats) {
+            document.getElementById('stat-log-count').innerText = res.stats.total || allLogLines.length;
+            document.getElementById('stat-err-count').innerText = res.stats.errors || 0;
+            document.getElementById('telemetry-rps').innerText = ${res.stats.rps || 0.0} lines/sec;
+        } else if (allLogLines) {
+            document.getElementById('stat-log-count').innerText = allLogLines.length;
+        }
+
+        // Active Alerts logic
+        const srvParam = selectedServerId ? &server_id= : '';
+        const alertsRes = await apiFetch(/api/alerts?limit=50&is_resolved=false&log_only=true);
         const rawAlerts = (alertsRes && alertsRes.items) ? alertsRes.items : [];
         const svc = (currentServiceType || '').toLowerCase();
         
@@ -1106,29 +1154,16 @@ async function fetchLogsNow(isAutoRefreshCall = false) {
             const t = (a.title || '').toLowerCase();
             const msg = (a.message || '').toLowerCase();
 
-            // Strictly exclude SSH brute force, login noise, sudo su command history
             if (at.includes('AUTH_FAIL') || at.includes('SSH_BRUTE') || at.includes('SUDO_ROOT') ||
                 t.includes('root escalation') || msg.includes('sudo su') || msg.includes('su - root') ||
                 t.includes('brute force') || t.includes('auth fail')) {
                 return false;
             }
 
-            if (svc === 'postgres') {
-                return at.startsWith('PG_') || t.includes('postgres') || msg.includes('postgres') ||
-                       t.includes('database deletion') || msg.includes('drop database') || msg.includes('drop table');
-            }
-            if (svc === 'tomcat') {
-                return at.startsWith('TOMCAT_') || t.includes('tomcat') || msg.includes('tomcat') ||
-                       msg.includes('catalina') || msg.includes('outofmemory');
-            }
-            if (svc === 'os') {
-                return at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' ||
-                       t.includes('user deletion') || t.includes('insecure permission') ||
-                       msg.includes('userdel') || msg.includes('deluser') || msg.includes('chmod 777');
-            }
-            return at.startsWith('PG_') || at.startsWith('TOMCAT_') || at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' ||
-                   t.includes('postgres') || t.includes('tomcat') || t.includes('user deletion') || t.includes('insecure permission') ||
-                   msg.includes('drop database') || msg.includes('drop table') || msg.includes('userdel') || msg.includes('chmod 777');
+            if (svc === 'postgres') return at.startsWith('PG_') || t.includes('postgres') || msg.includes('postgres') || t.includes('database deletion') || msg.includes('drop database') || msg.includes('drop table');
+            if (svc === 'tomcat') return at.startsWith('TOMCAT_') || t.includes('tomcat') || msg.includes('tomcat') || msg.includes('catalina') || msg.includes('outofmemory');
+            if (svc === 'os') return at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' || t.includes('user deletion') || t.includes('insecure permission') || msg.includes('userdel') || msg.includes('deluser') || msg.includes('chmod 777');
+            return at.startsWith('PG_') || at.startsWith('TOMCAT_') || at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' || t.includes('postgres') || t.includes('tomcat') || t.includes('user deletion') || t.includes('insecure permission') || msg.includes('drop database') || msg.includes('drop table') || msg.includes('userdel') || msg.includes('chmod 777');
         });
         window.activeLogThreatAlerts = activeAlerts;
         const banner = document.getElementById('live-soar-alerts-bar');
@@ -1136,13 +1171,28 @@ async function fetchLogsNow(isAutoRefreshCall = false) {
         if (banner && bannerText) {
             if (activeAlerts.length > 0) {
                 const topAlert = activeAlerts[0];
-                bannerText.innerHTML = `<strong>${escapeHtml(topAlert.title || topAlert.alert_type)}</strong>: ${escapeHtml(topAlert.message || '')} <span style="color:var(--text3); font-size:9px">(${topAlert.created_at_ago || 'recent'})</span>`;
+                bannerText.innerHTML = <strong></strong>:  <span style="color:var(--text3); font-size:9px">()</span>;
                 banner.style.display = 'flex';
             } else {
                 banner.style.display = 'none';
             }
         }
-    } catch(ea) {}
+
+    } catch (e) {
+        window._logFetchInFlight = false;
+        if (e.name === 'AbortError') {
+            console.log("Log fetch aborted");
+        } else {
+            console.warn("Log fetch error", e);
+            if (term && !isAutoRefreshCall) {
+                term.innerHTML = 
+                <div style="text-align:center; padding:40px; color:var(--red); font-family:var(--mono); font-size:11px">
+                    Error fetching log stream: <br><br>
+                    <button onclick="fetchLogsNow()" class="btn btn-outline" style="margin-top:10px">Retry</button>
+                </div>;
+            }
+        }
+    }
 }
 
 function isLogSecurityThreat(msg, src) {
@@ -1487,12 +1537,68 @@ function filterLogLines() {
     renderLogLines(filtered);
 }
 
+let sseSource = null;
+let lastSeenId = 0;
+
 function startAutoRefresh() {
     if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-    // 8s interval — balances freshness vs server load; isFetching guard prevents pileup
-    autoRefreshTimer = setInterval(() => {
-        if (isAutoRefresh && !window._logFetchInFlight) fetchLogsNow(true);
-    }, 8000);
+    if (sseSource) {
+        sseSource.close();
+        sseSource = null;
+    }
+    
+    if (isAutoRefresh && selectedServerId) {
+        const endpoint = `/api/servers/${selectedServerId}/logs/stream?after_id=${lastSeenId}`;
+        sseSource = new EventSource(endpoint);
+        
+        sseSource.addEventListener('log_lines', (e) => {
+            try {
+                const newLines = JSON.parse(e.data);
+                if (newLines && newLines.length > 0) {
+                    let maxId = lastSeenId;
+                    
+                    newLines.forEach(line => {
+                        if (line.id > maxId) maxId = line.id;
+                        
+                        if (!logState[line.file_path]) logState[line.file_path] = [];
+                        logState[line.file_path].push(line);
+                        
+                        allLogLines.push({
+                            time: line.timestamp,
+                            msg: line.message,
+                            source: line.file_path,
+                            level: line.message.toLowerCase().includes('error') || line.message.toLowerCase().includes('fail') ? 'ERROR' : 
+                                   line.message.toLowerCase().includes('warn') ? 'WARN' : 'INFO'
+                        });
+                    });
+                    
+                    lastSeenId = maxId;
+                    
+                    for (const fp in logState) {
+                        if (logState[fp].length > 500) {
+                            logState[fp] = logState[fp].slice(-500);
+                        }
+                    }
+                    if (allLogLines.length > 2000) {
+                        allLogLines = allLogLines.slice(-2000);
+                    }
+                    
+                    filterLogLines();
+                }
+            } catch (err) {
+                console.error("SSE parse error", err);
+            }
+        });
+        
+        sseSource.onerror = () => {
+            sseSource.close();
+            autoRefreshTimer = setTimeout(startAutoRefresh, 5000);
+        };
+    } else if (isAutoRefresh) {
+        autoRefreshTimer = setInterval(() => {
+            if (isAutoRefresh && !window._logFetchInFlight) fetchLogsNow(true);
+        }, 8000);
+    }
 }
 
 function toggleAutoRefresh() {

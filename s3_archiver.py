@@ -161,3 +161,111 @@ if __name__ == "__main__":
     if conn:
         archive_logs_to_s3(conn)
         conn.close()
+
+
+def upload_evicted_batch(config_id: int, rows: list, server_id: int = None, log_type: str = "os"):
+    """
+    Upload a batch of evicted hot-buffer rows to S3 and record the segment in log_file_segments.
+    Called asynchronously from push_log_entries when the 500-line cap is exceeded.
+    """
+    if not rows:
+        return
+    try:
+        s3_client = get_s3_client()
+        ensure_bucket_exists(s3_client)
+    except Exception as e:
+        logger.warning(f"S3 eviction skipped — cannot reach S3: {e}")
+        return
+
+    now = datetime.now()
+    safe_log_type = (log_type or "os").replace("/", "_").replace("\\", "_")
+    year, month, day, hour = now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"), now.strftime("%H")
+    ts_ms = now.strftime("%H%M%S_%f")[:13]
+
+    # Key format: logs/{server_id}/{log_type}/{config_id}/{year}/{month}/{day}/{hour}/{timestamp}.jsonl.gz
+    s3_key = f"logs/{server_id or 0}/{safe_log_type}/{config_id}/{year}/{month}/{day}/{hour}/{ts_ms}.jsonl.gz"
+
+    # Serialize rows as JSONL and gzip
+    try:
+        lines_for_json = []
+        first_ts = None
+        last_ts = None
+        for r in rows:
+            row_dict = dict(r) if isinstance(r, dict) else {
+                "id": r[0], "config_id": r[1], "server_id": r[2],
+                "log_type": r[3], "source": r[4], "message": r[5], "created_at": str(r[6])
+            }
+            # Convert datetime objects to strings for JSON
+            if hasattr(row_dict.get("created_at"), "isoformat"):
+                row_dict["created_at"] = row_dict["created_at"].isoformat()
+            ts_str = str(row_dict.get("created_at", ""))
+            if ts_str:
+                if first_ts is None or ts_str < first_ts:
+                    first_ts = ts_str
+                if last_ts is None or ts_str > last_ts:
+                    last_ts = ts_str
+            lines_for_json.append(row_dict)
+
+        jsonl_bytes = "\n".join(json.dumps(r, default=str) for r in lines_for_json).encode("utf-8")
+        compressed = gzip.compress(jsonl_bytes)
+
+        # Upload to S3
+        s3_client.put_object(
+            Bucket=S3_BUCKET_NAME,
+            Key=s3_key,
+            Body=compressed,
+            ContentType="application/x-gzip",
+            Metadata={
+                "config_id": str(config_id),
+                "server_id": str(server_id or 0),
+                "log_type": safe_log_type,
+                "line_count": str(len(rows))
+            }
+        )
+        logger.info(f"Evicted {len(rows)} lines → s3://{S3_BUCKET_NAME}/{s3_key}")
+
+        # Record segment metadata in the DB
+        try:
+            import database as _db
+            conn = _db.get_db_connection()
+            if conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO log_file_segments (config_id, s3_key, first_ts, last_ts, line_count, created_at)
+                        VALUES (%s, %s, %s, %s, %s, NOW());
+                    """, (config_id, s3_key, first_ts, last_ts, len(rows)))
+                    if hasattr(conn, 'commit'): conn.commit()
+                conn.close()
+        except Exception as db_e:
+            logger.warning(f"Could not record segment in DB: {db_e}")
+
+    except Exception as e:
+        logger.error(f"upload_evicted_batch failed for config_id={config_id}: {e}")
+
+
+def fetch_older_logs(s3_key: str):
+    """Fetch and decompress a specific gzipped log segment from S3."""
+    import gzip
+    import json
+    s3 = get_s3_client()
+    if not s3:
+        return []
+    try:
+        response = s3.get_object(Bucket=BUCKET_NAME, Key=s3_key)
+        compressed_data = response['Body'].read()
+        decompressed_data = gzip.decompress(compressed_data).decode('utf-8')
+        
+        lines = []
+        for line in decompressed_data.split('\n'):
+            line = line.strip()
+            if not line: continue
+            try:
+                obj = json.loads(line)
+                lines.append(obj)
+            except Exception:
+                pass
+        return lines
+    except Exception as e:
+        logger.error(f"Error fetching from S3 key {s3_key}: {e}")
+        return []
+
