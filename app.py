@@ -2073,6 +2073,10 @@ def _check_unified_fim(server_id, data):
                 return
             if "sshd" in exe_str_val and (f_lower.startswith("/dev/pts/") or key == "(null)"):
                 return
+                
+        # Specific noise suppression: Ignore sudo perm_mod on pseudo-terminals (/dev/pts/)
+        if key == "perm_mod" and "sudo" in exe_str_val.lower() and f_lower.startswith("/dev/pts/"):
+            return
             
         comm_str = f" using '{c_m.group(1)}'" if c_m else ""
         exe_str = f" ({exe_str_val})" if e_m else ""
