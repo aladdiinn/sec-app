@@ -605,12 +605,12 @@
                 <div class="i3-panel-title">📡 Server Traffic Stats</div>
                 <div style="display:flex; justify-content:space-between; align-items:center">
                     <div>
-                        <div style="font-size:11px; color:var(--text-sub)">Total Received (RX)</div>
-                        <div style="font-size:24px; color:var(--green); font-weight:bold" id="i3t-net-rx">0 MB</div>
+                        <div style="font-size:11px; color:var(--text-sub)">Total Received (RX) <span style="opacity:0.6; font-size:10px">(since last reboot)</span></div>
+                        <div style="font-size:24px; color:var(--green); font-weight:bold" id="i3t-net-rx">0.00 GB</div>
                     </div>
                     <div>
-                        <div style="font-size:11px; color:var(--text-sub)">Total Transmitted (TX)</div>
-                        <div style="font-size:24px; color:var(--cyan); font-weight:bold" id="i3t-net-tx">0 MB</div>
+                        <div style="font-size:11px; color:var(--text-sub)">Total Transmitted (TX) <span style="opacity:0.6; font-size:10px">(since last reboot)</span></div>
+                        <div style="font-size:24px; color:var(--cyan); font-weight:bold" id="i3t-net-tx">0.00 GB</div>
                     </div>
                 </div>
             </div>
@@ -683,6 +683,16 @@ function formatLocal(dateStr) {
                 hour: '2-digit', minute: '2-digit', second: '2-digit'
             });
         } catch(e) { return dateStr; }
+    }
+
+    function formatBytes(bytes) {
+        if (!bytes) return '0.00 GB';
+        const mb = bytes / (1024 * 1024);
+        if (mb < 1024) return mb.toFixed(2) + ' MB';
+        const gb = mb / 1024;
+        if (gb < 1024) return gb.toFixed(2) + ' GB';
+        const tb = gb / 1024;
+        return tb.toFixed(2) + ' TB';
     }
 
 let globalServersList = [];
@@ -992,8 +1002,8 @@ async function openImage3Modal(serverId) {
         // Phase 4: Network and Ports
         const rx_bytes = srv.network_rx_bytes || 0;
         const tx_bytes = srv.network_tx_bytes || 0;
-        if (document.getElementById('i3t-net-rx')) document.getElementById('i3t-net-rx').innerText = (rx_bytes / 1024 / 1024).toFixed(2) + ' MB';
-        if (document.getElementById('i3t-net-tx')) document.getElementById('i3t-net-tx').innerText = (tx_bytes / 1024 / 1024).toFixed(2) + ' MB';
+        if (document.getElementById('i3t-net-rx')) document.getElementById('i3t-net-rx').innerText = formatBytes(rx_bytes);
+        if (document.getElementById('i3t-net-tx')) document.getElementById('i3t-net-tx').innerText = formatBytes(tx_bytes);
         
         const vpnTrackEl = document.getElementById('serverVpnTracking');
         const vpnSubnetEl = document.getElementById('serverVpnSubnet');

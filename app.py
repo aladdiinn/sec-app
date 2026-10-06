@@ -1985,6 +1985,17 @@ def _check_unified_fim(server_id, data):
         if ("apache" in f_lower or "tomcat" in f_lower) and any(x in f_lower for x in ["/temp/", "/work/", "/webapps/"]):
             return
             
+        # Specific noise suppression: Ignore cron root jobs with (null) event
+        if key == "(null)" and real_actor == "root" and "cron" in exe_str_val:
+            return
+            
+        # Specific noise suppression: Ignore mdm_deployment java/sshd activity
+        if real_actor == "mdm_deployment":
+            if "java" in exe_str_val and (f_lower == "c:" or f_lower.startswith("c:/temp/")):
+                return
+            if "sshd" in exe_str_val and (f_lower.startswith("/dev/pts/") or key == "(null)"):
+                return
+            
         comm_str = f" using '{c_m.group(1)}'" if c_m else ""
         exe_str = f" ({exe_str_val})" if e_m else ""
         file_str = f" on file '{filename_str}'" if f_m else ""
@@ -2122,10 +2133,18 @@ def _check_network_and_connections(server_id, data):
                         delta_tx = tx_bytes - last_tx
                         
                         if samples > 10:
+                            def format_bytes(b):
+                                if not b: return '0.00 GB'
+                                mb = b / (1024 * 1024)
+                                if mb < 1024: return f"{mb:.2f} MB"
+                                gb = mb / 1024
+                                if gb < 1024: return f"{gb:.2f} GB"
+                                return f"{gb/1024:.2f} TB"
+
                             if delta_rx > (rx_avg * 4) and delta_rx > 52428800:
-                                _create_alert_dedup(server_id, 'NETWORK_RX_SPIKE', 'critical', 'Network Traffic Spike Alert', f'Detection Rule [Traffic Anomaly]: Sudden incoming traffic spike. 30s volume was {delta_rx//1024//1024}MB (Historical 24h avg is {rx_avg//1024//1024}MB).')
+                                _create_alert_dedup(server_id, 'NETWORK_RX_SPIKE', 'critical', 'Network Traffic Spike Alert', f'Detection Rule [Traffic Anomaly]: Sudden incoming traffic spike. 30s volume was {format_bytes(delta_rx)} (Historical 24h avg is {format_bytes(rx_avg)}).')
                             if delta_tx > (tx_avg * 4) and delta_tx > 52428800:
-                                _create_alert_dedup(server_id, 'NETWORK_TX_SPIKE', 'critical', 'Network Traffic Spike Alert', f'Detection Rule [Traffic Anomaly]: Sudden outgoing traffic spike. 30s volume was {delta_tx//1024//1024}MB (Historical 24h avg is {tx_avg//1024//1024}MB).')
+                                _create_alert_dedup(server_id, 'NETWORK_TX_SPIKE', 'critical', 'Network Traffic Spike Alert', f'Detection Rule [Traffic Anomaly]: Sudden outgoing traffic spike. 30s volume was {format_bytes(delta_tx)} (Historical 24h avg is {format_bytes(tx_avg)}).')
 
                         alpha = 2.0 / (min(samples, 2880) + 1.0)
                         new_rx_avg = int((delta_rx * alpha) + (rx_avg * (1.0 - alpha))) if rx_avg > 0 else delta_rx
@@ -3444,19 +3463,24 @@ def get_processes():
 def get_open_ports():
     ports = []
     try:
-        out = subprocess.check_output(["ss", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.strip().split("\\n")[1:]:
+        out = subprocess.check_output(["ss", "-tulnpH"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
+        for line in out.strip().split("\\n"):
             m = re.search(r':(\\d+)\\s+', line)
             if m:
                 port = int(m.group(1))
-                proc = re.search(r'users:\\(\\("([^"]+)"', line)
+                proc = re.search(r'users:\\s*\\(\\s*\\(\\s*"([^"]+)"', line)
                 ports.append({{"port": port, "process": proc.group(1) if proc else "unknown"}})
     except:
         try:
-            out = subprocess.check_output(["netstat", "-tlnp"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
+            out = subprocess.check_output(["netstat", "-tulnp"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
             for line in out.strip().split("\\n"):
                 m = re.search(r':(\\d+)\\s+', line)
-                if m: ports.append({{"port": int(m.group(1)), "process": "unknown"}})
+                if m:
+                    port = int(m.group(1))
+                    proc = re.search(r'\\s+\\d+/([^ \\n]+)', line)
+                    pname = proc.group(1).strip() if proc else "unknown"
+                    if pname.endswith(":"): pname = pname[:-1]
+                    ports.append({{"port": port, "process": pname}})
         except: pass
     return ports
 

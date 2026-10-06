@@ -174,7 +174,6 @@
     <div style="display:flex; background:var(--bg); border-bottom:1px solid rgba(255,255,255,0.1); padding:0 16px">
         <div class="i3-tab active" onclick="switchI3Tab('overview', this)" style="padding:12px 20px; font-size:13px; font-weight:600; color:var(--cyan); cursor:pointer; border-bottom:2px solid var(--cyan)">Overview</div>
         <div class="i3-tab" onclick="switchI3Tab('incidents', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Incidents / Outages</div>
-        <div class="i3-tab" onclick="switchI3Tab('resources', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Resource Usage (>85%)</div>
         <div class="i3-tab" onclick="switchI3Tab('logs', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Log Streams</div>
         <div class="i3-tab" onclick="switchI3Tab('ports', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Ports</div>
         <div class="i3-tab" onclick="switchI3Tab('network', this)" style="padding:12px 20px; font-size:13px; font-weight:500; color:var(--text2); cursor:pointer">Network</div>
@@ -228,16 +227,6 @@
             <div style="background:var(--bg3); padding:20px; border-radius:8px">
                 <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:12px">🚨 Incidents Logged For This Asset</div>
                 <div id="i3-incidents-list"><div style="text-align:center; padding:20px; color:var(--text2)">Loading incidents...</div></div>
-            </div>
-        </div>
-
-        <div id="i3t-resources" style="display:none">
-            <div style="background:var(--bg3); padding:20px; border-radius:8px">
-                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:12px">⚡ Resource Utilization (>85%)</div>
-                <table style="width:100%; border-collapse:collapse; text-align:left; font-size:12px">
-                    <thead><tr style="border-bottom:1px solid rgba(255,255,255,0.1); color:var(--text2)"><th style="padding:8px">PID</th><th style="padding:8px">PROCESS</th><th style="padding:8px">CPU %</th><th style="padding:8px">RAM %</th><th style="padding:8px">USER</th></tr></thead>
-                    <tbody id="i3-procs-body"><tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text2)">Loading...</td></tr></tbody>
-                </table>
             </div>
         </div>
 
@@ -312,12 +301,12 @@
                 <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:12px">📡 Server Traffic Stats</div>
                 <div style="display:flex; justify-content:space-between; align-items:center">
                     <div>
-                        <div style="font-size:11px; color:var(--text2)">Total Received (RX)</div>
-                        <div style="font-size:24px; color:#34d399; font-weight:bold" id="i3t-net-rx">0 MB</div>
+                        <div style="font-size:11px; color:var(--text2)">Total Received (RX) <span style="opacity:0.6; font-size:10px">(since last reboot)</span></div>
+                        <div style="font-size:24px; color:#34d399; font-weight:bold" id="i3t-net-rx">0.00 GB</div>
                     </div>
                     <div>
-                        <div style="font-size:11px; color:var(--text2)">Total Transmitted (TX)</div>
-                        <div style="font-size:24px; color:var(--cyan); font-weight:bold" id="i3t-net-tx">0 MB</div>
+                        <div style="font-size:11px; color:var(--text2)">Total Transmitted (TX) <span style="opacity:0.6; font-size:10px">(since last reboot)</span></div>
+                        <div style="font-size:24px; color:var(--cyan); font-weight:bold" id="i3t-net-tx">0.00 GB</div>
                     </div>
                 </div>
             </div>
@@ -363,6 +352,16 @@ function formatLocal(dateStr) {
                 hour: '2-digit', minute: '2-digit', second: '2-digit'
             });
         } catch(e) { return dateStr; }
+    }
+
+    function formatBytes(bytes) {
+        if (!bytes) return '0.00 GB';
+        const mb = bytes / (1024 * 1024);
+        if (mb < 1024) return mb.toFixed(2) + ' MB';
+        const gb = mb / 1024;
+        if (gb < 1024) return gb.toFixed(2) + ' GB';
+        const tb = gb / 1024;
+        return tb.toFixed(2) + ' TB';
     }
 
     async function loadServers() {
@@ -644,7 +643,7 @@ function formatLocal(dateStr) {
             btn.style.color = 'var(--cyan)';
             btn.style.borderBottom = '2px solid var(--cyan)';
         }
-        ['overview', 'incidents', 'resources', 'logs', 'ports', 'network', 'settings'].forEach(t => {
+        ['overview', 'incidents', 'logs', 'ports', 'network', 'settings'].forEach(t => {
             const el = document.getElementById(`i3t-${t}`);
             if (el) el.style.display = (t === tabName) ? 'block' : 'none';
         });
@@ -715,24 +714,6 @@ function formatLocal(dateStr) {
                 document.getElementById('i3-conn-bar').style.background = cpu > 85 ? 'var(--red)' : cpu > 70 ? 'var(--amber)' : 'var(--cyan)';
             }
 
-            const procs = details.processes || [];
-            const procBody = document.getElementById('i3-procs-body');
-            if (procBody) {
-                if (!procs.length) {
-                    procBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text2)">No high-resource processes detected</td></tr>';
-                } else {
-                    procBody.innerHTML = procs.map(p => `
-                        <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
-                            <td style="padding:8px; font-family:monospace; color:var(--cyan)">${p.pid}</td>
-                            <td style="padding:8px; font-weight:600; color:var(--text)">${escapeHtml(p.name)}</td>
-                            <td style="padding:8px; color:${p.cpu>85?'var(--red)':'var(--text)'}">${p.cpu}%</td>
-                            <td style="padding:8px; color:${p.memory>85?'var(--red)':'var(--text)'}">${p.memory}%</td>
-                            <td style="padding:8px; color:var(--text2)">${escapeHtml(p.user)}</td>
-                        </tr>
-                    `).join('');
-                }
-            }
-
             const alerts = details.alerts || [];
             const incList = document.getElementById('i3-incidents-list');
             if (incList) {
@@ -756,8 +737,8 @@ function formatLocal(dateStr) {
             // Phase 4: Network and Ports
             const rx_bytes = srv.network_rx_bytes || 0;
             const tx_bytes = srv.network_tx_bytes || 0;
-            if (document.getElementById('i3t-net-rx')) document.getElementById('i3t-net-rx').innerText = (rx_bytes / 1024 / 1024).toFixed(2) + ' MB';
-            if (document.getElementById('i3t-net-tx')) document.getElementById('i3t-net-tx').innerText = (tx_bytes / 1024 / 1024).toFixed(2) + ' MB';
+            if (document.getElementById('i3t-net-rx')) document.getElementById('i3t-net-rx').innerText = formatBytes(rx_bytes);
+            if (document.getElementById('i3t-net-tx')) document.getElementById('i3t-net-tx').innerText = formatBytes(tx_bytes);
             
             const vpnTrackEl = document.getElementById('serverVpnTracking');
             const vpnSubnetEl = document.getElementById('serverVpnSubnet');
