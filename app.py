@@ -5918,9 +5918,17 @@ async def api_log_streams(
     server_id: Optional[int] = None,
     log_type: Optional[str] = None,
     source: Optional[str] = None,
+    source_b64: Optional[str] = None,
     limit: int = 200
 ):
     """Fetch live streamed logs with type filtering (os, tomcat, postgres) and file path selection."""
+    import base64
+    if source_b64:
+        try:
+            source = base64.b64decode(source_b64).decode('utf-8')
+        except Exception:
+            pass
+
     conn = db.get_db_connection()
     if not conn:
         return []

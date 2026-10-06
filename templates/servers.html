@@ -974,7 +974,9 @@ function formatLocal(dateStr) {
         
         // As requested: Never fetch one global buffer and filter it in the browser when a specific file is selected
         if (modalActiveFile && activeModalServerId) {
-            apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=500&source=${encodeURIComponent(modalActiveFile)}`)
+            // Base64 encode the source path to prevent WAFs/proxies from blocking it as an LFI attempt
+            const b64Source = btoa(unescape(encodeURIComponent(modalActiveFile)));
+            apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=500&source_b64=${b64Source}`)
                 .then(fileLogs => {
                     if (Array.isArray(fileLogs)) {
                         currentModalLogs = fileLogs;
@@ -1135,7 +1137,8 @@ function formatLocal(dateStr) {
         if (!activeModalServerId) return;
         try {
             if (modalActiveFile) {
-                const fileLogs = await apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=500&source=${encodeURIComponent(modalActiveFile)}`);
+                const b64Source = btoa(unescape(encodeURIComponent(modalActiveFile)));
+                const fileLogs = await apiFetch(`/api/log-monitor/streams?server_id=${activeModalServerId}&limit=500&source_b64=${b64Source}`);
                 if (Array.isArray(fileLogs)) {
                     currentModalLogs = fileLogs;
                 }
