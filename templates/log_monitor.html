@@ -901,10 +901,9 @@ async function updateLogFileSelectorForServer(serverId) {
         return;
     }
     try {
-        const svc = (currentServiceType || '').toLowerCase();
-        const typeQuery = svc && svc !== 'all' ? `?type=${encodeURIComponent(svc)}` : '';
-        const res = await apiFetch(`/api/servers/${serverId}/log-files${typeQuery}`);
+        const res = await apiFetch(`/api/servers/${serverId}/log-files`);
         let files = (res && res.files) ? res.files : [];
+        const svc = (currentServiceType || '').toLowerCase();
 
         if (svc === 'postgres') {
             files = files.filter(f => {
@@ -951,9 +950,6 @@ function switchServiceTab(type, el) {
     document.querySelectorAll('.log-tab-btn').forEach(b => b.classList.remove('active'));
     if (el) el.classList.add('active');
     currentServiceType = type;
-    if (selectedServerId) {
-        updateLogFileSelectorForServer(selectedServerId);
-    }
     fetchLogsNow();
 }
 
@@ -1070,12 +1066,30 @@ async function fetchLogsNow(isAutoRefreshCall = false) {
         window._logFetchInFlight = false;
 
         if (res && res.lines) {
-            allLogLines = res.lines;
+            allLogLines = res.lines.map(l => {
+                if (l.time) {
+                    let d = new Date(l.time.includes('T') ? l.time : l.time.replace(' ', 'T') + 'Z');
+                    if (!isNaN(d)) {
+                        l.time = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,'0') + "-" + String(d.getDate()).padStart(2,'0') + " " + d.toLocaleTimeString([], {hour12:false});
+                    }
+                }
+                return l;
+            });
             filterLogLines();
 
-            if (res.histogram) {
-                renderHistogram(res.histogram);
-            }
+            let localHist = {};
+            allLogLines.forEach(l => {
+                let d = new Date(l.time.includes('T') ? l.time : l.time.replace(' ', 'T'));
+                let timeKey = isNaN(d) ? (l.time.length >= 16 ? l.time.substring(11, 16) : l.time) : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false});
+                if (!localHist[timeKey]) localHist[timeKey] = {time: timeKey, total: 0, errors: 0, warns: 0, info: 0};
+                localHist[timeKey].total++;
+                let lvl = (l.level || '').toUpperCase();
+                if (['ERROR', 'CRITICAL', 'CRIT', 'HIGH', 'FATAL'].includes(lvl)) localHist[timeKey].errors++;
+                else if (['WARN', 'WARNING', 'MEDIUM'].includes(lvl)) localHist[timeKey].warns++;
+                else localHist[timeKey].info++;
+            });
+            let buckets = Object.values(localHist).sort((a, b) => a.time.localeCompare(b.time));
+            renderHistogram(buckets);
 
             if (res.file_stats) {
                 document.getElementById('telemetry-file-path').innerText = res.file_stats.file_path || 'System Telemetry Stream';

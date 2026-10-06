@@ -184,7 +184,7 @@ def analyze_logs(server_id: int, server_ip: str, log_type: str, time_period_str:
     if not GEMINI_API_KEY:
         return {"error": "GEMINI_API_KEY is missing from your .env file. Add it and restart the app."}
 
-    now = datetime.now()
+    now = datetime.utcnow()
     period_map = {
         "1hr": timedelta(hours=1),   "3hr": timedelta(hours=3),
         "10hr": timedelta(hours=10), "1day": timedelta(days=1),
