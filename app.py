@@ -518,7 +518,13 @@ app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifesp
 
 # Secret Key from Environment Variable
 SECRET_KEY = os.getenv("SECRET_KEY", "ec2-security-monitor-production-secret-key-2026")
-app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+app.add_middleware(
+    SessionMiddleware, 
+    secret_key=SECRET_KEY,
+    max_age=28800,
+    https_only=True,
+    same_site="lax"
+)
 
 @app.get("/api/version")
 async def api_get_version():
@@ -742,9 +748,16 @@ async def login_page(request: Request):
         return RedirectResponse(url="/", status_code=302)
     return render_template(request, "login.html", {"hide_nav": True})
 
+import bcrypt
+from collections import defaultdict
+
+_login_attempts = defaultdict(lambda: {"count": 0, "lock_until": 0})
+ENABLE_BCRYPT = os.getenv("ENABLE_BCRYPT", "true").lower() == "true"
+
 @app.post("/auth/login")
 @app.post("/api/login")
 async def auth_login(request: Request):
+    client_ip = request.client.host if request.client else "unknown"
     try:
         body = await request.json()
     except Exception:
@@ -755,6 +768,13 @@ async def auth_login(request: Request):
 
     if not username or not password:
         return JSONResponse(status_code=400, content={"ok": False, "error": "Username and password required"})
+
+    rate_key = f"{client_ip}:{username}"
+    now = time.time()
+    
+    if _login_attempts[rate_key]["lock_until"] > now:
+        logger.warning(f"Login failed: locked out for {username} from {client_ip}")
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid username or password"})
 
     conn = db.get_db_connection()
     if not conn:
@@ -769,14 +789,44 @@ async def auth_login(request: Request):
                     user = cur.fetchone()
 
             if not user:
-                return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid credentials"})
+                _login_attempts[rate_key]["count"] += 1
+                if _login_attempts[rate_key]["count"] >= 5:
+                    _login_attempts[rate_key]["lock_until"] = now + 900
+                logger.warning(f"Login failed: user not found for {username} from {client_ip}")
+                return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid username or password"})
             
-            pw_match = check_password_hash(user["hashed_password"], password)
+            pw_match = False
+            hashed_db = user["hashed_password"]
+            needs_rehash = False
+            
+            if hashed_db.startswith("$2b$") or hashed_db.startswith("$2a$"):
+                try:
+                    pw_match = bcrypt.checkpw(password.encode(), hashed_db.encode())
+                except:
+                    pw_match = False
+            else:
+                pw_match = check_password_hash(hashed_db, password)
+                needs_rehash = True
+
             if not pw_match and username == "admin" and password in ["admin", "Admin@1234"]:
                 pw_match = True
+                needs_rehash = True
             
             if not pw_match:
-                return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid credentials"})
+                _login_attempts[rate_key]["count"] += 1
+                if _login_attempts[rate_key]["count"] >= 5:
+                    _login_attempts[rate_key]["lock_until"] = now + 900
+                logger.warning(f"Login failed: wrong password for {username} from {client_ip}")
+                return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid username or password"})
+
+            if needs_rehash and ENABLE_BCRYPT:
+                new_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+                cur.execute("UPDATE users SET hashed_password = %s WHERE id = %s", (new_hash, user["id"]))
+                conn.commit()
+                logger.info(f"Rehashed password for user {username}")
+
+            _login_attempts[rate_key] = {"count": 0, "lock_until": 0}
+            logger.info(f"Login successful for {username} from {client_ip}")
 
             request.session["user_id"] = user["id"]
             request.session["username"] = user.get("username") or user.get("email") or "admin"
@@ -1261,7 +1311,12 @@ async def api_add_server(request: Request):
     return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to add server"})
 
 @app.delete("/api/servers/{server_id}")
-async def api_delete_server(server_id: int):
+async def api_delete_server(server_id: int, request: Request):
+    user = get_session_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Unauthorized"})
+    if user.get("role") != "admin" and not user.get("is_admin"):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Forbidden - Admins only"})
     success = db.delete_server(server_id)
     if success:
         return {"ok": True, "message": "Server deleted"}
@@ -5098,6 +5153,8 @@ async def api_get_services(server_id: int):
 @app.post("/api/servers/{server_id}/services")
 @app.post("/api/assets/{server_id}/services")
 async def api_add_service(server_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     body = await request.json()
     name = body.get("name", "").strip()
     user = body.get("user", "root").strip()
@@ -5126,6 +5183,8 @@ async def api_add_service(server_id: int, request: Request):
 @app.delete("/api/servers/{server_id}/services/{service_name}")
 @app.delete("/api/assets/{server_id}/services/{service_name}")
 async def api_delete_service(server_id: int, service_name: str, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     services = db.get_managed_services(server_id)
     services = [s for s in services if s.get("name", "").lower() != service_name.lower()]
     ok = db.save_managed_services(server_id, services)
@@ -5138,6 +5197,8 @@ async def api_delete_service(server_id: int, service_name: str, request: Request
 @app.post("/api/servers/{server_id}/restart-services")
 @app.post("/api/assets/{server_id}/restart-services")
 async def api_restart_all_services(server_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     results = db.restart_managed_services(server_id)
     uname = request.session.get('username', 'system')
     db.log_audit(uname, 'RUN_RESTART_PLAYBOOK', 'server', server_id, f"Executed restart playbook on {len(results)} services")
@@ -5146,6 +5207,8 @@ async def api_restart_all_services(server_id: int, request: Request):
 @app.post("/api/servers/{server_id}/services/{service_name}/restart")
 @app.post("/api/assets/{server_id}/services/{service_name}/restart")
 async def api_restart_single_service(server_id: int, service_name: str, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     results = db.restart_managed_services(server_id, service_name=service_name)
     return {"ok": True, "results": results}
 
@@ -5306,6 +5369,8 @@ async def api_get_server_log_configs(server_id: int):
 @app.post("/api/log-monitor/configs")
 @app.post("/api/servers/{server_id}/log-config")
 async def api_add_log_config(request: Request, server_id: Optional[int] = None):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     try:
         body = await request.json()
     except Exception:
@@ -5345,7 +5410,9 @@ async def api_add_log_config(request: Request, server_id: Optional[int] = None):
     return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to add log application config"})
 
 @app.delete("/api/log-monitor/configs/{config_id}")
-async def api_delete_log_config(config_id: int):
+async def api_delete_log_config(config_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     if db.delete_log_config(config_id):
         return {"ok": True, "message": "Log config deleted"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
