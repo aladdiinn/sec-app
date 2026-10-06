@@ -1167,8 +1167,26 @@ function cleanLogSource(src) {
 function filterModalLogsByFile() {
     const sel = document.getElementById('modal-log-file-select');
     modalActiveFile = sel ? sel.value : '';
-    // Client-side file filter only — do NOT re-fetch from server (source path may not match DB exactly)
+    
     renderModalLogs();
+    
+    if (modalActiveFile && activeModalServerId) {
+        apiFetch('/api/logs/fetch', {
+            method: 'POST',
+            body: JSON.stringify({
+                server_id: activeModalServerId,
+                log_file_path: modalActiveFile,
+                limit: 500
+            })
+        }).then(res => {
+            if (res && res.lines && res.lines.length > 0) {
+                const formatted = res.lines.map(l => ({ ...l, message: l.msg || l.line || l.message || '' }));
+                if (mergeIntoBuffer(formatted)) {
+                    renderModalLogs();
+                }
+            }
+        }).catch(() => {});
+    }
 }
 
 function isModalLogSecurityThreat(text, src) {
