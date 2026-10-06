@@ -726,7 +726,7 @@ function renderServicesGrid() {
         const isApp = name.toLowerCase().includes('app') || name.toLowerCase().includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
         
         const rawBadge = isDb ? '<span class="service-type-badge st-database">DATABASE</span>' : (isApp ? '<span class="service-type-badge st-app">APP NODE</span>' : '<span class="service-type-badge st-server">LINUX SERVER</span>');
-        const typeBadge = `<div style="text-align:right">${rawBadge}<div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${s.agent_version || '0.5'}</div></div>`;
+        const typeBadge = `<div style="text-align:right">${rawBadge}<div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${s.agent_version || '1.0'}</div></div>`;
 
         const cpu = s.cpu_percent || 0;
         const ram = s.memory_percent || 0;
