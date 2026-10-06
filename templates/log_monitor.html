@@ -568,10 +568,14 @@ let virt_visibleBuffer = 8;  // extra rows to render above/below viewport
 let virt_scrollListener = null;
 
 document.addEventListener('DOMContentLoaded', () => {
-    loadLogConfigs();
-    fetchLogsNow();
-    startAutoRefresh();
-    initVirtualScroll();
+    try {
+        loadLogConfigs();
+        fetchLogsNow();
+        startAutoRefresh();
+        initVirtualScroll();
+    } catch (e) {
+        console.error("Critical Init Error:", e);
+    }
 });
 
 function filterLeftPanelApps() {
@@ -815,6 +819,10 @@ async function loadLogConfigs() {
         filterLeftPanelApps();
     } catch (e) {
         console.error("Config load error", e);
+        const container = document.getElementById('log-app-configs-list');
+        if (container) {
+            container.innerHTML = `<div style="text-align:center; color:var(--red); padding:15px; font-size:11px">Failed to load apps. <button onclick="loadLogConfigs()" class="btn btn-glass" style="padding:2px 8px; margin-top:5px; font-size:10px">Retry</button></div>`;
+        }
     }
 }
 
@@ -893,9 +901,10 @@ async function updateLogFileSelectorForServer(serverId) {
         return;
     }
     try {
-        const res = await apiFetch(`/api/servers/${serverId}/log-files`);
-        let files = (res && res.files) ? res.files : [];
         const svc = (currentServiceType || '').toLowerCase();
+        const typeQuery = svc && svc !== 'all' ? `?type=${encodeURIComponent(svc)}` : '';
+        const res = await apiFetch(`/api/servers/${serverId}/log-files${typeQuery}`);
+        let files = (res && res.files) ? res.files : [];
 
         if (svc === 'postgres') {
             files = files.filter(f => {
@@ -942,6 +951,9 @@ function switchServiceTab(type, el) {
     document.querySelectorAll('.log-tab-btn').forEach(b => b.classList.remove('active'));
     if (el) el.classList.add('active');
     currentServiceType = type;
+    if (selectedServerId) {
+        updateLogFileSelectorForServer(selectedServerId);
+    }
     fetchLogsNow();
 }
 
@@ -1092,6 +1104,9 @@ async function fetchLogsNow(isAutoRefreshCall = false) {
     } catch (e) {
         window._logFetchInFlight = false;
         console.warn("Log fetch error", e);
+        if (!isAutoRefreshCall && term) {
+            term.innerHTML = `<div style="text-align:center; padding:40px; color:var(--red); font-family:var(--mono); font-size:11px">Failed to connect to backend.<br><br><button class="btn btn-glass" onclick="fetchLogsNow()" style="padding:4px 12px; margin-top:10px">Retry Connection</button></div>`;
+        }
     }
 
     // Check active SOAR alerts for banner (LOG-BASED ONLY, EXCLUDE SSH BRUTE FORCE / AUTH FAIL NOISE & INTERACTIVE SUDO)

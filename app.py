@@ -6024,21 +6024,32 @@ async def api_log_streams(
 
 
 @app.get("/api/servers/{server_id}/log-files")
-async def api_server_log_files(server_id: int):
-    """Returns all auto-discovered log file paths pushed for a server."""
+async def api_server_log_files(server_id: int, type: Optional[str] = None):
+    """Returns all auto-discovered log file paths pushed for a server, optionally filtered by log_type."""
     conn = db.get_db_connection()
     if not conn:
         return {"files": []}
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
-                FROM pushed_logs
-                WHERE server_id = %s AND source IS NOT NULL AND source != ''
-                GROUP BY source, log_type
-                ORDER BY count DESC
-                LIMIT 100;
-            """, (server_id,))
+            if type and type.lower() != 'all':
+                cur.execute("""
+                    SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
+                    FROM pushed_logs
+                    WHERE server_id = %s AND source IS NOT NULL AND source != '' AND log_type = %s
+                    GROUP BY source, log_type
+                    ORDER BY count DESC
+                    LIMIT 100;
+                """, (server_id, type.lower()))
+            else:
+                cur.execute("""
+                    SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
+                    FROM pushed_logs
+                    WHERE server_id = %s AND source IS NOT NULL AND source != ''
+                    GROUP BY source, log_type
+                    ORDER BY count DESC
+                    LIMIT 100;
+                """, (server_id,))
+
             rows = [dict(r) for r in cur.fetchall()]
 
             deduped = {}
@@ -6065,12 +6076,20 @@ async def api_server_log_files(server_id: int):
             files = list(deduped.values())
             if not files:
                 try:
-                    cur.execute("""
-                        SELECT log_file_path as source, COALESCE(service_type, 'os') as log_type, 0 as count
-                        FROM server_log_configs
-                        WHERE server_id = %s AND log_file_path IS NOT NULL AND log_file_path != ''
-                        GROUP BY log_file_path, service_type;
-                    """, (server_id,))
+                    if type and type.lower() != 'all':
+                        cur.execute("""
+                            SELECT log_file_path as source, COALESCE(service_type, 'os') as log_type, 0 as count
+                            FROM server_log_configs
+                            WHERE server_id = %s AND service_type = %s AND log_file_path IS NOT NULL AND log_file_path != ''
+                            GROUP BY log_file_path, service_type;
+                        """, (server_id, type.lower()))
+                    else:
+                        cur.execute("""
+                            SELECT log_file_path as source, COALESCE(service_type, 'os') as log_type, 0 as count
+                            FROM server_log_configs
+                            WHERE server_id = %s AND log_file_path IS NOT NULL AND log_file_path != ''
+                            GROUP BY log_file_path, service_type;
+                        """, (server_id,))
                     cfg_files = [dict(r) for r in cur.fetchall()]
                     files.extend(cfg_files)
                 except Exception: pass
