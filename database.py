@@ -246,6 +246,25 @@ def init_db():
                 );
             """)
 
+            # Enhanced Server Ports Table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS server_ports (
+                    server_id INT REFERENCES servers(id) ON DELETE CASCADE,
+                    port INT NOT NULL,
+                    proto VARCHAR(16),
+                    pid INT,
+                    process_name VARCHAR(128),
+                    user_name VARCHAR(64),
+                    cmdline TEXT,
+                    status VARCHAR(16) DEFAULT 'open',
+                    first_seen TIMESTAMP WITH TIME ZONE,
+                    last_seen TIMESTAMP WITH TIME ZONE,
+                    closed_at TIMESTAMP WITH TIME ZONE,
+                    reopened_at TIMESTAMP WITH TIME ZONE,
+                    UNIQUE (server_id, port, proto)
+                );
+            """)
+
             # Login History Table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS login_history (
@@ -894,11 +913,45 @@ def save_agent_data(server_id: int, data: dict):
             # Persist open ports if provided
             if data.get("open_ports"):
                 try:
-                    cur.execute("DELETE FROM open_ports WHERE server_id = %s;", (server_id,))
+                    # Mark all currently open ports as unseen temporarily to find closed ports
+                    cur.execute("UPDATE server_ports SET status = 'checking' WHERE server_id = %s AND status = 'open';", (server_id,))
+                    
                     for p in data.get("open_ports", []):
-                        pnum = p.get("port") if isinstance(p, dict) else p
-                        proc = p.get("process", "unknown") if isinstance(p, dict) else "unknown"
-                        cur.execute("INSERT INTO open_ports (server_id, port, service) VALUES (%s, %s, %s);", (server_id, int(pnum), proc))
+                        if isinstance(p, dict):
+                            pnum = int(p.get("port", 0))
+                            proc = p.get("process", "unknown")
+                            pid = p.get("pid")
+                            proto = p.get("proto", "tcp")
+                            user = p.get("user")
+                            cmdline = p.get("cmdline")
+                        else:
+                            pnum = int(p)
+                            proc = "unknown"
+                            proto = "tcp"
+                            pid = None; user = None; cmdline = None
+                        
+                        if pnum == 0: continue
+                        
+                        cur.execute("SELECT id FROM open_ports WHERE server_id = %s AND port = %s LIMIT 1;", (server_id, pnum))
+                        if not cur.fetchone():
+                            cur.execute("INSERT INTO open_ports (server_id, port, service) VALUES (%s, %s, %s);", (server_id, pnum, proc))
+                        
+                        # Enhanced logic
+                        cur.execute("SELECT * FROM server_ports WHERE server_id = %s AND port = %s AND proto = %s LIMIT 1;", (server_id, pnum, proto))
+                        existing = cur.fetchone()
+                        
+                        if existing:
+                            if existing.get("status") == 'closed':
+                                cur.execute("UPDATE server_ports SET status = 'open', process_name = %s, pid = %s, user_name = %s, cmdline = %s, reopened_at = NOW(), last_seen = NOW() WHERE server_id = %s AND port = %s AND proto = %s;", (proc, pid, user, cmdline, server_id, pnum, proto))
+                            else:
+                                cur.execute("UPDATE server_ports SET status = 'open', process_name = %s, pid = %s, user_name = %s, cmdline = %s, last_seen = NOW() WHERE server_id = %s AND port = %s AND proto = %s;", (proc, pid, user, cmdline, server_id, pnum, proto))
+                        else:
+                            cur.execute("INSERT INTO server_ports (server_id, port, proto, pid, process_name, user_name, cmdline, status, first_seen, last_seen) VALUES (%s, %s, %s, %s, %s, %s, %s, 'open', NOW(), NOW());", (server_id, pnum, proto, pid, proc, user, cmdline))
+                            # Log alert for completely NEW port
+                            log_alert(server_id, "NEW_PORT_OPENED", f"Port {pnum}/{proto} opened by process {proc} (User: {user or 'unknown'})", severity="info")
+                            
+                    # Any port still in 'checking' status is now closed
+                    cur.execute("UPDATE server_ports SET status = 'closed', closed_at = NOW() WHERE server_id = %s AND status = 'checking';", (server_id,))
                 except Exception as ex_ports:
                     logger.debug(f"Open ports insert warning: {ex_ports}")
 
@@ -1150,6 +1203,11 @@ def get_server_details(server_id: int):
                 try:
                     cur.execute("SELECT * FROM open_ports WHERE server_id = %s ORDER BY port ASC;", (server_id,))
                     ports = [dict(r) for r in cur.fetchall()]
+                    
+                    cur.execute("SELECT * FROM server_ports WHERE server_id = %s ORDER BY port ASC;", (server_id,))
+                    server_ports = [dict(r) for r in cur.fetchall()]
+                    if server_ports:
+                        ports = server_ports
                 except Exception: pass
         except Exception as e:
             logger.error(f"Error in get_server_details: {e}")

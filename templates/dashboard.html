@@ -958,15 +958,22 @@ async function openImage3Modal(serverId) {
                 const dangerous = [21, 23, 3389, 5432, 3306, 6379, 27017, 11211, 9200, 2375];
                 portsList.innerHTML = ports.map(p => {
                     let pt = p.port || p;
-                    let proc = p.process || 'unknown';
+                    let proc = p.process_name || p.process || 'unknown';
+                    let proto = p.proto || 'tcp';
+                    let user = p.user_name || p.user || 'unknown';
+                    let pid = p.pid ? `PID: ${p.pid}` : '';
+                    let cmd = p.cmdline ? `<br><span style="color:#64748b; font-family:var(--mono); font-size:10px;">Cmd: ${escapeHtml(p.cmdline)}</span>` : '';
                     let isDanger = dangerous.includes(parseInt(pt));
                     return `
                     <div style="background:rgba(255,255,255,0.03); border-left:3px solid ${isDanger?'var(--red)':'var(--cyan)'}; padding:10px 14px; margin-bottom:6px; border-radius:4px; display:flex; justify-content:space-between; align-items:center">
                         <div>
-                            <strong style="color:${isDanger?'var(--red)':'var(--text)'}; font-size:13px; font-family:var(--mono)">PORT ${pt}</strong>
+                            <strong style="color:${isDanger?'var(--red)':'var(--text)'}; font-size:13px; font-family:var(--mono)">PORT ${pt} (${proto.toUpperCase()})</strong>
                             ${isDanger ? '<span style="margin-left:8px; font-size:10px; background:var(--red); color:#fff; padding:2px 4px; border-radius:3px">DANGEROUS DEFAULT</span>' : ''}
                         </div>
-                        <div style="font-size:11px; color:var(--text-sub)">Process: ${proc}</div>
+                        <div style="font-size:11px; color:var(--text-sub); text-align:right;">
+                            Process: <strong>${escapeHtml(proc)}</strong> (User: ${escapeHtml(user)}) ${pid}
+                            ${cmd}
+                        </div>
                     </div>`;
                 }).join('');
             }

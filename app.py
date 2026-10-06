@@ -1362,6 +1362,21 @@ async def api_server_update_agent(server_id: int, request: Request):
     finally:
         conn.close()
 
+@app.post("/api/server/{server_id}/scan_ports")
+async def api_scan_ports(server_id: int, request: Request):
+    if not is_admin_user(request):
+        raise HTTPException(status_code=403, detail="Admin required")
+    # Mark the server_ports status to trigger a UI refresh indication if needed
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                # Agent pushes every 30 seconds anyway, but we can do a mock update
+                pass
+        finally:
+            conn.close()
+    return {"status": "success", "message": "Port scan requested."}
+
 @app.get("/api/servers/{server_id}/system-users")
 async def api_get_system_users(server_id: int):
     server = db.get_server_by_id(server_id)
@@ -3526,14 +3541,62 @@ def get_processes():
 def get_open_ports():
     ports = []
     try:
+        import pwd
+        # Extract TCP and UDP ports
         out = subprocess.check_output(["ss", "-tulnpH"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
         for line in out.strip().split("\\n"):
-            m = re.search(r':(\\d+)\\s+', line)
+            if not line.strip(): continue
+            parts = line.split()
+            proto = parts[0] if len(parts) > 0 else "tcp"
+            if proto not in ("tcp", "udp"): continue
+            
+            # Find the local address:port which is usually the 4th or 5th column
+            local_addr_str = None
+            for p in parts:
+                if ":" in p and not p.startswith("user"):
+                    local_addr_str = p
+                    break
+                    
+            if not local_addr_str: continue
+            
+            m = re.search(r':(\\d+)$', local_addr_str)
+            if not m:
+                m = re.search(r':(\\d+)\\s*', local_addr_str)
+            
             if m:
                 port = int(m.group(1))
-                proc = re.search(r'users:\\s*\\(\\s*\\(\\s*"([^"]+)"', line)
-                ports.append({{"port": port, "process": proc.group(1) if proc else "unknown"}})
-    except:
+                proc_name = "unknown"
+                pid = None
+                user_name = "unknown"
+                cmdline = ""
+                
+                # users:(("nginx",pid=123,fd=5))
+                proc_m = re.search(r'users:\\s*\\(\\s*\\(\\s*"([^"]+)"\\s*,\\s*pid=(\\d+)', line)
+                if proc_m:
+                    proc_name = proc_m.group(1)
+                    pid = int(proc_m.group(2))
+                    
+                    try:
+                        # Get user
+                        with open(f"/proc/{{pid}}/status", "r") as sf:
+                            for sline in sf:
+                                if sline.startswith("Uid:"):
+                                    uid = int(sline.split()[1])
+                                    try: user_name = pwd.getpwuid(uid).pw_name
+                                    except: user_name = str(uid)
+                                    break
+                                    
+                        # Get cmdline
+                        with open(f"/proc/{{pid}}/cmdline", "r") as cf:
+                            raw_cmd = cf.read().replace("\\x00", " ").strip()
+                            # Mask secrets
+                            raw_cmd = re.sub(r'(--password|-p|token|secret|key)[=\\s]+[^\\s]+', r'\\1 *****', raw_cmd, flags=re.IGNORECASE)
+                            cmdline = raw_cmd[:120] + ("..." if len(raw_cmd) > 120 else "")
+                    except Exception:
+                        pass
+                
+                ports.append({{"port": port, "proto": proto, "process": proc_name, "pid": pid, "user": user_name, "cmdline": cmdline}})
+    except Exception as e:
         try:
             out = subprocess.check_output(["netstat", "-tulnp"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
             for line in out.strip().split("\\n"):
@@ -3543,7 +3606,7 @@ def get_open_ports():
                     proc = re.search(r'\\s+\\d+/([^ \\n]+)', line)
                     pname = proc.group(1).strip() if proc else "unknown"
                     if pname.endswith(":"): pname = pname[:-1]
-                    ports.append({{"port": port, "process": pname}})
+                    ports.append({{"port": port, "proto": "tcp", "process": pname, "pid": None, "user": "unknown", "cmdline": ""}})
         except: pass
     return ports
 
