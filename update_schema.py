@@ -1,17 +1,17 @@
 import os
 from dotenv import load_dotenv
-import psycopg
+import psycopg2
 
 load_dotenv()
 db_url = os.getenv("DATABASE_URL")
 # Convert SQLAlchemy URL to psycopg connection string
-# postgresql+psycopg://user:pass@host:port/db -> host=... user=...
-conn_str = db_url.replace("postgresql+psycopg://", "").split("@")
+# postgresql+psycopg2://user:pass@host:port/db -> host=... user=...
+conn_str = db_url.replace("postgresql+psycopg2://", "").replace("postgresql+psycopg://", "").split("@")
 user_pass = conn_str[0].split(":")
 host_db = conn_str[1].split("/")
 host_port = host_db[0].split(":")
 
-conn = psycopg.connect(
+conn = psycopg2.connect(
     host=host_port[0],
     port=host_port[1],
     user=user_pass[0],
