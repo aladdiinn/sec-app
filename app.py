@@ -5947,16 +5947,15 @@ async def api_log_streams(
                 src_val = source.strip()
                 if src_val.endswith("catalina.out"):
                     base_prefix = src_val[:-12]
-                    query += " AND (pl.source = %s OR pl.source ILIKE %s OR pl.source ILIKE %s)"
-                    params.extend([src_val, f"{base_prefix}catalina%.log", "%catalina.out"])
+                    query += " AND (pl.source = %s OR pl.source ILIKE %s)"
+                    params.extend([src_val, f"{base_prefix}catalina%.log"])
                 elif src_val.endswith("postgresql.log"):
                     base_prefix = src_val[:-14]
-                    query += " AND (pl.source = %s OR pl.source ILIKE %s OR pl.source ILIKE %s)"
-                    params.extend([src_val, f"{base_prefix}postgresql%.log", "%postgresql.log"])
-                else:
-                    base_fn = os.path.basename(src_val)
                     query += " AND (pl.source = %s OR pl.source ILIKE %s)"
-                    params.extend([src_val, f"%{base_fn}"])
+                    params.extend([src_val, f"{base_prefix}postgresql%.log"])
+                else:
+                    query += " AND pl.source = %s"
+                    params.append(src_val)
 
             if log_type and log_type.lower() != 'all':
                 lt = log_type.lower()
