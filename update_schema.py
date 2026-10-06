@@ -1,22 +1,24 @@
 import os
 from dotenv import load_dotenv
 import psycopg2
+from urllib.parse import urlparse
 
 load_dotenv()
 db_url = os.getenv("DATABASE_URL")
-# Convert SQLAlchemy URL to psycopg connection string
-# postgresql+psycopg2://user:pass@host:port/db -> host=... user=...
-conn_str = db_url.replace("postgresql+psycopg2://", "").replace("postgresql+psycopg://", "").split("@")
-user_pass = conn_str[0].split(":")
-host_db = conn_str[1].split("/")
-host_port = host_db[0].split(":")
+if not db_url:
+    print("Error: DATABASE_URL not found in environment.")
+    exit(1)
+
+# Ensure SQLAlchemy prefixes are stripped for urlparse
+clean_url = db_url.replace("postgresql+psycopg2://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
+parsed = urlparse(clean_url)
 
 conn = psycopg2.connect(
-    host=host_port[0],
-    port=host_port[1],
-    user=user_pass[0],
-    password=user_pass[1],
-    dbname=host_db[1]
+    host=parsed.hostname,
+    port=parsed.port or 5432,
+    user=parsed.username,
+    password=parsed.password,
+    dbname=parsed.path.lstrip('/')
 )
 
 try:
