@@ -3,7 +3,7 @@ from app import app, db
 from models import User
 import json
 
-class SecurePulseTestCase(unittest.TestCase):
+class BSMART SOCTestCase(unittest.TestCase):
     def setUp(self):
         # Set up a test client and configure the app for testing
         app.config['TESTING'] = True
@@ -17,7 +17,7 @@ class SecurePulseTestCase(unittest.TestCase):
             # Seed a test admin
             from werkzeug.security import generate_password_hash
             admin = User(
-                email='testadmin@securepulse.local',
+                email='testadmin@bsmartsoc.local',
                 hashed_password=generate_password_hash('TestAdmin@123'),
                 full_name='Test Admin',
                 is_admin=True
@@ -34,7 +34,7 @@ class SecurePulseTestCase(unittest.TestCase):
     def test_login_page_loads(self):
         response = self.app.get('/login')
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'SecurePulse', response.data)
+        self.assertIn(b'BSMART SOC', response.data)
 
     def test_dashboard_redirects_unauthenticated(self):
         response = self.app.get('/dashboard')
@@ -43,7 +43,7 @@ class SecurePulseTestCase(unittest.TestCase):
 
     def test_login_api_success(self):
         response = self.app.post('/auth/login', json={
-            'email': 'testadmin@securepulse.local',
+            'email': 'testadmin@bsmartsoc.local',
             'password': 'TestAdmin@123'
         })
         self.assertEqual(response.status_code, 200)
@@ -52,7 +52,7 @@ class SecurePulseTestCase(unittest.TestCase):
 
     def test_login_api_failure(self):
         response = self.app.post('/auth/login', json={
-            'email': 'testadmin@securepulse.local',
+            'email': 'testadmin@bsmartsoc.local',
             'password': 'wrongpassword'
         })
         self.assertEqual(response.status_code, 401)

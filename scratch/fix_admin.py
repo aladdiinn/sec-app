@@ -3,7 +3,7 @@ from models import User
 
 with app.app_context():
     # Find the admin by email and ensure the username is 'admin'
-    admin_email = "admin@securepulse.local"
+    admin_email = "admin@bsmartsoc.local"
     user = User.query.filter_by(email=admin_email).first()
     if user:
         user.username = "admin"

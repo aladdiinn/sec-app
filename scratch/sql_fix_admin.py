@@ -20,9 +20,9 @@ conn = psycopg.connect(
 try:
     with conn.cursor() as cur:
         # Force set the username for the admin email
-        cur.execute("UPDATE users SET username = 'admin' WHERE email = 'admin@securepulse.local';")
+        cur.execute("UPDATE users SET username = 'admin' WHERE email = 'admin@bsmartsoc.local';")
         conn.commit()
-        print("SQL Fix Applied: 'admin@securepulse.local' now has username 'admin'")
+        print("SQL Fix Applied: 'admin@bsmartsoc.local' now has username 'admin'")
 except Exception as e:
     print(f"Error: {e}")
 finally:

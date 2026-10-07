@@ -1,5 +1,5 @@
 /**
- * auth.js — SecurePulse
+ * auth.js — BSMART SOC
  * Central auth helpers: apiFetch, logout, user info population.
  * Loaded on every page (via base.html).
  */

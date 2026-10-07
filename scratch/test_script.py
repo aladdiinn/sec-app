@@ -3,11 +3,11 @@ import json
 import time
 
 BASE_URL = "http://127.0.0.1:5001"
-EMAIL = "admin@securepulse.local"
+EMAIL = "admin@bsmartsoc.local"
 PASSWORD = "Admin@1234"
 
 def test_app():
-    print("Testing SecurePulse App...")
+    print("Testing BSMART SOC App...")
     session = requests.Session()
     
     # 1. Test Login API

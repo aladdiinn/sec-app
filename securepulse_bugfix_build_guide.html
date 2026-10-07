@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SecurePulse — Bug Fix & Production Build Guide</title>
+<title>BSMART SOC — Bug Fix & Production Build Guide</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -137,7 +137,7 @@ hr.div{border:none;border-top:1px solid var(--border);margin:36px 0;}
 <div class="topbar">
   <div class="logo">
     <div class="logo-icon">🛡<div class="logo-pulse"></div></div>
-    <div><div class="logo-text">SECUREPULSE</div><div class="logo-sub">BUG FIX + PRODUCTION BUILD GUIDE</div></div>
+    <div><div class="logo-text">BSMART SOC</div><div class="logo-sub">BUG FIX + PRODUCTION BUILD GUIDE</div></div>
   </div>
   <div class="topbar-right">
     <div class="t-pill red">🔴 BUGS: 8 CRITICAL</div>
@@ -147,7 +147,7 @@ hr.div{border:none;border-top:1px solid var(--border);margin:36px 0;}
 </div>
 
 <div class="hero">
-  <h1>SECUREPULSE — <span>PRODUCTION READY</span> FIX GUIDE</h1>
+  <h1>BSMART SOC — <span>PRODUCTION READY</span> FIX GUIDE</h1>
   <div class="hero-sub">EVERY BROKEN FEATURE · ROOT CAUSE · EXACT FIX · COPY-READY PROMPTS</div>
   <div class="chip-row">
     <span class="chip red">🐛 Asset Delete + Add Server</span>
@@ -349,7 +349,7 @@ Shows restart result: "✓ Tomcat-1 restarted successfully at 18:32:44" or error
   - Analyst picks service from saved list (e.g., "Tomcat-1 on e2e-test-server")<br>
   - On playbook execution: agent receives command with exact binary_path + run_as_user<br>
   - Agent runs: sudo -u {run_as_user} {binary_path}/{start_command}<br>
-  - Agent reports result back to SecurePulse API<br>
+  - Agent reports result back to BSMART SOC API<br>
   IF no services configured: show warning "No services configured for this server. Go to Asset Detail → Managed Services to add service configurations."</span><br><br>
 <span class="pk">RUN RESTART PLAYBOOK BUTTON:</span><br>
 <span class="pv">Button calls POST /api/playbooks/run {playbook_type: "restart_service", server_id, service_id}<br>
@@ -736,9 +736,9 @@ All forms: disable submit button while API call is in progress (prevents double-
 <div class="issue-block good">
   <div class="issue-title">COMBINED MASTER PROMPT — ALL ISSUES IN ONE</div>
   <div class="prompt-wrap" id="bmaster">
-<span class="pc">// SECUREPULSE — FULL PRODUCTION FIX BRIEF — SEND TO AI BUILDER</span><br><br>
+<span class="pc">// BSMART SOC — FULL PRODUCTION FIX BRIEF — SEND TO AI BUILDER</span><br><br>
 <span class="pa">== THIS IS A COMPLETE BUG FIX + FEATURE COMPLETION TASK ==</span><br>
-<span class="pv">I have a cyber security SOC dashboard (SecurePulse) built with Python/Flask backend + PostgreSQL + React/Vue frontend. Multiple features are broken or not implemented. Fix ALL of the following:</span><br><br>
+<span class="pv">I have a cyber security SOC dashboard (BSMART SOC) built with Python/Flask backend + PostgreSQL + React/Vue frontend. Multiple features are broken or not implemented. Fix ALL of the following:</span><br><br>
 
 <span class="pk">━━ BUG 1: ASSET PAGE — DELETE + ADD SERVER ━━</span><br>
 <span class="pv">Add "🗑 DELETE SERVER" button on Asset Detail page (top-right, red outlined). On click: confirmation modal requiring user to type server name, then DELETE /api/assets/{id} with CASCADE delete of all related records (events, alerts, maintenance, services, project_endpoints). Also add "+ ADD SERVER" button on Assets list page with modal: hostname, IP, description, environment tag, auto-generated agent token with copy button and install command shown.</span><br><br>
@@ -773,7 +773,7 @@ All forms: disable submit button while API call is in progress (prevents double-
 
 <div class="footer">
   <span class="dot-live"></span>
-  SECUREPULSE BUG FIX GUIDE &nbsp;·&nbsp; 7 CRITICAL BUGS DOCUMENTED &nbsp;·&nbsp; 15 NEW RULES &nbsp;·&nbsp; 8 NEW PLAYBOOKS &nbsp;·&nbsp; PRODUCTION READY
+  BSMART SOC BUG FIX GUIDE &nbsp;·&nbsp; 7 CRITICAL BUGS DOCUMENTED &nbsp;·&nbsp; 15 NEW RULES &nbsp;·&nbsp; 8 NEW PLAYBOOKS &nbsp;·&nbsp; PRODUCTION READY
 </div>
 
 <script>

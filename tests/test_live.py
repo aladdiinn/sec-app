@@ -8,11 +8,11 @@ load_dotenv()
 
 BASE_URL = "http://127.0.0.1:5001"
 AGENT_KEY = os.getenv("AGENT_API_KEY", "sp-agent-key-9f2a8c1b5d3e7f0a4c6b8d2e1f5a9c3b")
-ADMIN_EMAIL = "admin@securepulse.local"
+ADMIN_EMAIL = "admin@bsmartsoc.local"
 ADMIN_PASS = "Admin@1234"
 
 def test_live_features():
-    print("Starting LIVE API Feature Tests against SecurePulse...")
+    print("Starting LIVE API Feature Tests against BSMART SOC...")
     
     # 1. Test Authentication
     print("\n[1] Testing Authentication...")

@@ -154,10 +154,10 @@ def init_db():
                 cur.execute("""
                     INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active, created_at)
                     VALUES (%s, %s, %s, 'superuser', 'System Administrator', TRUE, TRUE, NOW());
-                """, ("admin", "admin@securepulse.local", hashed_admin))
+                """, ("admin", "admin@bsmartsoc.local", hashed_admin))
             else:
                 cur.execute("""
-                    UPDATE users SET username = 'admin', email = 'admin@securepulse.local', hashed_password = %s, role = 'superuser', is_admin = TRUE, is_active = TRUE WHERE id = %s;
+                    UPDATE users SET username = 'admin', email = 'admin@bsmartsoc.local', hashed_password = %s, role = 'superuser', is_admin = TRUE, is_active = TRUE WHERE id = %s;
                 """, (hashed_admin, admin_row["id"]))
 
 
@@ -3437,7 +3437,7 @@ def create_user(username, email, password, role="normal", full_name=None):
                 role_clean = "normal"
             is_adm = True if role_clean in ("superuser", "admin") else False
             hashed = generate_password_hash(password)
-            email_val = email or f"{username}@securepulse.local"
+            email_val = email or f"{username}@bsmartsoc.local"
             
             cur.execute("""
                 INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active, created_at)
@@ -3738,7 +3738,7 @@ def create_group_user_wizard(data: dict):
         with conn.cursor() as cur:
             # Step 1: Create Group User (GC User)
             gc_username = data.get("gc_username")
-            gc_email = data.get("gc_email") or f"{gc_username}@securepulse.local"
+            gc_email = data.get("gc_email") or f"{gc_username}@bsmartsoc.local"
             gc_pass = data.get("gc_password") or "GroupUser123!"
             
             hashed_gc = generate_password_hash(gc_pass)
@@ -3781,7 +3781,7 @@ def create_group_user_wizard(data: dict):
             new_members = data.get("new_members") or []
             for nm in new_members:
                 m_uname = nm.get("username")
-                m_email = nm.get("email") or f"{m_uname}@securepulse.local"
+                m_email = nm.get("email") or f"{m_uname}@bsmartsoc.local"
                 m_pass = nm.get("password") or "NormalUser123!"
                 m_name = nm.get("full_name") or m_uname
                 m_hashed = generate_password_hash(m_pass)

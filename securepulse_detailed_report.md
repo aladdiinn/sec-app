@@ -1,6 +1,6 @@
-# SecurePulse: Feature Intelligence & Architecture Analysis
+# BSMART SOC: Feature Intelligence & Architecture Analysis
 
-This document provides a comprehensive breakdown of the SecurePulse SOC Command Center, cross-referencing documented features with actual code implementation.
+This document provides a comprehensive breakdown of the BSMART SOC Command Center, cross-referencing documented features with actual code implementation.
 
 ---
 

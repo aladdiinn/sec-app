@@ -1,6 +1,6 @@
-# SecurePulse: Full 35-Feature Technical Audit
+# BSMART SOC: Full 35-Feature Technical Audit
 
-This document provides a line-by-line audit of every feature in the SecurePulse SOC Command Center.
+This document provides a line-by-line audit of every feature in the BSMART SOC Command Center.
 
 ---
 

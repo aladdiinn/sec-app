@@ -1,5 +1,5 @@
 /**
- * realtime.js — SecurePulse
+ * realtime.js — BSMART SOC
  * SocketIO connection setup. Exposes window._socket.
  * Loaded on all authenticated pages (via base.html).
  */
@@ -26,7 +26,7 @@
   });
 
   socket.on('joined', function (data) {
-    console.log('[SecurePulse WS] Joined room:', data.room);
+    console.log('[BSMART SOC WS] Joined room:', data.room);
   });
 
   socket.on('disconnect', function () {
@@ -34,7 +34,7 @@
   });
 
   socket.on('connect_error', function (err) {
-    console.warn('[SecurePulse WS] Connection error:', err.message);
+    console.warn('[BSMART SOC WS] Connection error:', err.message);
     updateConnectionBadge(false);
   });
 

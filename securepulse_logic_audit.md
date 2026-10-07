@@ -1,4 +1,4 @@
-# SecurePulse: Deep Technical Logic Audit
+# BSMART SOC: Deep Technical Logic Audit
 
 This document identifies which features are **Real-World Functional** and which are **UI/Database Simulations**, along with their exact code locations.
 

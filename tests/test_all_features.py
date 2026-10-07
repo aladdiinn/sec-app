@@ -3,7 +3,7 @@ import json
 from app import app, db
 from models import User, Server, Event, Alert, Case, Playbook
 
-class SecurePulseComprehensiveTest(unittest.TestCase):
+class BSMART SOCComprehensiveTest(unittest.TestCase):
     def setUp(self):
         app.config['TESTING'] = True
         app.config['WTF_CSRF_ENABLED'] = False
@@ -16,7 +16,7 @@ class SecurePulseComprehensiveTest(unittest.TestCase):
             from werkzeug.security import generate_password_hash
             # Create an admin user
             admin = User(
-                email='admin@securepulse.local',
+                email='admin@bsmartsoc.local',
                 hashed_password=generate_password_hash('Admin@123'),
                 full_name='Test Admin',
                 is_admin=True
@@ -41,7 +41,7 @@ class SecurePulseComprehensiveTest(unittest.TestCase):
 
     def login(self):
         return self.app.post('/auth/login', json={
-            'email': 'admin@securepulse.local',
+            'email': 'admin@bsmartsoc.local',
             'password': 'Admin@123'
         })
 
@@ -56,7 +56,7 @@ class SecurePulseComprehensiveTest(unittest.TestCase):
         # Test Auth Me
         response = self.app.get('/auth/me', headers={'Authorization': f'Bearer {token}'})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(json.loads(response.data)['email'], 'admin@securepulse.local')
+        self.assertEqual(json.loads(response.data)['email'], 'admin@bsmartsoc.local')
 
     def test_2_agent_registration(self):
         # Test missing API key

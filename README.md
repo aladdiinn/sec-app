@@ -1,4 +1,4 @@
-# SecurePulse — Server Security Monitoring Platform
+# BSMART SOC — Server Security Monitoring Platform
 
 A production-style, agent-based security monitoring dashboard built with
 **FastAPI + PostgreSQL + Vanilla JS**.
@@ -60,7 +60,7 @@ chmod +x start.sh
 The server starts at **http://localhost:8000**
 
 **Default login:**
-- Email: `admin@securepulse.local`
+- Email: `admin@bsmartsoc.local`
 - Password: `Admin@1234`
 
 ---

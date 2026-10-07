@@ -6,7 +6,7 @@ cat > /mnt/user-data/outputs/securepulse_new_features_guide.html << 'HTMLEOF'
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SecurePulse — New Features Build Guide</title>
+<title>BSMART SOC — New Features Build Guide</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -209,7 +209,7 @@ hr.divider{border:none;border-top:1px solid var(--border);margin:40px 0;}
   <div class="logo">
     <div class="logo-icon">🛡<div class="logo-pulse"></div></div>
     <div>
-      <div class="logo-text">SECUREPULSE</div>
+      <div class="logo-text">BSMART SOC</div>
       <div class="logo-sub">NEW FEATURES BUILD GUIDE v2</div>
     </div>
   </div>
@@ -290,13 +290,13 @@ hr.divider{border:none;border-top:1px solid var(--border);margin:40px 0;}
 <div class="feat-block amber-block">
   <div class="feat-num">#24 — RESPONSE & CONTAINMENT</div>
   <div class="feat-title">ACCOUNT DISABLE / PASSWORD RESET</div>
-  <div class="feat-desc">When a user account is identified as compromised, analysts can disable the account or force a password reset directly from the SecurePulse incident view — without logging into Active Directory, Okta, or any other identity provider separately.</div>
+  <div class="feat-desc">When a user account is identified as compromised, analysts can disable the account or force a password reset directly from the BSMART SOC incident view — without logging into Active Directory, Okta, or any other identity provider separately.</div>
   <div class="info-grid">
     <div class="info-box">
       <div class="ib-label">HOW IT WORKS</div>
       <div class="flow">
         <div class="flow-step"><div class="flow-num amber">1</div><div class="flow-text">Analyst opens Incident/Case detail. Sees "Affected User: jake@company.com" identified in events.</div></div>
-        <div class="flow-step"><div class="flow-num amber">2</div><div class="flow-text">Clicks <strong>"Disable Account"</strong> button in Actions panel. SecurePulse calls your AD/LDAP/Okta API to disable the user.</div></div>
+        <div class="flow-step"><div class="flow-num amber">2</div><div class="flow-text">Clicks <strong>"Disable Account"</strong> button in Actions panel. BSMART SOC calls your AD/LDAP/Okta API to disable the user.</div></div>
         <div class="flow-step"><div class="flow-num amber">3</div><div class="flow-text">Confirmation banner: "Account jake@company.com disabled at 02:15AM by analyst A". Logged in Audit Trail.</div></div>
         <div class="flow-step"><div class="flow-num amber">4</div><div class="flow-text"><strong>"Force Password Reset"</strong> similarly calls the identity provider's reset API. User gets a reset email on next login attempt.</div></div>
       </div>
@@ -384,14 +384,14 @@ hr.divider{border:none;border-top:1px solid var(--border);margin:40px 0;}
 <div class="feat-block amber-block">
   <div class="feat-num">#32 — PLATFORM & INTEGRATION</div>
   <div class="feat-title">SINGLE SIGN-ON (SSO) + MFA</div>
-  <div class="feat-desc">Analysts log into SecurePulse using their existing company identity (Okta, Microsoft, Google) instead of separate credentials. Multi-factor authentication is enforced for all users — no exceptions. This is critical for a security product.</div>
+  <div class="feat-desc">Analysts log into BSMART SOC using their existing company identity (Okta, Microsoft, Google) instead of separate credentials. Multi-factor authentication is enforced for all users — no exceptions. This is critical for a security product.</div>
   <div class="info-grid">
     <div class="info-box">
       <div class="ib-label">LOGIN PAGE CHANGES</div>
       <div class="flow">
         <div class="flow-step"><div class="flow-num">1</div><div class="flow-text">Add SSO buttons below existing form: <strong>[Login with Okta]</strong> <strong>[Login with Microsoft]</strong> <strong>[Login with Google]</strong> — each with provider logo</div></div>
         <div class="flow-step"><div class="flow-num">2</div><div class="flow-text">Clicking SSO button → redirects to provider's auth page → user authenticates + MFA there → redirected back with JWT token</div></div>
-        <div class="flow-step"><div class="flow-num">3</div><div class="flow-text">SecurePulse maps provider groups/roles to internal roles (Admin/Normal) via Settings config</div></div>
+        <div class="flow-step"><div class="flow-num">3</div><div class="flow-text">BSMART SOC maps provider groups/roles to internal roles (Admin/Normal) via Settings config</div></div>
       </div>
     </div>
     <div class="info-box">
@@ -434,7 +434,7 @@ hr.divider{border:none;border-top:1px solid var(--border);margin:40px 0;}
 <div class="feat-block amber-block">
   <div class="feat-num">#33 — PLATFORM & INTEGRATION</div>
   <div class="feat-title">HIGH AVAILABILITY & DISASTER RECOVERY</div>
-  <div class="feat-desc">SecurePulse itself must never go down. HA means multiple instances run simultaneously — if one crashes, others continue without interruption. DR defines how fast you recover (RTO) and how much data you can afford to lose (RPO).</div>
+  <div class="feat-desc">BSMART SOC itself must never go down. HA means multiple instances run simultaneously — if one crashes, others continue without interruption. DR defines how fast you recover (RTO) and how much data you can afford to lose (RPO).</div>
   <div class="info-grid">
     <div class="info-box">
       <div class="ib-label">KEY CONCEPTS EXPLAINED</div>
@@ -488,7 +488,7 @@ hr.divider{border:none;border-top:1px solid var(--border);margin:40px 0;}
       <div class="ib-label purple">NOTIFICATIONS SYSTEM</div>
       <div class="ib-text" style="margin-bottom:10px;">• Bell icon in top bar with badge count<br>• Notification types: @mention in comment, assigned to you, SLA warning on your case, case status changed<br>• Click notification → navigates to that case<br>• Mark all read button</div>
       <div class="ib-label purple">AUDIT TRAIL INTEGRATION</div>
-      <div class="ib-text">All comments and status changes automatically logged to Audit Trail. Cannot be deleted. Format: "analyst@securepulse.local commented on Case #34 at 02:20AM: [first 50 chars preview]"</div>
+      <div class="ib-text">All comments and status changes automatically logged to Audit Trail. Cannot be deleted. Format: "analyst@bsmartsoc.local commented on Case #34 at 02:20AM: [first 50 chars preview]"</div>
     </div>
   </div>
   <div class="prompt-wrap" id="p34">
@@ -523,14 +523,14 @@ hr.divider{border:none;border-top:1px solid var(--border);margin:40px 0;}
 <div class="feat-block amber-block">
   <div class="feat-num">#35 — COLLABORATION & WORKFLOW</div>
   <div class="feat-title">EXTERNAL TICKET SYNC (JIRA / SERVICENOW)</div>
-  <div class="feat-desc">Bi-directional sync between SecurePulse incidents and your ITSM ticketing system. CRITICAL incidents auto-create Jira tickets. When the ticket is resolved in Jira, the incident auto-closes in SecurePulse. Status always stays in sync.</div>
+  <div class="feat-desc">Bi-directional sync between BSMART SOC incidents and your ITSM ticketing system. CRITICAL incidents auto-create Jira tickets. When the ticket is resolved in Jira, the incident auto-closes in SecurePulse. Status always stays in sync.</div>
   <div class="info-grid">
     <div class="info-box">
       <div class="ib-label">THE FLOW</div>
       <div class="flow">
-        <div class="flow-step"><div class="flow-num">1</div><div class="flow-text">CRITICAL incident created in SecurePulse → Jira issue auto-created (SEC-2847) → stored with incident</div></div>
+        <div class="flow-step"><div class="flow-num">1</div><div class="flow-text">CRITICAL incident created in BSMART SOC → Jira issue auto-created (SEC-2847) → stored with incident</div></div>
         <div class="flow-step"><div class="flow-num">2</div><div class="flow-text">Incident detail shows: "Jira: <strong>SEC-2847</strong> [Open]" with clickable link to Jira</div></div>
-        <div class="flow-step"><div class="flow-num">3</div><div class="flow-text">Analyst resolves SEC-2847 in Jira → Jira webhook fires → SecurePulse auto-closes the incident</div></div>
+        <div class="flow-step"><div class="flow-num">3</div><div class="flow-text">Analyst resolves SEC-2847 in Jira → Jira webhook fires → BSMART SOC auto-closes the incident</div></div>
         <div class="flow-step"><div class="flow-num">4</div><div class="flow-text">Status changes sync both ways: SP "In Progress" → Jira "In Progress" and vice versa</div></div>
       </div>
     </div>
@@ -643,21 +643,21 @@ hr.divider{border:none;border-top:1px solid var(--border);margin:40px 0;}
           <span class="um-col-hdr">ACTIONS</span>
         </div>
         <div class="um-row">
-          <div><div class="um-name">admin</div><div class="um-email">admin@securepulse.local</div></div>
+          <div><div class="um-name">admin</div><div class="um-email">admin@bsmartsoc.local</div></div>
           <span class="role-badge super">SUPERUSER</span>
           <span><span class="um-status-dot on"></span><span style="font-family:var(--mono);font-size:10px;color:var(--green);">ACTIVE</span></span>
           <span style="font-family:var(--mono);font-size:10px;color:var(--text2);">Just now</span>
           <span class="um-action">EDIT ROLE</span>
         </div>
         <div class="um-row">
-          <div><div class="um-name">analyst1</div><div class="um-email">analyst1@securepulse.local</div></div>
+          <div><div class="um-name">analyst1</div><div class="um-email">analyst1@bsmartsoc.local</div></div>
           <span class="role-badge admin">ADMIN</span>
           <span><span class="um-status-dot on"></span><span style="font-family:var(--mono);font-size:10px;color:var(--green);">ACTIVE</span></span>
           <span style="font-family:var(--mono);font-size:10px;color:var(--text2);">2h ago</span>
           <span class="um-action">EDIT ROLE</span>
         </div>
         <div class="um-row">
-          <div><div class="um-name">analyst2</div><div class="um-email">analyst2@securepulse.local</div></div>
+          <div><div class="um-name">analyst2</div><div class="um-email">analyst2@bsmartsoc.local</div></div>
           <span class="role-badge normal">NORMAL USER</span>
           <span><span class="um-status-dot off"></span><span style="font-family:var(--mono);font-size:10px;color:var(--text2);">INACTIVE</span></span>
           <span style="font-family:var(--mono);font-size:10px;color:var(--text2);">3d ago</span>
@@ -912,7 +912,7 @@ NORMAL USER: junior analyst — view all, resolve only assigned incidents, no de
 
 <div class="footer">
   <span class="dot-live"></span>
-  SECUREPULSE NEW FEATURES BUILD GUIDE &nbsp;·&nbsp; 7 MISSING FEATURES + USER MANAGEMENT + PROJECT PAGE &nbsp;·&nbsp; ALL PROMPTS COPY-READY
+  BSMART SOC NEW FEATURES BUILD GUIDE &nbsp;·&nbsp; 7 MISSING FEATURES + USER MANAGEMENT + PROJECT PAGE &nbsp;·&nbsp; ALL PROMPTS COPY-READY
 </div>
 
 <script>
