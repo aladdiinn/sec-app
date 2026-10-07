@@ -1768,7 +1768,7 @@ def _is_suppressed(server_id, alert_type, message):
         
     for supp in supps:
         rule_match = supp.get("rule_or_generator")
-        if rule_match:
+        if rule_match and rule_match.strip() not in ["*", "ALL", "ANY"]:
             # Check if rule matches alert_type or is inside message (for dynamic types)
             rules = [r.strip() for r in rule_match.split(",")]
             if not any(r in alert_type or r in message for r in rules):
