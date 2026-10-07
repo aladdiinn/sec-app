@@ -105,14 +105,14 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
             </div>
             
             <!-- Dark Banner -->
-            <table style="width: 100%; background-color: #0a0e17; color: white; border-collapse: collapse; margin: 0; padding: 0;">
+            <table background="cid:email_bg" style="width: 100%; background-color: #0a0e17; background-image: url('cid:email_bg'); background-size: cover; background-position: center; color: white; border-collapse: collapse; margin: 0; padding: 0;">
                 <tr>
                     <td style="padding: 15px 15px 15px 15px; width: 160px; vertical-align: middle; text-align: center;">
                         <img src="cid:soc_logo" alt="BSMART SOC" style="width: 150px; max-width: 150px; height: auto; display: block; border: 0; margin: 0 auto;" />
                     </td>
                     <td style="padding: 15px 15px 15px 0px; vertical-align: middle; text-align: left; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
-                        <span style="color: #0088ff; font-weight: 700; font-size: 22px; display: inline-block; vertical-align: middle; letter-spacing: 0.5px;">ALERT:</span>
-                        <span style="color: #ffffff; font-weight: 500; font-size: 22px; margin-left: 8px; display: inline-block; vertical-align: middle; text-transform: uppercase;">{safe_title}</span>
+                        <span style="color: #0088ff; font-weight: 700; font-size: 20px; display: inline-block; vertical-align: middle; letter-spacing: 0.5px;">ALERT:</span>
+                        <span style="color: #ffffff; font-weight: 500; font-size: 16px; margin-left: 8px; display: inline-block; vertical-align: middle; text-transform: uppercase;">{safe_title}</span>
                     </td>
                 </tr>
             </table>
@@ -204,6 +204,16 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
             msg_image.add_header('Content-ID', '<soc_logo>')
             msg_image.add_header('Content-Disposition', 'inline')
             msg.attach(msg_image)
+
+        # Attach CID background
+        bg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "img", "email_bg.png")
+        if os.path.exists(bg_path):
+            with open(bg_path, 'rb') as f:
+                bg_data = f.read()
+            msg_bg = MIMEImage(bg_data)
+            msg_bg.add_header('Content-ID', '<email_bg>')
+            msg_bg.add_header('Content-Disposition', 'inline')
+            msg.attach(msg_bg)
             
         ses = get_ses_client()
         response = ses.send_raw_email(
