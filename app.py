@@ -1822,8 +1822,8 @@ def _check_failed_logins(server_id, data):
 
     last_line = fail_events[-1][3] if fail_events else ""
 
-    brute_thresh = _rule_threshold('SSH Brute Force Attempt', default=10)
-    fail_thresh  = _rule_threshold('AUTH_FAIL', default=5)
+    brute_thresh = _rule_threshold('SSH Brute Force Attempt', default=5)
+    fail_thresh  = _rule_threshold('AUTH_FAIL', default=1)
     if _is_rule_enabled('SSH Brute Force Attempt') and len(recent_5min) >= brute_thresh:
         ips = list(set(ev[1] for ev in recent_5min if ev[1] != "unknown"))
         ip_str = ", ".join(ips[:3]) if ips else "external host"
@@ -1841,9 +1841,9 @@ def _check_failed_logins(server_id, data):
         users_hit = list(set(ev[2] for ev in recent_10min if ev[2] != "unknown"))[:3]
         user_str = f" targeting account(s): {', '.join(users_hit)}" if users_hit else ""
         _create_alert_dedup(
-            server_id, 'AUTH_FAIL_THRESHOLD', 'warning',
-            'Multiple Failed SSH Logins',
-            f"{len(recent_10min)} failed SSH login attempts in the last 10 minutes from {ip_str}{user_str}. "
+            server_id, f'AUTH_FAIL_THRESHOLD_{len(recent_10min)}', 'warning',
+            'Failed SSH Login Attempt' if len(recent_10min) == 1 else 'Multiple Failed SSH Logins',
+            f"{len(recent_10min)} failed SSH login attempt(s) in the last 10 minutes from {ip_str}{user_str}. "
             f"This may indicate a password-guessing attack or misconfigured service."
         )
 
