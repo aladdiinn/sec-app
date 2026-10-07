@@ -926,7 +926,7 @@ async function openImage3Modal(serverId) {
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
                         <strong style="color:var(--text); font-size:13px; font-weight:700">${a.title || a.alert_type || 'Security Alert'}</strong>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <span style="font-size:10px; color:var(--text3); font-family:monospace"></span>
+                            <span style="font-size:10px; color:var(--text3); font-family:monospace">${new Date(a.created_at).toLocaleString()}</span>
                             <input type="checkbox" title="Mark Closed" style="cursor:pointer;" onchange="resolveSingleAlert(${a.id}, this)">
                         </div>
                     </div>

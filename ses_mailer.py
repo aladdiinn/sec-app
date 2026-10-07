@@ -110,9 +110,9 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
                     <td style="padding: 15px 15px 15px 15px; width: 80px; vertical-align: middle; text-align: center;">
                         <img src="cid:soc_logo" alt="BSMART SOC" style="width: 70px; max-width: 70px; height: auto; display: block; border: 0; margin: 0 auto;" />
                     </td>
-                    <td style="padding: 15px 15px 15px 10px; vertical-align: middle; text-align: left;">
-                        <span style="color: #0088ff; font-weight: bold; font-size: 20px; display: inline-block; vertical-align: middle;">ALERT:</span>
-                        <span style="font-weight: bold; font-size: 20px; margin-left: 5px; display: inline-block; vertical-align: middle;">{safe_title}</span>
+                    <td style="padding: 15px 15px 15px 0px; vertical-align: middle; text-align: left; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+                        <span style="color: #0088ff; font-weight: 700; font-size: 22px; display: inline-block; vertical-align: middle; letter-spacing: 0.5px;">ALERT:</span>
+                        <span style="color: #ffffff; font-weight: 500; font-size: 22px; margin-left: 8px; display: inline-block; vertical-align: middle;">{safe_title}</span>
                     </td>
                 </tr>
             </table>
@@ -210,105 +210,6 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
             Source=SES_SENDER_EMAIL,
             Destinations=recipients,
             RawMessage={'Data': msg.as_string()}
-        )
-        logger.info(f"Smart Alert Email sent! Message ID: {response['MessageId']}")
-        return True
-    except ClientError as e:
-        logger.error(f"Failed to send SES email: {e.response['Error']['Message']}")
-        return False
-    except Exception as e:
-        logger.error(f"Failed to send email: {e}")
-        return False
-        
-    # 2. Get LLM Analysis
-    llm_data = generate_alert_analysis(alert_title, alert_type, message, server_ip)
-    
-    # 3. Construct the exact HTML table requested by the user
-    # Using a red header block and clean table rows
-    html_body = f"""
-    <html>
-    <head></head>
-    <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px;">
-        <div style="max-width: 900px; margin: 0 auto; background: white; border: 1px solid #ccc;">
-            <!-- Red Header -->
-            <div style="background-color: #ff0000; color: white; text-align: center; font-weight: bold; padding: 10px; font-size: 16px;">
-                Alert Name: "{alert_title}"
-            </div>
-            
-            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc; width: 25%; font-weight: bold;">Event Time Stamp</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{timestamp}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc; font-weight: bold;">Alert ID</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{alert_id}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc; font-weight: bold;">Event Generator</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{alert_type}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc; font-weight: bold;">Host Name</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{hostname}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc; font-weight: bold;">Host IP</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{server_ip}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc; font-weight: bold;">Severity</td>
-                    <td style="padding: 8px; border: 1px solid #ccc; color: red;">{severity.upper()}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc; font-weight: bold;">Raw Message</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">{message}</td>
-                </tr>
-                
-                <!-- LLM Analysis Section -->
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc; font-weight: bold; vertical-align: top;">Analysis/Observation</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">
-                        <ol style="margin: 0; padding-left: 20px;">
-                            {llm_data.get('analysis', '')}
-                        </ol>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc; font-weight: bold; vertical-align: top;">Potential Risk</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">
-                        {llm_data.get('risk', '')}
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ccc; font-weight: bold; vertical-align: top;">Recommendations</td>
-                    <td style="padding: 8px; border: 1px solid #ccc;">
-                        <ol style="margin: 0; padding-left: 20px;">
-                            {llm_data.get('recommendations', '')}
-                        </ol>
-                    </td>
-                </tr>
-            </table>
-        </div>
-    </body>
-    </html>
-    """
-    
-    subject = f"[SOC ALERT] {severity.upper()} - {alert_title} on {hostname}"
-    
-    # Parse multiple comma-separated recipients
-    recipient_str = os.environ.get("SES_RECIPIENT_EMAIL", "soc-team@yourcompany.com")
-    recipients = [r.strip() for r in recipient_str.replace(";", ",").split(",") if r.strip()]
-    
-    try:
-        ses = get_ses_client()
-        response = ses.send_email(
-            Source=SES_SENDER_EMAIL,
-            Destination={'ToAddresses': recipients},
-            Message={
-                'Subject': {'Data': subject},
-                'Body': {'Html': {'Data': html_body}}
-            }
         )
         logger.info(f"Smart Alert Email sent! Message ID: {response['MessageId']}")
         return True
