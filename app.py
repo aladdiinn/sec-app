@@ -5503,6 +5503,73 @@ async def api_scanner_vapt(request: Request):
     url = body.get("url", "")
     return scanner_engine.run_full_domain_vapt(url)
 
+
+# Alert Suppressions API
+@app.get("/api/detection/suppressions")
+async def get_suppressions(request: Request):
+    conn = db.get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM alert_suppressions ORDER BY id DESC")
+            cols = [desc[0] for desc in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return rows
+    except Exception as e:
+        print("Error get_suppressions:", e)
+        return []
+    finally:
+        conn.close()
+
+@app.post("/api/detection/suppressions")
+async def add_suppression(request: Request):
+    if not is_admin_user(request): return {"error": "Admin only"}
+    body = await request.json()
+    conn = db.get_db_connection()
+    user = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO alert_suppressions (rule_or_generator, match_field, match_type, match_value, reason, created_by) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                        (body.get("rule_or_generator"), body.get("match_field"), body.get("match_type"), body.get("match_value"), body.get("reason"), user))
+            new_id = cur.fetchone()[0]
+        conn.commit()
+        global _alert_suppressions_last_fetch
+        _alert_suppressions_last_fetch = 0
+        return {"id": new_id}
+    finally:
+        conn.close()
+
+@app.delete("/api/detection/suppressions/{id}")
+async def del_suppression(request: Request, id: int):
+    if not is_admin_user(request): return {"error": "Admin only"}
+    conn = db.get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM alert_suppressions WHERE id = %s", (id,))
+        conn.commit()
+        global _alert_suppressions_last_fetch
+        _alert_suppressions_last_fetch = 0
+        return {"ok": True}
+    finally:
+        conn.close()
+
+@app.post("/api/detection/suppressions/{id}/toggle")
+async def toggle_suppression(request: Request, id: int):
+    if not is_admin_user(request): return {"error": "Admin only"}
+    body = await request.json()
+    enabled = body.get("enabled", True)
+    conn = db.get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE alert_suppressions SET enabled = %s WHERE id = %s", (enabled, id))
+        conn.commit()
+        global _alert_suppressions_last_fetch
+        _alert_suppressions_last_fetch = 0
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     import uvicorn
     import os
