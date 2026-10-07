@@ -1337,7 +1337,7 @@ def delete_server(server_id: int):
         return False
     try:
         if hasattr(conn, 'autocommit'):
-            conn.autocommit = True
+            conn.autocommit = False
         with conn.cursor() as cur:
             # Fetch hostname and ip before deleting to clean up approvals
             hname = None
@@ -1398,6 +1398,7 @@ def delete_server(server_id: int):
                 cur.execute("RELEASE SAVEPOINT del_servers")
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT del_servers")
+        conn.commit()
         return True
     except Exception as e:
         logger.error(f"Error in delete_server: {e}")
@@ -2950,7 +2951,7 @@ def delete_project(project_id: int):
     if not conn: return False
     try:
         if hasattr(conn, 'autocommit'):
-            conn.autocommit = True
+            conn.autocommit = False
         with conn.cursor() as cur:
             # Unassign all servers from this project
             try:
