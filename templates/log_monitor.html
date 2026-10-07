@@ -1196,7 +1196,16 @@ let lastRenderedHash = '';
 function initVirtualScroll() {
     const term = document.getElementById('log-terminal-output');
     if (!term) return;
-    term.addEventListener('scroll', () => { virtPaint(term); }, { passive: true });
+    let ticking = false;
+    term.addEventListener('scroll', () => { 
+        if (!ticking) {
+            window.requestAnimationFrame(() => {
+                virtPaint(term);
+                ticking = false;
+            });
+            ticking = true;
+        }
+    }, { passive: true });
 }
 
 function buildLogRowHtml(l, idx) {
