@@ -5513,9 +5513,7 @@ async def get_suppressions(request: Request):
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM alert_suppressions ORDER BY id DESC")
-            cols = [desc[0] for desc in cur.description]
-            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
-        return rows
+            return cur.fetchall()
     except Exception as e:
         print("Error get_suppressions:", e)
         return []
