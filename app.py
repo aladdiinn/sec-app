@@ -5106,6 +5106,7 @@ async def api_toggle_detection_rule(id: int, request: Request):
             if updates:
                 params.append(id)
                 cur.execute(f"UPDATE detection_rules SET {', '.join(updates)} WHERE id = %s;", params)
+            conn.commit()
         uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
         action = 'TOGGLE_RULE' if 'enabled' in body else 'UPDATE_RULE_THRESHOLD'
         detail = f"Rule {id}: enabled={body.get('enabled', 'unchanged')}, threshold={body.get('threshold', 'unchanged')}"
