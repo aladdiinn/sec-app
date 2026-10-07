@@ -25,7 +25,7 @@ POLL_SEC  = 1   # tail poll interval in seconds
 
 # Regex patterns
 RE_SSH_OK  = re.compile(r"Accepted (?:password|publickey) for (\S+) from ([\d.]+)")
-RE_SSH_FAIL= re.compile(r"Failed password for (?:invalid user )?(\S+) from ([\d.]+)")
+RE_SSH_FAIL= re.compile(r"Failed (?:password|keyboard-interactive/pam) for (?:invalid user )?(\S+) from ([\d.]+)")
 RE_INV_USR = re.compile(r"Invalid user (\S+) from ([\d.]+)")
 RE_LOGOUT  = re.compile(r"(?:Disconnected from|session closed for user) (\S+)")
 
