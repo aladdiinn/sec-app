@@ -1822,8 +1822,8 @@ def _check_failed_logins(server_id, data):
 
     last_line = fail_events[-1][3] if fail_events else ""
 
-    brute_thresh = _rule_threshold('SSH Brute Force Attempt', default=5)
-    fail_thresh  = _rule_threshold('AUTH_FAIL', default=1)
+    brute_thresh = _rule_threshold('SSH Brute Force Attempt', default=10)
+    fail_thresh  = _rule_threshold('AUTH_FAIL', default=3)
     if _is_rule_enabled('SSH Brute Force Attempt') and len(recent_5min) >= brute_thresh:
         ips = list(set(ev[1] for ev in recent_5min if ev[1] != "unknown"))
         ip_str = ", ".join(ips[:3]) if ips else "external host"
