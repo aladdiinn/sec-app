@@ -1738,6 +1738,66 @@ def _rule_threshold(event_type_or_name, default=5):
         pass
     return default
 
+
+_alert_suppressions_cache = []
+_alert_suppressions_last_fetch = 0
+
+def _get_suppressions():
+    global _alert_suppressions_cache, _alert_suppressions_last_fetch
+    now = time.time()
+    if now - _alert_suppressions_last_fetch > 60:
+        try:
+            conn = db.get_db_connection()
+            if conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.DictCursor if hasattr(psycopg2, 'extras') else None) as cur:
+                    # Depending on if DictCursor is used. db_connection usually returns DictCursor if configured.
+                    # Let's just fetch dicts manually if needed.
+                    cur.execute("SELECT id, rule_or_generator, match_field, match_type, match_value, server_id FROM alert_suppressions WHERE enabled = TRUE AND (expires_at IS NULL OR expires_at > NOW())")
+                    cols = [desc[0] for desc in cur.description]
+                    _alert_suppressions_cache = [dict(zip(cols, row)) for row in cur.fetchall()]
+                conn.close()
+            _alert_suppressions_last_fetch = now
+        except Exception as e:
+            logger.error(f"Error fetching suppressions: {e}")
+    return _alert_suppressions_cache
+
+def _is_suppressed(server_id, alert_type, message):
+    supps = _get_suppressions()
+    if not supps:
+        return False
+        
+    for supp in supps:
+        rule_match = supp.get("rule_or_generator")
+        if rule_match:
+            # Check if rule matches alert_type or is inside message (for dynamic types)
+            rules = [r.strip() for r in rule_match.split(",")]
+            if not any(r in alert_type or r in message for r in rules):
+                continue
+                
+        supp_server = supp.get("server_id")
+        if supp_server and supp_server != server_id:
+            continue
+            
+        mfield = supp.get("match_field")
+        mval = supp.get("match_value", "")
+        mtype = supp.get("match_type", "exact")
+        
+        if mfield == "path" and mval:
+            import re as _re
+            paths = _re.findall(r'(/[a-zA-Z0-9_./-]+)', message)
+            matched = False
+            for p in paths:
+                if mtype == "exact" and p == mval:
+                    matched = True
+                    break
+                elif mtype == "prefix" and p.startswith(mval):
+                    matched = True
+                    break
+            if matched:
+                db.log_audit('System', 'ALERT_SUPPRESSED', 'alert', server_id or 0, f"Suppressed {alert_type} for path {mval} ({mtype})")
+                return True
+    return False
+
 def _create_alert_dedup(server_id, alert_type, severity, title, message):
     """Create alert only if similar alert not created within last 2 minutes, and trigger SOAR audit."""
     
@@ -1745,6 +1805,9 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
     srv = db.get_server_by_id(server_id)
     if srv and srv.get("is_maintenance"):
         return  # Silently suppress alert to prevent spam during OS patching
+        
+    if _is_suppressed(server_id, alert_type, message):
+        return  # Silently suppress based on allowlist rules
         
     cache_key = (int(server_id) if server_id else 0, str(alert_type))
     # print(f"DEBUG dedup check: {cache_key} against cache keys: {list(_dedup_alerts_cache.keys())}")
