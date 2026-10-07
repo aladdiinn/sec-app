@@ -112,7 +112,7 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
                     </td>
                     <td style="padding: 15px 15px 15px 0px; vertical-align: middle; text-align: left; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
                         <span style="color: #0088ff; font-weight: 700; font-size: 22px; display: inline-block; vertical-align: middle; letter-spacing: 0.5px;">ALERT:</span>
-                        <span style="color: #ffffff; font-weight: 500; font-size: 22px; margin-left: 8px; display: inline-block; vertical-align: middle;">{safe_title}</span>
+                        <span style="color: #ffffff; font-weight: 500; font-size: 22px; margin-left: 8px; display: inline-block; vertical-align: middle; text-transform: uppercase;">{safe_title}</span>
                     </td>
                 </tr>
             </table>
