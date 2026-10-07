@@ -1535,7 +1535,8 @@ async def api_block_ip(server_id: int, request: Request):
 # SIEM / IDS / IPS DETECTION ENGINE — Real-time Detection Logic
 # ══════════════════════════════════════════════════════════════════════════════
 
-_recent_auth_failures = {}   # {server_id: [(timestamp, ip, user, line), ...]}
+_recent_auth_failures = {}
+_ssh_sliding_windows = {} # {(server_id, ip, user): {"attempts": {}, "last_alert": 0}}   # {server_id: [(timestamp, ip, user, line), ...]}
 _known_server_ports = {}     # {server_id: set(ports)}
 _dedup_alerts_cache = {}     # {(server_id, alert_type): last_timestamp}
 
@@ -1768,114 +1769,60 @@ def _check_failed_logins(server_id, data):
     """Detection: SSH/VPN/App failed login threshold and brute force detection."""
     if not _is_rule_enabled('AUTH_FAIL') and not _is_rule_enabled('SSH Brute Force Attempt'):
         return
-    auth_failures = data.get("auth_failures", [])
+
     log_lines = data.get("log_lines", []) or data.get("logs", [])
-
-    fail_events = []
-    # Only keep core password/user failure events. Exclude PAM 'authentication failure' and 'Failed publickey' 
-    # to avoid double counting a single login attempt.
-    valid_auth = re.compile(r'(Failed password|Failed keyboard-interactive/pam|AUTH_FAIL)', re.IGNORECASE)
+    auth_failures = data.get("auth_failures", [])
     
-    for af in auth_failures:
-        if isinstance(af, dict):
-            line = af.get("line", "")
-            if valid_auth.search(line):
-                fail_events.append((time.time(), af.get("ip", "unknown"), af.get("user", "unknown"), line))
+    all_lines = []
+    for items in (log_lines, auth_failures):
+        for item in items:
+            all_lines.append(item.get("line", "") if isinstance(item, dict) else str(item))
 
-    if log_lines:
-        # We only match 'Failed password' to avoid double-counting 
-        # sshd's 'Invalid user' lines, PAM's 'authentication failure', or ssh client's 'Failed publickey' spam.
-        auth_patterns = re.compile(r'(Failed password|AUTH_FAIL)', re.IGNORECASE)
-        ip_pattern = re.compile(r'from (\d+\.\d+\.\d+\.\d+)')
-        user_pattern = re.compile(r'(?:for invalid user|for user|invalid user)\s+(\S+)', re.IGNORECASE)
-        for item in log_lines:
-            line = item.get("line", "") if isinstance(item, dict) else str(item)
-            # Exclude our own dashboard setup scripts — they use curl | sudo bash which can confuse auth parsers
-            if any(own in line for own in ["setup_node.sh", "setup_app.sh", "/api/agent/", "securepulse"]):
-                continue
-            if auth_patterns.search(line):
-                ip_m = ip_pattern.search(line)
-                usr_m = user_pattern.search(line)
-                fail_events.append((time.time(), ip_m.group(1) if ip_m else "unknown", usr_m.group(1) if usr_m else "unknown", line[:250]))
-
-    if not fail_events:
-        return
-
+    pattern = re.compile(
+        r'^(?P<log_ts>[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}).*sshd\[(?P<pid>\d+)\]:\s+Failed\s+(?P<auth_method>password|keyboard-interactive/pam)\s+for\s+(?:invalid user\s+)?(?P<user>\S+)\s+from\s+(?P<ip>[\d.]+)'
+    )
+    
     now = time.time()
-    if server_id not in _recent_auth_failures:
-        _recent_auth_failures[server_id] = []
-
-    # Deduplicate by log line to prevent agent push spam from double-counting
-    existing_lines = set(ev[3] for ev in _recent_auth_failures[server_id] if ev[3])
-    for ev in fail_events:
-        if ev[3] and ev[3] in existing_lines:
-            continue
-        _recent_auth_failures[server_id].append(ev)
-        if ev[3]:
-            existing_lines.add(ev[3])
-            
-    # Retain only last 15 minutes
-    _recent_auth_failures[server_id] = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 900]
-
-    recent_5min = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 300]
-    recent_3min = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 180]
-
-    last_line = fail_events[-1][3] if fail_events else ""
-
-    brute_thresh = _rule_threshold('SSH Brute Force Attempt', default=10)
-    fail_thresh  = _rule_threshold('AUTH_FAIL', default=3)
+    events_found = []
     
-    # Check for specific user targeted >= fail_thresh times in 1 min
-    # We group events that occur within 3 seconds of each other to avoid double/triple counting a single SSH failure
-    targeted_user = None
-    target_count = 0
-    if _is_rule_enabled('AUTH_FAIL'):
-        user_attempts = {}
-        # recent_1min is just recent_3min filtered to 60s
-        for ev in recent_3min:
-            if now - ev[0] < 60:
-                u = ev[2]
-                if u != "unknown":
-                    if u not in user_attempts:
-                        user_attempts[u] = []
-                    # Append timestamp
-                    user_attempts[u].append(ev[0])
-        
-        for u, timestamps in user_attempts.items():
-            timestamps.sort()
-            distinct_count = 0
-            last_ts = 0
-            for ts in timestamps:
-                # Group timestamps within 1.5 seconds of each other into a single distinct attempt
-                if ts - last_ts > 1.5:
-                    distinct_count += 1
-                    last_ts = ts
-                    
-            if distinct_count >= fail_thresh:
-                targeted_user = u
-                target_count = distinct_count
-                break
+    for line in all_lines:
+        if any(own in line for own in ["setup_node.sh", "setup_app.sh", "/api/agent/", "securepulse"]): continue
+        m = pattern.search(line)
+        if m:
+            attempt_key = (m.group('ip'), m.group('user'), m.group('pid'), m.group('log_ts'))
+            events_found.append((m.group('ip'), m.group('user'), attempt_key, line))
+        elif "Failed" in line or "Invalid" in line:
+            logger.debug(f"[AUTH] attempt ignored (not a distinct password/kbd-int match): {line[:60]}...")
 
-    if _is_rule_enabled('SSH Brute Force Attempt') and len(recent_5min) >= brute_thresh:
-        ips = list(set(ev[1] for ev in recent_5min if ev[1] != "unknown"))
-        ip_str = ", ".join(ips[:3]) if ips else "external host"
-        users_hit = list(set(ev[2] for ev in recent_5min if ev[2] != "unknown"))[:3]
-        user_str = f" targeting account(s): {', '.join(users_hit)}" if users_hit else ""
-        _create_alert_dedup(
-            server_id, 'SSH_BRUTE_FORCE', 'critical',
-            'SSH Brute Force Attack Detected',
-            f"{len(recent_5min)} failed SSH login attempts in the last 5 minutes from {ip_str}{user_str}. "
-            f"This pattern indicates an automated brute-force attack in progress. Consider blocking this IP immediately."
-        )
-    elif targeted_user:
-        ips = list(set(ev[1] for ev in recent_3min if ev[2] == targeted_user and ev[1] != "unknown"))
-        ip_str = ", ".join(ips[:3]) if ips else "external host"
-        _create_alert_dedup(
-            server_id, f'AUTH_FAIL_TARGET_{targeted_user}_{target_count}', 'critical',
-            'Targeted SSH Login Failures',
-            f"{target_count} failed SSH login attempts for user '{targeted_user}' in the last 1 minute from {ip_str}. "
-            f"This indicates a targeted password-guessing attack."
-        )
+    fail_thresh = _rule_threshold('AUTH_FAIL', default=3)
+    brute_thresh = _rule_threshold('SSH Brute Force Attempt', default=10)
+
+    for ip, user, attempt_key, line in events_found:
+        state = _ssh_sliding_windows.setdefault((server_id, ip, user), {"attempts": {}, "last_alert": 0})
+        
+        if attempt_key in state["attempts"]:
+            logger.debug(f"[AUTH] attempt ignored (duplicate fingerprint {attempt_key}): {line[:60]}...")
+            continue
+            
+        logger.debug(f"[AUTH] attempt counted: {attempt_key}")
+        state["attempts"][attempt_key] = now
+        
+        # Prune attempts older than 60s
+        state["attempts"] = {k: ts for k, ts in state["attempts"].items() if now - ts < 60}
+        
+        attempt_count = len(state["attempts"])
+        if attempt_count >= brute_thresh:
+            if now - state["last_alert"] >= 60:
+                _create_alert_dedup(server_id, f'SSH_BRUTE_{ip}', 'critical', 'SSH Brute Force Attempt', f"{attempt_count} failed SSH login attempts from {ip} in the last 60 seconds targeting user '{user}'.")
+                state["last_alert"] = now
+            else:
+                logger.debug(f"[AUTH] brute alert suppressed for {ip}")
+        elif attempt_count >= fail_thresh:
+            if now - state["last_alert"] >= 60:
+                _create_alert_dedup(server_id, f'AUTH_FAIL_TARGET_{user}_{ip}', 'critical', 'Targeted SSH Authentication Failure', f"{attempt_count} failed SSH login attempts for user '{user}' from {ip} in the last 60 seconds. Last log: {line[:200]}")
+                state["last_alert"] = now
+            else:
+                logger.debug(f"[AUTH] alert suppressed (already alerted for {user} from {ip} in window)")
 
 def _check_sudo_misuse(server_id, data):
     """Detection: Admin privilege misuse (sudo/su, userdel, role escalation, permission tampering)."""
