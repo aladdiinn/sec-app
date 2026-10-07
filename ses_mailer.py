@@ -1,4 +1,9 @@
 import os
+import html
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+
 import logging
 import boto3
 from botocore.exceptions import ClientError
@@ -69,10 +74,148 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
 def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, message: str, severity: str, timestamp: str, server_ip: str, hostname: str):
     """Constructs the HTML template and sends it via AWS SES."""
     
-    # 1. Filter out noisy alerts as requested by the user
+    # 1. Filter out noisy alerts
     noisy_types = ["sudo su", "session open", "uncoded", "session_opened"]
     if any(noisy in alert_type.lower() or noisy in message.lower() or noisy in alert_title.lower() for noisy in noisy_types):
         logger.info(f"Skipping email for noisy alert: {alert_title}")
+        return False
+        
+    # 2. Get LLM Analysis
+    llm_data = generate_alert_analysis(alert_title, alert_type, message, server_ip)
+    
+    # Escape dynamic values
+    safe_title = html.escape(str(alert_title))
+    safe_id = html.escape(str(alert_id))
+    safe_type = html.escape(str(alert_type))
+    safe_msg = html.escape(str(message))
+    safe_sev = html.escape(str(severity)).upper()
+    safe_time = html.escape(str(timestamp))
+    safe_ip = html.escape(str(server_ip))
+    safe_host = html.escape(str(hostname))
+    
+    sev_color = "red" if safe_sev in ["HIGH", "CRITICAL", "WARNING"] else "#333"
+
+    html_body = f"""
+    <html>
+    <head></head>
+    <body style="font-family: Arial, sans-serif; background-color: #f9f9f9; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: white; border: 1px solid #e0e0e0;">
+            <div style="padding: 10px 15px; font-size: 12px; color: #666; border-bottom: 1px solid #e0e0e0; background-color: #f0f0f0;">
+                BSMART SOC Alert
+            </div>
+            
+            <!-- Dark Banner -->
+            <div style="background-color: #0a0e17; color: white; padding: 15px; display: table; width: 100%; box-sizing: border-box;">
+                <div style="display: table-cell; vertical-align: middle; width: 60px;">
+                    <img src="cid:soc_logo" alt="BSMART SOC" style="max-width: 50px; height: auto; display: block;" />
+                </div>
+                <div style="display: table-cell; vertical-align: middle; padding-left: 15px;">
+                    <span style="color: #0088ff; font-weight: bold; font-size: 16px;">ALERT:</span>
+                    <span style="font-weight: bold; font-size: 16px; margin-left: 5px;">{safe_title}</span>
+                </div>
+            </div>
+            
+            <!-- Table -->
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; width: 35%; font-weight: bold; background-color: #fbfbfb;">Event Time Stamp</td>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0;">{safe_time}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; font-weight: bold; background-color: #fbfbfb;">Alert ID</td>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0;">{safe_id}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; font-weight: bold; background-color: #fbfbfb;">Event Generator</td>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0;">{safe_type}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; font-weight: bold; background-color: #fbfbfb;">Host Name</td>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0;">{safe_host}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; font-weight: bold; background-color: #fbfbfb;">Host IP</td>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0;">{safe_ip}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; font-weight: bold; background-color: #fbfbfb;">Severity</td>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; color: {sev_color};">{safe_sev}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; font-weight: bold; background-color: #fbfbfb;">Raw Message</td>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; word-break: break-all; word-wrap: break-word;">{safe_msg}</td>
+                </tr>
+                
+                <!-- LLM Analysis Section -->
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; font-weight: bold; background-color: #fbfbfb; vertical-align: top;">Analysis/Observation</td>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0;">
+                        <ol style="margin: 0; padding-left: 20px;">
+                            {llm_data.get('analysis', '')}
+                        </ol>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; font-weight: bold; background-color: #fbfbfb; vertical-align: top;">Potential Risk</td>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0;">
+                        {llm_data.get('risk', '')}
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0; font-weight: bold; background-color: #fbfbfb; vertical-align: top;">Recommendations</td>
+                    <td style="padding: 10px; border: 1px solid #e0e0e0;">
+                        <ol style="margin: 0; padding-left: 20px;">
+                            {llm_data.get('recommendations', '')}
+                        </ol>
+                    </td>
+                </tr>
+            </table>
+        </div>
+    </body>
+    </html>
+    """
+    
+    subject = f"[BSMART SOC] {safe_sev} - {safe_title} on {safe_host}"
+    
+    # Parse multiple comma-separated recipients
+    recipient_str = os.environ.get("SES_RECIPIENT_EMAIL", "soc-team@yourcompany.com")
+    recipients = [r.strip() for r in recipient_str.replace(";", ",").split(",") if r.strip()]
+    
+    try:
+        msg = MIMEMultipart('related')
+        msg['Subject'] = subject
+        msg['From'] = SES_SENDER_EMAIL
+        msg['To'] = ", ".join(recipients)
+
+        msg_alternative = MIMEMultipart('alternative')
+        msg.attach(msg_alternative)
+
+        msg_html = MIMEText(html_body, 'html')
+        msg_alternative.attach(msg_html)
+
+        # Attach CID image
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "img", "logo.png")
+        if os.path.exists(logo_path):
+            with open(logo_path, 'rb') as f:
+                img_data = f.read()
+            msg_image = MIMEImage(img_data)
+            msg_image.add_header('Content-ID', '<soc_logo>')
+            msg_image.add_header('Content-Disposition', 'inline')
+            msg.attach(msg_image)
+            
+        ses = get_ses_client()
+        response = ses.send_raw_email(
+            Source=SES_SENDER_EMAIL,
+            Destinations=recipients,
+            RawMessage={'Data': msg.as_string()}
+        )
+        logger.info(f"Smart Alert Email sent! Message ID: {response['MessageId']}")
+        return True
+    except ClientError as e:
+        logger.error(f"Failed to send SES email: {e.response['Error']['Message']}")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to send email: {e}")
         return False
         
     # 2. Get LLM Analysis
