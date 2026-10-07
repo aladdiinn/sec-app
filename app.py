@@ -1778,8 +1778,8 @@ def _check_failed_logins(server_id, data):
         for item in items:
             all_lines.append(item.get("line", "") if isinstance(item, dict) else str(item))
 
-    pattern = re.compile(
-        r'^(?P<log_ts>[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}).*sshd\[(?P<pid>\d+)\]:\s+Failed\s+(?P<auth_method>password|keyboard-interactive/pam)\s+for\s+(?:invalid user\s+)?(?P<user>\S+)\s+from\s+(?P<ip>[\d.]+)'
+        pattern = re.compile(
+        r'^(?P<log_ts>(?:[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T\S+)).*?sshd\[(?P<pid>\d+)\]:\s+Failed\s+(?P<auth_method>password|keyboard-interactive(?:/pam)?)\s+for\s+(?:invalid user\s+)?(?P<user>\S+)\s+from\s+(?P<ip>[\d.]+)'
     )
     
     now = time.time()
