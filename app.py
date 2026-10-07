@@ -1774,7 +1774,7 @@ def _check_failed_logins(server_id, data):
     fail_events = []
     # Only keep core password/user failure events. Exclude PAM 'authentication failure' and 'Failed publickey' 
     # to avoid double counting a single login attempt.
-    valid_auth = re.compile(r'(Failed password|AUTH_FAIL)', re.IGNORECASE)
+    valid_auth = re.compile(r'(Failed password|Failed keyboard-interactive/pam|AUTH_FAIL)', re.IGNORECASE)
     
     for af in auth_failures:
         if isinstance(af, dict):
@@ -1842,10 +1842,18 @@ def _check_failed_logins(server_id, data):
                     user_attempts[u].append(ev[0])
         
         for u, timestamps in user_attempts.items():
-            count = len(timestamps)
-            if count >= fail_thresh:
+            timestamps.sort()
+            distinct_count = 0
+            last_ts = 0
+            for ts in timestamps:
+                # Group timestamps within 1.5 seconds of each other into a single distinct attempt
+                if ts - last_ts > 1.5:
+                    distinct_count += 1
+                    last_ts = ts
+                    
+            if distinct_count >= fail_thresh:
                 targeted_user = u
-                target_count = count
+                target_count = distinct_count
                 break
 
     if _is_rule_enabled('SSH Brute Force Attempt') and len(recent_5min) >= brute_thresh:
