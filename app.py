@@ -1774,7 +1774,7 @@ def _check_failed_logins(server_id, data):
     fail_events = []
     # Only keep core password/user failure events. Exclude PAM 'authentication failure' and 'Failed publickey' 
     # to avoid double counting a single login attempt.
-    valid_auth = re.compile(r'(Failed password|AUTH_FAIL)', re.IGNORECASE)
+    valid_auth = re.compile(r'(Failed password|Failed keyboard-interactive/pam|AUTH_FAIL|Invalid user)', re.IGNORECASE)
     
     for af in auth_failures:
         if isinstance(af, dict):
