@@ -1749,12 +1749,9 @@ def _get_suppressions():
         try:
             conn = db.get_db_connection()
             if conn:
-                with conn.cursor(cursor_factory=psycopg2.extras.DictCursor if hasattr(psycopg2, 'extras') else None) as cur:
-                    # Depending on if DictCursor is used. db_connection usually returns DictCursor if configured.
-                    # Let's just fetch dicts manually if needed.
+                with conn.cursor() as cur:
                     cur.execute("SELECT id, rule_or_generator, match_field, match_type, match_value, server_id FROM alert_suppressions WHERE enabled = TRUE AND (expires_at IS NULL OR expires_at > NOW())")
-                    cols = [desc[0] for desc in cur.description]
-                    _alert_suppressions_cache = [dict(zip(cols, row)) for row in cur.fetchall()]
+                    _alert_suppressions_cache = cur.fetchall()
                 conn.close()
             _alert_suppressions_last_fetch = now
         except Exception as e:
