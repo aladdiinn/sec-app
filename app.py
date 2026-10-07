@@ -1818,12 +1818,28 @@ def _check_failed_logins(server_id, data):
     _recent_auth_failures[server_id] = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 900]
 
     recent_5min = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 300]
-    recent_10min = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 600]
+    recent_3min = [ev for ev in _recent_auth_failures[server_id] if now - ev[0] < 180]
 
     last_line = fail_events[-1][3] if fail_events else ""
 
     brute_thresh = _rule_threshold('SSH Brute Force Attempt', default=10)
     fail_thresh  = _rule_threshold('AUTH_FAIL', default=3)
+    
+    # Check for specific user targeted >= fail_thresh times in 3 mins
+    targeted_user = None
+    target_count = 0
+    if _is_rule_enabled('AUTH_FAIL'):
+        user_counts = {}
+        for ev in recent_3min:
+            u = ev[2]
+            if u != "unknown":
+                user_counts[u] = user_counts.get(u, 0) + 1
+        for u, count in user_counts.items():
+            if count >= fail_thresh:
+                targeted_user = u
+                target_count = count
+                break
+
     if _is_rule_enabled('SSH Brute Force Attempt') and len(recent_5min) >= brute_thresh:
         ips = list(set(ev[1] for ev in recent_5min if ev[1] != "unknown"))
         ip_str = ", ".join(ips[:3]) if ips else "external host"
@@ -1835,16 +1851,14 @@ def _check_failed_logins(server_id, data):
             f"{len(recent_5min)} failed SSH login attempts in the last 5 minutes from {ip_str}{user_str}. "
             f"This pattern indicates an automated brute-force attack in progress. Consider blocking this IP immediately."
         )
-    elif _is_rule_enabled('AUTH_FAIL') and len(recent_10min) >= fail_thresh:
-        ips = list(set(ev[1] for ev in recent_10min if ev[1] != "unknown"))
+    elif targeted_user:
+        ips = list(set(ev[1] for ev in recent_3min if ev[2] == targeted_user and ev[1] != "unknown"))
         ip_str = ", ".join(ips[:3]) if ips else "external host"
-        users_hit = list(set(ev[2] for ev in recent_10min if ev[2] != "unknown"))[:3]
-        user_str = f" targeting account(s): {', '.join(users_hit)}" if users_hit else ""
         _create_alert_dedup(
-            server_id, f'AUTH_FAIL_THRESHOLD_{len(recent_10min)}', 'warning',
-            'Failed SSH Login Attempt' if len(recent_10min) == 1 else 'Multiple Failed SSH Logins',
-            f"{len(recent_10min)} failed SSH login attempt(s) in the last 10 minutes from {ip_str}{user_str}. "
-            f"This may indicate a password-guessing attack or misconfigured service."
+            server_id, f'AUTH_FAIL_TARGET_{targeted_user}_{target_count}', 'critical',
+            'Targeted SSH Login Failures',
+            f"{target_count} failed SSH login attempts for user '{targeted_user}' in the last 3 minutes from {ip_str}. "
+            f"This indicates a targeted password-guessing attack."
         )
 
 def _check_sudo_misuse(server_id, data):
