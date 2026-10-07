@@ -375,7 +375,30 @@ def init_db():
                 );
             """)
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS settings (
+                
+            CREATE TABLE IF NOT EXISTS alert_suppressions (
+                id SERIAL PRIMARY KEY,
+                rule_or_generator VARCHAR(100),
+                match_field VARCHAR(100),
+                match_type VARCHAR(20),
+                match_value TEXT,
+                server_id INTEGER NULL,
+                reason TEXT,
+                created_by VARCHAR(100) DEFAULT 'system',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NULL,
+                enabled BOOLEAN DEFAULT TRUE
+            );
+            
+            INSERT INTO alert_suppressions (rule_or_generator, match_field, match_type, match_value, reason)
+            SELECT 'INSECURE_PERM_CHANGE,FIM_COMMAND,FIM_UNIFIED,CHOWN_ROOT,perm_mod', 'path', 'exact', '/usr/bin/xauth', 'Mute xauth permissions'
+            WHERE NOT EXISTS (SELECT 1 FROM alert_suppressions WHERE match_value = '/usr/bin/xauth');
+            
+            INSERT INTO alert_suppressions (rule_or_generator, match_field, match_type, match_value, reason)
+            SELECT 'INSECURE_PERM_CHANGE,FIM_COMMAND,FIM_UNIFIED,CHOWN_ROOT,perm_mod', 'path', 'prefix', '/usr/lib/jvm/', 'Mute JVM library permissions'
+            WHERE NOT EXISTS (SELECT 1 FROM alert_suppressions WHERE match_value = '/usr/lib/jvm/');
+
+            CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT
                 );
