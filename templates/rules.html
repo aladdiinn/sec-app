@@ -90,56 +90,55 @@
 <script>
 const BUILTIN_RULES = {
     identity: {
-        icon: '🔐', color: '#ef4444', bg: 'rgba(239,68,68,0.15)',
+        icon: '🔒', color: '#ef4444', bg: 'rgba(239,68,68,0.15)',
         title: 'IDENTITY & ACCESS', sub: 'Failed logins, brute force, userdel, privilege escalation',
         rules: [
-            { id: 'failed_login', name: 'Failed Login Threshold', sev: 'warning', desc: 'SSH/VPN/App login failures >= 5 in 10 minutes from same IP', threshold_label: 'Threshold (failures)', threshold_key: 'failed_login_threshold', default: 5 },
-            { id: 'brute_force', name: 'SSH Brute Force Detection', sev: 'critical', desc: 'Rapid SSH failures >= 10 in 5 minutes = active brute force attack', threshold_label: 'Threshold (in 5 min)', threshold_key: 'brute_force_threshold', default: 10 },
-            { id: 'user_deleted', name: 'User Account Deletion (userdel)', sev: 'critical', desc: 'userdel/deluser command detected — critical user account removed', threshold_label: null },
-            { id: 'sudo_misuse', name: 'Admin Privilege Misuse (sudo/su)', sev: 'critical', desc: 'Detect sudo/su escalation, suspicious COMMAND patterns in auth logs', threshold_label: null },
-            { id: 'shadow_dump', name: 'Shadow File Dumping', sev: 'critical', desc: 'cat /etc/shadow or /etc/passwd detected — credential access attempt', threshold_label: null },
-            { id: 'new_user', name: 'New User Account Created', sev: 'warning', desc: 'useradd/adduser detected — possible persistence mechanism', threshold_label: null },
-            { id: 'sudo_group', name: 'User Added to sudo/wheel Group', sev: 'critical', desc: 'usermod -aG sudo detected — privilege escalation attempt', threshold_label: null },
+            { id: 'failed_login', name: 'Failed Login Threshold', sev: 'critical', desc: '3 failed SSH login attempts from same IP within 60 seconds', always_on: true },
+            { id: 'brute_force', name: 'SSH Brute Force Detection', sev: 'critical', desc: 'Rapid SSH failures >= 10 in 5 minutes = active brute force attack', always_on: true },
+            { id: 'user_deleted', name: 'User Account Deletion (userdel)', sev: 'critical', desc: 'userdel/deluser command detected – critical user account removed', always_on: true },
+            { id: 'sudo_misuse', name: 'Admin Privilege Misuse (sudo/su)', sev: 'critical', desc: 'Detect sudo/su escalation, suspicious COMMAND patterns in auth logs', always_on: true },
+            { id: 'shadow_dump', name: 'Shadow File Dumping', sev: 'critical', desc: 'cat /etc/shadow or /etc/passwd detected – credential access attempt', always_on: true },
+            { id: 'new_user', name: 'New User Account Created', sev: 'warning', desc: 'useradd/adduser detected – possible persistence mechanism', threshold_label: null },
+            { id: 'sudo_group', name: 'User Added to sudo/wheel Group', sev: 'critical', desc: 'usermod -aG sudo detected – privilege escalation attempt', always_on: true },
         ]
     },
     file_integrity: {
         icon: '📁', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)',
         title: 'OS FILE INTEGRITY & PERMISSIONS (FIM)', sub: 'Critical system file modification and permission monitoring',
         rules: [
-            { id: 'fim_passwd', name: '/etc/passwd Modification', sev: 'critical', desc: 'File integrity change detected on /etc/passwd (user accounts)', threshold_label: null },
-            { id: 'fim_shadow', name: '/etc/shadow Modification', sev: 'critical', desc: 'File integrity change detected on /etc/shadow (password hashes)', threshold_label: null },
-            { id: 'fim_sudoers', name: '/etc/sudoers Modification', sev: 'critical', desc: 'File integrity change detected on /etc/sudoers', threshold_label: null },
-            { id: 'fim_sshd', name: 'sshd_config Modification', sev: 'critical', desc: 'SSH daemon config changed — possible backdoor or port change', threshold_label: null },
-            { id: 'chmod_insecure', name: 'Insecure Permission Grant (chmod 777 / SUID)', sev: 'critical', desc: 'chmod 777 or SUID (+s) execution detected on host', threshold_label: null },
-            { id: 'fim_crontab', name: '/etc/crontab Modification', sev: 'warning', desc: 'Crontab modification — possible persistence mechanism', threshold_label: null },
-            { id: 'chmod_critical', name: 'Critical Path chmod/chown', sev: 'warning', desc: 'chmod/chown commands on /etc, /bin, /sbin critical paths', threshold_label: null },
+            { id: 'fim_passwd', name: '/etc/passwd Modification', sev: 'critical', desc: 'File integrity change detected on /etc/passwd (user accounts)', always_on: true },
+            { id: 'fim_shadow', name: '/etc/shadow Modification', sev: 'critical', desc: 'File integrity change detected on /etc/shadow (password hashes)', always_on: true },
+            { id: 'fim_sudoers', name: '/etc/sudoers Modification', sev: 'critical', desc: 'File integrity change detected on /etc/sudoers', always_on: true },
+            { id: 'fim_sshd', name: 'sshd_config Modification', sev: 'critical', desc: 'SSH daemon config changed – possible backdoor or port change', always_on: true },
+            { id: 'chmod_insecure', name: 'Insecure Permission Grant (chmod 777 / SUID)', sev: 'critical', desc: 'chmod 777 or SUID (+s) execution detected on host', always_on: true },
+            { id: 'fim_crontab', name: '/etc/crontab Modification', sev: 'warning', desc: 'Crontab modification – possible persistence mechanism', always_on: true },
+            { id: 'chmod_critical', name: 'Critical Path chmod/chown', sev: 'warning', desc: 'chmod/chown commands on /etc, /bin, /sbin critical paths', always_on: true },
         ]
     },
     network: {
         icon: '🌐', color: '#38bdf8', bg: 'rgba(56,189,248,0.15)',
-        title: 'NETWORK & HOST', sub: 'Port scan, traffic anomalies, CPU/RAM monitoring',
+        title: 'NETWORK & HOST RESOURCES', sub: 'Open ports, CPU/Memory spikes, firewall tampering',
         rules: [
-            { id: 'port_scan', name: 'New Open Port Detected', sev: 'warning', desc: 'Unexpected port opened — possible unauthorized service or backdoor', threshold_label: null },
-            { id: 'high_cpu_proc', name: 'High CPU Process (>85%)', sev: 'warning', desc: 'Per-process CPU exceeds 85% — possible crypto-mining or runaway process', threshold_label: 'CPU Threshold %', threshold_key: 'cpu_threshold', default: 85 },
-            { id: 'high_mem_proc', name: 'High Memory Process (>85%)', sev: 'warning', desc: 'Per-process RAM exceeds 85% — possible memory exhaustion', threshold_label: 'RAM Threshold %', threshold_key: 'mem_threshold', default: 85 },
-            { id: 'firewall_disable', name: 'Firewall Disabled (iptables/ufw)', sev: 'critical', desc: 'iptables -F or ufw disable command detected', threshold_label: null },
-            { id: 'cron_persist', name: 'Cron Persistence Attempt', sev: 'warning', desc: 'crontab -e/r or /etc/cron write detected in logs', threshold_label: null },
+            { id: 'port_scan', name: 'New Open Port Detected', sev: 'warning', desc: 'Unexpected port opened – possible unauthorized service or backdoor', threshold_label: null },
+            { id: 'high_cpu_proc', name: 'High CPU Process (>85%)', sev: 'warning', desc: 'Per-process CPU exceeds 85% – possible crypto-mining or runaway process', threshold_label: 'CPU Threshold %', threshold_key: 'cpu_threshold', default: 85 },
+            { id: 'high_mem_proc', name: 'High Memory Process (>85%)', sev: 'warning', desc: 'Per-process RAM exceeds 85% – possible memory exhaustion', threshold_label: 'RAM Threshold %', threshold_key: 'mem_threshold', default: 85 },
+            { id: 'firewall_disable', name: 'Firewall Disabled (iptables/ufw)', sev: 'critical', desc: 'iptables -F or ufw disable command detected', always_on: true },
+            { id: 'cron_persist', name: 'Cron Persistence Attempt', sev: 'warning', desc: 'crontab -e/r or /etc/cron write detected in logs', always_on: true },
         ]
     },
     log_analysis: {
-        icon: '📋', color: '#a855f7', bg: 'rgba(168,85,247,0.15)',
+        icon: '🗄️', color: '#a855f7', bg: 'rgba(168,85,247,0.15)',
         title: 'APPLICATION & DB LOGS', sub: 'Tomcat, PostgreSQL, OS log pattern analysis & SOAR',
         rules: [
-            { id: 'pg_destructive', name: 'PostgreSQL Database Deletion (DROP/TRUNCATE)', sev: 'critical', desc: 'DROP DATABASE / DROP SCHEMA / DROP TABLE / TRUNCATE detected in PostgreSQL logs or CLI', threshold_label: null },
-            { id: 'pg_priv_change', name: 'PostgreSQL Privilege Escalation', sev: 'critical', desc: 'ALTER USER / ROLE / GRANT / REVOKE / SUPERUSER detected in PostgreSQL logs', threshold_label: null },
+            { id: 'pg_destructive', name: 'PostgreSQL Database Deletion (DROP/TRUNCATE)', sev: 'critical', desc: 'DROP DATABASE / DROP SCHEMA / DROP TABLE / TRUNCATE detected in PostgreSQL logs or CLI', always_on: true },
+            { id: 'pg_priv_change', name: 'PostgreSQL Privilege Escalation', sev: 'critical', desc: 'ALTER USER / ROLE / GRANT / REVOKE / SUPERUSER detected in PostgreSQL logs', always_on: true },
             { id: 'pg_access_denied', name: 'PostgreSQL Permission Denied', sev: 'warning', desc: 'Permission denied / must be superuser errors in PostgreSQL logs', threshold_label: null },
-            { id: 'pg_auth_fail', name: 'PostgreSQL Auth Failure', sev: 'warning', desc: 'FATAL: password authentication failed — database login attack', threshold_label: null },
-            { id: 'tomcat_oom', name: 'Tomcat OutOfMemoryError', sev: 'critical', desc: 'Java OutOfMemoryError or StackOverflow in application logs', threshold_label: null },
+            { id: 'pg_auth_fail', name: 'PostgreSQL Auth Failure', sev: 'warning', desc: 'FATAL: password authentication failed – database login attack', threshold_label: null },
+            { id: 'tomcat_oom', name: 'Tomcat OutOfMemoryError', sev: 'critical', desc: 'Java OutOfMemoryError or StackOverflow in application logs', always_on: true },
             { id: 'tomcat_500', name: 'Tomcat Application Errors', sev: 'warning', desc: 'Internal Server Error or SEVERE in Tomcat/catalina.out logs', threshold_label: null },
             { id: 'os_kernel_err', name: 'OS Kernel / Audit Errors', sev: 'warning', desc: 'Kernel panic, AVC denied, audit failures in OS logs', threshold_label: null },
         ]
-    }
-};
+    }};
 
 let ruleStates = {};
 let alertSummary = {};
@@ -180,7 +179,7 @@ function renderCategories() {
             const state = ruleStates[rule.id] || ruleStates[rule.name] || {};
             const enabled = state.enabled !== false;
             if (enabled) activeRules++;
-            const thresholdHtml = rule.threshold_label ? `<div class="det-threshold"><span>${rule.threshold_label}:</span><input type="number" value="${state.threshold || rule.default}" min="1" max="1000" onchange="saveThreshold('${rule.id}', this.value)"></div>` : '';
+            const thresholdHtml = (rule.threshold_label && !rule.always_on) ? `<div class="det-threshold"><span>${rule.threshold_label}:</span><input type="number" value="${state.threshold || rule.default}" min="1" max="1000" onchange="saveThreshold('${rule.id}', this.value)"></div>` : '';
             return `<div class="det-rule-item">
                 <div style="flex:1">
                     <div class="det-rule-name">${rule.name}</div>
@@ -188,10 +187,10 @@ function renderCategories() {
                     ${thresholdHtml}
                 </div>
                 <span class="det-rule-sev sev-${rule.sev}">${rule.sev.toUpperCase()}</span>
-                <label class="det-toggle" title="${enabled?'Enabled — click to disable':'Disabled — click to enable'}">
+                ${rule.always_on ? `<span style="background: rgba(16,185,129,0.15); color: #10b981; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; border: 1px solid rgba(16,185,129,0.3); white-space: nowrap;">ALWAYS ON</span>` : `<label class="det-toggle" title="${enabled?'Enabled - click to disable':'Disabled - click to enable'}">
                     <input type="checkbox" ${enabled?'checked':''} onchange="toggleRule('${rule.id}','${rule.name}',this.checked)">
                     <span class="det-toggle-slider"></span>
-                </label>
+                </label>`}
             </div>`;
         }).join('');
         return `<div class="det-cat-card">
