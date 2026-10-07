@@ -1825,19 +1825,34 @@ def _check_failed_logins(server_id, data):
     brute_thresh = _rule_threshold('SSH Brute Force Attempt', default=10)
     fail_thresh  = _rule_threshold('AUTH_FAIL', default=3)
     
-    # Check for specific user targeted >= fail_thresh times in 3 mins
+    # Check for specific user targeted >= fail_thresh times in 1 min
+    # We group events that occur within 3 seconds of each other to avoid double/triple counting a single SSH failure
     targeted_user = None
     target_count = 0
     if _is_rule_enabled('AUTH_FAIL'):
-        user_counts = {}
+        user_attempts = {}
+        # recent_1min is just recent_3min filtered to 60s
         for ev in recent_3min:
-            u = ev[2]
-            if u != "unknown":
-                user_counts[u] = user_counts.get(u, 0) + 1
-        for u, count in user_counts.items():
-            if count >= fail_thresh:
+            if now - ev[0] < 60:
+                u = ev[2]
+                if u != "unknown":
+                    if u not in user_attempts:
+                        user_attempts[u] = []
+                    # Append timestamp
+                    user_attempts[u].append(ev[0])
+        
+        for u, timestamps in user_attempts.items():
+            timestamps.sort()
+            distinct_count = 0
+            last_ts = 0
+            for ts in timestamps:
+                if ts - last_ts > 3:
+                    distinct_count += 1
+                    last_ts = ts
+            
+            if distinct_count >= fail_thresh:
                 targeted_user = u
-                target_count = count
+                target_count = distinct_count
                 break
 
     if _is_rule_enabled('SSH Brute Force Attempt') and len(recent_5min) >= brute_thresh:
@@ -1857,7 +1872,7 @@ def _check_failed_logins(server_id, data):
         _create_alert_dedup(
             server_id, f'AUTH_FAIL_TARGET_{targeted_user}_{target_count}', 'critical',
             'Targeted SSH Login Failures',
-            f"{target_count} failed SSH login attempts for user '{targeted_user}' in the last 3 minutes from {ip_str}. "
+            f"{target_count} failed SSH login attempts for user '{targeted_user}' in the last 1 minute from {ip_str}. "
             f"This indicates a targeted password-guessing attack."
         )
 
