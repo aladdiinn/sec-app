@@ -105,15 +105,17 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
             </div>
             
             <!-- Dark Banner -->
-            <div style="background-color: #0a0e17; color: white; padding: 15px; display: table; width: 100%; box-sizing: border-box;">
-                <div style="display: table-cell; vertical-align: middle; width: 60px;">
-                    <img src="cid:soc_logo" alt="BSMART SOC" style="max-width: 50px; height: auto; display: block;" />
-                </div>
-                <div style="display: table-cell; vertical-align: middle; padding-left: 15px;">
-                    <span style="color: #0088ff; font-weight: bold; font-size: 16px;">ALERT:</span>
-                    <span style="font-weight: bold; font-size: 16px; margin-left: 5px;">{safe_title}</span>
-                </div>
-            </div>
+            <table style="width: 100%; background-color: #0a0e17; color: white; border-collapse: collapse; margin: 0; padding: 0;">
+                <tr>
+                    <td style="padding: 15px 15px 15px 15px; width: 80px; vertical-align: middle; text-align: center;">
+                        <img src="cid:soc_logo" alt="BSMART SOC" style="width: 70px; max-width: 70px; height: auto; display: block; border: 0; margin: 0 auto;" />
+                    </td>
+                    <td style="padding: 15px 15px 15px 10px; vertical-align: middle; text-align: left;">
+                        <span style="color: #0088ff; font-weight: bold; font-size: 20px; display: inline-block; vertical-align: middle;">ALERT:</span>
+                        <span style="font-weight: bold; font-size: 20px; margin-left: 5px; display: inline-block; vertical-align: middle;">{safe_title}</span>
+                    </td>
+                </tr>
+            </table>
             
             <!-- Table -->
             <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
