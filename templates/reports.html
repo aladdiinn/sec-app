@@ -178,7 +178,7 @@
 <!-- HIDDEN PDF RENDER CONTAINER (ONLY VISIBLE IN @media print) -->
 <div id="pdf-container">
     <div class="pdf-header">
-        <h1 id="pdf-title">SECUREPULSE SOC REPORT</h1>
+        <h1 id="pdf-title">{{ APP_BRAND }} REPORT</h1>
         <div id="pdf-subtitle">Generated automatically by Security Engine</div>
         <div id="pdf-meta" style="margin-top:20px; color:#64748b; font-size:12px"></div>
     </div>
@@ -186,7 +186,7 @@
     <div id="pdf-content"></div>
     
     <div class="pdf-footer">
-        <div>SecurePulse SOC Platform - Executive Insights</div>
+        <div>{{ APP_BRAND }} - Executive Insights</div>
         <div>Page 1</div>
     </div>
 </div>
@@ -318,7 +318,7 @@
             </div>
             ${htmlContent}
             <div class="pdf-footer" style="margin-top:50px; padding-top:20px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; font-size:11px; color:#94a3b8;">
-                <div>SecurePulse SOC Platform - Executive Insights</div><div>${isPreview ? 'Preview Mode' : 'Page 1'}</div>
+                <div>{{ APP_BRAND }} - Executive Insights</div><div>${isPreview ? 'Preview Mode' : 'Page 1'}</div>
             </div>
         `;
         document.getElementById('preview-content').innerHTML = out;

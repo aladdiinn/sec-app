@@ -445,6 +445,8 @@ import os
 import re
 import json
 import logging
+
+APP_BRAND = "BSMART SOC"
 import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
@@ -643,7 +645,7 @@ def render_template(request: Request, name: str, context: dict = None):
     """Safe template renderer providing request, session, project_id, user, and is_admin context."""
     if context is None:
         context = {}
-    
+    context["APP_BRAND"] = APP_BRAND
     user = get_session_user(request)
     is_admin = is_admin_user(request)
     if user:
@@ -3084,7 +3086,7 @@ async def api_create_user(request: Request):
     except Exception:
         body = {}
     username = body.get("username") or body.get("email")
-    email = body.get("email") or f"{username}@securepulse.local"
+    email = body.get("email") or f"{username}@bsmartsoc.local"
     password = body.get("password") or "User123!"
     role = body.get("role", "normal")
     full_name = body.get("full_name") or username
@@ -3335,16 +3337,16 @@ set -e
 # Self-elevation check
 if [ "$(id -u)" -ne 0 ]; then
     if command -v sudo >/dev/null 2>&1; then
-        echo "[SECUREPULSE] Elevating privileges via sudo..."
+        echo "[{APP_BRAND}] Elevating privileges via sudo..."
         exec sudo bash "$0" "$@"
     fi
 fi
 
 echo "============================================================"
-echo " SecurePulse SOC Command Center — Target Node Push Agent"
+echo " {APP_BRAND} Command Center — Target Node Push Agent"
 echo "============================================================"
-echo "[SECUREPULSE] SOC Server URL : {base_url}"
-echo "[SECUREPULSE] (Zero SSH Credentials Stored / Pure Outbound Push)"
+echo "[{APP_BRAND}] SOC Server URL : {base_url}"
+echo "[{APP_BRAND}] (Zero SSH Credentials Stored / Pure Outbound Push)"
 
 # 0. Auto-detect real Outward IP and Hostname on the target machine
 DETECTED_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{{print $7}}' || hostname -I 2>/dev/null | awk '{{print $1}}')
@@ -3363,11 +3365,11 @@ if [ -n "$DETECTED_HOST" ] && ([ "$NODE_NAME" = "Target-Node" ] || [ -z "$NODE_N
     NODE_NAME="$DETECTED_HOST"
 fi
 
-echo "[SECUREPULSE] Target Node IP   : $NODE_IP"
-echo "[SECUREPULSE] Target Hostname  : $NODE_NAME"
+echo "[{APP_BRAND}] Target Node IP   : $NODE_IP"
+echo "[{APP_BRAND}] Target Hostname  : $NODE_NAME"
 
 # 1. Submit Onboarding Approval Request
-echo "[SECUREPULSE] Submitting onboarding approval request for $NODE_NAME ($NODE_IP)..."
+echo "[{APP_BRAND}] Submitting onboarding approval request for $NODE_NAME ($NODE_IP)..."
 
 PAYLOAD_JSON=$(cat << JSON_EOF
 {{
@@ -3433,15 +3435,15 @@ chmod -R +r /var/log/postgresql /var/lib/pgsql /var/lib/postgresql /opt/postgres
 chmod -R +r /var/log/tomcat* /opt/tomcat* 2>/dev/null || true
 
 # 1.5 Setup auditd safely (Cross-platform)
-echo "[SECUREPULSE] Configuring auditd security policies..."
+echo "[{APP_BRAND}] Configuring auditd security policies..."
 if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null 2>&1 || true
-    apt-get install -y -qq auditd </dev/null >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install auditd, continuing..."
+    apt-get install -y -qq auditd </dev/null >/dev/null 2>&1 || echo "[{APP_BRAND}] Failed to install auditd, continuing..."
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y audit </dev/null >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install audit, continuing..."
+    yum install -y audit </dev/null >/dev/null 2>&1 || echo "[{APP_BRAND}] Failed to install audit, continuing..."
 elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y audit </dev/null >/dev/null 2>&1 || echo "[SECUREPULSE] Failed to install audit, continuing..."
+    dnf install -y audit </dev/null >/dev/null 2>&1 || echo "[{APP_BRAND}] Failed to install audit, continuing..."
 fi
 
 if [ -d /etc/audit/rules.d/ ]; then
@@ -4136,10 +4138,10 @@ def get_new_log_lines(max_lines_per_file=50):
     return balanced
 
 # Main loop
-print(f"[SecurePulse Agent] Starting. SOC: {{SOC_URL}}, Node: {{TARGET_NAME}} ({{TARGET_IP}}), Server ID: {{ASSIGNED_SERVER_ID}}")
-print("[SecurePulse Agent] Discovering log paths...")
+print(f"[{APP_BRAND} Agent] Starting. SOC: {{SOC_URL}}, Node: {{TARGET_NAME}} ({{TARGET_IP}}), Server ID: {{ASSIGNED_SERVER_ID}}")
+print("[{APP_BRAND} Agent] Discovering log paths...")
 discovered_paths = auto_discover_log_paths()
-print(f"[SecurePulse Agent] Found log paths: {{list(discovered_paths.keys())}}")
+print(f"[{APP_BRAND} Agent] Found log paths: {{list(discovered_paths.keys())}}")
 
 # Initialize FIM baseline
 check_fim()
@@ -4227,9 +4229,9 @@ while True:
             discovered_paths = auto_discover_log_paths()
 
     except urllib.error.URLError as e:
-        print(f"[SecurePulse Agent] Connection error: {{e}}")
+        print(f"[{APP_BRAND} Agent] Connection error: {{e}}")
     except Exception as e:
-        print(f"[SecurePulse Agent] Error: {{e}}")
+        print(f"[{APP_BRAND} Agent] Error: {{e}}")
 
     time.sleep(PUSH_INTERVAL)
 PY_EOF
@@ -4242,7 +4244,7 @@ pkill -f node_push_agent.sh 2>/dev/null || true
 if command -v systemctl >/dev/null 2>&1; then
     cat << 'SERVICE_EOF' > /etc/systemd/system/securepulse.service
 [Unit]
-Description=SecurePulse SOC Node Agent Daemon
+Description={APP_BRAND} Node Agent Daemon
 After=network.target
 
 [Service]
@@ -4266,7 +4268,7 @@ else
     nohup python3 /opt/securepulse/node_push_agent.py > /var/log/securepulse_agent.log 2>&1 &
 fi
 
-echo "[SUCCESS] SecurePulse Agent Daemon is active & streaming telemetry!"
+echo "[SUCCESS] {APP_BRAND} Agent Daemon is active & streaming telemetry!"
 echo "[INFO] Manage service: systemctl restart securepulse | systemctl status securepulse"
 """
     return Response(content=script, media_type="text/x-shellscript")
@@ -4284,12 +4286,12 @@ async def setup_app_log_script(request: Request, config_id: Optional[int] = None
     script = f"""#!/bin/bash
 set -e
 echo "============================================================"
-echo " SecurePulse SOC — Standalone Application Log Shipper"
+echo " {APP_BRAND} — Standalone Application Log Shipper"
 echo "============================================================"
-echo "[SECUREPULSE] SOC Server URL : {base_url}"
-echo "[SECUREPULSE] Standalone Log Config ID : {cfg_id}"
-echo "[SECUREPULSE] Log File Path            : {target_log_path}"
-echo "[SECUREPULSE] (No asset created in inventory / Zero SSH Credentials)"
+echo "[{APP_BRAND}] SOC Server URL : {base_url}"
+echo "[{APP_BRAND}] Standalone Log Config ID : {cfg_id}"
+echo "[{APP_BRAND}] Log File Path            : {target_log_path}"
+echo "[{APP_BRAND}] (No asset created in inventory / Zero SSH Credentials)"
 
 mkdir -p /opt/securepulse
 if [ ! -f "{target_log_path}" ]; then
@@ -4317,7 +4319,7 @@ nohup /opt/securepulse/log_forwarder_{cfg_id}.sh >/dev/null 2>&1 &
 echo "============================================================"
 echo " [SUCCESS] Application Log Shipper Started!"
 echo " Log File : {target_log_path}"
-echo " Streaming directly to SecurePulse Log Analyzer (Zero SSH Credentials Used)!"
+echo " Streaming directly to {APP_BRAND} Log Analyzer (Zero SSH Credentials Used)!"
 echo "============================================================"
 """
     return Response(content=script, media_type="text/x-shellscript")

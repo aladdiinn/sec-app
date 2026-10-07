@@ -68,7 +68,7 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
         return {
             "analysis": f"<li>Event Type: {alert_type}</li><li>Target Server: {server_ip}</li><li>User: {username}</li><li>Raw Event: {message}</li>",
             "risk": f"<p>A security event matching rule '{alert_title}' was triggered. Immediate manual review is recommended.</p>",
-            "recommendations": "<li>Investigate the raw event logs via the SecurePulse dashboard.</li><li>Verify the user's authorization to perform this action.</li><li>Check the affected server for related anomalous activity.</li>"
+            "recommendations": "<li>Investigate the raw event logs via the {APP_BRAND} dashboard.</li><li>Verify the user's authorization to perform this action.</li><li>Check the affected server for related anomalous activity.</li>"
         }
 
 def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, message: str, severity: str, timestamp: str, server_ip: str, hostname: str):

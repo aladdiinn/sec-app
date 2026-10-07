@@ -1,5 +1,5 @@
 """
-SecurePulse SOC - Domain VAPT & Security Scanner Engine
+BSMART SOC - Domain VAPT & Security Scanner Engine
 Provides real-world security assessment for:
 1. HTTP Security Headers (SHCHECK Analyzer)
 2. SSL/TLS Configuration & Certificate Analysis (Accurate Expiration & Issuer)

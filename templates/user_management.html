@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% set active = 'user-management' %}
-{% block title %}User Management & RBAC — SecurePulse{% endblock %}
+{% block title %}User Management & RBAC — {{ APP_BRAND }}{% endblock %}
 {% block page_title %}USER MANAGEMENT & RBAC{% endblock %}
 {% block page_sub %}3-Tier Role Architecture, Group Access Inheritance, and Guided Group User Onboarding{% endblock %}
 
@@ -363,7 +363,7 @@ if (!projectTags) {
                     </div>
                     <div>
                         <label class="stat-label">EMAIL ADDRESS</label>
-                        <input type="email" id="nu-email" style="width:100%" placeholder="jsmith@securepulse.local">
+                        <input type="email" id="nu-email" style="width:100%" placeholder="jsmith@bsmartsoc.local">
                     </div>
                     <div>
                         <label class="stat-label">INITIAL PASSWORD</label>
@@ -603,7 +603,7 @@ if (!projectTags) {
                         </div>
                         <div>
                             <label class="stat-label">GC USER EMAIL</label>
-                            <input type="email" id="wz-gcemail" value="${wizardData.gc_email}" style="width:100%" placeholder="gc_operator@securepulse.local">
+                            <input type="email" id="wz-gcemail" value="${wizardData.gc_email}" style="width:100%" placeholder="gc_operator@bsmartsoc.local">
                         </div>
                         <div style="grid-column: span 2">
                             <label class="stat-label">GC USER INITIAL PASSWORD *</label>
@@ -694,7 +694,7 @@ if (!projectTags) {
                             <div class="stat-label" style="color:var(--cyan)">GROUP & GC USER</div>
                             <div style="margin-top:6px"><strong>Group Name:</strong> ${wizardData.group_name}</div>
                             <div><strong>GC Username:</strong> ${wizardData.gc_username}</div>
-                            <div><strong>Email:</strong> ${wizardData.gc_email || wizardData.gc_username+'@securepulse.local'}</div>
+                            <div><strong>Email:</strong> ${wizardData.gc_email || wizardData.gc_username+'@bsmartsoc.local'}</div>
                         </div>
                         <div class="card glass" style="padding:12px">
                             <div class="stat-label" style="color:var(--amber)">MEMBERS & PROJECTS</div>

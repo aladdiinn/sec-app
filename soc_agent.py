@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SecurePulse Real-Time SOC Endpoint Agent
+BSMART SOC Real-Time Endpoint Agent
 Monitors:
 1. /var/log/auth.log for real SSH failed logins, invalid users, and sudo commands
 2. Bash command history from all active users (/root/.bash_history, /home/*/.bash_history)
@@ -190,7 +190,7 @@ def scan_bash_histories():
 
 def main():
     logger.info("==============================================================")
-    logger.info("  SecurePulse SOC Endpoint Agent Started")
+    logger.info("  BSMART SOC Endpoint Agent Started")
     logger.info(f"  Target Server ID : {SERVER_ID}")
     logger.info(f"  SOC Endpoint URL : {SOC_URL}")
     logger.info("  Monitoring: /var/log/auth.log + user bash histories in real time")

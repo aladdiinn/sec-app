@@ -3,7 +3,7 @@ import sys
 import os
 
 def start():
-    print("🚀 Initializing SecurePulse SOC Platform...")
+    print("🚀 Initializing BSMART SOC Platform...")
     
     # 1. Run migrations
     print("\n--- Synchronizing Database ---")
