@@ -879,6 +879,7 @@ async def auth_login(request: Request):
             request.session["user_id"] = user["id"]
             request.session["username"] = user.get("username") or user.get("email") or "admin"
             request.session["user_role"] = user.get("role", "admin")
+            request.session["user_email"] = user.get("email", "")
             
             return JSONResponse(content={
                 "ok": True,

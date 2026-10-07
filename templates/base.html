@@ -175,7 +175,20 @@
                     </div>
 
                     <div id="sb-clock">--:--:--</div>
-                    <div class="sb-logo" style="width:26px; height:26px; border-radius:50%; font-family:var(--orb); font-size:10px; color:var(--cyan); display:flex; align-items:center; justify-content:center; background:rgba(0,200,255,0.1); border:1px solid var(--cyan)">{{ session.get('user_role', 'N')[0]|upper }}</div>
+                    <!-- User Profile Avatar -->
+                    <div class="user-profile-bell" id="profile-toggle" style="position: relative; cursor: pointer;">
+                        <div class="sb-logo" style="width:26px; height:26px; border-radius:50%; font-family:var(--orb); font-size:10px; color:var(--cyan); display:flex; align-items:center; justify-content:center; background:rgba(0,200,255,0.1); border:1px solid var(--cyan)">{{ session.get('username', 'U')[0]|upper }}</div>
+                        <div class="notif-dropdown" id="profile-dropdown" style="right: 0; left: auto; top: 120%; min-width: 220px; z-index: 9999;">
+                            <div class="notif-header" style="text-align: center;">USER PROFILE</div>
+                            <div class="notif-list" style="padding: 12px; font-size: 11px; line-height: 2; font-family: var(--orb); text-transform: uppercase;">
+                                <div><span style="color:#888;">USERNAME:</span> <span style="float:right; color:#fff;">{{ session.get('username', 'N/A') }}</span></div>
+                                <div style="border-bottom: 1px solid rgba(255,255,255,0.1); margin: 6px 0;"></div>
+                                <div><span style="color:#888;">EMAIL:</span> <span style="float:right; color:#fff; text-transform: none;">{{ session.get('user_email', 'N/A') }}</span></div>
+                                <div style="border-bottom: 1px solid rgba(255,255,255,0.1); margin: 6px 0;"></div>
+                                <div><span style="color:#888;">ROLE:</span> <span style="float:right; color:var(--cyan); font-weight: bold;">{{ session.get('user_role', 'ADMIN') }}</span></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </header>
             {% if current_project or session.get('project_id') %}

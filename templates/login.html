@@ -650,7 +650,7 @@ body {
       }));
 
       // Trigger success animation and clean redirect
-      showSuccess(data.full_name || data.username || 'admin', data.redirect_url || '/dashboard');
+      showSuccess((data.user && data.user.username) || data.full_name || data.username || 'admin', data.redirect_url || '/dashboard');
 
     } catch (ex) {
       err.textContent = '⚠ ' + ex.message;
