@@ -107,8 +107,8 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
             <!-- Dark Banner -->
             <table style="width: 100%; background-color: #0a0e17; color: white; border-collapse: collapse; margin: 0; padding: 0;">
                 <tr>
-                    <td style="padding: 15px 15px 15px 15px; width: 80px; vertical-align: middle; text-align: center;">
-                        <img src="cid:soc_logo" alt="BSMART SOC" style="width: 70px; max-width: 70px; height: auto; display: block; border: 0; margin: 0 auto;" />
+                    <td style="padding: 15px 15px 15px 15px; width: 160px; vertical-align: middle; text-align: center;">
+                        <img src="cid:soc_logo" alt="BSMART SOC" style="width: 150px; max-width: 150px; height: auto; display: block; border: 0; margin: 0 auto;" />
                     </td>
                     <td style="padding: 15px 15px 15px 0px; vertical-align: middle; text-align: left; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
                         <span style="color: #0088ff; font-weight: 700; font-size: 22px; display: inline-block; vertical-align: middle; letter-spacing: 0.5px;">ALERT:</span>
