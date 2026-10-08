@@ -2578,7 +2578,7 @@ async def api_agent_push(request: Request):
     except Exception:
         data = {}
     try:
-        logger.warning(f"DEBUG AGENT PUSH: rx={data.get('network_rx_bytes')} tx={data.get('network_tx_bytes')} agent_v={data.get('agent_version')}")
+        logger.warning(f"DEBUG AGENT PUSH: rx={data.get('network_rx_bytes')} tx={data.get('network_tx_bytes')} agent_v={data.get('agent_version')} machine_id={data.get('machine_id')}")
     except: pass
     
     server_id = data.get("server_id")
@@ -2683,7 +2683,7 @@ async def api_agent_push(request: Request):
                 update_q = "UPDATE servers SET last_seen = NOW(), status = 'online'"
                 params = []
                 if machine_id:
-                    update_q += ", machine_id = COALESCE(machine_id, %s)"
+                    update_q += ", machine_id = CASE WHEN machine_id IS NULL OR machine_id = '' THEN %s ELSE machine_id END"
                     params.append(machine_id)
                 update_q += " WHERE id = %s;"
                 params.append(server_id)
