@@ -193,6 +193,7 @@
                     <div><span style="color:var(--text2)">Database / App:</span> <strong id="i3-info-db" style="color:var(--text)">sikkim_tnd_hes</strong></div>
                     <div><span style="color:var(--text2)">Status:</span> <span id="i3-info-status" style="color:var(--red); font-weight:700">CRITICAL</span></div>
                     <div><span style="color:var(--text2)">Agent Status:</span> <strong id="i3-info-agent" style="color:var(--green)">Agent Alive</strong></div>
+                    <div><span style="color:var(--text2)">Machine ID:</span> <strong id="i3-info-machine" style="color:var(--text)">N/A</strong></div>
                 </div>
             </div>
 
@@ -689,6 +690,11 @@ function formatLocal(dateStr) {
             if (document.getElementById('i3-info-type')) document.getElementById('i3-info-type').innerText = srv.os_info || 'Linux Server';
             if (document.getElementById('i3-info-host')) document.getElementById('i3-info-host').innerText = ip;
             if (document.getElementById('i3-info-db')) document.getElementById('i3-info-db').innerText = srv.name || name;
+            if (document.getElementById('i3-info-machine')) {
+                const mid = srv.machine_id;
+                document.getElementById('i3-info-machine').innerText = mid ? mid : 'Not Registered';
+                document.getElementById('i3-info-machine').style.color = mid ? 'var(--cyan)' : 'var(--text2)';
+            }
             const infStat = document.getElementById('i3-info-status');
             if (infStat) {
                 infStat.innerText = status.toUpperCase();
