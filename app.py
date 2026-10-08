@@ -3596,6 +3596,13 @@ def get_hostname():
     try: return socket.gethostname()
     except: return TARGET_NAME
 
+def get_machine_id():
+    try:
+        with open("/etc/machine-id", "r") as f:
+            return f.read().strip()
+    except:
+        return ""
+
 def check_assigned_server_id():
     global ASSIGNED_SERVER_ID
     if ASSIGNED_SERVER_ID is not None:
@@ -4228,6 +4235,7 @@ while True:
             "agent_version": AGENT_VERSION,
             "server_ip": TARGET_IP,
             "hostname": get_hostname(),
+            "machine_id": get_machine_id(),
             "cpu_percent": cpu,
             "memory_percent": mem,
             "disk_percent": disk,
