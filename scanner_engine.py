@@ -85,7 +85,7 @@ def analyze_http_headers(raw_url: str, follow_redirects: bool = True):
         resp = requests.get(
             target_url,
             timeout=6.0,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SecurePulse-SHCHECK/1.0"},
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SecurePulse-SHCHECK/1.5"},
             allow_redirects=follow_redirects,
             verify=False
         )
@@ -99,7 +99,7 @@ def analyze_http_headers(raw_url: str, follow_redirects: bool = True):
                 resp = requests.get(
                     fallback_url,
                     timeout=5.0,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SecurePulse-SHCHECK/1.0"},
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SecurePulse-SHCHECK/1.5"},
                     allow_redirects=follow_redirects,
                     verify=False
                 )
@@ -627,7 +627,7 @@ def lookup_dns_records(raw_domain: str):
         try:
             req = urllib.request.Request(
                 f"https://dns.google/resolve?name={name}&type={rtype}",
-                headers={"Accept": "application/dns-json", "User-Agent": "SecurePulse/1.0"}
+                headers={"Accept": "application/dns-json", "User-Agent": "SecurePulse/1.5"}
             )
             with urllib.request.urlopen(req, timeout=3.5) as resp:
                 data = json.loads(resp.read().decode())
@@ -742,7 +742,7 @@ def lookup_whois_rdap(raw_domain: str):
     try:
         req = urllib.request.Request(
             f"https://rdap.org/domain/{root_domain}",
-            headers={"User-Agent": "Mozilla/5.0 SecurePulse/1.0"}
+            headers={"User-Agent": "Mozilla/5.0 SecurePulse/1.5"}
         )
         with urllib.request.urlopen(req, timeout=4.0) as resp:
             data = json.loads(resp.read().decode())

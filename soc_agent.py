@@ -30,7 +30,7 @@ history_file_positions = {}
 def get_server_id():
     """Dynamically fetch our registered server ID from SOC backend if available."""
     try:
-        req = urllib.request.Request(f"{SOC_URL}/api/servers", headers={"User-Agent": "SecurePulse-Agent/1.0"})
+        req = urllib.request.Request(f"{SOC_URL}/api/servers", headers={"User-Agent": "SecurePulse-Agent/1.5"})
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode())
             servers = data if isinstance(data, list) else data.get("items", [])
@@ -43,7 +43,7 @@ def get_server_id():
 def send_telemetry(payload):
     """Post security events to SOC backend."""
     url = f"{SOC_URL}/api/agent/push"
-    headers = {"Content-Type": "application/json", "User-Agent": "SecurePulse-Agent/1.0"}
+    headers = {"Content-Type": "application/json", "User-Agent": "SecurePulse-Agent/1.5"}
     try:
         req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
         with urllib.request.urlopen(req, timeout=4) as resp:

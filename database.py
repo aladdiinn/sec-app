@@ -2547,7 +2547,7 @@ def lookup_ip_geo(ip: str):
     if ip in _geo_cache:
         return _geo_cache[ip]
     try:
-        req = urllib.request.Request(f"http://ip-api.com/json/{ip}?fields=status,country,city,lat,lon", headers={"User-Agent": "SecurePulse-SOC/1.0"})
+        req = urllib.request.Request(f"http://ip-api.com/json/{ip}?fields=status,country,city,lat,lon", headers={"User-Agent": "SecurePulse-SOC/1.5"})
         with urllib.request.urlopen(req, timeout=1.5) as resp:
             data = json.loads(resp.read().decode())
             if data.get("status") == "success":
