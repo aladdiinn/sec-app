@@ -437,6 +437,7 @@
                     <div><span style="color:var(--text2)">Database / App:</span> <strong id="i3-info-db" style="color:var(--text)">--</strong></div>
                     <div><span style="color:var(--text2)">Status:</span> <span id="i3-info-status" style="color:var(--red); font-weight:700">--</span></div>
                     <div><span style="color:var(--text2)">Agent Status:</span> <strong id="i3-info-agent" style="color:var(--green)">--</strong></div>
+                    <div><span style="color:var(--text2)">Machine ID:</span> <strong id="i3-info-machine" style="color:var(--text)">N/A</strong></div>
                 </div>
                 <div style="margin-top:12px; font-size:12px; color:var(--text2); border-top:1px solid rgba(255,255,255,0.05); padding-top:10px">
                     Last Contact: <span id="i3-info-lastseen" style="color:var(--text)">--</span>
@@ -876,6 +877,13 @@ async function openImage3Modal(serverId) {
         document.getElementById('i3-info-type').innerText = srv.os_info || 'Linux Server';
         document.getElementById('i3-info-host').innerText = ip;
         document.getElementById('i3-info-db').innerText = srv.name || name;
+        
+        if (document.getElementById('i3-info-machine')) {
+            const mid = srv.machine_id;
+            document.getElementById('i3-info-machine').innerText = mid ? mid : 'Not Registered';
+            document.getElementById('i3-info-machine').style.color = mid ? 'var(--cyan)' : 'var(--text2)';
+        }
+
         document.getElementById('i3-info-status').innerText = status.toUpperCase();
         document.getElementById('i3-info-status').style.color = status === 'online' ? 'var(--green)' : 'var(--red)';
         if (status === 'online') {
