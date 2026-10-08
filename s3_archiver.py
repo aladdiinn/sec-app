@@ -87,9 +87,17 @@ def archive_logs_to_s3(db_conn):
                 if file_id.startswith("_"):
                     file_id = file_id[1:]
                 
-                cur.execute("SELECT ip FROM servers WHERE id = %s", (server_id,))
+                cur.execute("SELECT ip, machine_id FROM servers WHERE id = %s", (server_id,))
                 server_row = cur.fetchone()
-                server_ip = server_row["ip"] if server_row and isinstance(server_row, dict) else (server_row[0] if server_row else f"unknown-server-{server_id}")
+                if server_row and isinstance(server_row, dict):
+                    server_ip = server_row.get("ip") or f"unknown-ip-{server_id}"
+                    machine_id = server_row.get("machine_id") or f"unknown-machine-{server_id}"
+                elif server_row:
+                    server_ip = server_row[0] or f"unknown-ip-{server_id}"
+                    machine_id = server_row[1] or f"unknown-machine-{server_id}"
+                else:
+                    server_ip = f"unknown-ip-{server_id}"
+                    machine_id = f"unknown-machine-{server_id}"
 
                 # 2. Fetch the actual logs for this specific batch
                 cur.execute("""
@@ -118,15 +126,14 @@ def archive_logs_to_s3(db_conn):
                 json_data = json.dumps(log_dicts, default=str)
                 compressed_data = gzip.compress(json_data.encode('utf-8'))
 
-                # 4. Determine S3 Path Structure matching user requirements:
-                # logs/{server_id}/{type}/{file_id}/{yyyy}/{mm}/{dd}/{hh}/{ts}.jsonl.gz
+                # logs/{machine_id}/{server_ip}/{type}/{file_id}/{yyyy}/{mm}/{dd}/{hh}/{ts}.jsonl.gz
                 dt_obj = log_date if isinstance(log_date, datetime) else datetime.strptime(str(log_date), "%Y-%m-%d")
                 year, month, day = str(dt_obj.year), f"{dt_obj.month:02d}", f"{dt_obj.day:02d}"
                 now = datetime.now()
                 hour = f"{now.hour:02d}"
                 timestamp_str = now.strftime("%H_%M_%S")
                 
-                s3_key = f"logs/{server_id}/{safe_log_type}/{file_id}/{year}/{month}/{day}/{hour}/{timestamp_str}.jsonl.gz"
+                s3_key = f"{machine_id}/{server_ip}/logs/{safe_log_type}/{file_id}/{year}/{month}/{day}/{hour}/{timestamp_str}.jsonl.gz"
 
                 # 5. Upload to S3
                 logger.info(f"Uploading {len(log_dicts)} evicted logs to s3://{S3_BUCKET_NAME}/{s3_key}")

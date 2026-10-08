@@ -593,7 +593,8 @@ def init_db():
             for col, col_type in [
                 ('managed_services', "TEXT DEFAULT '[]'"),
                 ('is_maintenance', "BOOLEAN DEFAULT FALSE"),
-                ('maintenance_until', "TIMESTAMP WITH TIME ZONE")
+                ('maintenance_until', "TIMESTAMP WITH TIME ZONE"),
+                ('machine_id', 'VARCHAR(128)')
             ]:
                 try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass

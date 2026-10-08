@@ -2584,8 +2584,22 @@ async def api_agent_push(request: Request):
     server_id = data.get("server_id")
     server_ip = (data.get("server_ip") or "").strip()
     hostname = (data.get("hostname") or "").strip()
+    machine_id = (data.get("machine_id") or "").strip()
     agent_version = data.get("agent_version", "0.2")
     client_ip = request.client.host if request.client else None
+
+    # Step 0: Match by Machine ID (Highest Priority)
+    if not server_id and machine_id:
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id FROM servers WHERE machine_id = %s LIMIT 1;", (machine_id,))
+                    r = cur.fetchone()
+                    if r:
+                        server_id = r["id"] if isinstance(r, dict) else r[0]
+            except Exception: pass
+            finally: conn.close()
 
     # Step 1: Validate server_id if provided
     if server_id:
@@ -2666,7 +2680,14 @@ async def api_agent_push(request: Request):
     if conn:
         try:
             with conn.cursor() as cur:
-                cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
+                update_q = "UPDATE servers SET last_seen = NOW(), status = 'online'"
+                params = []
+                if machine_id:
+                    update_q += ", machine_id = COALESCE(machine_id, %s)"
+                    params.append(machine_id)
+                update_q += " WHERE id = %s;"
+                params.append(server_id)
+                cur.execute(update_q, tuple(params))
         except Exception: pass
         finally: conn.close()
 
