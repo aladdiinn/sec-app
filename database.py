@@ -148,7 +148,7 @@ def init_db():
 
             # Seed primary super admin with exact password Admin@1234
             hashed_admin = generate_password_hash("Admin@1234")
-            cur.execute("SELECT id FROM users WHERE LOWER(username) IN ('admin', 'superuser') OR is_admin = TRUE;")
+            cur.execute("SELECT id FROM users WHERE email = 'admin@bsmartsoc.local' OR LOWER(username) IN ('admin', 'superuser') ORDER BY (CASE WHEN email = 'admin@bsmartsoc.local' THEN 1 ELSE 2 END), id ASC LIMIT 1;")
             admin_row = cur.fetchone()
             if not admin_row:
                 cur.execute("""
@@ -525,6 +525,156 @@ def init_db():
                 );
             """)
 
+            # ── VULNERABILITY & PATCH VISIBILITY TABLES ──
+            # 1. Server OS Information
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS server_os_info (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT REFERENCES servers(id) ON DELETE CASCADE UNIQUE,
+                    os_id VARCHAR(64),
+                    os_name VARCHAR(128),
+                    os_version_id VARCHAR(64),
+                    os_version_codename VARCHAR(64),
+                    os_pretty_name VARCHAR(255),
+                    architecture VARCHAR(32),
+                    kernel_release VARCHAR(128),
+                    reboot_required BOOLEAN DEFAULT FALSE,
+                    reboot_reasons TEXT,
+                    packages_hash VARCHAR(64),
+                    package_count INT DEFAULT 0,
+                    last_scanned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_server_os_info_sid ON server_os_info(server_id);
+            """)
+
+            # 2. Installed Server Packages
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS server_packages (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT REFERENCES servers(id) ON DELETE CASCADE,
+                    name VARCHAR(255) NOT NULL,
+                    version VARCHAR(255) NOT NULL,
+                    arch VARCHAR(64),
+                    source_name VARCHAR(255),
+                    source_version VARCHAR(255),
+                    ecosystem VARCHAR(128),
+                    installed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_server_packages_sid ON server_packages(server_id);
+                CREATE INDEX IF NOT EXISTS idx_server_packages_sid_name ON server_packages(server_id, name);
+                CREATE INDEX IF NOT EXISTS idx_server_packages_source ON server_packages(server_id, source_name);
+            """)
+
+            # 3. Standalone Software
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS server_software (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT REFERENCES servers(id) ON DELETE CASCADE,
+                    product VARCHAR(128) NOT NULL,
+                    version VARCHAR(128) NOT NULL,
+                    path TEXT,
+                    detection_evidence TEXT,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_server_software_sid ON server_software(server_id);
+            """)
+
+            # 4. Inventory Runs History
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS server_inventory_runs (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT REFERENCES servers(id) ON DELETE CASCADE,
+                    packages_hash VARCHAR(64),
+                    package_count INT DEFAULT 0,
+                    is_hash_only BOOLEAN DEFAULT FALSE,
+                    status VARCHAR(32) DEFAULT 'success',
+                    error_message TEXT,
+                    duration_ms INT DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_server_inv_runs_sid ON server_inventory_runs(server_id);
+            """)
+
+            # 5. Package History (Installed, Upgraded, Removed)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS server_package_history (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT REFERENCES servers(id) ON DELETE CASCADE,
+                    package_name VARCHAR(255) NOT NULL,
+                    action VARCHAR(32) NOT NULL,
+                    old_version VARCHAR(255),
+                    new_version VARCHAR(255),
+                    detected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_server_pkg_hist_sid ON server_package_history(server_id);
+            """)
+
+            # 6. Advisory CVEs Database
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS advisory_cves (
+                    id SERIAL PRIMARY KEY,
+                    cve_id VARCHAR(64) NOT NULL,
+                    ecosystem VARCHAR(128) NOT NULL,
+                    package_name VARCHAR(255) NOT NULL,
+                    vulnerable_version_range TEXT,
+                    fixed_version VARCHAR(255),
+                    severity VARCHAR(32) DEFAULT 'UNKNOWN',
+                    cvss_score FLOAT DEFAULT 0.0,
+                    cvss_vector VARCHAR(255),
+                    epss_score FLOAT DEFAULT 0.0,
+                    is_cisa_kev BOOLEAN DEFAULT FALSE,
+                    cisa_due_date DATE,
+                    advisory_id VARCHAR(128),
+                    summary TEXT,
+                    details TEXT,
+                    source VARCHAR(64),
+                    published_at TIMESTAMP WITH TIME ZONE,
+                    synced_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_adv_cves_eco_pkg ON advisory_cves(ecosystem, package_name);
+                CREATE INDEX IF NOT EXISTS idx_adv_cves_cve_id ON advisory_cves(cve_id);
+            """)
+
+            # 7. Advisory Sync Status
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS advisory_sync_status (
+                    id SERIAL PRIMARY KEY,
+                    source VARCHAR(64) UNIQUE NOT NULL,
+                    last_sync TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    status VARCHAR(32) DEFAULT 'pending',
+                    records_count INT DEFAULT 0,
+                    error_message TEXT
+                );
+            """)
+
+            # 8. Server Matched Vulnerabilities
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS server_vulnerabilities (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT REFERENCES servers(id) ON DELETE CASCADE,
+                    cve_id VARCHAR(64) NOT NULL,
+                    package_name VARCHAR(255) NOT NULL,
+                    installed_version VARCHAR(255) NOT NULL,
+                    fixed_version VARCHAR(255),
+                    fix_state VARCHAR(64) DEFAULT 'needed',
+                    severity VARCHAR(32) DEFAULT 'UNKNOWN',
+                    cvss_score FLOAT DEFAULT 0.0,
+                    epss_score FLOAT DEFAULT 0.0,
+                    is_cisa_kev BOOLEAN DEFAULT FALSE,
+                    reboot_required BOOLEAN DEFAULT FALSE,
+                    running_kernel_affected BOOLEAN DEFAULT FALSE,
+                    advisory_id VARCHAR(128),
+                    summary TEXT,
+                    detected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    resolved_at TIMESTAMP WITH TIME ZONE,
+                    status VARCHAR(32) DEFAULT 'active'
+                );
+                CREATE INDEX IF NOT EXISTS idx_server_vulns_sid ON server_vulnerabilities(server_id);
+                CREATE INDEX IF NOT EXISTS idx_server_vulns_cve ON server_vulnerabilities(cve_id);
+                CREATE INDEX IF NOT EXISTS idx_server_vulns_status ON server_vulnerabilities(status);
+            """)
+
 
             # Alerts Alter
             for col, col_type in [
@@ -598,7 +748,16 @@ def init_db():
                 ('managed_services', "TEXT DEFAULT '[]'"),
                 ('is_maintenance', "BOOLEAN DEFAULT FALSE"),
                 ('maintenance_until', "TIMESTAMP WITH TIME ZONE"),
-                ('machine_id', 'VARCHAR(128)')
+                ('machine_id', 'VARCHAR(128)'),
+                ('vuln_critical', 'INT DEFAULT 0'),
+                ('vuln_high', 'INT DEFAULT 0'),
+                ('vuln_medium', 'INT DEFAULT 0'),
+                ('vuln_low', 'INT DEFAULT 0'),
+                ('reboot_required', 'BOOLEAN DEFAULT FALSE'),
+                ('reboot_reasons', 'TEXT'),
+                ('last_inventory_hash', 'VARCHAR(64)'),
+                ('last_inventory_scan', 'TIMESTAMP WITH TIME ZONE'),
+                ('vuln_scan_status', "VARCHAR(64) DEFAULT 'never_scanned'")
             ]:
                 try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass
@@ -3907,5 +4066,420 @@ def change_user_password(user_id: int, new_password: str):
         return False
     finally:
         conn.close()
+
+
+# ── VULNERABILITY & INVENTORY DATABASE API ──
+
+def record_server_inventory(server_id: int, payload: dict) -> dict:
+    """
+    Ingest server inventory payload atomically.
+    Supports hash-only diffing, OS info upsert, package history tracking,
+    standalone software recording, and run execution auditing.
+    """
+    conn = get_db_connection()
+    if not conn:
+        raise Exception("Database connection unavailable")
+    start_time = time.time()
+    try:
+        with conn.cursor() as cur:
+            # Check server exists
+            cur.execute("SELECT id, name, hostname, agent_version FROM servers WHERE id = %s;", (server_id,))
+            server = cur.fetchone()
+            if not server:
+                return {"status": "error", "error": f"Server {server_id} not found"}
+
+            os_info = payload.get("os_info") or {}
+            packages = payload.get("packages") or []
+            standalone_sw = payload.get("standalone_software") or []
+            pkg_hash = payload.get("packages_hash") or ""
+            pkg_count = payload.get("package_count") or len(packages)
+            is_hash_only = bool(payload.get("is_hash_only", False))
+            reboot_req = bool(os_info.get("reboot_required", False))
+            reboot_reasons = os_info.get("reboot_reasons")
+            if isinstance(reboot_reasons, list):
+                reboot_reasons_str = json.dumps(reboot_reasons)
+            else:
+                reboot_reasons_str = str(reboot_reasons or "")
+
+            # If hash-only requested, check if we actually have packages in DB
+            if is_hash_only:
+                cur.execute("SELECT COUNT(*) as cnt FROM server_packages WHERE server_id = %s;", (server_id,))
+                pkg_row = cur.fetchone()
+                existing_pkg_cnt = (pkg_row["cnt"] if isinstance(pkg_row, dict) else pkg_row[0]) if pkg_row else 0
+                if existing_pkg_cnt == 0 and pkg_count > 0:
+                    # We don't have packages stored! Request full inventory
+                    return {"status": "ok", "full_inventory_required": True, "message": "Full package list required"}
+
+            # Upsert server_os_info
+            cur.execute("""
+                INSERT INTO server_os_info (
+                    server_id, os_id, os_name, os_version_id, os_version_codename,
+                    os_pretty_name, architecture, kernel_release, reboot_required,
+                    reboot_reasons, packages_hash, package_count, last_scanned_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                ON CONFLICT (server_id) DO UPDATE SET
+                    os_id = EXCLUDED.os_id,
+                    os_name = EXCLUDED.os_name,
+                    os_version_id = EXCLUDED.os_version_id,
+                    os_version_codename = EXCLUDED.os_version_codename,
+                    os_pretty_name = EXCLUDED.os_pretty_name,
+                    architecture = EXCLUDED.architecture,
+                    kernel_release = EXCLUDED.kernel_release,
+                    reboot_required = EXCLUDED.reboot_required,
+                    reboot_reasons = EXCLUDED.reboot_reasons,
+                    packages_hash = EXCLUDED.packages_hash,
+                    package_count = EXCLUDED.package_count,
+                    last_scanned_at = NOW(),
+                    updated_at = NOW();
+            """, (
+                server_id,
+                os_info.get("id"),
+                os_info.get("name"),
+                os_info.get("version_id"),
+                os_info.get("version_codename"),
+                os_info.get("pretty_name"),
+                os_info.get("architecture"),
+                os_info.get("kernel_release"),
+                reboot_req,
+                reboot_reasons_str,
+                pkg_hash,
+                pkg_count
+            ))
+
+            # Standalone software
+            if standalone_sw:
+                cur.execute("DELETE FROM server_software WHERE server_id = %s;", (server_id,))
+                for sw in standalone_sw:
+                    cur.execute("""
+                        INSERT INTO server_software (server_id, product, version, path, detection_evidence, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, NOW());
+                    """, (
+                        server_id,
+                        sw.get("product", "Unknown"),
+                        sw.get("version", "Unknown"),
+                        sw.get("path"),
+                        sw.get("detection_evidence")
+                    ))
+
+            # Full packages replacement if not hash-only
+            packages_changed = False
+            if not is_hash_only and packages:
+                packages_changed = True
+                # Query existing packages for diff history
+                cur.execute("SELECT name, version FROM server_packages WHERE server_id = %s;", (server_id,))
+                old_rows = cur.fetchall()
+                old_pkgs = {r["name"]: r["version"] for r in old_rows} if old_rows else {}
+                new_pkgs = {p.get("name"): p.get("version") for p in packages if p.get("name")}
+
+                # Diff history tracking (limit recording to max 100 changes per run to prevent flood)
+                change_count = 0
+                for name, new_v in new_pkgs.items():
+                    if name not in old_pkgs:
+                        if change_count < 100:
+                            cur.execute("""
+                                INSERT INTO server_package_history (server_id, package_name, action, new_version, detected_at)
+                                VALUES (%s, %s, 'installed', %s, NOW());
+                            """, (server_id, name, new_v))
+                            change_count += 1
+                    elif old_pkgs[name] != new_v:
+                        if change_count < 100:
+                            cur.execute("""
+                                INSERT INTO server_package_history (server_id, package_name, action, old_version, new_version, detected_at)
+                                VALUES (%s, %s, 'upgraded', %s, %s, NOW());
+                            """, (server_id, name, old_pkgs[name], new_v))
+                            change_count += 1
+                for name, old_v in old_pkgs.items():
+                    if name not in new_pkgs and change_count < 100:
+                        cur.execute("""
+                            INSERT INTO server_package_history (server_id, package_name, action, old_version, detected_at)
+                            VALUES (%s, %s, 'removed', %s, NOW());
+                        """, (server_id, name, old_v))
+                        change_count += 1
+
+                # Replace current packages atomically
+                cur.execute("DELETE FROM server_packages WHERE server_id = %s;", (server_id,))
+                
+                # Bulk insert packages
+                insert_tuples = [
+                    (
+                        server_id,
+                        p.get("name"),
+                        p.get("version"),
+                        p.get("arch"),
+                        p.get("source_name") or p.get("name"),
+                        p.get("source_version") or p.get("version"),
+                        p.get("ecosystem") or f"{os_info.get('id', '')}:{os_info.get('version_id', '')}"
+                    )
+                    for p in packages if p.get("name") and p.get("version")
+                ]
+                if insert_tuples:
+                    if hasattr(psycopg2.extras, "execute_values"):
+                        psycopg2.extras.execute_values(
+                            cur,
+                            """
+                            INSERT INTO server_packages (server_id, name, version, arch, source_name, source_version, ecosystem)
+                            VALUES %s;
+                            """,
+                            insert_tuples,
+                            page_size=1000
+                        )
+                    else:
+                        cur.executemany("""
+                            INSERT INTO server_packages (server_id, name, version, arch, source_name, source_version, ecosystem)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s);
+                        """, insert_tuples)
+
+            # Update servers table summary
+            agent_ver = payload.get("agent_version") or "1.6"
+            cur.execute("""
+                UPDATE servers SET
+                    os_info = COALESCE(%s, os_info),
+                    agent_version = %s,
+                    reboot_required = %s,
+                    reboot_reasons = %s,
+                    last_inventory_hash = %s,
+                    last_inventory_scan = NOW(),
+                    last_seen = NOW()
+                WHERE id = %s;
+            """, (
+                os_info.get("pretty_name") or os_info.get("name"),
+                agent_ver,
+                reboot_req,
+                reboot_reasons_str,
+                pkg_hash,
+                server_id
+            ))
+
+            # Record inventory run
+            dur_ms = int((time.time() - start_time) * 1000)
+            cur.execute("""
+                INSERT INTO server_inventory_runs (server_id, packages_hash, package_count, is_hash_only, status, duration_ms, created_at)
+                VALUES (%s, %s, %s, %s, 'success', %s, NOW());
+            """, (server_id, pkg_hash, pkg_count, is_hash_only, dur_ms))
+
+            return {
+                "status": "success",
+                "server_id": server_id,
+                "package_count": pkg_count,
+                "packages_hash": pkg_hash,
+                "is_hash_only": is_hash_only,
+                "packages_changed": packages_changed,
+                "full_inventory_required": False,
+                "duration_ms": dur_ms
+            }
+    except Exception as e:
+        logger.error(f"Error in record_server_inventory for server {server_id}: {e}")
+        try:
+            with conn.cursor() as cur:
+                dur_ms = int((time.time() - start_time) * 1000)
+                cur.execute("""
+                    INSERT INTO server_inventory_runs (server_id, status, error_message, duration_ms, created_at)
+                    VALUES (%s, 'error', %s, %s, NOW());
+                """, (server_id, str(e), dur_ms))
+        except: pass
+        raise
+    finally:
+        conn.close()
+
+
+def get_server_os_info(server_id: int):
+    """Retrieve detailed OS info for a server."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM server_os_info WHERE server_id = %s;", (server_id,))
+            return cur.fetchone()
+    except Exception as e:
+        logger.error(f"Error in get_server_os_info: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def get_server_packages(server_id: int, search: str = None, limit: int = 1000, offset: int = 0):
+    """Retrieve installed packages for a server with optional search filter."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            if search and search.strip():
+                pat = f"%{search.strip()}%"
+                cur.execute("""
+                    SELECT name, version, arch, source_name, source_version, ecosystem, installed_at
+                    FROM server_packages
+                    WHERE server_id = %s AND (name ILIKE %s OR source_name ILIKE %s)
+                    ORDER BY name ASC LIMIT %s OFFSET %s;
+                """, (server_id, pat, pat, limit, offset))
+            else:
+                cur.execute("""
+                    SELECT name, version, arch, source_name, source_version, ecosystem, installed_at
+                    FROM server_packages
+                    WHERE server_id = %s
+                    ORDER BY name ASC LIMIT %s OFFSET %s;
+                """, (server_id, limit, offset))
+            return cur.fetchall() or []
+    except Exception as e:
+        logger.error(f"Error in get_server_packages: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_server_software(server_id: int):
+    """Retrieve standalone software detected for a server."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT product, version, path, detection_evidence, updated_at
+                FROM server_software
+                WHERE server_id = %s
+                ORDER BY product ASC;
+            """, (server_id,))
+            return cur.fetchall() or []
+    except Exception as e:
+        logger.error(f"Error in get_server_software: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_server_inventory_runs(server_id: int, limit: int = 20):
+    """Retrieve recent inventory collection runs for a server."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM server_inventory_runs
+                WHERE server_id = %s
+                ORDER BY created_at DESC LIMIT %s;
+            """, (server_id, limit))
+            return cur.fetchall() or []
+    except Exception as e:
+        logger.error(f"Error in get_server_inventory_runs: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_server_package_history(server_id: int, limit: int = 50):
+    """Retrieve package upgrade/install/remove history for a server."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM server_package_history
+                WHERE server_id = %s
+                ORDER BY detected_at DESC LIMIT %s;
+            """, (server_id, limit))
+            return cur.fetchall() or []
+    except Exception as e:
+        logger.error(f"Error in get_server_package_history: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_server_vulnerabilities(server_id: int, severity: str = None, status: str = 'active'):
+    """Retrieve matched vulnerabilities for a server."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            query = """
+                SELECT * FROM server_vulnerabilities
+                WHERE server_id = %s
+            """
+            params = [server_id]
+            if status:
+                query += " AND status = %s"
+                params.append(status)
+            if severity and severity.upper() != "ALL":
+                query += " AND UPPER(severity) = %s"
+                params.append(severity.upper())
+            query += """
+                ORDER BY
+                    CASE UPPER(severity)
+                        WHEN 'CRITICAL' THEN 1
+                        WHEN 'HIGH' THEN 2
+                        WHEN 'MEDIUM' THEN 3
+                        WHEN 'LOW' THEN 4
+                        ELSE 5
+                    END,
+                    cvss_score DESC,
+                    cve_id ASC;
+            """
+            cur.execute(query, tuple(params))
+            return cur.fetchall() or []
+    except Exception as e:
+        logger.error(f"Error in get_server_vulnerabilities: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_fleet_vulnerabilities_summary():
+    """Fleet-wide summary metrics for vulnerabilities and patch visibility."""
+    conn = get_db_connection()
+    if not conn:
+        return {
+            "total_servers": 0, "affected_servers": 0, "total_vulnerabilities": 0,
+            "critical": 0, "high": 0, "medium": 0, "low": 0, "kev_count": 0,
+            "reboot_pending_servers": 0
+        }
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) as cnt FROM servers;")
+            row = cur.fetchone()
+            tot_srv = (row["cnt"] if isinstance(row, dict) else row[0]) if row else 0
+
+            cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE reboot_required = TRUE;")
+            row = cur.fetchone()
+            reboot_cnt = (row["cnt"] if isinstance(row, dict) else row[0]) if row else 0
+
+            cur.execute("""
+                SELECT
+                    COUNT(DISTINCT server_id) as affected_servers,
+                    COUNT(*) as total_vulns,
+                    COUNT(*) FILTER (WHERE UPPER(severity) = 'CRITICAL') as crit_cnt,
+                    COUNT(*) FILTER (WHERE UPPER(severity) = 'HIGH') as high_cnt,
+                    COUNT(*) FILTER (WHERE UPPER(severity) = 'MEDIUM') as med_cnt,
+                    COUNT(*) FILTER (WHERE UPPER(severity) = 'LOW') as low_cnt,
+                    COUNT(*) FILTER (WHERE is_cisa_kev = TRUE) as kev_cnt
+                FROM server_vulnerabilities
+                WHERE status = 'active';
+            """)
+            summary = cur.fetchone()
+            if isinstance(summary, dict):
+                return {
+                    "total_servers": tot_srv,
+                    "affected_servers": summary.get("affected_servers") or 0,
+                    "total_vulnerabilities": summary.get("total_vulns") or 0,
+                    "critical": summary.get("crit_cnt") or 0,
+                    "high": summary.get("high_cnt") or 0,
+                    "medium": summary.get("med_cnt") or 0,
+                    "low": summary.get("low_cnt") or 0,
+                    "kev_count": summary.get("kev_cnt") or 0,
+                    "reboot_pending_servers": reboot_cnt
+                }
+            return {
+                "total_servers": tot_srv, "affected_servers": 0, "total_vulnerabilities": 0,
+                "critical": 0, "high": 0, "medium": 0, "low": 0, "kev_count": 0,
+                "reboot_pending_servers": reboot_cnt
+            }
+    except Exception as e:
+        logger.error(f"Error in get_fleet_vulnerabilities_summary: {e}")
+        return {
+            "total_servers": 0, "affected_servers": 0, "total_vulnerabilities": 0,
+            "critical": 0, "high": 0, "medium": 0, "low": 0, "kev_count": 0,
+            "reboot_pending_servers": 0
+        }
+    finally:
+        conn.close()
+
 
 

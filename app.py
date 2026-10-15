@@ -457,6 +457,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+import gzip
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import database as db
@@ -563,6 +565,30 @@ APP_VERSION = "1.5"
 AGENT_VERSION = "1.6"
 _inventory_scan_queue = set()  # server_ids queued for on-demand inventory scan
 app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifespan)
+
+# Gzip Request Decompression Middleware for Agent Inventory Payloads
+MAX_COMPRESSED_INVENTORY_BYTES = 2 * 1024 * 1024      # 2 MB
+MAX_DECOMPRESSED_INVENTORY_BYTES = 10 * 1024 * 1024  # 10 MB
+
+class GzipDecompressionMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        encoding = request.headers.get("content-encoding", "").lower()
+        if encoding == "gzip":
+            body = await request.body()
+            if len(body) > MAX_COMPRESSED_INVENTORY_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "Compressed payload exceeds 2MB limit"})
+            try:
+                decompressed = gzip.decompress(body)
+                if len(decompressed) > MAX_DECOMPRESSED_INVENTORY_BYTES:
+                    return JSONResponse(status_code=413, content={"detail": "Decompressed payload exceeds 10MB limit"})
+                request._body = decompressed
+            except gzip.BadGzipFile:
+                return JSONResponse(status_code=400, content={"detail": "Invalid gzip data"})
+            except Exception as e:
+                return JSONResponse(status_code=400, content={"detail": f"Decompression error: {str(e)}"})
+        return await call_next(request)
+
+app.add_middleware(GzipDecompressionMiddleware)
 
 # Secret Key from Environment Variable
 SECRET_KEY = os.getenv("SECRET_KEY", "ec2-security-monitor-production-secret-key-2026")
@@ -2788,6 +2814,117 @@ async def api_agent_status_update(request: Request):
         return {"ok": True}
     except Exception:
         return {"ok": False}
+
+@app.post("/api/agent/inventory")
+def api_agent_inventory(request: Request, data: dict):
+    """
+    Ingest agent package inventory and standalone software.
+    Synchronous plain def ensures non-blocking psycopg2 queries on threadpool.
+    """
+    server_id = data.get("server_id")
+    server_ip = (data.get("server_ip") or "").strip()
+    hostname = (data.get("hostname") or "").strip()
+    machine_id = (request.headers.get("x-machine-id") or data.get("machine_id") or "").strip()
+    client_ip = request.client.host if request.client else None
+
+    # Step 0: Match by Machine ID (Highest Priority)
+    if not server_id and machine_id:
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id FROM servers WHERE machine_id = %s LIMIT 1;", (machine_id,))
+                    r = cur.fetchone()
+                    if r:
+                        server_id = r["id"] if isinstance(r, dict) else r[0]
+            except Exception: pass
+            finally: conn.close()
+
+    # Step 1: Validate server_id if provided
+    if server_id:
+        srv = db.get_server_by_id(server_id)
+        if not srv:
+            server_id = None
+
+    # Step 2: Match by server_ip (and client_ip if remote)
+    if not server_id:
+        ips_to_try = []
+        if server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
+            ips_to_try.append(server_ip)
+        if client_ip and client_ip not in ("127.0.0.1", "localhost") and client_ip not in ips_to_try:
+            ips_to_try.append(client_ip)
+
+        for ip_candidate in ips_to_try:
+            srv = db.get_server_by_ip(ip_candidate)
+            if srv:
+                server_id = srv.get("id")
+                break
+
+    # Step 3: Match by hostname
+    if not server_id and hostname and hostname.lower() not in ("localhost", "target-node"):
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) ORDER BY id DESC LIMIT 1;", (hostname, hostname))
+                    r = cur.fetchone()
+                    if r:
+                        server_id = r["id"] if isinstance(r, dict) else r[0]
+            except Exception: pass
+            finally: conn.close()
+
+    if not server_id:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized", "detail": "Server not recognized or registered"})
+
+    # Ensure server has machine_id saved if present
+    if machine_id:
+        try:
+            conn = db.get_db_connection()
+            if conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE servers SET machine_id = %s WHERE id = %s AND (machine_id IS NULL OR machine_id = '');", (machine_id, server_id))
+                conn.close()
+        except: pass
+
+    # Ingest inventory atomically into database
+    res = db.record_server_inventory(server_id, data)
+    return res
+
+
+@app.post("/api/servers/{server_id}/scan-now")
+def api_server_scan_now(server_id: int, request: Request):
+    """Trigger an on-demand inventory collection for target server on next heartbeat."""
+    srv = db.get_server_by_id(server_id)
+    if not srv:
+        return JSONResponse(status_code=404, content={"error": "Server not found"})
+    _inventory_scan_queue.add(server_id)
+    return {"ok": True, "message": f"On-demand inventory scan requested for server {server_id}."}
+
+
+@app.get("/api/servers/{server_id}/inventory")
+def api_get_server_inventory(server_id: int, request: Request, search: Optional[str] = None, limit: int = 500, offset: int = 0):
+    """Retrieve full inventory details for a server."""
+    srv = db.get_server_by_id(server_id)
+    if not srv:
+        return JSONResponse(status_code=404, content={"error": "Server not found"})
+    os_info = db.get_server_os_info(server_id)
+    packages = db.get_server_packages(server_id, search=search, limit=limit, offset=offset)
+    software = db.get_server_software(server_id)
+    runs = db.get_server_inventory_runs(server_id, limit=10)
+    history = db.get_server_package_history(server_id, limit=20)
+    vulns = db.get_server_vulnerabilities(server_id)
+    return {
+        "server_id": server_id,
+        "agent_version": srv.get("agent_version"),
+        "os_info": os_info,
+        "packages": packages,
+        "packages_count": len(packages),
+        "standalone_software": software,
+        "recent_runs": runs,
+        "recent_changes": history,
+        "vulnerabilities": vulns
+    }
+
 
 @app.get("/api/alerts")
 def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False, log_type: Optional[str] = None):
