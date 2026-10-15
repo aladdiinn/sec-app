@@ -2895,6 +2895,11 @@ def api_agent_inventory(request: Request, data: dict):
 
     # Ingest inventory atomically into database
     res = db.record_server_inventory(server_id, data)
+    if res.get("status") == "success":
+        try:
+            import vuln_matcher
+            threading.Thread(target=vuln_matcher.scan_server_vulnerabilities, args=(server_id,), daemon=True).start()
+        except: pass
     return res
 
 
@@ -2906,6 +2911,27 @@ def api_server_scan_now(server_id: int, request: Request):
         return JSONResponse(status_code=404, content={"error": "Server not found"})
     _inventory_scan_queue.add(server_id)
     return {"ok": True, "message": f"On-demand inventory scan requested for server {server_id}."}
+
+
+@app.post("/api/servers/{server_id}/scan-vulns")
+def api_server_scan_vulns(server_id: int):
+    """Run vulnerability scan/matching for a server immediately."""
+    import vuln_matcher
+    return vuln_matcher.scan_server_vulnerabilities(server_id)
+
+
+@app.post("/api/vulnerabilities/scan-all")
+def api_scan_all_vulnerabilities():
+    """Run fleet-wide vulnerability scan in a background thread."""
+    import vuln_matcher
+    threading.Thread(target=vuln_matcher.scan_all_servers_vulnerabilities, daemon=True).start()
+    return {"ok": True, "message": "Fleet vulnerability scan launched in background."}
+
+
+@app.get("/api/vulnerabilities/summary")
+def api_get_vulns_summary():
+    """Fleet-wide vulnerability summary metrics."""
+    return db.get_fleet_vulnerabilities_summary()
 
 
 @app.get("/api/servers/{server_id}/inventory")

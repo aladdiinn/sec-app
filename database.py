@@ -759,6 +759,7 @@ def init_db():
                 ('reboot_reasons', 'TEXT'),
                 ('last_inventory_hash', 'VARCHAR(64)'),
                 ('last_inventory_scan', 'TIMESTAMP WITH TIME ZONE'),
+                ('last_vuln_scan', 'TIMESTAMP WITH TIME ZONE'),
                 ('vuln_scan_status', "VARCHAR(64) DEFAULT 'never_scanned'")
             ]:
                 try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
