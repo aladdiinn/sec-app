@@ -558,6 +558,13 @@ async def lifespan(app: FastAPI):
         logger.info("Port 5522 SSH Test Honeypot started.")
     except Exception as e:
         logger.warning(f"Could not start port 5522 honeypot: {e}")
+    try:
+        import vuln_sync_engine
+        t_vs = threading.Thread(target=vuln_sync_engine.run_advisory_sync_worker, daemon=True)
+        t_vs.start()
+        logger.info("Vulnerability Advisory Sync Engine started.")
+    except Exception as e:
+        logger.warning(f"Could not start Vulnerability Advisory Sync Engine: {e}")
     yield
 
 # Initialize FastAPI App

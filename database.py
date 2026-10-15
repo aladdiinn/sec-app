@@ -634,6 +634,7 @@ def init_db():
                 );
                 CREATE INDEX IF NOT EXISTS idx_adv_cves_eco_pkg ON advisory_cves(ecosystem, package_name);
                 CREATE INDEX IF NOT EXISTS idx_adv_cves_cve_id ON advisory_cves(cve_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_adv_cves_unique ON advisory_cves(cve_id, ecosystem, package_name);
             """)
 
             # 7. Advisory Sync Status
@@ -673,6 +674,7 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_server_vulns_sid ON server_vulnerabilities(server_id);
                 CREATE INDEX IF NOT EXISTS idx_server_vulns_cve ON server_vulnerabilities(cve_id);
                 CREATE INDEX IF NOT EXISTS idx_server_vulns_status ON server_vulnerabilities(status);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_server_vulns_unique ON server_vulnerabilities(server_id, cve_id, package_name);
             """)
 
 
