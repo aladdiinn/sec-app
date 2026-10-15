@@ -2953,6 +2953,15 @@ async def page_nids(request: Request):
     })
 
 
+@app.get("/download/suricata_forwarder.py")
+async def download_suricata_forwarder():
+    """Directly serve suricata_forwarder.py so sensor machines can download it with curl."""
+    from fastapi.responses import FileResponse
+    fpath = os.path.join(os.path.dirname(__file__), "suricata_forwarder.py")
+    if os.path.exists(fpath):
+        return FileResponse(fpath, media_type="text/x-python", filename="suricata_forwarder.py")
+    raise HTTPException(status_code=404, detail="Forwarder script not found")
+
 @app.get("/api/alerts")
 def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False, log_type: Optional[str] = None):
     conn = db.get_db_connection()

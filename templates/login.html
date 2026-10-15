@@ -3,556 +3,999 @@
 {% block title %}BSmart SOC Login{% endblock %}
 
 {% block extra_css %}
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
 <style>
-/* ── RESET for login page ── */
-body {
-  overflow: hidden !important;
-  height: 100vh;
-  margin: 0;
-  padding: 0;
-  font-family: 'Share Tech Mono', monospace;
+/* ── LOCAL SELF-HOSTED FONT ── */
+@font-face {
+  font-family: 'Nunito Sans';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('/static/fonts/NunitoSans-Variable.woff2') format('woff2');
 }
 
-.page-container { padding: 0 !important; }
+*, *::before, *::after {
+  box-sizing: border-box;
+}
 
-/* ── FULL SCREEN SCENE ── */
-.login-scene {
+/* ── BASE RESET FOR SPLIT LOGIN ── */
+body {
+  overflow: hidden !important;
+  height: 100vh !important;
+  width: 100vw !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+  background: var(--panel) !important;
+  color: var(--text) !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.page-container {
+  padding: 0 !important;
+  margin: 0 !important;
+  height: 100vh !important;
+  width: 100vw !important;
+  overflow: hidden !important;
+}
+
+/* ── SPLIT LAYOUT CONTAINER ── */
+.login-split {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  background: var(--panel);
+}
+
+/* ── LEFT PANEL (~52% BRAND AREA) ── */
+.login-left {
+  position: relative;
+  flex: 0 0 52%;
+  max-width: 52%;
+  height: 100vh;
+  background: linear-gradient(145deg, var(--lp1), var(--lp2) 55%, var(--lp3));
+  overflow: hidden;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+/* Angular decorative polygon shapes */
+.login-shape {
+  position: absolute;
+  pointer-events: none;
+}
+.login-shape.s1 {
+  width: 620px;
+  height: 100vh;
+  left: -120px;
+  top: 0;
+  clip-path: polygon(35% 0, 100% 0, 62% 100%, 0 100%);
+  background: rgba(255, 255, 255, 0.07);
+}
+.login-shape.s2 {
+  width: 540px;
+  height: 640px;
+  right: -80px;
+  top: -60px;
+  clip-path: polygon(40% 0, 100% 0, 100% 100%, 0 70%);
+  background: rgba(255, 255, 255, 0.06);
+}
+.login-shape.s3 {
+  width: 720px;
+  height: 440px;
+  left: 100px;
+  bottom: -120px;
+  clip-path: polygon(0 60%, 70% 0, 100% 40%, 60% 100%, 0 100%);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+/* Concentric rings in left panel */
+.login-rings {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  transform: translate(-50%, -50%);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* 4 Corner Tech Metadata */
+.corner-tag {
+  position: absolute;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.75);
+  z-index: 5;
+  text-transform: uppercase;
+}
+.corner-tag.lt {
+  left: 44px;
+  top: 40px;
+}
+.corner-tag.lt2 {
+  right: 44px;
+  top: 40px;
+}
+.corner-tag.lf {
+  left: 44px;
+  bottom: 36px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.88);
+}
+.corner-tag.lr {
+  right: 44px;
+  bottom: 36px;
+}
+.status-glow-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7CF2BE;
+  box-shadow: 0 0 0 4px rgba(124, 242, 190, 0.28);
+  animation: pulseDot 2s ease-in-out infinite;
+}
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.9); }
+}
+
+/* Center Brand Block */
+.brand-center {
+  position: relative;
+  text-align: center;
+  z-index: 5;
+  transform: translateY(-8px);
+}
+
+/* Frosted rounded square logo box */
+.brand-logo-box {
+  width: 148px;
+  height: 148px;
+  margin: 0 auto 24px;
+  border-radius: 36px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.18);
+  position: relative;
+}
+
+.brand-title {
+  font-size: 80px;
+  font-weight: 800;
+  letter-spacing: -1px;
+  line-height: 1;
+  color: #ffffff;
+}
+.brand-title b {
+  color: #9BF0CB;
+  font-weight: 900;
+}
+.brand-soc {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 14px;
+  margin-top: 8px;
+  padding-left: 14px;
+  color: #ffffff;
+}
+.brand-by {
+  margin-top: 22px;
+  font-size: 12.5px;
+  letter-spacing: 5px;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* ── RIGHT PANEL (FORM AREA) ── */
+.login-right {
+  flex: 1;
+  height: 100vh;
+  background: var(--bg);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* Soft ambient radial glow */
+.login-right::before {
+  content: "";
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--tint), transparent 70%);
+  right: -100px;
+  top: -120px;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+/* Top Right Theme Toggle */
+.login-theme-toggle {
+  position: absolute !important;
+  top: 32px !important;
+  right: 36px !important;
+  z-index: 25 !important;
+  background: var(--card) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: var(--shadow) !important;
+  color: var(--text) !important;
+}
+
+/* Mobile Brand Header (<900px only) */
+.mobile-brand {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: 24px;
+}
+.mobile-brand .brand-logo-box {
+  width: 84px;
+  height: 84px;
+  border-radius: 22px;
+  margin: 0 auto 12px;
+  background: linear-gradient(135deg, var(--lp1), var(--lp2));
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 10px 24px rgba(27, 154, 108, 0.2);
+}
+.mobile-brand .mb-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--navy);
+  line-height: 1.1;
+}
+.mobile-brand .mb-title b {
+  color: var(--g1);
+}
+.mobile-brand .mb-sub {
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--muted);
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+/* ── FORM CARD ── */
+.login-card {
+  position: relative;
+  width: 440px;
+  max-width: min(440px, calc(100vw - 32px));
+  box-sizing: border-box !important;
+  background: var(--card);
+  border-radius: 24px;
+  padding: 44px 42px 40px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--line);
+  z-index: 10;
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+/* Card Header */
+.card-hd {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 30px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--line);
+}
+.card-mini-logo {
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  background: var(--tint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.card-hd .t {
+  font-size: 23px;
+  font-weight: 800;
+  color: var(--navy);
+  line-height: 1.15;
+}
+.card-hd .t b {
+  color: var(--g1);
+}
+.card-hd .u {
+  font-size: 10.5px;
+  letter-spacing: 3px;
+  color: var(--muted);
+  margin-top: 4px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* Form Labels & Fields */
+.form-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 8px;
+}
+
+.input-wrap {
+  height: 54px;
+  border-radius: 14px;
+  background: var(--input);
+  border: 1.5px solid var(--line);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+  margin-bottom: 20px;
+  color: var(--text);
+  font-size: 15px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  position: relative;
+}
+.input-wrap:focus-within {
+  border-color: var(--g1);
+  box-shadow: 0 0 0 4px rgba(27, 154, 108, 0.16);
+  background: var(--card);
+}
+.input-wrap svg.input-icon {
+  flex: none;
+  stroke: var(--muted);
+  width: 19px;
+  height: 19px;
+  transition: stroke 0.2s ease;
+}
+.input-wrap:focus-within svg.input-icon {
+  stroke: var(--g1);
+}
+
+.input-wrap input {
+  flex: 1;
+  min-width: 0 !important;
+  width: 100% !important;
+  height: 100%;
+  border: none !important;
+  background: transparent !important;
+  outline: none !important;
+  color: var(--text) !important;
+  font-family: inherit;
+  font-size: 14.5px;
+  font-weight: 500;
+  padding: 0;
+  box-shadow: none !important;
+}
+.input-wrap input::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+/* Password Toggle Icon Button */
+.pw-toggle-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--muted);
+  transition: color 0.2s ease;
+}
+.pw-toggle-btn:hover {
+  color: var(--g1);
+}
+.pw-toggle-btn:focus-visible {
+  outline: 2px solid var(--g1);
+  outline-offset: 2px;
+}
+.pw-toggle-btn svg {
+  width: 19px;
+  height: 19px;
+  stroke: currentColor;
+}
+
+/* Remember Me & Forgot Password Row */
+.form-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: -2px 0 24px;
+  font-size: 13px;
+}
+.cb-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 600;
+  user-select: none;
+}
+.cb-label .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+.cb-box {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--g1), var(--g2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.cb-box svg {
+  display: block;
+}
+.cb-label input:not(:checked) + .cb-box {
+  background: var(--input);
+  border: 1.5px solid var(--line);
+}
+.cb-label input:not(:checked) + .cb-box svg {
+  display: none;
+}
+.cb-label input:focus-visible + .cb-box {
+  outline: 2px solid var(--g1);
+  outline-offset: 2px;
+}
+
+.fg-link {
+  color: var(--g1);
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+.fg-link:hover {
+  opacity: 0.82;
+  text-decoration: underline;
+}
+.fg-link:focus-visible {
+  outline: 2px solid var(--g1);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Error Banner */
+.login-error-banner {
+  background: rgba(229, 72, 77, 0.12);
+  border: 1.5px solid var(--red);
+  color: var(--red);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 10px 14px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  display: none;
+  animation: shake 0.35s ease;
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+
+/* Primary Access Button */
+.access-btn {
+  width: 100%;
+  height: 56px;
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--g1), var(--g2));
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 14px 28px rgba(27, 154, 108, 0.32);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+.access-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 36px rgba(27, 154, 108, 0.40);
+}
+.access-btn:active {
+  transform: translateY(0);
+}
+.access-btn:focus-visible {
+  outline: 3px solid var(--g2);
+  outline-offset: 3px;
+}
+.access-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Button Spinner */
+.access-spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spinBtn 0.8s linear infinite;
+}
+@keyframes spinBtn {
+  to { transform: rotate(360deg); }
+}
+
+/* ── POST-LOGIN ANIMATION: HIGH CONTRAST DARK GREEN THEME ── */
+.login-success {
   position: fixed;
   inset: 0;
   width: 100vw;
   height: 100vh;
-  overflow: hidden;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, #0B3326 0%, #051A13 70%, #020C09 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.login-success.visible {
+  opacity: 1;
+  pointer-events: all;
 }
 
-/* Background image */
-.login-bg-img {
-  position: absolute;
-  inset: 0;
-  background: url('https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=1400&q=80') center/cover no-repeat;
-  filter: brightness(0.2) grayscale(0.8) contrast(1.2);
-}
-
-/* Gradient overlay: dark on left, transparent on right */
-.login-bg-overlay {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    rgba(0,0,0,0.95) 0%,
-    rgba(0,0,0,0.85) 30%,
-    rgba(0,0,0,0.60) 60%,
-    rgba(0,0,0,0.15) 100%
-  );
-}
-
-/* Scanline texture */
-.login-scanlines {
+/* Floating Mint Particles */
+.ls-particles {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 3px,
-    rgba(255,255,255,0.015) 3px,
-    rgba(255,255,255,0.015) 4px
-  );
 }
-
-/* CSS grid overlay */
-.login-grid {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.07;
-  background:
-    linear-gradient(rgba(0,229,255,0.5) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,229,255,0.5) 1px, transparent 1px);
-  background-size: 40px 40px;
-}
-
-/* Sweep scan line */
-.login-sweep {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, rgba(0,229,255,0.7), transparent);
-  animation: sweepDown 4s linear infinite;
-  pointer-events: none;
-}
-@keyframes sweepDown {
-  from { top: 0; opacity: 0; }
-  10%  { opacity: 1; }
-  90%  { opacity: 1; }
-  to   { top: 100%; opacity: 0; }
-}
-
-/* ── LEFT PANEL ── */
-.login-panel {
-  position: absolute;
-  left: 32px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 230px;
-  background: rgba(5,5,5,0.85);
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 10px;
-  padding: 22px 18px 18px;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  transition: opacity 0.6s ease;
-}
-
-/* Corner brackets */
-.c { position: absolute; width: 12px; height: 12px; border-color: rgba(255,255,255,0.3); border-style: solid; }
-.c.tl { top:-1px; left:-1px; border-width:2px 0 0 2px; border-radius:3px 0 0 0; }
-.c.tr { top:-1px; right:-1px; border-width:2px 2px 0 0; border-radius:0 3px 0 0; }
-.c.bl { bottom:-1px; left:-1px; border-width:0 0 2px 2px; border-radius:0 0 0 3px; }
-.c.br { bottom:-1px; right:-1px; border-width:0 2px 2px 0; border-radius:0 0 3px 0; }
-
-/* Logo row */
-.lp-logo-row { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
-.lp-logo-box {
-  width:36px; height:36px;
-  background: rgba(0,229,255,0.1);
-  border: 1.5px solid rgba(0,229,255,0.5);
-  border-radius:7px;
-  display:flex; align-items:center; justify-content:center;
-  position: relative; flex-shrink:0;
-}
-.lp-logo-box svg { width:18px; height:18px; stroke:#00e5ff; fill:none; stroke-width:2; }
-.lp-pulse {
-  position:absolute; inset:-5px; border-radius:10px;
-  border:1px solid rgba(0,229,255,0.3);
-  animation: lpulse 2s ease-in-out infinite;
-}
-@keyframes lpulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.3;transform:scale(1.1)} }
-.lp-logo-name { font-family:'Orbitron',monospace; font-size:11px; color:#00e5ff; letter-spacing:2px; line-height:1.3; }
-.lp-logo-sub  { font-size:9px; color:rgba(255,255,255,0.4); letter-spacing:1px; }
-
-/* Divider */
-.lp-div { height:1px; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.15),transparent); margin-bottom:14px; }
-
-/* Field label */
-.lp-label { font-size:9px; letter-spacing:2px; color:rgba(255,255,255,0.5); margin-bottom:5px; text-transform:uppercase; display:block; }
-
-/* Input wrapper */
-.lp-field {
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius:5px;
-  padding: 0;
-  display:flex; align-items:center;
-  margin-bottom:10px;
-  transition: border-color 0.3s, box-shadow 0.3s;
-  overflow: hidden;
-}
-.lp-field:focus-within {
-  border-color: rgba(255,255,255,0.3);
-  box-shadow: 0 0 10px rgba(0,229,255,0.2);
-}
-.lp-field-icon {
-  width:32px; display:flex; align-items:center; justify-content:center; flex-shrink:0;
-}
-.lp-field-icon svg { width:13px; height:13px; stroke:rgba(255,255,255,0.4); fill:none; stroke-width:2; }
-.lp-field input {
-  flex:1; background:transparent !important; border:none !important;
-  outline:none !important; padding:8px 8px 8px 0;
-  color:rgba(255,255,255,0.85) !important;
-  font-family:'Share Tech Mono',monospace;
-  font-size:12px;
-  box-shadow:none !important;
-}
-.lp-field input::placeholder { color:rgba(255,255,255,0.25); }
-
-/* Password toggle */
-.lp-pw-toggle {
-  background:none; border:none; cursor:pointer;
-  padding:0 10px; display:flex; align-items:center;
-}
-.lp-pw-toggle svg { width:12px; height:12px; stroke:rgba(255,255,255,0.3); fill:none; stroke-width:2; }
-
-/* Remember + Forgot row */
-.lp-rem-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
-.lp-rem { display:flex; align-items:center; gap:5px; cursor:pointer; }
-.lp-chk {
-  width:10px; height:10px;
-  border:1px solid rgba(255,255,255,0.3);
-  border-radius:2px;
-  display:flex; align-items:center; justify-content:center;
-}
-.lp-chk-inner { width:5px; height:5px; background:#00e5ff; border-radius:1px; }
-.lp-rem-txt { font-size:9px; color:rgba(255,255,255,0.35); letter-spacing:1px; }
-.lp-forgot { font-size:9px; color:rgba(255,255,255,0.5); letter-spacing:1px; cursor:pointer; text-decoration:none; }
-.lp-forgot:hover { color:#00e5ff; }
-
-/* Error box */
-.lp-error {
-  background: rgba(255,51,102,0.1);
-  border: 1px solid rgba(255,51,102,0.3);
-  border-radius:4px;
-  color: #ff3366;
-  font-size:10px;
-  padding: 6px 10px;
-  margin-bottom:10px;
-  display:none;
-  letter-spacing:0.5px;
-}
-
-/* ACCESS button */
-.lp-btn {
-  width:100%; padding:10px;
-  background: linear-gradient(90deg,rgba(0,229,255,0.3),rgba(0,229,255,0.2));
-  border: 1px solid rgba(0,229,255,0.55);
-  border-radius:5px;
-  font-family:'Orbitron',monospace;
-  font-size:10px; letter-spacing:3px;
-  color:#00e5ff;
-  cursor:pointer;
-  position:relative; overflow:hidden;
-  transition: box-shadow 0.3s, border-color 0.3s;
-}
-.lp-btn:hover { border-color:rgba(0,229,255,0.9); box-shadow:0 0 16px rgba(0,229,255,0.3); }
-.lp-btn:disabled { opacity:0.5; cursor:not-allowed; }
-.lp-btn-shine {
-  position:absolute; top:0; left:-100%; width:60%; height:100%;
-  background:linear-gradient(90deg,transparent,rgba(0,229,255,0.18),transparent);
-  animation: btnshine 3s ease-in-out infinite 1s;
-}
-@keyframes btnshine { 0%{left:-100%} 40%{left:150%} 100%{left:150%} }
-
-/* Spinner in button */
-.lp-spinner {
-  display:inline-block;
-  width:12px; height:12px;
-  border:2px solid rgba(0,229,255,0.3);
-  border-top-color:#00e5ff;
-  border-radius:50%;
-  animation: lpspin 0.8s linear infinite;
-}
-@keyframes lpspin { to{transform:rotate(360deg)} }
-
-/* ── HUD DECORATIVE — RIGHT ── */
-.hud-ring {
-  position:absolute; border-radius:50%;
-  border:1px solid rgba(255,255,255,0.08);
-}
-.hud-ring1 {
-  width:180px; height:180px;
-  right:18%; top:50%;
-  transform:translate(50%,-50%);
-  animation:spinSlow 12s linear infinite;
-}
-.hud-ring2 {
-  width:240px; height:240px;
-  right:18%; top:50%;
-  transform:translate(50%,-50%);
-  border-style:dashed;
-  border-color:rgba(255,255,255,0.05);
-  animation:spinSlow 20s linear infinite reverse;
-}
-.hud-ring3 {
-  width:120px; height:120px;
-  right:18%; top:50%;
-  transform:translate(50%,-50%);
-  border-color:rgba(255,255,255,0.1);
-  animation:spinSlow 8s linear infinite;
-}
-@keyframes spinSlow {
-  from { transform:translate(50%,-50%) rotate(0deg); }
-  to   { transform:translate(50%,-50%) rotate(360deg); }
-}
-
-/* Data tags */
-.hud-tag {
-  position:absolute;
-  font-family:'Share Tech Mono',monospace;
-  font-size:9px; letter-spacing:1px;
-  color:rgba(255,255,255,0.3);
-}
-.hud-tag1 { top:14%; right:7%; }
-.hud-tag2 { bottom:20%; right:5%; }
-.hud-tag3 { top:52%; right:3%; transform:translateY(-50%); }
-
-/* Bottom status bar */
-.hud-status {
-  position:absolute; bottom:14px; left:32px;
-  display:flex; align-items:center; gap:8px;
-}
-.hud-sdot {
-  width:5px; height:5px; border-radius:50%;
-  background:#00fa9a;
-  animation:sdpulse 1.5s ease-in-out infinite;
-}
-@keyframes sdpulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
-.hud-stxt { font-size:9px; color:rgba(255,255,255,0.3); letter-spacing:2px; }
-
-.hud-ver { position:absolute; bottom:14px; right:18px; font-size:9px; color:rgba(255,255,255,0.2); letter-spacing:1px; }
-
-/* ── SUCCESS OVERLAY ── */
-.login-success {
-  position:absolute; inset:0;
-  display:flex; flex-direction:column;
-  align-items:center; justify-content:center;
-  opacity:0; pointer-events:none;
-  transition: opacity 0.6s ease;
-}
-.login-success.visible { opacity:1; pointer-events:all; }
-
-/* Particles */
-.ls-particles { position:absolute; inset:0; pointer-events:none; }
 .ls-pt {
-  position:absolute; width:3px; height:3px;
-  background:rgba(0,229,255,0.7); border-radius:50%;
-  animation:ptfloat 3s ease-in-out infinite;
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  background: #7CF2BE;
+  border-radius: 50%;
+  box-shadow: 0 0 10px #7CF2BE;
+  animation: ptfloat 3.5s ease-in-out infinite;
 }
-.ls-pt:nth-child(1){left:8%;top:20%;animation-delay:0s}
-.ls-pt:nth-child(2){left:78%;top:25%;animation-delay:0.4s}
-.ls-pt:nth-child(3){left:45%;top:75%;animation-delay:0.8s}
-.ls-pt:nth-child(4){left:20%;top:65%;animation-delay:1.2s}
-.ls-pt:nth-child(5){left:72%;top:80%;animation-delay:1.6s}
-.ls-pt:nth-child(6){left:55%;top:15%;animation-delay:2.0s}
-.ls-pt:nth-child(7){left:30%;top:45%;animation-delay:0.6s}
-.ls-pt:nth-child(8){left:88%;top:55%;animation-delay:1.0s}
+.ls-pt:nth-child(1) { left: 12%; top: 22%; animation-delay: 0s; }
+.ls-pt:nth-child(2) { left: 82%; top: 28%; animation-delay: 0.4s; }
+.ls-pt:nth-child(3) { left: 48%; top: 76%; animation-delay: 0.8s; }
+.ls-pt:nth-child(4) { left: 22%; top: 68%; animation-delay: 1.2s; }
+.ls-pt:nth-child(5) { left: 74%; top: 82%; animation-delay: 1.6s; }
+.ls-pt:nth-child(6) { left: 58%; top: 18%; animation-delay: 2.0s; }
+.ls-pt:nth-child(7) { left: 32%; top: 46%; animation-delay: 0.6s; }
+.ls-pt:nth-child(8) { left: 90%; top: 56%; animation-delay: 1.0s; }
+
 @keyframes ptfloat {
-  0%,100%{transform:translateY(0);opacity:0.6}
-  50%{transform:translateY(-12px);opacity:1}
+  0%, 100% { transform: translateY(0); opacity: 0.6; }
+  50% { transform: translateY(-14px); opacity: 1; }
 }
 
-/* Avatar with spinning rings */
-.ls-avatar-wrap { position:relative; width:80px; height:80px; margin-bottom:16px; }
+/* Success Avatar with Orbit Rings */
+.ls-avatar-wrap {
+  position: relative;
+  width: 90px;
+  height: 90px;
+  margin-bottom: 22px;
+}
 .ls-avatar-wrap::before,
 .ls-avatar-wrap::after {
-  content:''; position:absolute; border-radius:50%;
-  border:1.5px solid rgba(0,229,255,0.5);
+  content: '';
+  position: absolute;
+  border-radius: 50%;
 }
-.ls-avatar-wrap::before { inset:-10px; animation:spinRing 4s linear infinite; }
-.ls-avatar-wrap::after  { inset:-20px; border-color:rgba(0,229,255,0.2); animation:spinRing 7s linear infinite reverse; }
-@keyframes spinRing { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+.ls-avatar-wrap::before {
+  inset: -12px;
+  border: 1.5px solid #3DC38F;
+  box-shadow: 0 0 18px rgba(61, 195, 143, 0.35);
+  animation: spinRing 4s linear infinite;
+}
+.ls-avatar-wrap::after {
+  inset: -24px;
+  border: 1px dashed rgba(61, 195, 143, 0.45);
+  animation: spinRing 8s linear infinite reverse;
+}
+@keyframes spinRing {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 .ls-avatar {
-  width:80px; height:80px; border-radius:50%;
-  background:rgba(0,229,255,0.08);
-  border:2px solid rgba(0,229,255,0.5);
-  display:flex; align-items:center; justify-content:center;
-  box-shadow:0 0 20px rgba(0,229,255,0.3);
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: rgba(61, 195, 143, 0.14);
+  border: 2px solid #3DC38F;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 32px rgba(61, 195, 143, 0.5);
 }
-.ls-avatar svg { width:34px; height:34px; stroke:#00e5ff; fill:none; stroke-width:1.5; }
+.ls-avatar svg {
+  width: 42px;
+  height: 42px;
+  stroke: #3DC38F;
+  fill: none;
+  stroke-width: 2;
+}
 
+/* Text in Success State */
 .ls-granted {
-  font-family:'Orbitron',monospace;
-  font-size:11px; letter-spacing:4px;
-  color:#00e5ff; text-transform:uppercase;
-  margin-bottom:8px;
-  text-shadow:0 0 20px rgba(0,229,255,0.6);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 5px;
+  color: #3DC38F;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  text-shadow: 0 0 18px rgba(61, 195, 143, 0.7);
 }
 .ls-username {
-  font-family:'Orbitron',monospace;
-  font-size:18px; font-weight:600;
-  color:#fff; letter-spacing:2px;
-  margin-bottom:12px;
-  min-height:28px;
+  font-size: 26px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 2px;
+  margin-bottom: 16px;
+  min-height: 36px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
 }
-.ls-statusbar { display:flex; align-items:center; gap:8px; }
+
+/* Status Pill */
+.ls-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(61, 195, 143, 0.14);
+  border: 1px solid rgba(61, 195, 143, 0.38);
+  border-radius: 9999px;
+  padding: 7px 18px;
+}
 .ls-dot {
-  width:7px; height:7px; border-radius:50%;
-  background:#00fa9a;
-  box-shadow:0 0 8px rgba(0,250,154,0.7);
-  animation:sdpulse 1.5s ease-in-out infinite;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #34D399;
+  box-shadow: 0 0 10px #34D399;
+  animation: pulseDot 1.5s ease-in-out infinite;
 }
-.ls-stxt { font-size:11px; color:rgba(255,255,255,0.4); letter-spacing:2px; }
+.ls-stxt {
+  font-size: 11px;
+  font-weight: 700;
+  color: #7CF2BE;
+  letter-spacing: 2px;
+}
+
+/* ── RESPONSIVE RULES ── */
+@media (max-width: 900px) {
+  html, body, .page-container {
+    overflow-x: hidden !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+  }
+  .login-split {
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    height: 100vh !important;
+  }
+  .login-left {
+    display: none !important;
+  }
+  .login-right {
+    width: 100% !important;
+    max-width: 100vw !important;
+    min-height: 100vh !important;
+    height: auto !important;
+    padding: 40px 16px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  .login-right::before {
+    display: none !important;
+  }
+  .login-card {
+    width: 100% !important;
+    max-width: 420px !important;
+    padding: 34px 28px 30px !important;
+    margin: 0 auto !important;
+    box-sizing: border-box !important;
+  }
+  .card-hd {
+    display: none !important;
+  }
+  .mobile-brand {
+    display: flex !important;
+    margin-bottom: 22px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-right {
+    padding: 20px 16px !important;
+  }
+  .login-card {
+    padding: 26px 20px 22px !important;
+    border-radius: 20px !important;
+    width: 100% !important;
+    max-width: 350px !important;
+    margin: 0 auto !important;
+  }
+  .input-wrap {
+    height: 50px !important;
+    padding: 0 14px !important;
+    margin-bottom: 16px !important;
+  }
+  .access-btn {
+    height: 52px !important;
+  }
+  .mobile-brand .brand-logo-box {
+    width: 76px !important;
+    height: 76px !important;
+    border-radius: 20px !important;
+    margin-bottom: 10px !important;
+  }
+  .mobile-brand .mb-title {
+    font-size: 24px !important;
+  }
+  .mobile-brand .mb-sub {
+    font-size: 9.5px !important;
+    letter-spacing: 2px !important;
+  }
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="login-scene">
-  <!-- Background layers -->
-  <div class="login-bg-img"></div>
-  <div class="login-bg-overlay"></div>
-  <div class="login-scanlines"></div>
-  <div class="login-grid"></div>
-  <div class="login-sweep"></div>
+<div class="login-split">
+  <!-- ── LEFT BRAND PANEL (~52%) ── -->
+  <div class="login-left">
+    <!-- Angular Polygon Shapes -->
+    <div class="login-shape s1"></div>
+    <div class="login-shape s2"></div>
+    <div class="login-shape s3"></div>
 
-  
-  <div id="center-logo" style="position:absolute; right:15%; top:50%; transform:translateY(-50%); opacity:0.95; pointer-events:none; z-index:1; display:flex; align-items:center; gap:20px; transition: opacity 0.6s ease;">
-      <div style="width:110px; height:110px;">
-        <svg viewBox="0 0 100 100" style="width: 100%; height: 100%; filter: drop-shadow(0 0 10px rgba(0, 191, 255, 0.6));">
-    <defs>
-        <linearGradient id="padlockGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stop-color="#00ffff" />
-            <stop offset="100%" stop-color="#0055ff" />
-        </linearGradient>
-    </defs>
-    <circle cx="50" cy="50" r="44" fill="none" stroke="#00bfff" stroke-width="1.5" stroke-dasharray="8 4 2 4 12 4" stroke-linecap="round" stroke-opacity="0.6">
-        <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="20s" repeatCount="indefinite" />
-    </circle>
-    <circle cx="50" cy="50" r="37" fill="none" stroke="#00bfff" stroke-width="0.75" stroke-opacity="0.4"></circle>
-    <circle cx="50" cy="50" r="31" fill="none" stroke="#00bfff" stroke-width="2.5" stroke-dasharray="20 10 40 10" stroke-linecap="round" stroke-opacity="0.8">
-        <animateTransform attributeName="transform" type="rotate" from="360 50 50" to="0 50 50" dur="15s" repeatCount="indefinite" />
-    </circle>
-    <circle cx="50" cy="13" r="2" fill="#00ffff"><animate attributeName="opacity" values="0.2;1;0.2" dur="3s" repeatCount="indefinite"/></circle>
-    <circle cx="87" cy="50" r="2" fill="#00ffff"><animate attributeName="opacity" values="0.2;1;0.2" dur="4s" repeatCount="indefinite"/></circle>
-    <circle cx="13" cy="50" r="2" fill="#00ffff"><animate attributeName="opacity" values="0.2;1;0.2" dur="5s" repeatCount="indefinite"/></circle>
-    <path d="M37 45 V 36 A 13 13 0 0 1 63 36 V 45" fill="none" stroke="url(#padlockGrad)" stroke-width="7" stroke-linecap="round"></path>
-    <rect x="27" y="44" width="46" height="34" rx="7" ry="7" fill="url(#padlockGrad)"></rect>
-    <circle cx="50" cy="55" r="4.5" fill="#020a17"></circle>
-    <path d="M48 57 L46 66 L54 66 L52 57 Z" fill="#020a17"></path>
-</svg>
+    <!-- Concentric Technical Rings -->
+    <svg class="login-rings" width="760" height="760" viewBox="0 0 760 760" fill="none" stroke="#ffffff">
+      <circle cx="380" cy="380" r="150" stroke-opacity=".25"/>
+      <circle cx="380" cy="380" r="230" stroke-opacity=".18"/>
+      <circle cx="380" cy="380" r="310" stroke-opacity=".12" stroke-dasharray="3 9"/>
+      <circle cx="380" cy="380" r="375" stroke-opacity=".08"/>
+    </svg>
+
+    <!-- 4 Corner Technical Tags -->
+    <div class="corner-tag lt">SYS_AUTH v2.4</div>
+    <div class="corner-tag lt2">STATUS: ONLINE</div>
+    <div class="corner-tag lf">
+      <span class="status-glow-dot"></span>
+      SECURE CONNECTION ESTABLISHED
+    </div>
+    <div class="corner-tag lr">ENC: AES-256 &nbsp;|&nbsp; v2.4.1</div>
+
+    <!-- Center Brand Showcase -->
+    <div class="brand-center">
+      <div class="brand-logo-box">
+        <!-- Project Padlock SVG (White / Mint Theme for Green Brand Panel) -->
+        <svg viewBox="0 0 100 100" width="88" height="88" style="filter: drop-shadow(0 0 12px rgba(155, 240, 203, 0.4));">
+          <defs>
+            <linearGradient id="padlockGradLeft" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#ffffff" />
+              <stop offset="100%" stop-color="#E7F7F0" />
+            </linearGradient>
+          </defs>
+          <circle cx="50" cy="50" r="44" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-dasharray="8 4 2 4 12 4" stroke-linecap="round" stroke-opacity="0.55">
+            <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="20s" repeatCount="indefinite" />
+          </circle>
+          <circle cx="50" cy="50" r="37" fill="none" stroke="#9BF0CB" stroke-width="0.8" stroke-opacity="0.45"></circle>
+          <circle cx="50" cy="50" r="31" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-dasharray="20 10 40 10" stroke-linecap="round" stroke-opacity="0.75">
+            <animateTransform attributeName="transform" type="rotate" from="360 50 50" to="0 50 50" dur="15s" repeatCount="indefinite" />
+          </circle>
+          <circle cx="50" cy="13" r="2.2" fill="#9BF0CB"><animate attributeName="opacity" values="0.3;1;0.3" dur="3s" repeatCount="indefinite"/></circle>
+          <circle cx="87" cy="50" r="2.2" fill="#9BF0CB"><animate attributeName="opacity" values="0.3;1;0.3" dur="4s" repeatCount="indefinite"/></circle>
+          <circle cx="13" cy="50" r="2.2" fill="#9BF0CB"><animate attributeName="opacity" values="0.3;1;0.3" dur="5s" repeatCount="indefinite"/></circle>
+          <path d="M37 45 V 36 A 13 13 0 0 1 63 36 V 45" fill="none" stroke="url(#padlockGradLeft)" stroke-width="7" stroke-linecap="round"></path>
+          <rect x="27" y="44" width="46" height="34" rx="7" ry="7" fill="url(#padlockGradLeft)"></rect>
+          <circle cx="50" cy="55" r="4.2" fill="#0A5A43"></circle>
+          <path d="M48 57 L46 66 L54 66 L52 57 Z" fill="#0A5A43"></path>
+        </svg>
       </div>
-      <div style="display:flex; flex-direction:column; justify-content:center; align-items:flex-start;">
-        <div style="font-family:'Orbitron', sans-serif; font-size:54px; font-weight:700; letter-spacing:1px; line-height:1.0; text-shadow:0 0 20px rgba(0,191,255,0.4);">
-          <span style="color:#00bfff;">B</span><span style="color:#ffffff;">Smart</span>
-        </div>
-        <div style="font-family:'Orbitron', sans-serif; font-size:28px; font-weight:600; color:#00bfff; letter-spacing:8px; margin-top:4px; text-shadow:0 0 15px rgba(0,191,255,0.5);">
-          SOC
-        </div>
-        <div style="font-family:'Share Tech Mono', monospace; font-size:14px; color:#00bfff; letter-spacing:2px; margin-top:10px; opacity:0.9;">
-          BY BCITS SMARTER SOLUTIONS
-        </div>
+
+      <div class="brand-title"><b>B</b>Smart</div>
+      <div class="brand-soc">SOC</div>
+      <div class="brand-by">BY BCITS SMARTER SOLUTIONS</div>
+    </div>
+  </div>
+
+  <!-- ── RIGHT FORM AREA (~48%) ── -->
+  <div class="login-right">
+    <!-- Sun / Moon Theme Switch Component -->
+    <button id="theme-toggle-btn" class="theme-toggle-btn login-theme-toggle" onclick="toggleTheme()" type="button" title="Switch Theme (Light / Dark)" aria-label="Switch Theme">
+      <svg class="theme-icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="theme-icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
+
+    <!-- Mobile Brand Header (Visible below 900px, placed ABOVE the card) -->
+    <div class="mobile-brand">
+      <div class="brand-logo-box">
+        <svg viewBox="0 0 100 100" width="48" height="48">
+          <path d="M37 45 V 36 A 13 13 0 0 1 63 36 V 45" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round"></path>
+          <rect x="27" y="44" width="46" height="34" rx="7" ry="7" fill="#ffffff"></rect>
+          <circle cx="50" cy="55" r="4.2" fill="#1B9A6C"></circle>
+          <path d="M48 57 L46 66 L54 66 L52 57 Z" fill="#1B9A6C"></path>
+        </svg>
       </div>
+      <div class="mb-title"><b>B</b>Smart SOC</div>
+      <div class="mb-sub">BY BCITS SMARTER SOLUTIONS</div>
     </div>
 
-  <!-- HUD decorative rings (right side) -->
-  <div class="hud-ring hud-ring1"></div>
-  <div class="hud-ring hud-ring2"></div>
-  <div class="hud-ring hud-ring3"></div>
-
-  <!-- Floating data tags -->
-  <div class="hud-tag hud-tag1">SYS_AUTH v2.4</div>
-  <div class="hud-tag hud-tag2">ENC: AES-256</div>
-  <div class="hud-tag hud-tag3">STATUS: ONLINE</div>
-
-  <!-- ── LOGIN PANEL (LEFT) ── -->
-  <div class="login-panel" id="login-panel">
-    <!-- Corner brackets -->
-    <div class="c tl"></div><div class="c tr"></div>
-    <div class="c bl"></div><div class="c br"></div>
-
-    <!-- Logo -->
-    <div class="lp-logo-row" style="display:flex; align-items:center; gap:12px; margin-bottom:24px;">
-      <div class="lp-logo-box" style="position:relative; width:44px; height:44px; display:flex; align-items:center; justify-content:center; background: rgba(0,191,255,0.05); border: 1px solid rgba(0,191,255,0.3); border-radius: 6px;">
-        <div class="lp-pulse" style="position:absolute; inset:-4px; border-radius:10px; border:1px solid rgba(0,191,255,0.3); animation: lpulse 2s ease-in-out infinite;"></div>
-        <div style="width:36px; height:36px; display:flex; align-items:center; justify-content:center;">
-          <svg viewBox="0 0 100 100" style="width: 100%; height: 100%; filter: drop-shadow(0 0 10px rgba(0, 191, 255, 0.6));">
-    <defs>
-        <linearGradient id="padlockGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stop-color="#00ffff" />
-            <stop offset="100%" stop-color="#0055ff" />
-        </linearGradient>
-    </defs>
-    <circle cx="50" cy="50" r="44" fill="none" stroke="#00bfff" stroke-width="1.5" stroke-dasharray="8 4 2 4 12 4" stroke-linecap="round" stroke-opacity="0.6">
-        <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="20s" repeatCount="indefinite" />
-    </circle>
-    <circle cx="50" cy="50" r="37" fill="none" stroke="#00bfff" stroke-width="0.75" stroke-opacity="0.4"></circle>
-    <circle cx="50" cy="50" r="31" fill="none" stroke="#00bfff" stroke-width="2.5" stroke-dasharray="20 10 40 10" stroke-linecap="round" stroke-opacity="0.8">
-        <animateTransform attributeName="transform" type="rotate" from="360 50 50" to="0 50 50" dur="15s" repeatCount="indefinite" />
-    </circle>
-    <circle cx="50" cy="13" r="2" fill="#00ffff"><animate attributeName="opacity" values="0.2;1;0.2" dur="3s" repeatCount="indefinite"/></circle>
-    <circle cx="87" cy="50" r="2" fill="#00ffff"><animate attributeName="opacity" values="0.2;1;0.2" dur="4s" repeatCount="indefinite"/></circle>
-    <circle cx="13" cy="50" r="2" fill="#00ffff"><animate attributeName="opacity" values="0.2;1;0.2" dur="5s" repeatCount="indefinite"/></circle>
-    <path d="M37 45 V 36 A 13 13 0 0 1 63 36 V 45" fill="none" stroke="url(#padlockGrad)" stroke-width="7" stroke-linecap="round"></path>
-    <rect x="27" y="44" width="46" height="34" rx="7" ry="7" fill="url(#padlockGrad)"></rect>
-    <circle cx="50" cy="55" r="4.5" fill="#020a17"></circle>
-    <path d="M48 57 L46 66 L54 66 L52 57 Z" fill="#020a17"></path>
-</svg>
+    <!-- Centered Form Card -->
+    <div class="login-card" id="login-card">
+      <!-- Card Top Header (Desktop only) -->
+      <div class="card-hd">
+        <div class="card-mini-logo">
+          <!-- Project Padlock SVG (Card Header Theme) -->
+          <svg viewBox="0 0 100 100" width="34" height="34">
+            <defs>
+              <linearGradient id="padlockGradCard" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stop-color="#1B9A6C" />
+                <stop offset="100%" stop-color="#3DC38F" />
+              </linearGradient>
+            </defs>
+            <circle cx="50" cy="50" r="42" fill="none" stroke="#1B9A6C" stroke-width="2.5" stroke-dasharray="8 6" stroke-linecap="round" stroke-opacity="0.6">
+              <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="20s" repeatCount="indefinite" />
+            </circle>
+            <path d="M37 45 V 36 A 13 13 0 0 1 63 36 V 45" fill="none" stroke="url(#padlockGradCard)" stroke-width="7" stroke-linecap="round"></path>
+            <rect x="27" y="44" width="46" height="34" rx="7" ry="7" fill="url(#padlockGradCard)"></rect>
+            <circle cx="50" cy="55" r="4.5" fill="#ffffff"></circle>
+            <path d="M48 57 L46 66 L54 66 L52 57 Z" fill="#ffffff"></path>
+          </svg>
+        </div>
+        <div>
+          <div class="t"><b>B</b>Smart SOC</div>
+          <div class="u">BY BCITS SMARTER SOLUTIONS</div>
         </div>
       </div>
-      <div style="display:flex; flex-direction:column; justify-content:center;">
-        <div style="font-family:'Orbitron', sans-serif; font-size:18px; font-weight:700; letter-spacing:1px; line-height:1.1;">
-          <span style="color:#00bfff;">B</span><span style="color:#ffffff;">Smart</span>
-        </div>
-        <div style="font-family:'Orbitron', sans-serif; font-size:12px; font-weight:600; color:#00bfff; letter-spacing:3px; margin-top:2px;">
-          SOC
-        </div>
-        <div style="font-family:'Share Tech Mono', monospace; font-size:8px; color:#00bfff; letter-spacing:1px; margin-top:4px; opacity:0.8; white-space:nowrap;">
-          BY BCITS SMARTER SOLUTIONS
-        </div>
-      </div>
-    </div>
 
-    <div class="lp-div"></div>
-
-    <form id="login-form" autocomplete="on">
-      <!-- Username -->
-      <label class="lp-label" for="username">Identifier</label>
-      <div class="lp-field">
-        <div class="lp-field-icon">
-          <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <!-- Login Form with Existing IDs and Logic -->
+      <form id="login-form" autocomplete="on">
+        <!-- Identifier -->
+        <label class="form-label" for="username">Identifier</label>
+        <div class="input-wrap">
+          <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="8" r="4"/>
+            <path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>
+          </svg>
+          <input type="text" id="username" name="username" placeholder="admin" required autofocus tabindex="1" autocomplete="username" />
         </div>
-        <input type="text" id="username" name="username" placeholder="Username" required autofocus />
-      </div>
 
-      <!-- Password -->
-      <label class="lp-label" for="password">Authorization</label>
-      <div class="lp-field">
-        <div class="lp-field-icon">
-          <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <!-- Authorization -->
+        <label class="form-label" for="password">Authorization</label>
+        <div class="input-wrap">
+          <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="11" width="16" height="10" rx="3"/>
+            <path d="M8 11V8a4 4 0 0 1 8 0v3"/>
+          </svg>
+          <input type="password" id="password" name="password" placeholder="••••••••••" required tabindex="2" autocomplete="current-password" />
+          <button type="button" id="pw-toggle" class="pw-toggle-btn" onclick="togglePw()" tabindex="3" title="Toggle password visibility" aria-label="Toggle password visibility">
+            <svg id="pw-eye" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
         </div>
-        <input type="password" id="password" name="password" placeholder="••••••••••" required />
-        <button type="button" class="lp-pw-toggle" onclick="togglePw()" tabindex="-1">
-          <svg id="pw-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+
+        <!-- Remember Me + Forgot? -->
+        <div class="form-row">
+          <label class="cb-label" for="remember-me">
+            <input type="checkbox" id="remember-me" tabindex="4" class="sr-only" checked />
+            <div class="cb-box">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 12l5 5 9-10"/>
+              </svg>
+            </div>
+            <span>Remember Me</span>
+          </label>
+          <a href="#" class="fg-link" id="forgot-link" tabindex="5">Forgot?</a>
+        </div>
+
+        <!-- Error Message Container -->
+        <div id="login-error" class="login-error-banner"></div>
+
+        <!-- Access Button -->
+        <button type="submit" class="access-btn" id="login-btn" tabindex="6">
+          <span id="login-btn-txt">ACCESS</span>
         </button>
-      </div>
+      </form>
+    </div>
+  </div>
+</div>
 
-      <!-- Remember + Forgot -->
-      <div class="lp-rem-row">
-        <label class="lp-rem">
-          <div class="lp-chk"><div class="lp-chk-inner"></div></div>
-          <span class="lp-rem-txt">REMEMBER ME</span>
-        </label>
-        <a href="#" class="lp-forgot">FORGOT?</a>
-      </div>
-
-      <!-- Error -->
-      <div id="login-error" class="lp-error"></div>
-
-      <!-- Submit -->
-      <button type="submit" class="lp-btn" id="login-btn">
-        <div class="lp-btn-shine"></div>
-        <span id="login-btn-txt">ACCESS</span>
-      </button>
-    </form>
+<!-- ── SUCCESS ANIMATION OVERLAY (DARK GREEN HIGH-CONTRAST) ── -->
+<div class="login-success" id="login-success">
+  <div class="ls-particles">
+    <div class="ls-pt"></div>
+    <div class="ls-pt"></div>
+    <div class="ls-pt"></div>
+    <div class="ls-pt"></div>
+    <div class="ls-pt"></div>
+    <div class="ls-pt"></div>
+    <div class="ls-pt"></div>
+    <div class="ls-pt"></div>
   </div>
 
-  <!-- ── SUCCESS OVERLAY ── -->
-  <div class="login-success" id="login-success">
-    <div class="ls-particles">
-      <div class="ls-pt"></div><div class="ls-pt"></div><div class="ls-pt"></div>
-      <div class="ls-pt"></div><div class="ls-pt"></div><div class="ls-pt"></div>
-      <div class="ls-pt"></div><div class="ls-pt"></div>
-    </div>
-
-    <div class="ls-avatar-wrap">
-      <div class="ls-avatar">
-        <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-      </div>
-    </div>
-
-    <div class="ls-granted">ACCESS GRANTED</div>
-    <div class="ls-username" id="ls-username"></div>
-    <div class="ls-statusbar">
-      <div class="ls-dot"></div>
-      <span class="ls-stxt">SESSION ACTIVE</span>
+  <div class="ls-avatar-wrap">
+    <div class="ls-avatar">
+      <svg viewBox="0 0 24 24">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+        <circle cx="12" cy="7" r="4"/>
+      </svg>
     </div>
   </div>
 
-  <!-- Bottom HUD status -->
-  <div class="hud-status">
-    <div class="hud-sdot"></div>
-    <span class="hud-stxt">SECURE CONNECTION ESTABLISHED</span>
+  <div class="ls-granted">ACCESS GRANTED</div>
+  <div class="ls-username" id="ls-username"></div>
+  <div class="ls-statusbar">
+    <div class="ls-dot"></div>
+    <span class="ls-stxt">SESSION ACTIVE</span>
   </div>
-  <div class="hud-ver">v2.4.1</div>
 </div>
 
 <script>
+  // Support theme preview from URL parameter
+  (function() {
+    var p = new URLSearchParams(window.location.search).get('theme');
+    if (p === 'dark' || p === 'light') {
+      document.documentElement.setAttribute('data-theme', p);
+    }
+  })();
+
   // Clear stale tokens when login page loads
   localStorage.removeItem('sp_token');
   localStorage.removeItem('sp_user');
 
   function togglePw() {
     const pw = document.getElementById('password');
-    pw.type = pw.type === 'password' ? 'text' : 'password';
+    const eye = document.getElementById('pw-eye');
+    if (pw.type === 'password') {
+      pw.type = 'text';
+      eye.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>';
+    } else {
+      pw.type = 'password';
+      eye.innerHTML = '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>';
+    }
   }
 
   // ── Glitch typewriter effect ──
@@ -590,18 +1033,15 @@ body {
     const nameStr = (fullName || 'SYSTEM ADMIN').toString();
     const targetUrl = redirectUrl || '/dashboard';
     
-    // Fade out panel
-    const panel = document.getElementById('login-panel');
-    if (panel) {
-      panel.style.opacity = '0';
-      panel.style.pointerEvents = 'none';
-    }
-    const centerLogo = document.getElementById('center-logo');
-    if (centerLogo) {
-      centerLogo.style.opacity = '0';
+    // Fade out form card
+    const card = document.getElementById('login-card');
+    if (card) {
+      card.style.opacity = '0';
+      card.style.transform = 'scale(0.96)';
+      card.style.pointerEvents = 'none';
     }
 
-    // Show success overlay
+    // Show high-contrast dark green success overlay
     const success = document.getElementById('login-success');
     if (success) {
       success.classList.add('visible');
@@ -613,10 +1053,19 @@ body {
       }
     }
 
-    // Redirect automatically after short delay
+    // Redirect automatically after short delay unless previewing
+    if (targetUrl !== '#') {
+      setTimeout(() => {
+        window.location.href = targetUrl;
+      }, 1100);
+    }
+  }
+
+  // Preview hook for automated testing
+  if (new URLSearchParams(window.location.search).get('preview_success')) {
     setTimeout(() => {
-      window.location.href = targetUrl;
-    }, 1000);
+      showSuccess('ADMIN', '#');
+    }, 100);
   }
 
   // ── Form submit ──
@@ -628,7 +1077,7 @@ body {
 
     err.style.display = 'none';
     btn.disabled = true;
-    btnTxt.innerHTML = '<span class="lp-spinner"></span>';
+    btnTxt.innerHTML = '<span class="access-spinner"></span>';
 
     try {
       const res = await fetch('/auth/login', {
