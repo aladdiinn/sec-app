@@ -3783,7 +3783,7 @@ def get_process_connections():
         out = subprocess.check_output(["ss", "-tunpa"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
         for line in out.strip().split("\\n")[1:]:
             if "ESTAB" in line or "SYN-RECV" in line:
-                m = re.search(r'users:\(\("([^"]+)",pid=(\d+)', line)
+                m = re.search(r'users:\\(\\("([^"]+)",pid=(\\d+)', line)
                 if m:
                     name = m.group(1)
                     pid = m.group(2)
@@ -3797,10 +3797,10 @@ def auto_discover_log_paths():
 
     def is_rotated_archive(filepath):
         filename = os.path.basename(filepath)
-        if re.search(r'\.\d{{4}}-\d{{2}}-\d{{2}}\.log$', filename, re.IGNORECASE): return True
-        if re.search(r'\.\d{{8}}\.log$', filename, re.IGNORECASE): return True
-        if re.search(r'\.(gz|bz2|zip|tar|1|2|3|4|5|bak|old|swp)$', filename, re.IGNORECASE): return True
-        if re.search(r'^(localhost|manager|host-manager)\.', filename, re.IGNORECASE): return True
+        if re.search(r'\\.\\d{{4}}-\\d{{2}}-\\d{{2}}\\.log$', filename, re.IGNORECASE): return True
+        if re.search(r'\\.\\d{{8}}\\.log$', filename, re.IGNORECASE): return True
+        if re.search(r'\\.(gz|bz2|zip|tar|1|2|3|4|5|bak|old|swp)$', filename, re.IGNORECASE): return True
+        if re.search(r'^(localhost|manager|host-manager)\\.', filename, re.IGNORECASE): return True
         return False
 
     # OS Log Discovery (Ubuntu/Debian vs RHEL/CentOS/Rocky/Amazon Linux)
@@ -4004,18 +4004,18 @@ def get_auditd_events():
         with open(path, 'r', errors='ignore') as f:
             f.seek(pos)
             for line in f:
-                msg_id_m = re.search(r'msg=audit\(([\d\.:]+)\)', line)
+                msg_id_m = re.search(r'msg=audit\\(([\\d\\.:]+)\\)', line)
                 if not msg_id_m: continue
                 msg_id = msg_id_m.group(1)
                 
                 if "type=PATH" in line:
-                    name_m = re.search(r'name="?([^"\s]+)"?', line)
+                    name_m = re.search(r'name="?([^"\\s]+)"?', line)
                     if name_m:
                         paths[msg_id] = name_m.group(1)
                         
                 elif "type=SYSCALL" in line:
-                    auid_m = re.search(r'auid=(\d+)', line)
-                    key_m = re.search(r'key="?([^"\s]+)"?', line)
+                    auid_m = re.search(r'auid=(\\d+)', line)
+                    key_m = re.search(r'key="?([^"\\s]+)"?', line)
                     if auid_m and auid_m.group(1) != "4294967295":
                         auid = auid_m.group(1)
                         uname = user_mapping.get(auid, "unknown")
@@ -4142,10 +4142,10 @@ def get_new_log_lines(max_lines_per_file=50):
                     continue
 
                 clean_src = path
-                if re.search(r'(catalina|localhost|manager|host-manager)\.\d{{4}}-\d{{2}}-\d{{2}}\.log$', clean_src, re.I):
-                    clean_src = re.sub(r'(catalina|localhost|manager|host-manager)\.\d{{4}}-\d{{2}}-\d{{2}}\.log$', 'catalina.out', clean_src, flags=re.I)
-                elif re.search(r'postgresql-[A-Za-z0-9_-]+\.log$', clean_src, re.I):
-                    clean_src = re.sub(r'postgresql-[A-Za-z0-9_-]+\.log$', 'postgresql.log', clean_src, flags=re.I)
+                if re.search(r'(catalina|localhost|manager|host-manager)\\.\\d{{4}}-\\d{{2}}-\\d{{2}}\\.log$', clean_src, re.I):
+                    clean_src = re.sub(r'(catalina|localhost|manager|host-manager)\\.\\d{{4}}-\\d{{2}}-\\d{{2}}\\.log$', 'catalina.out', clean_src, flags=re.I)
+                elif re.search(r'postgresql-[A-Za-z0-9_-]+\\.log$', clean_src, re.I):
+                    clean_src = re.sub(r'postgresql-[A-Za-z0-9_-]+\\.log$', 'postgresql.log', clean_src, flags=re.I)
 
                 for line in raw_lines[-max_lines_per_file:]:
                     line = line.strip()
