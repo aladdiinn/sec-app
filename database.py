@@ -551,6 +551,21 @@ def init_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_net_threats_src ON network_threats(src_ip);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_net_threats_dest ON network_threats(dest_ip);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_net_threats_created ON network_threats(created_at DESC);")
+            # Sensor registry table (tracks all Suricata sensors and their health)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS nids_sensors (
+                    id SERIAL PRIMARY KEY,
+                    sensor_name VARCHAR(128) UNIQUE NOT NULL,
+                    project_id INT,
+                    last_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    event_count BIGINT DEFAULT 0,
+                    status VARCHAR(32) DEFAULT 'online',
+                    iface VARCHAR(32),
+                    sensor_type VARCHAR(64) DEFAULT 'Suricata',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
 
 
             # Alerts Alter
@@ -3987,8 +4002,8 @@ def create_network_threat(threat_data: dict) -> int:
         conn.close()
 
 
-def get_network_threats(project_id=None, limit=50, offset=0, search=None) -> list:
-    """Fetch network threats ordered by created_at DESC with optional project filter."""
+def get_network_threats(project_id=None, limit=50, offset=0, search=None, severity=None, sensor=None) -> list:
+    """Fetch network threats ordered by created_at DESC with optional project, search, severity, and sensor filters."""
     conn = get_db_connection()
     if not conn:
         return []
@@ -4002,29 +4017,48 @@ def get_network_threats(project_id=None, limit=50, offset=0, search=None) -> lis
             """
             conditions = []
             params = []
-            
+
             if project_id:
                 conditions.append("nt.project_id = %s")
                 params.append(project_id)
-                
+
             if search:
                 s_term = f"%{search}%"
-                conditions.append("(nt.src_ip LIKE %s OR nt.dest_ip LIKE %s OR nt.signature LIKE %s OR nt.category LIKE %s)")
-                params.extend([s_term, s_term, s_term, s_term])
-                
+                conditions.append("(nt.src_ip LIKE %s OR nt.dest_ip LIKE %s OR nt.signature LIKE %s OR nt.category LIKE %s OR nt.sensor_name LIKE %s)")
+                params.extend([s_term, s_term, s_term, s_term, s_term])
+
+            if severity is not None:
+                conditions.append("nt.severity = %s")
+                params.append(int(severity))
+
+            if sensor:
+                conditions.append("nt.sensor_name = %s")
+                params.append(sensor)
+
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
-                
+
             query += " ORDER BY nt.id DESC LIMIT %s OFFSET %s;"
             params.extend([limit, offset])
-            
+
             cur.execute(query, tuple(params))
-            return cur.fetchall()
+            rows = cur.fetchall() or []
+            result = []
+            for row in rows:
+                if isinstance(row, dict):
+                    result.append(row)
+                else:
+                    try:
+                        result.append(dict(row))
+                    except Exception:
+                        result.append(row)
+            return result
     except Exception as e:
         logger.error(f"Error getting network threats: {e}")
         return []
     finally:
         conn.close()
+
 
 
 def get_network_threat_stats(project_id=None) -> dict:
@@ -4100,3 +4134,79 @@ def get_network_threat_stats(project_id=None) -> dict:
 
 
 
+
+def upsert_nids_sensor(sensor_name: str, project_id=None, iface: str = None, sensor_type: str = "Suricata") -> bool:
+    """Register or update a Suricata sensor heartbeat in nids_sensors table."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO nids_sensors (sensor_name, project_id, iface, sensor_type, last_seen, event_count, status)
+                VALUES (%s, %s, %s, %s, NOW(), 1, 'online')
+                ON CONFLICT (sensor_name) DO UPDATE SET
+                    last_seen = NOW(),
+                    event_count = nids_sensors.event_count + 1,
+                    status = 'online',
+                    project_id = COALESCE(EXCLUDED.project_id, nids_sensors.project_id),
+                    iface = COALESCE(EXCLUDED.iface, nids_sensors.iface);
+            """, (sensor_name, project_id, iface, sensor_type))
+            if hasattr(conn, 'commit'):
+                conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error in upsert_nids_sensor: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def get_nids_sensors(project_id=None) -> list:
+    """Fetch all registered NIDS sensors, marking offline if last_seen > 10 minutes ago."""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            if project_id:
+                cur.execute("""
+                    SELECT s.*, p.name as project_name,
+                        CASE WHEN s.last_seen >= NOW() - INTERVAL '10 minutes' THEN 'online' ELSE 'offline' END as live_status
+                    FROM nids_sensors s
+                    LEFT JOIN projects p ON s.project_id = p.id
+                    WHERE s.project_id = %s
+                    ORDER BY s.last_seen DESC;
+                """, (project_id,))
+            else:
+                cur.execute("""
+                    SELECT s.*, p.name as project_name,
+                        CASE WHEN s.last_seen >= NOW() - INTERVAL '10 minutes' THEN 'online' ELSE 'offline' END as live_status
+                    FROM nids_sensors s
+                    LEFT JOIN projects p ON s.project_id = p.id
+                    ORDER BY s.last_seen DESC;
+                """)
+            return cur.fetchall() or []
+    except Exception as e:
+        logger.error(f"Error in get_nids_sensors: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def delete_nids_sensor(sensor_id: int) -> bool:
+    """Delete a NIDS sensor by id."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM nids_sensors WHERE id = %s;", (sensor_id,))
+            if hasattr(conn, 'commit'):
+                conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error in delete_nids_sensor: {e}")
+        return False
+    finally:
+        conn.close()

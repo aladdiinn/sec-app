@@ -2880,6 +2880,17 @@ async def api_ingest_nids_events(request: Request):
                 except Exception as ex_log:
                     logger.debug(f"Failed to create central alert for NIDS threat: {ex_log}")
 
+    # Update sensor registry heartbeat
+    if inserted_count > 0:
+        try:
+            db.upsert_nids_sensor(
+                sensor_name=sensor_name,
+                project_id=target_project_id,
+                sensor_type="Suricata"
+            )
+        except Exception:
+            pass
+
     return {
         "ok": True,
         "inserted": inserted_count,
@@ -2889,11 +2900,12 @@ async def api_ingest_nids_events(request: Request):
 
 
 @app.get("/api/nids/events")
-async def api_get_nids_events(request: Request, limit: int = 50, offset: int = 0, search: str = None):
-    """Retrieve recent Suricata network threat events, isolated by project."""
+async def api_get_nids_events(request: Request, limit: int = 50, offset: int = 0, search: str = None, severity: int = None, sensor: str = None):
+    """Retrieve recent Suricata network threat events, isolated by project. Supports search, severity, and sensor filters."""
     pid = get_effective_project_id(request)
-    threats = db.get_network_threats(project_id=pid, limit=limit, offset=offset, search=search)
+    threats = db.get_network_threats(project_id=pid, limit=limit, offset=offset, search=search, severity=severity, sensor=sensor)
     return {"ok": True, "count": len(threats), "events": threats}
+
 
 
 @app.get("/api/nids/stats")
@@ -2902,6 +2914,43 @@ async def api_get_nids_stats(request: Request):
     pid = get_effective_project_id(request)
     stats = db.get_network_threat_stats(project_id=pid)
     return {"ok": True, "stats": stats}
+
+
+@app.get("/api/nids/sensors")
+async def api_get_nids_sensors(request: Request):
+    """List all registered Suricata sensors with live/offline status."""
+    pid = get_effective_project_id(request)
+    sensors = db.get_nids_sensors(project_id=pid)
+    return {"ok": True, "sensors": sensors}
+
+
+@app.delete("/api/nids/sensors/{sensor_id}")
+async def api_delete_nids_sensor(sensor_id: int, request: Request):
+    """Remove a registered NIDS sensor."""
+    ok = db.delete_nids_sensor(sensor_id)
+    return {"ok": ok}
+
+
+@app.get("/nids")
+async def page_nids(request: Request):
+    """Dedicated NIDS / Perimeter IDS monitoring page."""
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/login")
+    projects = db.get_projects()
+    current_project = None
+    pid = get_effective_project_id(request)
+    if pid:
+        current_project = next((p for p in projects if (p.get("id") if isinstance(p, dict) else p[0]) == pid), None)
+    is_admin = request.session.get("user_role") in ("admin", "superuser")
+    return templates.TemplateResponse("nids.html", {
+        "request": request,
+        "user": user,
+        "active": "nids",
+        "current_project": current_project,
+        "projects": projects,
+        "is_admin": is_admin
+    })
 
 
 @app.get("/api/alerts")
