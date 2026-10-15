@@ -560,7 +560,8 @@ async def lifespan(app: FastAPI):
 
 # Initialize FastAPI App
 APP_VERSION = "1.5"
-AGENT_VERSION = "1.5"
+AGENT_VERSION = "1.6"
+_inventory_scan_queue = set()  # server_ids queued for on-demand inventory scan
 app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifespan)
 
 # Secret Key from Environment Variable
@@ -2765,6 +2766,9 @@ async def api_agent_push(request: Request):
     if update_req:
         res["update_requested"] = True
         res["update_cmd_url"] = update_cmd_url
+    if server_id and server_id in _inventory_scan_queue:
+        res["inventory_scan_requested"] = True
+        _inventory_scan_queue.discard(server_id)
     return res
 
 @app.post("/api/agent/status-update")
@@ -3581,16 +3585,24 @@ fi
 mkdir -p /opt/securepulse
 
 cat << PY_EOF > /opt/securepulse/node_push_agent.py
-import os, sys, time, json, socket, subprocess, glob, re, hashlib
+import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threading, random, platform, zipfile
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "1.5"
+AGENT_VERSION = "1.6"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
 ASSIGNED_SERVER_ID = int("$ASSIGNED_ID") if "$ASSIGNED_ID".isdigit() else {server_id or "None"}
 PUSH_INTERVAL = 30  # seconds
+
+# ── VULNERABILITY INVENTORY STATE (Agent v1.6) ──
+last_package_hash = ""
+inventory_error = None
+inventory_in_progress = False
+scheduled_inventory_hour = 2
+scheduled_inventory_minute = random.randint(25, 35)
+daily_inventory_done_date = ""
 
 def get_hostname():
     try: return socket.gethostname()
@@ -3618,6 +3630,311 @@ def check_assigned_server_id():
                 return ASSIGNED_SERVER_ID
     except: pass
     return ASSIGNED_SERVER_ID
+
+def get_os_info():
+    info = {{
+        "id": "unknown",
+        "version_id": "",
+        "version_codename": "",
+        "pretty_name": "Linux",
+        "architecture": platform.machine() or "x86_64",
+        "kernel_release": platform.release() or "unknown",
+        "reboot_required": "unknown",
+        "reboot_pkgs": []
+    }}
+    for p in ["/etc/os-release", "/usr/lib/os-release"]:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"): continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            v = v.strip().strip('"').strip("'")
+                            k = k.strip()
+                            if k == "ID": info["id"] = v.lower()
+                            elif k == "VERSION_ID": info["version_id"] = v
+                            elif k == "VERSION_CODENAME": info["version_codename"] = v.lower()
+                            elif k == "PRETTY_NAME": info["pretty_name"] = v
+                break
+            except Exception: pass
+
+    # Reboot detection
+    try:
+        deb_reboot = "/var/run/reboot-required" if os.path.exists("/var/run/reboot-required") else "/run/reboot-required"
+        if os.path.exists(deb_reboot):
+            info["reboot_required"] = True
+            pkgs_file = deb_reboot + ".pkgs"
+            if os.path.exists(pkgs_file):
+                try:
+                    with open(pkgs_file, "r", encoding="utf-8", errors="ignore") as f:
+                        info["reboot_pkgs"] = [l.strip() for l in f if l.strip()]
+                except Exception: pass
+        elif info["id"] in ("ubuntu", "debian"):
+            info["reboot_required"] = False
+        else:
+            res = subprocess.run(["needs-restarting", "-r"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15)
+            if res.returncode == 0:
+                info["reboot_required"] = False
+            elif res.returncode == 1:
+                info["reboot_required"] = True
+            else:
+                info["reboot_required"] = "unknown"
+    except Exception:
+        if info["id"] not in ("ubuntu", "debian") and info["reboot_required"] == "unknown":
+            info["reboot_required"] = "unknown"
+
+    return info
+
+def get_installed_packages(os_id, os_version):
+    packages = []
+    # 1. Debian/Ubuntu family (dpkg-query)
+    if os.path.exists("/usr/bin/dpkg-query") or os.path.exists("/bin/dpkg-query"):
+        try:
+            cmd = ["dpkg-query", "-W", "-f=${{binary:Package}}\\t${{Version}}\\t${{Architecture}}\\t${{source:Package}}\\t${{source:Version}}\\t${{db:Status-Abbrev}}\\n"]
+            out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=60).decode("utf-8", errors="ignore")
+            ecosystem = f"Ubuntu:{{os_version}}" if os_id == "ubuntu" else ("Debian" if os_id == "debian" else "Debian")
+            for line in out.splitlines():
+                parts = line.split("\\t")
+                if len(parts) >= 6:
+                    bin_pkg, ver, arch, src_pkg, src_ver, status = parts[:6]
+                    if status.strip().startswith("ii"):
+                        s_name = src_pkg.strip() if src_pkg.strip() else bin_pkg.strip()
+                        s_ver = src_ver.strip() if src_ver.strip() else ver.strip()
+                        packages.append({{
+                            "name": bin_pkg.strip(),
+                            "version": ver.strip(),
+                            "arch": arch.strip(),
+                            "source_name": s_name,
+                            "source_version": s_ver,
+                            "ecosystem": ecosystem
+                        }})
+            return packages, None
+        except Exception as e:
+            return [], f"dpkg-query error: {{e}}"
+
+    # 2. RHEL/CentOS/Rocky/Alma/Amazon Linux family (rpm)
+    if os.path.exists("/usr/bin/rpm") or os.path.exists("/bin/rpm"):
+        try:
+            cmd = ["rpm", "-qa", "--qf", "%{{NAME}}\\t%{{EPOCH}}\\t%{{VERSION}}\\t%{{RELEASE}}\\t%{{ARCH}}\\t%{{SOURCERPM}}\\n"]
+            out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=60).decode("utf-8", errors="ignore")
+            ecosystem = os_id.upper() if os_id else "RHEL"
+            for line in out.splitlines():
+                parts = line.split("\\t")
+                if len(parts) >= 6:
+                    name, epoch, ver, rel, arch, src_rpm = parts[:6]
+                    epoch_clean = "" if epoch in ("(none)", "None", "") else epoch.strip()
+                    s_name = src_rpm.strip()
+                    if s_name.endswith(".src.rpm"):
+                        s_name = s_name[:-8]
+                    elif s_name.endswith(".rpm"):
+                        s_name = s_name[:-4]
+                    packages.append({{
+                        "name": name.strip(),
+                        "epoch": epoch_clean,
+                        "version": ver.strip(),
+                        "release": rel.strip(),
+                        "arch": arch.strip(),
+                        "source_name": s_name,
+                        "ecosystem": ecosystem
+                    }})
+            return packages, None
+        except Exception as e:
+            return [], f"rpm error: {{e}}"
+
+    return [], "No supported package manager found (dpkg-query or rpm)"
+
+def get_standalone_software():
+    results = []
+    seen_paths = set()
+
+    # 1. Apache Tomcat (Read-only manifest/release-notes inspection)
+    tomcat_candidates = [
+        "/application/MDM/apache-tomcat-9.0.98",
+        "/application/MDM/*",
+        "/application/apache-tomcat*",
+        "/opt/tomcat*",
+        "/opt/apache-tomcat*",
+        "/usr/local/tomcat*",
+        "/var/lib/tomcat*"
+    ]
+    try:
+        for p in glob.glob("/proc/[0-9]*/cmdline"):
+            try:
+                with open(p, "rb") as f:
+                    cmd_str = f.read().decode("utf-8", errors="ignore")
+                    m = re.search(r'-Dcatalina\\.(?:home|base)=([^\\0\\s]+)', cmd_str)
+                    if m:
+                        tpath = m.group(1).strip()
+                        if tpath and os.path.isdir(tpath):
+                            tomcat_candidates.append(tpath)
+            except Exception: pass
+    except Exception: pass
+
+    expanded_tc = []
+    for c in tomcat_candidates:
+        if "*" in c:
+            expanded_tc.extend(glob.glob(c))
+        elif os.path.isdir(c):
+            expanded_tc.append(c)
+
+    for tc_dir in sorted(set(expanded_tc)):
+        real_tc = os.path.realpath(tc_dir)
+        if real_tc in seen_paths: continue
+        cat_jar = os.path.join(real_tc, "lib", "catalina.jar")
+        tc_version = None
+        evidence = None
+        if os.path.isfile(cat_jar):
+            try:
+                with zipfile.ZipFile(cat_jar, "r") as z:
+                    if "META-INF/MANIFEST.MF" in z.namelist():
+                        mf_content = z.read("META-INF/MANIFEST.MF").decode("utf-8", errors="ignore")
+                        for line in mf_content.splitlines():
+                            if line.startswith("Implementation-Version:"):
+                                tc_version = line.split(":", 1)[1].strip()
+                                evidence = f"{{cat_jar}} META-INF/MANIFEST.MF: Implementation-Version: {{tc_version}}"
+                                break
+                            elif line.startswith("Server-Number:"):
+                                tc_version = line.split(":", 1)[1].strip()
+                                evidence = f"{{cat_jar}} META-INF/MANIFEST.MF: Server-Number: {{tc_version}}"
+            except Exception: pass
+
+        if not tc_version:
+            rel_notes = os.path.join(real_tc, "RELEASE-NOTES")
+            if os.path.isfile(rel_notes):
+                try:
+                    with open(rel_notes, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            m = re.search(r'Apache Tomcat Version\\s+([0-9\\.]+)', line, re.I)
+                            if m:
+                                tc_version = m.group(1).strip()
+                                evidence = f"{{rel_notes}}: {{line.strip()}}"
+                                break
+                except Exception: pass
+
+        if tc_version:
+            seen_paths.add(real_tc)
+            results.append({{
+                "product": "Apache Tomcat",
+                "version": tc_version,
+                "path": real_tc,
+                "detection_evidence": evidence or f"Path: {{real_tc}}"
+            }})
+
+    # 2. Java / JVM (Read-only release file inspection)
+    jvm_candidates = glob.glob("/usr/lib/jvm/*") + glob.glob("/opt/java*") + glob.glob("/opt/jdk*") + glob.glob("/usr/java/*")
+    for jvm_dir in sorted(set(jvm_candidates)):
+        real_jvm = os.path.realpath(jvm_dir)
+        if real_jvm in seen_paths or not os.path.isdir(real_jvm): continue
+        rel_file = os.path.join(real_jvm, "release")
+        if os.path.isfile(rel_file):
+            try:
+                j_ver = None
+                with open(rel_file, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if line.startswith("JAVA_VERSION="):
+                            j_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            break
+                        elif line.startswith("JAVA_RUNTIME_VERSION=") and not j_ver:
+                            j_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if j_ver:
+                    seen_paths.add(real_jvm)
+                    results.append({{
+                        "product": "Java",
+                        "version": j_ver,
+                        "path": real_jvm,
+                        "detection_evidence": f"{{rel_file}}: JAVA_VERSION={{j_ver}}"
+                    }})
+            except Exception: pass
+
+    # 3. PostgreSQL (Read-only PG_VERSION file inspection)
+    pg_candidates = glob.glob("/var/lib/postgresql/*/*") + glob.glob("/var/lib/pgsql/data") + glob.glob("/var/lib/pgsql/*/*") + glob.glob("/data/pg*") + glob.glob("/opt/postgresql/data")
+    for pg_dir in sorted(set(pg_candidates)):
+        real_pg = os.path.realpath(pg_dir)
+        if real_pg in seen_paths or not os.path.isdir(real_pg): continue
+        pg_ver_file = os.path.join(real_pg, "PG_VERSION")
+        if os.path.isfile(pg_ver_file):
+            try:
+                with open(pg_ver_file, "r", encoding="utf-8", errors="ignore") as f:
+                    pg_v = f.read().strip()
+                    if pg_v:
+                        seen_paths.add(real_pg)
+                        results.append({{
+                            "product": "PostgreSQL",
+                            "version": pg_v,
+                            "path": real_pg,
+                            "detection_evidence": f"{{pg_ver_file}}: {{pg_v}}"
+                        }})
+            except Exception: pass
+
+    return results
+
+def collect_and_send_inventory(force_full=False):
+    global last_package_hash, inventory_error, inventory_in_progress
+    if inventory_in_progress: return
+    inventory_in_progress = True
+    try:
+        try: os.nice(10)
+        except: pass
+
+        sid = check_assigned_server_id()
+        os_info = get_os_info()
+        packages, pkg_err = get_installed_packages(os_info.get("id"), os_info.get("version_id"))
+        standalone_sw = get_standalone_software()
+
+        if pkg_err:
+            inventory_error = pkg_err
+        else:
+            inventory_error = None
+
+        h = hashlib.sha256()
+        for p in sorted(packages, key=lambda x: (x.get("name",""), x.get("version",""), x.get("arch",""))):
+            h.update(f"{{p.get('name')}}:{{p.get('version')}}:{{p.get('arch')}}:{{p.get('source_name')}}".encode('utf-8'))
+        pkg_hash = h.hexdigest()
+
+        send_hash_only = (not force_full) and (last_package_hash != "") and (pkg_hash == last_package_hash)
+
+        payload = {{
+            "server_id": sid,
+            "agent_version": AGENT_VERSION,
+            "machine_id": get_machine_id(),
+            "server_ip": TARGET_IP,
+            "hostname": get_hostname(),
+            "timestamp": datetime.utcnow().isoformat(),
+            "os_info": os_info,
+            "package_count": len(packages),
+            "packages_hash": pkg_hash,
+            "standalone_software": standalone_sw,
+            "is_hash_only": send_hash_only
+        }}
+        if not send_hash_only:
+            payload["packages"] = packages
+
+        raw_bytes = json.dumps(payload).encode("utf-8")
+        comp_bytes = gzip.compress(raw_bytes)
+        if len(comp_bytes) > 2 * 1024 * 1024:
+            raise Exception("Inventory compressed payload exceeds 2MB limit")
+
+        req = urllib.request.Request(
+            f"{{SOC_URL}}/api/agent/inventory",
+            data=comp_bytes,
+            headers={{
+                "Content-Type": "application/json",
+                "Content-Encoding": "gzip",
+                "X-Machine-ID": get_machine_id()
+            }}
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            resp_data = json.loads(resp.read().decode())
+            if resp_data.get("full_inventory_required") and send_hash_only:
+                collect_and_send_inventory(force_full=True)
+                return
+            last_package_hash = pkg_hash
+    except Exception as e:
+        inventory_error = f"inventory_error: {{e}}"
+    finally:
+        inventory_in_progress = False
 
 def get_cpu_percent():
     try:
@@ -4204,103 +4521,124 @@ def get_new_log_lines(max_lines_per_file=50):
     return balanced
 
 # Main loop
-print(f"[{APP_BRAND} Agent] Starting. SOC: {{SOC_URL}}, Node: {{TARGET_NAME}} ({{TARGET_IP}}), Server ID: {{ASSIGNED_SERVER_ID}}")
-print("[{APP_BRAND} Agent] Discovering log paths...")
-discovered_paths = auto_discover_log_paths()
-print(f"[{APP_BRAND} Agent] Found log paths: {{list(discovered_paths.keys())}}")
+def main():
+    global push_count, daily_inventory_done_date, discovered_paths
+    print(f"[{APP_BRAND} Agent] Starting. SOC: {{SOC_URL}}, Node: {{TARGET_NAME}} ({{TARGET_IP}}), Server ID: {{ASSIGNED_SERVER_ID}}")
+    print("[{APP_BRAND} Agent] Discovering log paths...")
+    discovered_paths = auto_discover_log_paths()
+    print(f"[{APP_BRAND} Agent] Found log paths: {{list(discovered_paths.keys())}}")
 
-# Initialize FIM baseline
-check_fim()
+    # Initialize FIM baseline
+    check_fim()
 
-push_count = 0
-while True:
-    try:
-        sid = check_assigned_server_id()
-        cpu = get_cpu_percent()
-        mem = get_memory_percent()
-        disk = get_disk_percent()
-        procs = get_processes()
-        ports = get_open_ports()
-        bash_cmds = get_bash_commands()
-        log_lines = get_new_log_lines()
-        auth_failures = get_auth_failures()
-        sudo_events = get_sudo_events()
-        file_changes = check_fim()
-        audit_events = get_auditd_events()
-        rx, tx = get_network_bytes()
-        proc_conns = get_process_connections()
+    # Initial background inventory collection on agent startup (Agent v1.6)
+    threading.Thread(target=collect_and_send_inventory, kwargs={{"force_full": False}}, daemon=True).start()
 
-        payload = {{
-            "server_id": sid,
-            "agent_version": AGENT_VERSION,
-            "server_ip": TARGET_IP,
-            "hostname": get_hostname(),
-            "machine_id": get_machine_id(),
-            "cpu_percent": cpu,
-            "memory_percent": mem,
-            "disk_percent": disk,
-            "network_rx_bytes": rx,
-            "network_tx_bytes": tx,
-            "processes": procs,
-            "process_connections": proc_conns,
-            "open_ports": ports,
-            "commands": bash_cmds,
-            "log_lines": [x["line"] for x in log_lines[:100]],
-            "logs": [{{"line": x["line"], "source": x["source"], "log_type": x["log_type"]}} for x in log_lines[:100]],
-            "auth_failures": auth_failures,
-            "sudo_events": sudo_events,
-            "file_changes": file_changes,
-            "audit_events": audit_events,
-            "discovered_log_paths": list(discovered_paths.keys())
-        }}
+    push_count = 0
+    while True:
+        try:
+            # Daily scheduled inventory collection (default 02:30 with random jitter)
+            now_dt = datetime.now()
+            today_str = now_dt.strftime("%Y-%m-%d")
+            if today_str != daily_inventory_done_date:
+                if now_dt.hour == scheduled_inventory_hour and now_dt.minute >= scheduled_inventory_minute:
+                    daily_inventory_done_date = today_str
+                    threading.Thread(target=collect_and_send_inventory, kwargs={{"force_full": False}}, daemon=True).start()
 
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            SOC_URL + "/api/agent/push",
-            data=data,
-            headers={{"Content-Type": "application/json"}}
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:
-            res_data = json.loads(r.read().decode())
-            if res_data.get("update_requested"):
-                dl_url = res_data.get("update_cmd_url")
-                try:
-                    ureq = urllib.request.Request(f"{{SOC_URL}}/api/agent/status-update", data=json.dumps({{"server_id": sid, "status": "updating"}}).encode('utf-8'), headers={{"Content-Type": "application/json"}})
-                    urllib.request.urlopen(ureq, timeout=5)
-                except: pass
-                
-                cmd = f"curl -s {{dl_url}} -d 'name={{TARGET_NAME}}&ip={{TARGET_IP}}' | bash"
-                subprocess.Popen(["bash", "-c", cmd])
-                sys.exit(0)
+            sid = check_assigned_server_id()
+            cpu = get_cpu_percent()
+            mem = get_memory_percent()
+            disk = get_disk_percent()
+            procs = get_processes()
+            ports = get_open_ports()
+            bash_cmds = get_bash_commands()
+            log_lines = get_new_log_lines()
+            auth_failures = get_auth_failures()
+            sudo_events = get_sudo_events()
+            file_changes = check_fim()
+            audit_events = get_auditd_events()
+            rx, tx = get_network_bytes()
+            proc_conns = get_process_connections()
 
-        # Also push structured logs
-        if log_lines:
-            log_payload = {{
+            payload = {{
                 "server_id": sid,
+                "agent_version": AGENT_VERSION,
                 "server_ip": TARGET_IP,
                 "hostname": get_hostname(),
-                "lines": log_lines[:200]
+                "machine_id": get_machine_id(),
+                "inventory_error": inventory_error,
+                "cpu_percent": cpu,
+                "memory_percent": mem,
+                "disk_percent": disk,
+                "network_rx_bytes": rx,
+                "network_tx_bytes": tx,
+                "processes": procs,
+                "process_connections": proc_conns,
+                "open_ports": ports,
+                "commands": bash_cmds,
+                "log_lines": [x["line"] for x in log_lines[:100]],
+                "logs": [{{"line": x["line"], "source": x["source"], "log_type": x["log_type"]}} for x in log_lines[:100]],
+                "auth_failures": auth_failures,
+                "sudo_events": sudo_events,
+                "file_changes": file_changes,
+                "audit_events": audit_events,
+                "discovered_log_paths": list(discovered_paths.keys())
             }}
-            ldata = json.dumps(log_payload).encode("utf-8")
-            lreq = urllib.request.Request(
-                SOC_URL + "/api/agent/push-logs",
-                data=ldata,
+
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                SOC_URL + "/api/agent/push",
+                data=data,
                 headers={{"Content-Type": "application/json"}}
             )
-            try: urllib.request.urlopen(lreq, timeout=10)
-            except: pass
+            with urllib.request.urlopen(req, timeout=10) as r:
+                res_data = json.loads(r.read().decode())
+                if res_data.get("update_requested"):
+                    dl_url = res_data.get("update_cmd_url")
+                    try:
+                        ureq = urllib.request.Request(f"{{SOC_URL}}/api/agent/status-update", data=json.dumps({{"server_id": sid, "status": "updating"}}).encode('utf-8'), headers={{"Content-Type": "application/json"}})
+                        urllib.request.urlopen(ureq, timeout=5)
+                    except: pass
+                    
+                    cmd = f"curl -s {{dl_url}} -d 'name={{TARGET_NAME}}&ip={{TARGET_IP}}' | bash"
+                    subprocess.Popen(["bash", "-c", cmd])
+                    sys.exit(0)
 
-        push_count += 1
-        if push_count % 10 == 0:
-            # Re-discover log paths periodically
-            discovered_paths = auto_discover_log_paths()
+                # On-demand inventory scan requested from SOC ("Scan now" button)
+                if res_data.get("inventory_scan_requested"):
+                    threading.Thread(target=collect_and_send_inventory, kwargs={{"force_full": True}}, daemon=True).start()
 
-    except urllib.error.URLError as e:
-        print(f"[{APP_BRAND} Agent] Connection error: {{e}}")
-    except Exception as e:
-        print(f"[{APP_BRAND} Agent] Error: {{e}}")
+            # Also push structured logs
+            if log_lines:
+                log_payload = {{
+                    "server_id": sid,
+                    "server_ip": TARGET_IP,
+                    "hostname": get_hostname(),
+                    "lines": log_lines[:200]
+                }}
+                ldata = json.dumps(log_payload).encode("utf-8")
+                lreq = urllib.request.Request(
+                    SOC_URL + "/api/agent/push-logs",
+                    data=ldata,
+                    headers={{"Content-Type": "application/json"}}
+                )
+                try: urllib.request.urlopen(lreq, timeout=10)
+                except: pass
 
-    time.sleep(PUSH_INTERVAL)
+            push_count += 1
+            if push_count % 10 == 0:
+                # Re-discover log paths periodically
+                discovered_paths = auto_discover_log_paths()
+
+        except urllib.error.URLError as e:
+            print(f"[{APP_BRAND} Agent] Connection error: {{e}}")
+        except Exception as e:
+            print(f"[{APP_BRAND} Agent] Error: {{e}}")
+
+        time.sleep(PUSH_INTERVAL)
+
+if __name__ == "__main__":
+    main()
 PY_EOF
 
 chmod +x /opt/securepulse/node_push_agent.py
