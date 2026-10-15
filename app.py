@@ -2934,23 +2934,10 @@ async def api_delete_nids_sensor(sensor_id: int, request: Request):
 @app.get("/nids")
 async def page_nids(request: Request):
     """Dedicated NIDS / Perimeter IDS monitoring page."""
-    user = request.session.get("user")
+    user = get_session_user(request)
     if not user:
-        return RedirectResponse(url="/login")
-    projects = db.get_projects()
-    current_project = None
-    pid = get_effective_project_id(request)
-    if pid:
-        current_project = next((p for p in projects if (p.get("id") if isinstance(p, dict) else p[0]) == pid), None)
-    is_admin = request.session.get("user_role") in ("admin", "superuser")
-    return templates.TemplateResponse("nids.html", {
-        "request": request,
-        "user": user,
-        "active": "nids",
-        "current_project": current_project,
-        "projects": projects,
-        "is_admin": is_admin
-    })
+        return RedirectResponse(url="/login", status_code=302)
+    return render_template(request, "nids.html", {"active": "nids"})
 
 
 @app.get("/download/suricata_forwarder.py")
