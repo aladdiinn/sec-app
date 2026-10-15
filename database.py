@@ -477,6 +477,8 @@ def init_db():
                         OR message ILIKE '%autovacuum%' OR message ILIKE '%postgres%' OR message ILIKE '%pgsql%'
                         OR source ILIKE '%postgres%' OR source ILIKE '%pgsql%'
                     );
+                """)
+                cur.execute("""
                     UPDATE pushed_logs
                     SET log_type = 'tomcat',
                         source = CASE WHEN source LIKE 'node-agent/%' OR source LIKE 'app-agent/%' OR source IS NULL THEN '/opt/tomcat/logs/catalina.out' ELSE source END
@@ -486,6 +488,8 @@ def init_db():
                         OR message ILIKE '%spring%' OR message ILIKE '%hibernate%'
                         OR source ILIKE '%tomcat%' OR source ILIKE '%catalina%' OR source ILIKE '%nohup%'
                     );
+                """)
+                cur.execute("""
                     UPDATE pushed_logs
                     SET log_type = 'os',
                         source = CASE WHEN source LIKE 'node-agent/%' OR source LIKE 'app-agent/%' OR source IS NULL THEN '/var/log/syslog' ELSE source END
@@ -520,6 +524,33 @@ def init_db():
                     UNIQUE(group_id, project_id)
                 );
             """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS network_threats (
+                    id SERIAL PRIMARY KEY,
+                    project_id INT,
+                    server_id INT,
+                    sensor_name VARCHAR(128),
+                    timestamp VARCHAR(64),
+                    src_ip VARCHAR(64),
+                    src_port INT,
+                    dest_ip VARCHAR(64),
+                    dest_port INT,
+                    proto VARCHAR(16),
+                    signature TEXT,
+                    category VARCHAR(256),
+                    severity INT,
+                    signature_id BIGINT,
+                    action VARCHAR(32) DEFAULT 'allowed',
+                    flow_id BIGINT,
+                    raw_json TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_net_threats_proj ON network_threats(project_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_net_threats_src ON network_threats(src_ip);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_net_threats_dest ON network_threats(dest_ip);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_net_threats_created ON network_threats(created_at DESC);")
 
 
             # Alerts Alter
@@ -3903,5 +3934,169 @@ def change_user_password(user_id: int, new_password: str):
         return False
     finally:
         conn.close()
+
+
+def create_network_threat(threat_data: dict) -> int:
+    """Insert a normalized Suricata NIDS threat event into network_threats table."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO network_threats (
+                    project_id, server_id, sensor_name, timestamp,
+                    src_ip, src_port, dest_ip, dest_port,
+                    proto, signature, category, severity,
+                    signature_id, action, flow_id, raw_json, created_at
+                ) VALUES (
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, NOW()
+                );
+            """, (
+                threat_data.get("project_id"),
+                threat_data.get("server_id"),
+                threat_data.get("sensor_name", "Suricata-Sensor"),
+                str(threat_data.get("timestamp", "")),
+                threat_data.get("src_ip", "0.0.0.0"),
+                threat_data.get("src_port", 0),
+                threat_data.get("dest_ip", "0.0.0.0"),
+                threat_data.get("dest_port", 0),
+                threat_data.get("proto", "TCP"),
+                threat_data.get("signature", "Suspicious Network Activity"),
+                threat_data.get("category", "Potentially Bad Traffic"),
+                threat_data.get("severity", 3),
+                threat_data.get("signature_id", 0),
+                threat_data.get("action", "allowed"),
+                threat_data.get("flow_id", 0),
+                json.dumps(threat_data.get("raw_json", threat_data))
+            ))
+            # Fetch the generated ID
+            try:
+                cur.execute("SELECT id FROM network_threats ORDER BY id DESC LIMIT 1;")
+                r = cur.fetchone()
+                return r["id"] if isinstance(r, dict) else r[0] if r else None
+            except Exception:
+                return None
+    except Exception as e:
+        logger.error(f"Error creating network threat: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def get_network_threats(project_id=None, limit=50, offset=0, search=None) -> list:
+    """Fetch network threats ordered by created_at DESC with optional project filter."""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            query = """
+                SELECT nt.*, s.hostname as server_name, p.name as project_name
+                FROM network_threats nt
+                LEFT JOIN servers s ON nt.server_id = s.id
+                LEFT JOIN projects p ON nt.project_id = p.id
+            """
+            conditions = []
+            params = []
+            
+            if project_id:
+                conditions.append("nt.project_id = %s")
+                params.append(project_id)
+                
+            if search:
+                s_term = f"%{search}%"
+                conditions.append("(nt.src_ip LIKE %s OR nt.dest_ip LIKE %s OR nt.signature LIKE %s OR nt.category LIKE %s)")
+                params.extend([s_term, s_term, s_term, s_term])
+                
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+                
+            query += " ORDER BY nt.id DESC LIMIT %s OFFSET %s;"
+            params.extend([limit, offset])
+            
+            cur.execute(query, tuple(params))
+            return cur.fetchall()
+    except Exception as e:
+        logger.error(f"Error getting network threats: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_network_threat_stats(project_id=None) -> dict:
+    """Compute high-level NIDS stats (24h counts, top attackers, top targeted ports)."""
+    conn = get_db_connection()
+    if not conn:
+        return {"total_24h": 0, "critical_count": 0, "high_count": 0, "medium_count": 0, "top_attackers": [], "top_signatures": [], "top_ports": []}
+    try:
+        with conn.cursor() as cur:
+            pid_clause = "AND project_id = %s" if project_id else ""
+            pid_params = (project_id,) if project_id else ()
+
+            # Total & Severity in last 24h
+            cur.execute(f"""
+                SELECT 
+                    COUNT(*) as total,
+                    SUM(CASE WHEN severity = 1 THEN 1 ELSE 0 END) as critical_count,
+                    SUM(CASE WHEN severity = 2 THEN 1 ELSE 0 END) as high_count,
+                    SUM(CASE WHEN severity >= 3 THEN 1 ELSE 0 END) as medium_count
+                FROM network_threats
+                WHERE created_at >= NOW() - INTERVAL '24 hours' {pid_clause};
+            """, pid_params)
+            row = cur.fetchone() or {}
+            total_24h = row.get("total") or 0
+            critical_count = row.get("critical_count") or 0
+            high_count = row.get("high_count") or 0
+            medium_count = row.get("medium_count") or 0
+
+            # Top 5 Attacker IPs
+            cur.execute(f"""
+                SELECT src_ip, COUNT(*) as hit_count
+                FROM network_threats
+                WHERE created_at >= NOW() - INTERVAL '24 hours' {pid_clause}
+                GROUP BY src_ip
+                ORDER BY hit_count DESC LIMIT 5;
+            """, pid_params)
+            top_attackers = cur.fetchall()
+
+            # Top 5 Signatures
+            cur.execute(f"""
+                SELECT signature, category, severity, COUNT(*) as hit_count
+                FROM network_threats
+                WHERE created_at >= NOW() - INTERVAL '24 hours' {pid_clause}
+                GROUP BY signature, category, severity
+                ORDER BY hit_count DESC LIMIT 5;
+            """, pid_params)
+            top_signatures = cur.fetchall()
+
+            # Top 5 Destination Ports
+            cur.execute(f"""
+                SELECT dest_port, proto, COUNT(*) as hit_count
+                FROM network_threats
+                WHERE dest_port > 0 AND created_at >= NOW() - INTERVAL '24 hours' {pid_clause}
+                GROUP BY dest_port, proto
+                ORDER BY hit_count DESC LIMIT 5;
+            """, pid_params)
+            top_ports = cur.fetchall()
+
+            return {
+                "total_24h": total_24h,
+                "critical_count": critical_count,
+                "high_count": high_count,
+                "medium_count": medium_count,
+                "top_attackers": top_attackers,
+                "top_signatures": top_signatures,
+                "top_ports": top_ports
+            }
+    except Exception as e:
+        logger.error(f"Error getting network threat stats: {e}")
+        return {"total_24h": 0, "critical_count": 0, "high_count": 0, "medium_count": 0, "top_attackers": [], "top_signatures": [], "top_ports": []}
+    finally:
+        conn.close()
+
 
 

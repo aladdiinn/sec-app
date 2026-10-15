@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{% block title %}BSmart SOC{% endblock %} — SOC Command Center</title>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet"/>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300c8ff'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>" />
+    <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@300;400;500;600;700;800;900&family=Orbitron:wght@400;600;700&family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet"/>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231B9A6C'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>" />
     <link rel="stylesheet" href="/static/css/main.css?v=2" />
     <!-- Theme init: run before paint to prevent flash -->
     <script>
       (function() {
-        var t = localStorage.getItem('sp_theme');
-        if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        var t = localStorage.getItem('bsmart-theme') || localStorage.getItem('sp_theme') || 'light';
+        document.documentElement.setAttribute('data-theme', t);
         window.USER_ROLE = "{{ session.get('user_role', 'normal') }}";
       })();
     </script>
@@ -19,6 +19,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     {% block extra_css %}{% endblock %}
+    <link rel="stylesheet" href="/static/css/theme.css?v=9" />
 </head>
 <body>
     {% if not hide_nav %}
@@ -161,6 +162,12 @@
                     </a>
                     {% block topbar_actions %}{% endblock %}
                     
+                    <!-- Theme Toggle Switch (Sun / Moon) -->
+                    <button id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleTheme()" type="button" title="Switch Theme (Light / Dark)" aria-label="Switch Theme">
+                        <svg class="theme-icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                        <svg class="theme-icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                    </button>
+
                     <!-- Notification Bell -->
                     <div class="notif-bell" id="notif-toggle">
                         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -177,15 +184,15 @@
                     <div id="sb-clock">--:--:--</div>
                     <!-- User Profile Avatar -->
                     <div class="user-profile-bell" id="profile-toggle" style="position: relative; cursor: pointer;">
-                        <div class="sb-logo" style="width:26px; height:26px; border-radius:50%; font-family:var(--orb); font-size:10px; color:var(--cyan); display:flex; align-items:center; justify-content:center; background:rgba(0,200,255,0.1); border:1px solid var(--cyan)">{{ session.get('username', 'U')[0]|upper }}</div>
+                        <div class="sb-logo" style="width:26px; height:26px; border-radius:50%; font-family:var(--font-sans); font-size:10px; color:var(--primary-green); display:flex; align-items:center; justify-content:center; background:var(--tint); border:1.5px solid var(--primary-green-light)">{{ session.get('username', 'U')[0]|upper }}</div>
                         <div class="notif-dropdown" id="profile-dropdown" style="right: 0; left: auto; top: 120%; min-width: 220px; z-index: 9999;">
                             <div class="notif-header" style="text-align: center;">USER PROFILE</div>
-                            <div class="notif-list" style="padding: 12px; font-size: 11px; line-height: 2; font-family: var(--orb); text-transform: uppercase;">
-                                <div><span style="color:#888;">USERNAME:</span> <span style="float:right; color:#fff;">{{ session.get('username', 'N/A') }}</span></div>
-                                <div style="border-bottom: 1px solid rgba(255,255,255,0.1); margin: 6px 0;"></div>
-                                <div><span style="color:#888;">EMAIL:</span> <span style="float:right; color:#fff; text-transform: none;">{{ session.get('user_email', 'N/A') }}</span></div>
-                                <div style="border-bottom: 1px solid rgba(255,255,255,0.1); margin: 6px 0;"></div>
-                                <div><span style="color:#888;">ROLE:</span> <span style="float:right; color:var(--cyan); font-weight: bold;">{{ session.get('user_role', 'ADMIN') }}</span></div>
+                            <div class="notif-list" style="padding: 12px; font-size: 11px; line-height: 2; font-family: var(--font-sans); text-transform: uppercase;">
+                                <div><span style="color:var(--muted);">USERNAME:</span> <span style="float:right; color:var(--navy); font-weight:700">{{ session.get('username', 'N/A') }}</span></div>
+                                <div style="border-bottom: 1px solid var(--line); margin: 6px 0;"></div>
+                                <div><span style="color:var(--muted);">EMAIL:</span> <span style="float:right; color:var(--navy); text-transform: none; font-weight:600">{{ session.get('user_email', 'N/A') }}</span></div>
+                                <div style="border-bottom: 1px solid var(--line); margin: 6px 0;"></div>
+                                <div><span style="color:var(--muted);">ROLE:</span> <span style="float:right; color:var(--primary-green); font-weight: bold;">{{ session.get('user_role', 'ADMIN') }}</span></div>
                             </div>
                         </div>
                     </div>
@@ -429,6 +436,17 @@
             } else {
                 alert("Playbooks feature is currently disabled");
             }
+        }
+
+        function toggleTheme() {
+            var cur = document.documentElement.getAttribute('data-theme') || 'light';
+            var next = (cur === 'dark') ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            try {
+                localStorage.setItem('bsmart-theme', next);
+                localStorage.setItem('sp_theme', next);
+            } catch(e) {}
+            window.dispatchEvent(new CustomEvent('bsmart-theme-changed', { detail: { theme: next } }));
         }
 
         async function updatePendingApprovalsBadge() {

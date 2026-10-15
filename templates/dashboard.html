@@ -129,7 +129,7 @@
 /* Services Cards Grid (Image 2 style) */
 .services-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 16px;
     margin-bottom: 24px;
 }
@@ -371,11 +371,11 @@
                 <option value="down">Offline / Down</option>
             </select>
 
-            <div class="view-toggle" style="display:flex; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:6px; overflow:hidden;">
-                <button id="btn-view-grid" onclick="setDashboardView('grid')" style="background:var(--cyan); color:#000; border:none; padding:6px 10px; cursor:pointer;" title="Grid View">
+            <div class="view-toggle">
+                <button id="btn-view-grid" class="active" onclick="setDashboardView('grid')" title="Grid View">
                     <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
                 </button>
-                <button id="btn-view-list" onclick="setDashboardView('list')" style="background:transparent; color:var(--text2); border:none; padding:6px 10px; cursor:pointer;" title="List View">
+                <button id="btn-view-list" onclick="setDashboardView('list')" title="List View">
                     <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
                 </button>
             </div>
@@ -386,6 +386,86 @@
     <!-- Services Cards Grid (Image 2 Style) -->
     <div id="services-cards-grid" class="services-grid">
         <div style="grid-column:1/-1; display:flex; flex-direction:column; align-items:center; padding:80px; color:var(--cyan); font-family:var(--mono); letter-spacing:1px;" class="fade-in"><div class="loader-spinner" style="margin-bottom:20px;"></div><div>ESTABLISHING SECURE CONNECTION...</div></div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         PERIMETER NETWORK IDS (SURICATA) MULTI-SENSOR MONITOR
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="nids-panel" style="background:var(--card); border:1px solid var(--border); border-radius:14px; padding:22px 24px; margin-bottom:28px; box-shadow:var(--shadow);">
+        <!-- Header -->
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:18px; border-bottom:1px solid var(--border); padding-bottom:14px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span style="font-size:20px;">🛡️</span>
+                <div>
+                    <div style="font-size:15px; font-weight:800; color:var(--navy); font-family:var(--font-sans); letter-spacing:0.5px;">
+                        PERIMETER NETWORK IDS <span style="font-size:11px; font-weight:700; color:var(--mint); background:var(--tint); padding:2px 8px; border-radius:12px; border:1px solid rgba(46,158,120,0.3); margin-left:6px;">SURICATA ENGINE</span>
+                    </div>
+                    <div style="font-size:11px; color:var(--muted); font-weight:600; margin-top:2px;">
+                        Live packet inspection stream from AWS VPC Mirror & FortiGate Perimeter TAPs
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:16px;">
+                <div style="display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--muted); font-weight:700;">
+                    <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--mint); box-shadow:0 0 8px var(--mint);"></span>
+                    Sensors Online
+                </div>
+                <button class="btn btn-glass" onclick="loadNidsData()" style="padding:4px 10px; font-size:11px;">🔄 Refresh NIDS</button>
+            </div>
+        </div>
+
+        <!-- 4 Metric Cards -->
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px; margin-bottom:20px;">
+            <div style="background:var(--card-2); border:1px solid var(--border); border-radius:10px; padding:12px 16px;">
+                <div style="font-size:10px; font-weight:700; color:var(--muted); letter-spacing:0.5px; text-transform:uppercase;">Total 24h Threats</div>
+                <div id="nids-stat-total" style="font-size:24px; font-weight:800; color:var(--navy); font-family:var(--font-mono); margin-top:4px;">0</div>
+            </div>
+            <div style="background:var(--card-2); border:1px solid var(--border); border-radius:10px; padding:12px 16px;">
+                <div style="font-size:10px; font-weight:700; color:var(--muted); letter-spacing:0.5px; text-transform:uppercase;">Critical Exploits</div>
+                <div id="nids-stat-critical" style="font-size:24px; font-weight:800; color:var(--red); font-family:var(--font-mono); margin-top:4px;">0</div>
+            </div>
+            <div style="background:var(--card-2); border:1px solid var(--border); border-radius:10px; padding:12px 16px;">
+                <div style="font-size:10px; font-weight:700; color:var(--muted); letter-spacing:0.5px; text-transform:uppercase;">High / Warnings</div>
+                <div id="nids-stat-high" style="font-size:24px; font-weight:800; color:var(--orange); font-family:var(--font-mono); margin-top:4px;">0</div>
+            </div>
+            <div style="background:var(--card-2); border:1px solid var(--border); border-radius:10px; padding:12px 16px;">
+                <div style="font-size:10px; font-weight:700; color:var(--muted); letter-spacing:0.5px; text-transform:uppercase;">Probes & Scans</div>
+                <div id="nids-stat-medium" style="font-size:24px; font-weight:800; color:var(--blue); font-family:var(--font-mono); margin-top:4px;">0</div>
+            </div>
+        </div>
+
+        <!-- 2-Column Split: Live Feed (Left) & Top Attackers / Ports (Right) -->
+        <div style="display:grid; grid-template-columns: 2fr 1fr; gap:18px;">
+            <!-- Left: Live Threat Stream -->
+            <div style="background:var(--card-2); border:1px solid var(--border); border-radius:10px; padding:16px;">
+                <div style="font-size:12px; font-weight:800; color:var(--navy); margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>📡 RECENT NETWORK DETECTIONS</span>
+                    <span style="font-size:10px; font-weight:600; color:var(--muted);">ET Open Signatures</span>
+                </div>
+                <div id="nids-threats-container" style="display:flex; flex-direction:column; gap:8px; max-height:280px; overflow-y:auto;">
+                    <div style="text-align:center; padding:30px; color:var(--muted); font-size:12px;">Loading live perimeter events...</div>
+                </div>
+            </div>
+
+            <!-- Right: Top Attackers & Targeted Ports -->
+            <div style="display:flex; flex-direction:column; gap:14px;">
+                <!-- Top Attackers -->
+                <div style="background:var(--card-2); border:1px solid var(--border); border-radius:10px; padding:16px; flex:1;">
+                    <div style="font-size:12px; font-weight:800; color:var(--navy); margin-bottom:10px;">🎯 TOP ATTACKER IPs (24H)</div>
+                    <div id="nids-top-attackers" style="display:flex; flex-direction:column; gap:6px;">
+                        <div style="color:var(--muted); font-size:11px;">No attacker IPs recorded yet</div>
+                    </div>
+                </div>
+
+                <!-- Targeted Ports -->
+                <div style="background:var(--card-2); border:1px solid var(--border); border-radius:10px; padding:14px; flex:1;">
+                    <div style="font-size:12px; font-weight:800; color:var(--navy); margin-bottom:8px;">🚪 PROBED PORTS</div>
+                    <div id="nids-top-ports" style="display:flex; flex-wrap:wrap; gap:6px;">
+                        <span style="color:var(--muted); font-size:11px;">Listening...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
 </div>
@@ -460,19 +540,13 @@
                     </div>
                 </div>
 
-                <div class="i3-grid-3">
-                    <div class="i3-metric-box">
-                        <div style="font-size:11px; color:var(--text2)">CPU Usage</div>
-                        <div id="i3-m-cpu" style="font-size:22px; font-weight:700; color:var(--text); margin:4px 0">0%</div>
-                    </div>
-                    <div class="i3-metric-box">
-                        <div style="font-size:11px; color:var(--text2)">RAM Usage</div>
-                        <div id="i3-m-ram" style="font-size:22px; font-weight:700; color:var(--text); margin:4px 0">0%</div>
-                    </div>
-                    <div class="i3-metric-box">
-                        <div style="font-size:11px; color:var(--text2)">Disk Usage</div>
-                        <div id="i3-m-disk" style="font-size:22px; font-weight:700; color:var(--text); margin:4px 0">0%</div>
-                    </div>
+                <div class="donut-gauges-row" id="i3-modal-donuts" style="padding:14px 10px; margin-top:14px;">
+                    <!-- Rendered by updateModalDonuts -->
+                </div>
+                <div style="display:none">
+                    <div id="i3-m-cpu">0%</div>
+                    <div id="i3-m-ram">0%</div>
+                    <div id="i3-m-disk">0%</div>
                 </div>
             </div>
         </div>
@@ -612,21 +686,42 @@ let currentDashboardView = 'grid';
 
 function setDashboardView(view) {
     currentDashboardView = view;
-    document.getElementById('btn-view-grid').style.background = view === 'grid' ? 'var(--cyan)' : 'transparent';
-    document.getElementById('btn-view-grid').style.color = view === 'grid' ? '#000' : 'var(--text2)';
+    const btnGrid = document.getElementById('btn-view-grid');
+    const btnList = document.getElementById('btn-view-list');
     
-    document.getElementById('btn-view-list').style.background = view === 'list' ? 'var(--cyan)' : 'transparent';
-    document.getElementById('btn-view-list').style.color = view === 'list' ? '#000' : 'var(--text2)';
+    if (btnGrid && btnList) {
+        if (view === 'grid') {
+            btnGrid.classList.add('active');
+            btnList.classList.remove('active');
+            btnGrid.style.background = '';
+            btnGrid.style.color = '';
+            btnList.style.background = '';
+            btnList.style.color = '';
+        } else {
+            btnList.classList.add('active');
+            btnGrid.classList.remove('active');
+            btnList.style.background = '';
+            btnList.style.color = '';
+            btnGrid.style.background = '';
+            btnGrid.style.color = '';
+        }
+    }
     
     const container = document.getElementById('services-cards-grid');
-    if (view === 'list') {
-        container.style.display = 'flex';
-        container.style.flexDirection = 'column';
-        container.style.gap = '8px';
-    } else {
-        container.style.display = 'grid';
-        container.style.gridTemplateColumns = 'repeat(auto-fill, minmax(280px, 1fr))';
-        container.style.gap = '20px';
+    if (container) {
+        if (view === 'list') {
+            container.classList.add('view-is-list');
+            container.style.display = 'flex';
+            container.style.flexDirection = 'column';
+            container.style.gap = '8px';
+            container.style.gridTemplateColumns = 'none';
+        } else {
+            container.classList.remove('view-is-list');
+            container.style.display = 'grid';
+            container.style.flexDirection = '';
+            container.style.gap = '';
+            container.style.gridTemplateColumns = '';
+        }
     }
     
     renderServicesGrid();
@@ -657,6 +752,92 @@ function formatLocal(dateStr) {
 let globalServersList = [];
 let activeModalServerId = null;
 
+async function loadNidsData() {
+    try {
+        const statsRes = await apiFetch('/api/nids/stats');
+        if (statsRes && statsRes.stats) {
+            const s = statsRes.stats;
+            const elTotal = document.getElementById('nids-stat-total');
+            const elCrit = document.getElementById('nids-stat-critical');
+            const elHigh = document.getElementById('nids-stat-high');
+            const elMed = document.getElementById('nids-stat-medium');
+
+            if (elTotal) elTotal.innerText = s.total_24h || 0;
+            if (elCrit) elCrit.innerText = s.critical_count || 0;
+            if (elHigh) elHigh.innerText = s.high_count || 0;
+            if (elMed) elMed.innerText = s.medium_count || 0;
+
+            // Render Top Attackers
+            const attackersEl = document.getElementById('nids-top-attackers');
+            if (attackersEl) {
+                if (s.top_attackers && s.top_attackers.length > 0) {
+                    attackersEl.innerHTML = s.top_attackers.map(a => `
+                        <div style="display:flex; justify-content:space-between; align-items:center; background:var(--card); border:1px solid var(--border); padding:5px 10px; border-radius:6px; font-size:11px;">
+                            <span style="font-family:monospace; font-weight:700; color:var(--red);">${a.src_ip}</span>
+                            <span style="font-weight:700; color:var(--muted); font-size:10px;">${a.hit_count} hits</span>
+                        </div>
+                    `).join('');
+                } else {
+                    attackersEl.innerHTML = '<div style="color:var(--muted); font-size:11px; padding:6px 0;">No suspicious IPs in last 24h</div>';
+                }
+            }
+
+            // Render Top Ports
+            const portsEl = document.getElementById('nids-top-ports');
+            if (portsEl) {
+                if (s.top_ports && s.top_ports.length > 0) {
+                    portsEl.innerHTML = s.top_ports.map(p => `
+                        <span style="background:var(--card); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:11px; font-family:monospace; color:var(--navy); font-weight:700;">
+                            ${p.dest_port}/${p.proto} <span style="color:var(--muted); font-size:9.5px;">(${p.hit_count})</span>
+                        </span>
+                    `).join('');
+                } else {
+                    portsEl.innerHTML = '<span style="color:var(--muted); font-size:11px;">Listening on perimeter...</span>';
+                }
+            }
+        }
+
+        // Fetch recent events
+        const eventsRes = await apiFetch('/api/nids/events?limit=8');
+        const threatsEl = document.getElementById('nids-threats-container');
+        if (threatsEl && eventsRes && eventsRes.events) {
+            if (eventsRes.events.length > 0) {
+                threatsEl.innerHTML = eventsRes.events.map(ev => {
+                    const isCrit = ev.severity === 1;
+                    const isHigh = ev.severity === 2;
+                    const sevBadge = isCrit
+                        ? '<span style="background:rgba(255,90,95,0.15); color:var(--red); border:1px solid rgba(255,90,95,0.3); padding:2px 6px; border-radius:4px; font-size:9px; font-weight:800;">CRITICAL</span>'
+                        : (isHigh
+                            ? '<span style="background:rgba(247,147,26,0.15); color:var(--orange); border:1px solid rgba(247,147,26,0.3); padding:2px 6px; border-radius:4px; font-size:9px; font-weight:800;">HIGH</span>'
+                            : '<span style="background:rgba(76,141,255,0.15); color:var(--blue); border:1px solid rgba(76,141,255,0.3); padding:2px 6px; border-radius:4px; font-size:9px; font-weight:800;">INFO</span>');
+                    
+                    const sensorLabel = ev.sensor_name ? (ev.sensor_name.toLowerCase().includes('aws') ? 'AWS' : (ev.sensor_name.toLowerCase().includes('forti') ? 'FortiGate' : 'NIDS')) : 'NIDS';
+                    const timeShort = ev.timestamp ? ev.timestamp.substring(11, 19) : 'recent';
+
+                    return `
+                        <div style="display:flex; justify-content:space-between; align-items:center; background:var(--card); border:1px solid var(--border); border-left:3px solid ${isCrit ? 'var(--red)' : isHigh ? 'var(--orange)' : 'var(--blue)'}; padding:8px 12px; border-radius:6px; font-size:11.5px;">
+                            <div style="min-width:0; flex:1; margin-right:12px;">
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <span style="font-weight:800; color:var(--navy); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${ev.signature}">${ev.signature}</span>
+                                    <span style="background:var(--card-2); border:1px solid var(--border); color:var(--muted); font-size:9px; padding:1px 5px; border-radius:3px; font-weight:700;">${sensorLabel}</span>
+                                </div>
+                                <div style="font-size:10px; color:var(--muted); font-family:monospace; margin-top:2px;">
+                                    <span style="color:var(--red); font-weight:700;">${ev.src_ip}:${ev.src_port}</span> &rarr; <span>${ev.dest_ip}:${ev.dest_port}</span> [${ev.proto}] &bull; ${timeShort}
+                                </div>
+                            </div>
+                            <div>${sevBadge}</div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                threatsEl.innerHTML = '<div style="text-align:center; padding:30px; color:var(--muted); font-size:12px;">No perimeter network intrusions detected in current window.</div>';
+            }
+        }
+    } catch (e) {
+        console.error('Error loading NIDS data:', e);
+    }
+}
+
 async function loadDashboardData() {
     try {
         // Load Counts
@@ -680,6 +861,7 @@ async function loadDashboardData() {
         globalServersList = Array.isArray(serversRes) ? serversRes : (serversRes.servers || []);
         
         renderServicesGrid();
+        loadNidsData();
     } catch(e) {
         console.error('Error loading dashboard data:', e);
         // Remove spinner and show error message
@@ -690,8 +872,66 @@ async function loadDashboardData() {
     }
 }
 
+// ── DONUT GAUGE HELPER (Exact style of 1st image: 98% Green, 7% Red, 23% Amber) ──
+function renderDonutGauge(pct, label, colorOverride) {
+    const val = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+    const circ = 106.8;
+    const offset = (circ - (val / 100 * circ)).toFixed(1);
+    
+    // Gauge color logic matching Image 1
+    let color = colorOverride;
+    if (!color) {
+        if (val > 85) color = '#FF5A5F'; // Red
+        else if (val > 70) color = '#F7931A'; // Amber/Orange
+        else color = '#10B981'; // Vibrant Green
+    }
+
+    return `
+    <div class="donut-gauge-item" title="${label}: ${val}%">
+        <div class="donut-gauge-circle">
+            <svg width="44" height="44" viewBox="0 0 44 44">
+                <circle cx="22" cy="22" r="17" fill="none" class="donut-track" stroke-width="3.5" />
+                <circle cx="22" cy="22" r="17" fill="none" stroke="${color}" stroke-width="3.5"
+                        stroke-linecap="round"
+                        stroke-dasharray="${circ}"
+                        stroke-dashoffset="${offset}"
+                        transform="rotate(-90 22 22)" />
+            </svg>
+            <span class="donut-gauge-num">${val}%</span>
+        </div>
+        <span class="donut-gauge-label">${label}</span>
+    </div>
+    `;
+}
+
+function updateModalDonuts(cpu, ram, disk) {
+    const el = document.getElementById('i3-modal-donuts');
+    if (el) {
+        el.innerHTML = `
+            ${renderDonutGauge(cpu, 'CPU Usage')}
+            ${renderDonutGauge(ram, 'RAM Usage')}
+            ${renderDonutGauge(disk, 'Disk Usage')}
+        `;
+    }
+}
+
 function renderServicesGrid() {
     const container = document.getElementById('services-cards-grid');
+    if (container) {
+        if (currentDashboardView === 'list') {
+            container.classList.add('view-is-list');
+            container.style.display = 'flex';
+            container.style.flexDirection = 'column';
+            container.style.gap = '8px';
+            container.style.gridTemplateColumns = 'none';
+        } else {
+            container.classList.remove('view-is-list');
+            container.style.display = 'grid';
+            container.style.flexDirection = '';
+            container.style.gap = '';
+            container.style.gridTemplateColumns = '';
+        }
+    }
     const search = (document.getElementById('srv-search-input').value || '').toLowerCase().trim();
     const filter = document.getElementById('srv-filter-select').value;
 
@@ -732,7 +972,7 @@ function renderServicesGrid() {
         const isApp = name.toLowerCase().includes('app') || name.toLowerCase().includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
         
         const rawBadge = isDb ? '<span class="service-type-badge st-database">DATABASE</span>' : (isApp ? '<span class="service-type-badge st-app">APP NODE</span>' : '<span class="service-type-badge st-server">LINUX SERVER</span>');
-        const typeBadge = `<div style="text-align:right">${rawBadge}<div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${s.agent_version || '1.5'}</div></div>`;
+        const typeBadge = `<div style="text-align:right">${rawBadge}<div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">v${s.agent_version || '1.5'}</div></div>`;
 
         const cpu = s.cpu_percent || 0;
         const ram = s.memory_percent || 0;
@@ -755,65 +995,56 @@ function renderServicesGrid() {
             alertBox = `<div class="service-alert-box sab-trouble"> <strong>HIGH RESOURCE</strong>  CPU: ${cpu}% / RAM: ${ram}%</div>`;
         }
 
-        // Border color based on status
-        const borderColor = isDown ? 'var(--red)' : (isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : 'rgba(255,255,255,0.08)')));
+        // Border color based on status (fallback to empty so default theme border applies)
+        const borderColor = isDown ? 'var(--red)' : (isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : '')));
 
         if (currentDashboardView === 'list') {
+            const listBorderColor = borderColor || 'var(--mint)';
             return `
-            <div class="service-card-list fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="border-left: 4px solid ${borderColor}; display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; background: rgba(255,255,255,0.02); margin-bottom: 8px; border-radius: 6px; cursor: pointer; border-right: 1px solid rgba(255,255,255,0.05); border-top: 1px solid rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.05);">
-                <div style="flex: 1.5; min-width: 120px;">
-                    <div style="font-weight: 700; color: var(--text); font-size: 13px; margin-bottom: 2px;">${name}</div>
-                    <div style="font-size: 11px; color: var(--cyan); font-family: monospace;">${ip}</div>
+            <div class="service-card-list fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="border-left: 4px solid ${listBorderColor} !important;">
+                <div style="flex: 1.5; min-width: 140px;">
+                    <div class="list-srv-name" style="font-weight: 700; color: var(--navy); font-size: 13px; margin-bottom: 2px;">${name}</div>
+                    <div class="list-srv-ip" style="font-size: 11px; color: var(--muted); font-family: monospace;">${ip}</div>
                 </div>
                 <div style="flex: 1.5; font-size: 11px; transform: scale(0.9); transform-origin: left;">
                     ${typeBadge}
                 </div>
-                <div style="flex: 2; display: flex; gap: 16px; font-size: 11px;">
-                    <div><span style="color:var(--text2)">CPU</span> <span style="color:${cpu>85?'var(--red)':cpu>70?'var(--amber)':'var(--text)'}; font-weight:600">${cpu}%</span></div>
-                    <div><span style="color:var(--text2)">RAM</span> <span style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--text)'}; font-weight:600">${ram}%</span></div>
-                    <div><span style="color:var(--text2)">Disk</span> <span style="color:var(--text); font-weight:600">${disk}%</span></div>
+                <div style="flex: 2; display: flex; gap: 16px; font-size: 11px; align-items: center;">
+                    <div><span class="list-metric-label" style="color:var(--muted)">CPU</span> <span class="list-metric-val" style="color:${cpu>85?'var(--red)':cpu>70?'var(--amber)':'var(--navy)'}; font-weight:600">${cpu}%</span></div>
+                    <div><span class="list-metric-label" style="color:var(--muted)">RAM</span> <span class="list-metric-val" style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--navy)'}; font-weight:600">${ram}%</span></div>
+                    <div><span class="list-metric-label" style="color:var(--muted)">Disk</span> <span class="list-metric-val" style="color:var(--navy); font-weight:600">${disk}%</span></div>
                 </div>
                 <div style="flex: 1; font-size: 12px; text-align: center;">
-                    <span style="color:${alertCount>0?'var(--red)':'var(--green)'}; font-weight:700;">${alertCount} Alerts</span>
+                    <span style="color:${alertCount>0?'var(--red)':'var(--mint)'}; font-weight:700;">${alertCount} Alerts</span>
                 </div>
-                <div style="flex: 1.5; transform: scale(0.9); transform-origin: right;">
+                <div style="flex: 1.5; transform: scale(0.9); transform-origin: right; display: flex; justify-content: flex-end;">
                     ${alertBox}
                 </div>
             </div>
             `;
         } else {
             return `
-            <div class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="border-color:${borderColor}; padding: 14px; transform: scale(0.95); margin: -8px;">
+            <div class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="${borderColor ? 'border-color:' + borderColor + ';' : ''}">
                 <div>
-                    <div class="service-header" style="margin-bottom: 12px;">
-                        <div>
-                            <h4 class="service-title" style="font-size: 14px;">${name}</h4>
-                            <div style="font-family:monospace; font-size:10px; color:var(--cyan)">${ip}</div>
+                    <div class="service-header">
+                        <div style="min-width:0; flex:1;">
+                            <div style="display:flex; align-items:center; gap:5px; overflow:hidden;">
+                                <h4 class="service-title" title="${name}">${name}</h4>
+                                ${alertCount > 0 ? `<span class="badge-alert-pill" title="${alertCount} active alert(s)">🚨 ${alertCount}</span>` : ''}
+                            </div>
+                            <div style="font-family:monospace; font-size:9.5px; color:var(--cyan); margin-top:2px;">${ip}</div>
                         </div>
-                        <div style="transform: scale(0.85); transform-origin: right top;">${typeBadge}</div>
+                        <div style="text-align:right; flex-shrink:0;">${typeBadge}</div>
                     </div>
 
-                    <div class="service-metrics" style="gap: 8px;">
-                        <div class="service-metrics-item">
-                            <span class="sm-label">CPU USAGE</span>
-                            <span class="sm-val" style="color:${cpu>85?'var(--red)':cpu>70?'var(--amber)':'var(--text)'}; font-size: 13px;">${cpu}%</span>
-                        </div>
-                        <div class="service-metrics-item">
-                            <span class="sm-label">RAM USAGE</span>
-                            <span class="sm-val" style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--text)'}; font-size: 13px;">${ram}%</span>
-                        </div>
-                        <div class="service-metrics-item" style="margin-top:6px">
-                            <span class="sm-label">DISK USAGE</span>
-                            <span class="sm-val" style="font-size: 13px;">${disk}%</span>
-                        </div>
-                        <div class="service-metrics-item" style="margin-top:6px">
-                            <span class="sm-label">ALERTS</span>
-                            <span class="sm-val" style="color:${alertCount>0?'var(--red)':'var(--green)'}; font-size: 13px;">${alertCount}</span>
-                        </div>
+                    <div class="donut-gauges-row">
+                        ${renderDonutGauge(cpu, 'CPU')}
+                        ${renderDonutGauge(ram, 'RAM')}
+                        ${renderDonutGauge(disk, 'DISK')}
                     </div>
                 </div>
 
-                <div style="margin-top: 12px;">
+                <div>
                     ${alertBox}
                 </div>
             </div>
@@ -918,6 +1149,7 @@ async function openImage3Modal(serverId) {
         document.getElementById('i3-m-ram').innerText = ram + '%';
         document.getElementById('i3-m-ram').style.color = ram > 85 ? 'var(--red)' : 'var(--text)';
         document.getElementById('i3-m-disk').innerText = disk + '%';
+        updateModalDonuts(cpu, ram, disk);
 
 
         // Incidents tab (Matching Image 1)
