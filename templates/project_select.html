@@ -26,7 +26,7 @@
 .card-header{padding:16px 18px 12px;display:flex;align-items:flex-start;justify-content:space-between}
 .card-icon-wrap{width:40px;height:40px;border-radius:8px;background:linear-gradient(135deg,var(--bg3),var(--bg));border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;margin-right:12px}
 .card-title-wrap{flex:1}
-.card-title{font-family:'Orbitron',sans-serif;font-size:12px;font-weight:600;letter-spacing:2px;color:var(--text);margin-bottom:4px}
+.card-title{font-family:var(--font-sans);font-size:13px;font-weight:700;letter-spacing:0.5px;color:var(--text);margin-bottom:4px}
 .card-desc{font-size:10px;color:var(--text3);letter-spacing:.5px;line-height:1.5}
 .card-status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
 .dot-ok{background:var(--green);box-shadow:0 0 6px var(--green)66}
@@ -36,11 +36,11 @@
 .card-metrics{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
 .card-metric{padding:12px 14px;border-right:1px solid var(--border);text-align:center}
 .card-metric:last-child{border-right:none}
-.metric-val{font-family:'Orbitron',sans-serif;font-size:20px;font-weight:700;color:var(--text);line-height:1;margin-bottom:4px}
+.metric-val{font-family:var(--font-sans);font-size:20px;font-weight:800;color:var(--text);line-height:1;margin-bottom:4px}
 .metric-val.crit{color:var(--red)}
 .metric-val.warn{color:var(--amber)}
 .metric-val.ok{color:var(--green)}
-.metric-label{font-size:8px;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase}
+.metric-label{font-size:8px;color:var(--text3);letter-spacing:1px;text-transform:uppercase}
 
 .card-alert-bar{padding:8px 18px;background:rgba(255, 51, 102,0.06);border-bottom:1px solid rgba(255, 51, 102,0.15);display:flex;align-items:center;gap:8px;font-size:10px;color:var(--red)}
 .alert-dot{width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0;animation:blink 1.5s infinite}
@@ -48,7 +48,7 @@
 
 .card-footer{padding:14px 18px;display:flex;align-items:center;justify-content:space-between}
 .card-meta{font-size:10px;color:var(--text3);letter-spacing:.5px}
-.enter-btn{display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--cyan);color:var(--cyan);font-family:'Orbitron',sans-serif;font-size:9px;letter-spacing:2px;padding:7px 16px;border-radius:3px;cursor:pointer;transition:all .2s;text-transform:uppercase}
+.enter-btn{display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-sans);font-size:10px;font-weight:700;letter-spacing:1px;padding:7px 16px;border-radius:3px;cursor:pointer;transition:all .2s;text-transform:uppercase}
 .enter-btn:hover{background:rgba(0,212,255,0.1);border-color:var(--cyan);box-shadow:0 0 12px rgba(0,212,255,0.15)}
 .enter-btn svg{width:12px;height:12px;transition:transform .2s}
 .enter-btn:hover svg{transform:translateX(3px)}
@@ -59,7 +59,7 @@
 .create-card:hover{border-color:var(--cyan);background:#0f1a2a}
 .create-icon{font-size:28px;color:var(--text3);margin-bottom:12px;transition:color .2s}
 .create-card:hover .create-icon{color:var(--cyan)}
-.create-label{font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;transition:color .2s}
+.create-label{font-family:var(--font-sans);font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text3);text-transform:uppercase;transition:color .2s}
 .create-card:hover .create-label{color:var(--cyan)}
 
 .empty-state{grid-column:1/-1;text-align:center;padding:60px;color:var(--text3);font-size:12px;letter-spacing:2px;text-transform:uppercase}

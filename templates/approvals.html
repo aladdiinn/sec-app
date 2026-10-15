@@ -26,7 +26,7 @@
     <div class="card glass" style="padding:0; overflow:hidden">
         <table style="width:100%; border-collapse:collapse; text-align:left; font-size:12px">
             <thead>
-                <tr style="background:rgba(0,212,255,0.06); border-bottom:1px solid var(--border); font-family:var(--orbitron); color:var(--cyan); font-size:10px; letter-spacing:1px">
+                <tr style="background:rgba(0,212,255,0.06); border-bottom:1px solid var(--border); font-family:var(--font-sans); color:var(--cyan); font-size:11px; font-weight:700; letter-spacing:0.5px">
                     <th style="padding:14px 18px">NODE HOSTNAME</th>
                     <th style="padding:14px 18px">IP ADDRESS</th>
                     <th style="padding:14px 18px">AGENT TOKEN</th>
@@ -71,7 +71,7 @@
                     <td style="padding:14px 18px; font-family:var(--mono); color:var(--cyan)">${a.ip_address || '172.31.2.38'}</td>
                     <td style="padding:14px 18px; font-family:var(--mono); font-size:11px; color:var(--text3)">${a.agent_token}</td>
                     <td style="padding:14px 18px">
-                        <span style="padding:3px 10px; border-radius:4px; font-size:10px; font-family:var(--orbitron); text-transform:uppercase; ${badgeStyle}">
+                        <span style="padding:3px 10px; border-radius:4px; font-size:10px; font-weight:700; font-family:var(--font-sans); text-transform:uppercase; ${badgeStyle}">
                             ${status}
                         </span>
                     </td>

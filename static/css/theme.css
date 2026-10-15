@@ -11,6 +11,23 @@
   src: url('/static/fonts/NunitoSans-Variable.woff2') format('woff2');
 }
 
+/* Alias legacy futuristic fonts directly to Nunito Sans so all legacy usages render with modern font */
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('/static/fonts/NunitoSans-Variable.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Rajdhani';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('/static/fonts/NunitoSans-Variable.woff2') format('woff2');
+}
+
 /* ── ROOT DESIGN TOKENS ── */
 :root, :root[data-theme="light"] {
   /* Page & Surfaces */
@@ -100,6 +117,7 @@
   --font-mono: 'Share Tech Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --raj: var(--font-sans);
   --orb: var(--font-sans);
+  --orbitron: var(--font-sans);
   --mono: var(--font-mono);
   --font-main: var(--font-sans);
   --font-heading: var(--font-sans);
@@ -187,6 +205,20 @@
   --accent-green: #34D399;
   --accent-red: #FF5A5F;
   --accent-orange: #F7931A;
+  --orbitron: var(--font-sans);
+  --orb: var(--font-sans);
+  --raj: var(--font-sans);
+}
+
+/* Universal Typography Enforcement: modern Nunito Sans across all headings, titles, labels */
+[style*="Orbitron"],
+[style*="orbitron"],
+[style*="Rajdhani"],
+[style*="rajdhani"],
+.orbitron,
+.raj,
+.rajdhani {
+  font-family: var(--font-sans) !important;
 }
 
 /* ── RESET & BODY ── */

@@ -56,10 +56,10 @@
           </div>
       </div>
       <div style="display:flex; flex-direction:column; justify-content:center; line-height:1.0;">
-          <div style="font-family:'Orbitron', sans-serif; font-size:16px; font-weight:700; letter-spacing:1px;">
+          <div style="font-family:var(--font-sans); font-size:16px; font-weight:700; letter-spacing:0.5px;">
               <span style="color:#00bfff;">B</span><span style="color:#ffffff;">Smart</span>
           </div>
-          <div style="font-family:'Orbitron', sans-serif; font-size:10px; font-weight:600; color:#00bfff; letter-spacing:2px; margin-top:2px;">
+          <div style="font-family:var(--font-sans); font-size:10px; font-weight:600; color:#00bfff; letter-spacing:1px; margin-top:2px;">
               SOC
           </div>
           <div style="font-family:'Share Tech Mono', monospace; font-size:7.5px; color:#00bfff; letter-spacing:0.5px; margin-top:4px; opacity:0.8; white-space:normal; line-height:1.2;">
@@ -157,7 +157,7 @@
                     </p>
                 </div>
                 <div style="display:flex; align-items:center; gap:14px">
-                    <a href="/projects/select" class="btn-project-view" style="font-family:'Orbitron',sans-serif; font-size:10px; font-weight:700; letter-spacing:2px; color:var(--cyan); background:var(--cyan3); border:1px solid var(--cyan); padding:6px 14px; border-radius:4px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s ease">
+                    <a href="/projects/select" class="btn-project-view" style="font-family:var(--font-sans); font-size:11px; font-weight:700; letter-spacing:1px; color:var(--cyan); background:var(--cyan3); border:1px solid var(--cyan); padding:6px 14px; border-radius:4px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s ease">
                         <span style="font-size:12px">⊞</span> PROJECT VIEW
                     </a>
                     {% block topbar_actions %}{% endblock %}
@@ -199,12 +199,12 @@
                 </div>
             </header>
             {% if current_project or session.get('project_id') %}
-            <div class="project-mode-banner" style="background:#001a2e; border-bottom:2px solid #00aaff; padding:8px 24px; display:flex; justify-content:space-between; align-items:center; font-family:'Orbitron',sans-serif; font-size:11px; letter-spacing:2px; color:#00d4ff; box-shadow:0 4px 12px rgba(0,170,255,0.15)">
+            <div class="project-mode-banner" style="background:#001a2e; border-bottom:2px solid #00aaff; padding:8px 24px; display:flex; justify-content:space-between; align-items:center; font-family:var(--font-sans); font-size:12px; letter-spacing:1px; color:#00d4ff; box-shadow:0 4px 12px rgba(0,170,255,0.15)">
                 <div style="display:flex; align-items:center; gap:8px">
                     <span style="font-size:14px">🏢</span>
                     <span>PROJECT MODE: <strong style="color:#ffffff">{{ current_project.name.upper() if current_project else ('PROJECT #' ~ session.get('project_id')) }}</strong></span>
                 </div>
-                <button onclick="exitProjectMode()" style="background:rgba(255,68,102,0.15); border:1px solid #ff4466; color:#ff4466; padding:5px 14px; border-radius:4px; font-family:'Orbitron',sans-serif; font-size:10px; cursor:pointer; letter-spacing:1px; display:flex; align-items:center; gap:6px; transition:all 0.2s">
+                <button onclick="exitProjectMode()" style="background:rgba(255,68,102,0.15); border:1px solid #ff4466; color:#ff4466; padding:5px 14px; border-radius:4px; font-family:var(--font-sans); font-size:11px; cursor:pointer; letter-spacing:0.5px; display:flex; align-items:center; gap:6px; transition:all 0.2s">
                     ← EXIT PROJECT MODE
                 </button>
             </div>
@@ -227,7 +227,7 @@
             <div style="display:flex; align-items:center; gap:12px">
                 <span style="font-size:24px">🚀</span>
                 <div>
-                    <h3 id="gsm-title" style="margin:0; font-family:var(--orbitron,monospace); font-size:14px; color:var(--cyan); letter-spacing:1px">TARGET SERVER SETUP SCRIPT</h3>
+                    <h3 id="gsm-title" style="margin:0; font-family:var(--font-sans); font-size:14px; font-weight:700; color:var(--cyan); letter-spacing:0.5px">TARGET SERVER SETUP SCRIPT</h3>
                     <p id="gsm-sub" style="margin:3px 0 0 0; font-size:11px; color:var(--text3)">Run this 1-line command on your targeted server to authorize SSH key & log streaming</p>
                 </div>
             </div>

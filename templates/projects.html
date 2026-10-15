@@ -7,7 +7,7 @@
 <div class="fade-in">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px">
         <div>
-            <h2 class="card-title" style="font-size:20px; font-family:var(--orbitron,monospace); letter-spacing:2px">PROJECTS / WORKSPACES</h2>
+            <h2 class="card-title" style="font-size:20px; font-family:var(--font-sans); font-weight:700; letter-spacing:0.5px">PROJECTS / WORKSPACES</h2>
             <p class="text-sub" style="margin-top:4px">Assign assets to projects for focused SOC view mode monitoring</p>
         </div>
         <button class="btn btn-primary" onclick="openCreateModal()" style="display:flex; align-items:center; gap:8px">
@@ -24,7 +24,7 @@
 <!-- ── CREATE PROJECT MODAL ── -->
 <div id="create-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:520px; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--border)">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
-        <h3 class="card-title" style="font-size:18px; font-family:var(--orbitron,monospace); color:var(--cyan); letter-spacing:2px">CREATE NEW PROJECT</h3>
+        <h3 class="card-title" style="font-size:18px; font-family:var(--font-sans); font-weight:700; color:var(--cyan); letter-spacing:0.5px">CREATE NEW PROJECT</h3>
         <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeCreateModal()">✕</button>
     </div>
     
@@ -76,7 +76,7 @@
 <div id="manage-assets-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:540px; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--cyan)">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
         <div>
-            <h3 class="card-title" style="font-size:16px; font-family:var(--orbitron,monospace); color:var(--cyan); letter-spacing:2px" id="manage-modal-title">MANAGE PROJECT ASSETS</h3>
+            <h3 class="card-title" style="font-size:16px; font-family:var(--font-sans); font-weight:700; color:var(--cyan); letter-spacing:0.5px" id="manage-modal-title">MANAGE PROJECT ASSETS</h3>
             <p class="text-sub" style="font-size:11px; margin-top:2px" id="manage-modal-sub">Check assets to include in this project</p>
         </div>
         <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeManageAssetsModal()">✕</button>
@@ -107,7 +107,7 @@
 <div id="manage-groups-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px; z-index:1000; border-radius:var(--radius-lg, 8px); width:540px; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--amber)">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
         <div>
-            <h3 class="card-title" style="font-size:16px; font-family:var(--orbitron,monospace); color:var(--amber); letter-spacing:1.5px" id="manage-groups-title">MANAGE GROUPS & USER ACCESS</h3>
+            <h3 class="card-title" style="font-size:16px; font-family:var(--font-sans); font-weight:700; color:var(--amber); letter-spacing:0.5px" id="manage-groups-title">MANAGE GROUPS & USER ACCESS</h3>
             <p class="text-sub" style="font-size:11px; margin-top:2px">Check Project Groups to grant project access to their members</p>
         </div>
         <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeManageGroupsModal()">✕</button>
@@ -162,7 +162,7 @@ function renderProjects() {
         <div class="card glass glass-hover fade-in" id="proj-${id}" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:20px">
             <div>
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
-                    <h3 class="card-title" style="font-size:16px; font-family:var(--orbitron,monospace); color:var(--cyan); letter-spacing:1px">${p.name}</h3>
+                    <h3 class="card-title" style="font-size:16px; font-family:var(--font-sans); font-weight:700; color:var(--cyan); letter-spacing:0.5px">${p.name}</h3>
                     <div>
                         <button onclick="event.stopPropagation(); openEditModal(${id})"
                             title="Edit project"

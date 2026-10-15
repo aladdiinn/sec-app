@@ -4,133 +4,456 @@
 {% block page_title %}LOG ANALYZER & MONITOR{% endblock %}
 {% block page_sub %}Real-time application log stream analysis, log parsing, and multi-server event telemetry{% endblock %}
 
-{% block topbar_actions %}
-<div style="display:flex; gap:10px; align-items:center">
-</div>
-{% endblock %}
-
 {% block extra_css %}
 <style>
-.log-layout {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    gap: 16px;
-    height: calc(100vh - 145px);
-    overflow: hidden;
-}
-.log-panel-left {
+/* ── FULL WIDTH LOG MONITOR CONTAINER ── */
+.log-full-container {
+    width: 100%;
+    height: calc(100vh - 120px);
+    display: flex;
+    flex-direction: column;
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    display: flex;
-    flex-direction: column;
     overflow: hidden;
-}
-.log-panel-right {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-.panel-section-title {
-    font-family: var(--orbitron, monospace);
-    font-size: 10px;
-    letter-spacing: 2px;
-    color: var(--cyan);
-    padding: 12px 14px;
-    background: var(--bg3);
-    border-bottom: 1px solid var(--border);
-    text-transform: uppercase;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.server-item-row {
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    cursor: pointer;
-    transition: background 0.15s;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.server-item-row:hover { background: rgba(0,212,255,0.03); }
-.server-item-row.active {
-    background: rgba(0,212,255,0.08);
-    border-left: 3px solid var(--cyan);
-}
-.srv-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.srv-dot.online { background: var(--green); box-shadow: 0 0 6px rgba(0,255,136,0.4); }
-.srv-dot.offline { background: var(--red); }
-.srv-dot.maint { background: var(--amber); }
-
-.log-tab-bar {
-    display: flex;
-    background: var(--bg3);
-    border-bottom: 1px solid var(--border);
-    overflow-x: auto;
-    flex-shrink: 0;
-}
-.log-tab-btn {
-    padding: 10px 16px;
-    font-family: var(--orbitron, monospace);
-    font-size: 10px;
-    letter-spacing: 1.5px;
-    color: var(--text3);
-    cursor: pointer;
-    border: none;
-    background: transparent;
-    border-bottom: 2px solid transparent;
-    transition: all 0.2s;
-    text-transform: uppercase;
-    white-space: nowrap;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-.log-tab-btn:hover { color: var(--text); }
-.log-tab-btn.active { color: var(--cyan); border-bottom-color: var(--cyan); background: rgba(0,212,255,0.04); }
-.log-tab-badge {
-    background: var(--bg4);
-    color: var(--text2);
-    font-size: 9px;
-    padding: 1px 6px;
-    border-radius: 10px;
-    font-family: var(--mono);
+    box-shadow: var(--shadow-card);
+    font-family: var(--font-sans);
 }
 
-.log-toolbar-bar {
+/* ── UNIFIED TOP CONTROL TOOLBAR ── */
+.log-control-bar {
     background: var(--bg3);
     border-bottom: 1px solid var(--border);
     padding: 8px 14px;
     display: flex;
     align-items: center;
-    gap: 10px;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
     flex-shrink: 0;
 }
+
+.log-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+.log-actions-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* ── SERVER SEARCH & SELECTOR DROPDOWN ── */
+.server-dropdown-wrap {
+    position: relative;
+    min-width: 220px;
+    max-width: 260px;
+    flex-shrink: 0;
+}
+
+.btn-server-trigger {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: 11px;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    box-sizing: border-box;
+}
+
+.btn-server-trigger:hover, .btn-server-trigger:focus {
+    border-color: var(--cyan);
+    background: var(--bg3);
+}
+
+.trigger-label {
+    flex: 1;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.srv-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-block;
+}
+.srv-dot.online { background: var(--green); box-shadow: 0 0 6px rgba(0,255,136,0.5); }
+.srv-dot.offline { background: var(--red); }
+.srv-dot.maint { background: var(--amber); }
+
+.server-popover-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 310px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.45);
+    z-index: 1000;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.server-search-box {
+    position: relative;
+    width: 100%;
+}
+
+.server-search-box input {
+    width: 100%;
+    padding: 6px 8px 6px 28px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: 11px;
+    font-family: var(--font-sans);
+    outline: none;
+    box-sizing: border-box;
+}
+
+.server-search-box input:focus {
+    border-color: var(--cyan);
+}
+
+.server-search-box svg {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    stroke: var(--text3);
+    pointer-events: none;
+}
+
+.server-items-scroll {
+    max-height: 240px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.server-item-option {
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+
+.server-item-option:hover {
+    background: rgba(27, 154, 108, 0.12);
+}
+
+.server-item-option.active {
+    background: rgba(27, 154, 108, 0.18);
+    border-left: 3px solid var(--primary-green);
+}
+
+.server-item-option .opt-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.server-item-option .opt-sub {
+    font-size: 9.5px;
+    color: var(--text3);
+    font-family: var(--font-mono);
+}
+
+/* ── TOOLBAR DROPDOWNS ── */
+.ctrl-select {
+    padding: 6px 10px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: 11px;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s;
+    height: 32px;
+    box-sizing: border-box;
+}
+
+.ctrl-select:hover, .ctrl-select:focus {
+    border-color: var(--cyan);
+}
+
+/* ── SEARCH INPUT WRAPPER ── */
+.search-wrapper {
+    position: relative;
+    flex: 1.5;
+    min-width: 200px;
+}
+
+.search-wrapper input {
+    width: 100%;
+    padding: 6px 26px 6px 28px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    outline: none;
+    transition: border-color 0.15s;
+    height: 32px;
+    box-sizing: border-box;
+}
+
+.search-wrapper input:focus {
+    border-color: var(--cyan);
+}
+
+.search-wrapper svg.search-ico {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    stroke: var(--text3);
+    pointer-events: none;
+}
+
+.search-wrapper button.clear-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    color: var(--text3);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 4px;
+}
+
+.search-wrapper button.clear-btn:hover {
+    color: var(--text);
+}
+
+/* ── BUTTONS ── */
+.btn-ctrl {
+    padding: 5px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 10.5px;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+    box-sizing: border-box;
+}
+
+.btn-ctrl:hover {
+    border-color: var(--cyan);
+    color: var(--text);
+}
+
+.btn-ctrl.btn-stream {
+    color: var(--amber);
+    border-color: rgba(255,184,0,0.3);
+}
+
+.btn-ctrl.btn-stream.active {
+    color: var(--green);
+    border-color: rgba(0,255,136,0.3);
+    background: rgba(0,255,136,0.06);
+}
+
+.btn-ctrl.btn-clear {
+    color: var(--amber);
+}
+
+.btn-ctrl.btn-add {
+    color: var(--cyan);
+    border-color: rgba(27, 154, 108, 0.4);
+    background: rgba(27, 154, 108, 0.08);
+}
+
+.export-menu-wrap {
+    position: relative;
+}
+
+.export-menu-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    width: 140px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+    z-index: 1000;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.export-menu-item {
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--text);
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.12s;
+}
+
+.export-menu-item:hover {
+    background: rgba(27, 154, 108, 0.15);
+    color: var(--cyan);
+}
+
+/* ── STATUS & TELEMETRY RIBBON ── */
+.log-telemetry-ribbon {
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    padding: 5px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10.5px;
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.telemetry-left {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.telem-tag {
+    color: var(--text3);
+}
+
+.telem-tag strong {
+    color: var(--text);
+}
+
+.telemetry-right {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.btn-ribbon {
+    padding: 3px 8px;
+    font-size: 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    transition: all 0.15s;
+}
+
+.btn-ribbon:hover {
+    border-color: var(--cyan);
+    color: var(--cyan);
+}
+
+.btn-ribbon.btn-llm {
+    color: #c9d1d9;
+    background: linear-gradient(45deg, rgba(31,111,235,0.15), rgba(137,87,229,0.15));
+    border-color: rgba(137,87,229,0.4);
+}
+
+/* ── TABLE HEADER & TERMINAL ── */
+.log-table-header {
+    display: grid;
+    grid-template-columns: 160px 75px 160px 1fr;
+    gap: 10px;
+    padding: 7px 14px;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-sans);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text3);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
 .log-terminal {
     flex: 1;
     overflow-y: auto;
-    background: #060a14;
-    font-family: var(--mono);
+    background: var(--bg-deep, #060a14);
+    font-family: var(--font-mono);
     font-size: 11px;
     line-height: 1.6;
     padding-bottom: 20px;
 }
+
 .log-row-grid {
     display: grid;
-    grid-template-columns: 160px 65px 120px 1fr;
+    grid-template-columns: 160px 75px 160px 1fr;
     gap: 10px;
     padding: 5px 14px;
     border-bottom: 1px solid rgba(255,255,255,0.03);
     align-items: start;
+    transition: background 0.12s;
 }
-.log-row-grid:hover { background: rgba(255,255,255,0.02); }
-.log-row-grid.lvl-error { border-left: 2px solid var(--red); background: rgba(255,59,92,0.04); }
-.log-row-grid.lvl-warn { border-left: 2px solid var(--amber); background: rgba(255,184,0,0.03); }
-.log-row-grid.lvl-info { border-left: 2px solid var(--cyan); }
+
+.log-row-grid:hover {
+    background: rgba(255,255,255,0.02);
+}
+
+.log-row-grid.lvl-error {
+    border-left: 2px solid var(--red);
+    background: rgba(255,59,92,0.04);
+}
+.log-row-grid.lvl-warn {
+    border-left: 2px solid var(--amber);
+    background: rgba(255,184,0,0.03);
+}
+.log-row-grid.lvl-info {
+    border-left: 2px solid var(--cyan);
+}
+
 .lvl-tag {
     font-size: 9px;
     padding: 1px 6px;
@@ -145,47 +468,6 @@
 .lvl-tag.INFO, .lvl-tag.LOW { background: rgba(0,212,255,0.15); color: var(--cyan); }
 .lvl-tag.DEBUG { background: rgba(136,153,170,0.2); color: var(--text3); }
 
-.config-app-item {
-    padding: 8px 12px;
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    margin-bottom: 6px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-.config-app-item:hover {
-    background: rgba(0,212,255,0.06);
-    border-color: rgba(0,212,255,0.4);
-}
-.config-app-item.active {
-    background: rgba(0,212,255,0.12);
-    border-color: var(--cyan);
-    box-shadow: 0 0 10px rgba(0,212,255,0.15);
-}
-.preset-pill {
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 9px;
-    font-family: var(--mono);
-    cursor: pointer;
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    color: var(--text3);
-    transition: all 0.15s ease;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
-.preset-pill:hover { border-color: var(--cyan); color: var(--text); }
-.preset-pill.active { background: rgba(0,212,255,0.15); border-color: var(--cyan); color: var(--cyan); }
-.preset-pill.pill-err:hover, .preset-pill.pill-err.active { background: rgba(255,59,92,0.15); border-color: var(--red); color: var(--red); }
-.preset-pill.pill-warn:hover, .preset-pill.pill-warn.active { background: rgba(255,184,0,0.15); border-color: var(--amber); color: var(--amber); }
-.preset-pill.pill-sec:hover, .preset-pill.pill-sec.active { background: rgba(0,255,136,0.15); border-color: var(--green); color: var(--green); }
-
 .kv-pill {
     display: inline-block;
     background: rgba(0,212,255,0.06);
@@ -193,10 +475,11 @@
     padding: 2px 6px;
     border-radius: 4px;
     font-size: 9px;
-    font-family: var(--mono);
+    font-family: var(--font-mono);
     color: var(--text);
     cursor: pointer;
     transition: background 0.15s;
+    margin: 2px;
 }
 .kv-pill:hover {
     background: rgba(0,212,255,0.15);
@@ -206,252 +489,161 @@
 {% endblock %}
 
 {% block content %}
-<div class="log-layout fade-in">
-    <!-- LEFT PANEL: Servers & Registered Log Applications -->
-    <div class="log-panel-left">
-        <div class="panel-section-title">
-            <span>🖥 SERVERS & APPS</span>
-            <button class="btn btn-glass" style="font-size:9px; padding:2px 8px" onclick="openAddAppModal()">+ ADD</button>
-        </div>
-
-        <!-- Left Panel Realtime Filter Search Bar -->
-        <div style="padding:8px 12px; border-bottom:1px solid var(--border); background:var(--bg3)">
-            <div style="position:relative">
-                <input type="text" id="left-panel-search-input" placeholder="🔍 Search IP, app, service..." class="mono glass"
-                       style="width:100%; padding:5px 10px 5px 26px; font-size:11px; border-radius:4px"
-                       oninput="filterLeftPanelApps()">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" style="position:absolute; left:8px; top:50%; transform:translateY(-50%)">
-                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                </svg>
-            </div>
-        </div>
-
-        <div style="flex:1; overflow-y:auto">
-            <!-- Server Selector List -->
-            <div id="log-server-list">
-                <div class="server-item-row active" onclick="selectServerFilter(null, this)" data-search="all servers global telemetry stream">
-                    <div class="srv-dot online"></div>
-                    <div style="flex:1">
-                        <div style="font-size:12px; font-weight:600; color:var(--text)">ALL SERVERS</div>
-                        <div style="font-size:10px; color:var(--text3); font-family:var(--mono)">Global Telemetry Stream</div>
+<div class="log-full-container fade-in">
+    <!-- ── TOP CONTROL BAR ── -->
+    <div class="log-control-bar">
+        <div class="log-filter-row">
+            <!-- 1. Server Search & Dropdown -->
+            <div class="server-dropdown-wrap" id="server-dropdown-wrap">
+                <button type="button" class="btn-server-trigger" id="server-trigger-btn" onclick="toggleServerDropdown(event)">
+                    <span id="server-trigger-dot" class="srv-dot online"></span>
+                    <span id="server-trigger-label" class="trigger-label">All Servers (Global Stream)</span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="server-popover-menu" id="server-popover-menu" style="display:none">
+                    <div class="server-search-box">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <input type="text" id="server-search-input" placeholder="Search IP or hostname..." oninput="filterServerDropdownOptions(this.value)" autocomplete="off">
+                    </div>
+                    <div class="server-items-scroll" id="server-items-scroll">
+                        <div class="server-item-option active" onclick="selectServerFromDropdown(null, 'All Servers (Global Stream)', 'online')" data-search="all servers global stream">
+                            <span class="srv-dot online"></span>
+                            <div>
+                                <div class="opt-title">ALL SERVERS</div>
+                                <div class="opt-sub">Global Telemetry Stream</div>
+                            </div>
+                        </div>
+                        {% for srv in servers %}
+                        <div class="server-item-option" onclick="selectServerFromDropdown('{{ srv.id }}', '{{ srv.hostname }} ({{ srv.ip_address }})', '{{ 'maint' if srv.is_maintenance else ('online' if srv.status == 'online' else 'offline') }}')" data-search="{{ srv.hostname|lower }} {{ srv.ip_address|lower }}">
+                            <span class="srv-dot {{ 'maint' if srv.is_maintenance else ('online' if srv.status == 'online' else 'offline') }}"></span>
+                            <div>
+                                <div class="opt-title">{{ srv.hostname }}</div>
+                                <div class="opt-sub">{{ srv.ip_address }}</div>
+                            </div>
+                        </div>
+                        {% endfor %}
                     </div>
                 </div>
-                {% for srv in servers %}
-                <div class="server-item-row" onclick="selectServerFilter('{{ srv.id }}', this)" data-search="{{ srv.hostname|lower }} {{ srv.ip_address|lower }}">
-                    <div class="srv-dot {{ 'maint' if srv.is_maintenance else ('online' if srv.status == 'online' else 'offline') }}"></div>
-                    <div style="flex:1; min-width:0">
-                        <div style="font-size:11px; font-weight:600; color:var(--text); text-overflow:ellipsis; overflow:hidden; white-space:nowrap">{{ srv.hostname }}</div>
-                        <div style="font-size:10px; color:var(--text3); font-family:var(--mono)">{{ srv.ip_address }}</div>
-                    </div>
-                </div>
-                {% endfor %}
             </div>
 
-            <!-- Configured Applications Section -->
-            <div class="panel-section-title" style="margin-top:10px">
-                <span>📦 CONFIGURED LOG APPS</span>
-                <span id="config-count" class="log-tab-badge">0</span>
-            </div>
-            <div id="log-app-configs-list" style="padding:10px; max-height:260px; overflow-y:auto">
-                <div style="text-align:center; color:var(--text3); padding:15px; font-size:11px">Loading configured apps...</div>
+            <!-- 2. Log Type Dropdown (Process / Service) -->
+            <select id="log-service-selector" class="ctrl-select" onchange="onServiceDropdownChanged(this.value)" title="Select Log Service Type">
+                <option value="">⚡ All Log Types</option>
+                <option value="os">💻 OS Logs (Syslog / Auth)</option>
+                <option value="tomcat">☕ Tomcat & Application</option>
+                <option value="postgres">🐘 PostgreSQL Database</option>
+            </select>
+
+            <!-- 3. Cascading Discovered Log Files Dropdown -->
+            <select id="log-file-selector" class="ctrl-select" onchange="onLogFileSelected()" title="Select Specific Log File">
+                <option value="">-- All Discovered Files --</option>
+            </select>
+
+            <!-- 4. Filter Preset Dropdown -->
+            <select id="log-preset-selector" class="ctrl-select" onchange="onPresetDropdownChanged(this.value)" title="Quick Filter Presets">
+                <option value="">🎯 Preset: All Logs</option>
+                <option value="error">🔥 Errors & Critical</option>
+                <option value="warn">⚠️ Warnings</option>
+                <option value="soar">🚨 SOAR Threats</option>
+                <option value="auth">🔒 Auth & Security</option>
+                <option value="postgres">🐘 PostgreSQL Queries</option>
+                <option value="userdel">👤 User & Perm Changes</option>
+                <option value="500">🌐 5xx HTTP Errors</option>
+                <option value="apm">⚡ APM Traces</option>
+            </select>
+
+            <!-- 5. Search Filter Input Box -->
+            <div class="search-wrapper">
+                <svg class="search-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="log-search-input" placeholder="Search log lines (regex, keyword, IP, path...)" oninput="filterLogLines()">
+                <button type="button" class="clear-btn" onclick="clearSearchInput()" title="Clear Search">✕</button>
             </div>
         </div>
 
-        <!-- Left Quick Stats -->
-        <div style="border-top:1px solid var(--border); padding:12px; background:var(--bg3); display:grid; grid-template-columns:1fr 1fr; gap:8px">
-            <div style="text-align:center; background:var(--bg2); padding:8px; border-radius:4px; border:1px solid var(--border)">
-                <div id="stat-log-count" style="font-family:var(--orbitron); font-size:16px; color:var(--cyan)">0</div>
-                <div style="font-size:8px; color:var(--text3); letter-spacing:1px">TOTAL LOGS</div>
+        <!-- Right Side Actions -->
+        <div class="log-actions-row">
+            <select id="log-tail-limit" class="ctrl-select" style="max-width:95px" onchange="fetchLogsNow()" title="Tail Limit">
+                <option value="50">50 lines</option>
+                <option value="100" selected>100 lines</option>
+                <option value="250">250 lines</option>
+                <option value="500">500 lines</option>
+            </select>
+
+            <button class="btn-ctrl btn-stream" id="btn-toggle-auto" onclick="toggleAutoRefresh()" title="Toggle Real-time Stream">
+                ⏸️ STREAM PAUSED
+            </button>
+            <button class="btn-ctrl" onclick="fetchLogsNow()" title="Fetch Latest Logs">
+                🔄 REFRESH
+            </button>
+            <button class="btn-ctrl btn-clear" onclick="clearTerminal()" title="Clear View">
+                CLEAR
+            </button>
+            <div class="export-menu-wrap">
+                <button class="btn-ctrl" onclick="toggleExportMenu(event)">
+                    📥 EXPORT ▾
+                </button>
+                <div id="export-menu-popover" class="export-menu-popover" style="display:none">
+                    <div class="export-menu-item" onclick="exportLogs('csv'); closeExportMenu()">📄 Export CSV</div>
+                    <div class="export-menu-item" onclick="exportLogs('json'); closeExportMenu()">{ } Export JSON</div>
+                    <div class="export-menu-item" onclick="exportLogs('log'); closeExportMenu()">📜 Export RAW .LOG</div>
+                </div>
             </div>
-            <div style="text-align:center; background:var(--bg2); padding:8px; border-radius:4px; border:1px solid var(--border)">
-                <div id="stat-err-count" style="font-family:var(--orbitron); font-size:16px; color:var(--red)">0</div>
-                <div style="font-size:8px; color:var(--text3); letter-spacing:1px">ERRORS</div>
-            </div>
+            <button class="btn-ctrl btn-add" onclick="openAddAppModal()" title="Add Custom Application Log Source">
+                + ADD APP
+            </button>
         </div>
     </div>
 
-    <!-- RIGHT PANEL: Service Tabs & Live Log Output -->
-    <div class="log-panel-right">
-        <!-- Service Tabs: OS, Tomcat, PostgreSQL -->
-        <div class="log-tab-bar" id="service-tabs">
-            <button class="log-tab-btn active" onclick="switchServiceTab('', this)">
-                ⚡ ALL LOGS <span class="log-tab-badge" id="badge-tab-all">0</span>
-            </button>
-            <button class="log-tab-btn" onclick="switchServiceTab('os', this)">
-                💻 OS LOGS <span class="log-tab-badge" id="badge-tab-os">0</span>
-            </button>
-            <button class="log-tab-btn" onclick="switchServiceTab('tomcat', this)">
-                ☕ TOMCAT & NOHUP <span class="log-tab-badge" id="badge-tab-tomcat">0</span>
-            </button>
-            <button class="log-tab-btn" onclick="switchServiceTab('postgres', this)">
-                🐘 POSTGRESQL <span class="log-tab-badge" id="badge-tab-postgres">0</span>
-            </button>
-            <div id="log-file-selector-wrap" style="display:flex; align-items:center; gap:6px; padding:4px 12px; margin-left:auto">
-                <span style="font-size:9px; color:var(--text3); font-family:var(--orbitron)">LOG FILE:</span>
-                <select id="log-file-selector" onchange="onLogFileSelected()" style="font-size:10px; background:var(--bg2); border:1px solid var(--border); color:var(--cyan); padding:4px 8px; border-radius:4px; max-width:260px; font-family:var(--mono)">
-                    <option value="">-- All Discovered Files --</option>
-                </select>
-            </div>
+    <!-- ── TELEMETRY & HEALTH RIBBON ── -->
+    <div class="log-telemetry-ribbon">
+        <div class="telemetry-left">
+            <span class="telem-tag">📁 SOURCE: <strong id="telemetry-file-path" style="color:var(--cyan)">Global Telemetry Stream</strong></span>
+            <span class="telem-tag">💾 SIZE: <strong id="telemetry-file-size">System Feed</strong></span>
+            <span class="telem-tag">⚡ THROUGHPUT: <strong id="telemetry-rps" style="color:var(--green)">0.0 lines/sec</strong></span>
+            <span class="telem-tag">📊 TOTAL: <strong id="stat-log-count" style="color:var(--cyan)">0</strong></span>
+            <span class="telem-tag">🔥 ERRORS: <strong id="stat-err-count" style="color:var(--red)">0</strong></span>
+            <span><span id="telemetry-health-badge" class="lvl-tag INFO">ONLINE</span></span>
         </div>
-
-        <!-- Log Telemetry & File Health Bar -->
-        <div style="background:var(--bg3); border-bottom:1px solid var(--border); padding:6px 14px; display:flex; justify-content:space-between; align-items:center; font-size:10px; font-family:var(--mono)">
-            <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap">
-                <span style="color:var(--text3)">📁 SOURCE: <strong id="telemetry-file-path" style="color:var(--cyan)">Global Telemetry Stream</strong></span>
-                <span style="color:var(--text3)">💾 SIZE: <strong id="telemetry-file-size" style="color:var(--text)">System Feed</strong></span>
-                <span style="color:var(--text3)">⚡ THROUGHPUT: <strong id="telemetry-rps" style="color:var(--green)">0.0 lines/sec</strong></span>
-                <span style="color:var(--text3)">STATUS: <span id="telemetry-health-badge" class="lvl-tag INFO">ONLINE</span></span>
-            </div>
-            <div style="display:flex; gap:8px">
-                <button class="btn btn-glass" onclick="openLlmModal()" style="font-size:9px; padding:3px 8px; color:#c9d1d9; background: linear-gradient(45deg, #1f6feb22, #8957e522); border-color:rgba(137, 87, 229, 0.4); box-shadow: 0 0 10px rgba(137, 87, 229, 0.2);">
-                    ✨ LLM ANALYZE LOGS
-                </button>
-                <button class="btn btn-glass" onclick="toggleHistogramPanel()" style="font-size:9px; padding:3px 8px; color:var(--cyan); border-color:rgba(0,212,255,0.3)">
-                    📊 TIME HISTOGRAM
-                </button>
-            </div>
+        <div class="telemetry-right">
+            <button class="btn-ribbon btn-llm" onclick="openLlmModal()">✨ LLM ANALYZE LOGS</button>
+            <button class="btn-ribbon" onclick="toggleHistogramPanel()">📊 TIME HISTOGRAM</button>
         </div>
+    </div>
 
-        <!-- LLM Analyzer Modal -->
-        <div id="llm-modal-overlay" onclick="closeLlmModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:998;"></div>
-        <div id="llm-analyzer-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:24px 28px; border-radius:var(--radius-lg); z-index:999; width:1000px; max-width:95vw; min-height:400px; max-height:88vh; overflow-y:auto; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid #8957e5">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:10px">
-                <div style="display:flex; align-items:center; gap:16px;">
-                    <h3 style="margin:0; color:#c9d1d9; font-family:var(--orbitron); font-size:16px; letter-spacing:2px">✨ AI LOG ANALYZER</h3>
-                    <span id="llm-target-label" style="font-size:10px; color:var(--text3); font-family:var(--mono); background:var(--bg3); padding:4px 8px; border-radius:4px;">Log Type Filter: ALL</span>
-                </div>
-                <button class="btn btn-ghost" onclick="closeLlmModal()" style="padding:4px 12px; font-size:16px; color:var(--red); border:1px solid rgba(255,59,92,0.4)">✕</button>
-            </div>
-            
-            <div style="display:flex; gap:12px; align-items:center; margin-bottom:16px; flex-wrap:wrap;">
-                <label style="font-size:11px; color:var(--cyan); font-weight:bold;">TARGET SERVER:</label>
-                <select id="llm-server-selector" class="glass mono" style="padding:6px 12px; font-size:12px; border-radius:4px; color:white; max-width:280px;">
-                    <option value="0">Global Stream (All Servers)</option>
-                    {% for srv in servers %}
-                    <option value="{{ srv.id }}">{{ srv.hostname }} ({{ srv.ip_address }})</option>
-                    {% endfor %}
-                </select>
-                
-                <label style="font-size:11px; color:var(--cyan); font-weight:bold; margin-left:12px;">TIME PERIOD:</label>
-                <select id="llm-time-period" class="glass mono" style="padding:6px 12px; font-size:12px; border-radius:4px; color:white;">
-                    <option value="1hr">Last 1 Hour</option>
-                    <option value="3hr">Last 3 Hours</option>
-                    <option value="10hr">Last 10 Hours</option>
-                    <option value="1day">Last 1 Day</option>
-                    <option value="3day">Last 3 Days</option>
-                    <option value="1week">Last 1 Week</option>
-                    <option value="15days">Last 15 Days</option>
-                    <option value="1month">Last 1 Month</option>
-                </select>
-                <button id="llm-analyze-btn" class="btn btn-primary" onclick="analyzeWithLlm()" style="padding:6px 16px; font-size:11px; font-weight:600; background: linear-gradient(45deg, #1f6feb, #8957e5); border:none;">
-                    ANALYZE NOW
-                </button>
-            </div>
-            
-            <div id="llm-result-container" style="background:#090e1a; border:1px solid var(--border); padding:20px; border-radius:6px; min-height:250px; font-size:13px; line-height:1.6;">
-                <div style="color:var(--text3); text-align:center; padding-top:60px;">Select a time period and click Analyze.</div>
-            </div>
-            
-            <div style="display:flex; justify-content:flex-end; margin-top:20px; border-top:1px solid var(--border); padding-top:16px;">
-                <button class="btn btn-glass" onclick="closeLlmModal()" style="padding:8px 20px; color:var(--text); border-color:var(--text3);">CANCEL / CLOSE</button>
-            </div>
+    <!-- ── HISTOGRAM CHART DRAWER ── -->
+    <div id="log-histogram-container" style="background:#04070d; border-bottom:1px solid var(--border); padding:8px 14px; display:none">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
+            <span style="font-family:var(--font-sans); font-size:9.5px; font-weight:700; color:var(--text3); letter-spacing:0.5px">LOG VOLUME & ERROR SPIKE HISTOGRAM (CLICK BAR TO ZOOM TIME)</span>
+            <span id="histogram-time-range" style="font-family:var(--font-mono); font-size:9.5px; color:var(--cyan)">Real-Time Ingestion</span>
         </div>
-
-        <!-- Log Histogram Chart Drawer -->
-        <div id="log-histogram-container" style="background:#04070d; border-bottom:1px solid var(--border); padding:10px 14px; display:none">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
-                <span style="font-family:var(--orbitron); font-size:9px; color:var(--text3); letter-spacing:1px">LOG VOLUME & ERROR SPIKE HISTOGRAM (CLICK BAR TO ZOOM TIME)</span>
-                <span id="histogram-time-range" style="font-family:var(--mono); font-size:9px; color:var(--cyan)">Real-Time Ingestion</span>
-            </div>
-            <div id="log-histogram-bars" style="display:flex; gap:4px; height:45px; align-items:flex-end; padding-top:4px; overflow-x:auto">
-                <!-- Dynamic Bar elements -->
-            </div>
+        <div id="log-histogram-bars" style="display:flex; gap:4px; height:40px; align-items:flex-end; padding-top:4px; overflow-x:auto">
+            <!-- Dynamic Bar elements -->
         </div>
+    </div>
 
-        <!-- Filter Toolbar -->
-        <div class="log-toolbar-bar">
-            <div style="position:relative; flex:1">
-                <input type="text" id="log-search-input" placeholder="Search log lines (regex, keyword, IP, path...)" class="mono"
-                       style="width:100%; background:var(--bg2); color:var(--text); border:1px solid var(--border); padding:6px 12px 6px 30px; border-radius:4px; font-size:11px"
-                       oninput="filterLogLines()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" style="position:absolute; left:9px; top:50%; transform:translateY(-50%)">
-                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                </svg>
-            </div>
-            
-            <div style="display:flex; gap:8px; align-items:center">
-                <div style="display:flex; align-items:center; gap:4px">
-                    <span style="font-size:9px; color:var(--text3); font-family:var(--orbitron)">TAIL LINES:</span>
-                    <select id="log-tail-limit" class="glass mono" style="padding:4px 8px; font-size:10px; border-radius:3px; color:var(--cyan); border:1px solid var(--border)" onchange="fetchLogsNow()">
-                        <option value="50">50 lines</option>
-                        <option value="100" selected>100 lines</option>
-                        <option value="250">250 lines</option>
-                        <option value="500">500 lines</option>
-                    </select>
-                </div>
-
-                <button class="btn btn-glass" id="btn-toggle-auto" onclick="toggleAutoRefresh()" style="font-size:10px; padding:5px 12px; color:var(--amber); border-color:rgba(255,184,0,0.3)">
-                    ⏸️ STREAM PAUSED
-                </button>
-                <button class="btn btn-glass" onclick="fetchLogsNow()" style="font-size:10px; padding:5px 10px">REFRESH</button>
-                <button class="btn btn-glass" onclick="clearTerminal()" style="font-size:10px; padding:5px 10px; color:var(--amber)">CLEAR</button>
-            </div>
+    <!-- ── REAL-TIME SOAR DETECTIONS BANNER ── -->
+    <div id="live-soar-alerts-bar" style="display:none; background:rgba(239,68,68,0.12); border-bottom:1px solid rgba(239,68,68,0.4); padding:7px 14px; font-size:11px; align-items:center; justify-content:space-between">
+        <div style="display:flex; align-items:center; gap:10px; overflow:hidden">
+            <span class="lvl-tag CRITICAL" style="flex-shrink:0">🚨 SOAR DETECTIONS</span>
+            <span id="live-soar-alerts-text" style="color:#f8fafc; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">Active Threat Alert</span>
         </div>
-
-        <!-- Real-Time SOAR Detections & Alerts Banner -->
-        <div id="live-soar-alerts-bar" style="display:none; background:rgba(239,68,68,0.12); border-bottom:1px solid rgba(239,68,68,0.4); padding:7px 14px; font-size:11px; align-items:center; justify-content:space-between">
-            <div style="display:flex; align-items:center; gap:10px; overflow:hidden">
-                <span class="lvl-tag CRITICAL" style="flex-shrink:0">🚨 SOAR DETECTIONS</span>
-                <span id="live-soar-alerts-text" style="color:#f8fafc; font-weight:600; text-overflow:ellipsis; overflow:hidden; white-space:nowrap">Active Threat Alert</span>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center; flex-shrink:0">
-                <button class="btn btn-glass" onclick="applyPresetFilter('soar', this)" style="font-size:9px; padding:2px 8px; color:var(--red); border-color:rgba(239,68,68,0.4)">⚡ FILTER THREATS</button>
-                <a href="/incidents" class="btn btn-glass" style="font-size:9px; padding:2px 8px; color:var(--cyan); border-color:rgba(0,212,255,0.4); text-decoration:none">VIEW INCIDENTS</a>
-            </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-shrink:0">
+            <button class="btn-ctrl" onclick="onPresetDropdownChanged('soar')" style="color:var(--red); border-color:rgba(239,68,68,0.4)">⚡ FILTER THREATS</button>
+            <a href="/incidents" class="btn-ctrl" style="color:var(--cyan); border-color:rgba(0,212,255,0.4); text-decoration:none">VIEW INCIDENTS</a>
         </div>
+    </div>
 
-        <!-- Quick Filter Preset Pills & Export Bar -->
-        <div style="background:var(--bg3); border-bottom:1px solid var(--border); padding:6px 14px; display:flex; justify-content:space-between; align-items:center">
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
-                <span style="font-size:9px; color:var(--text3); font-family:var(--orbitron); margin-right:4px">PRESETS:</span>
-                <button class="preset-pill active" onclick="applyPresetFilter('', this)">ALL</button>
-                <button class="preset-pill pill-err" onclick="applyPresetFilter('soar', this)">🚨 SOAR THREATS</button>
-                <button class="preset-pill pill-err" onclick="applyPresetFilter('error', this)">🔥 ERRORS</button>
-                <button class="preset-pill pill-warn" onclick="applyPresetFilter('warn', this)">⚠️ WARNS</button>
-                <button class="preset-pill pill-sec" onclick="applyPresetFilter('postgres', this)">🐘 POSTGRESQL</button>
-                <button class="preset-pill pill-warn" onclick="applyPresetFilter('userdel', this)">👤 USER & PERM</button>
-                <button class="preset-pill pill-sec" onclick="applyPresetFilter('auth', this)">🔒 AUTH & SEC</button>
-                <button class="preset-pill pill-sec" onclick="applyPresetFilter('500', this)">🌐 5xx HTTP</button>
-                <button class="preset-pill pill-sec" onclick="applyPresetFilter('apm', this)">⚡ APM TRACES</button>
-            </div>
+    <!-- ── STICKY TABLE HEADER ── -->
+    <div class="log-table-header">
+        <div>TIMESTAMP</div>
+        <div>LEVEL</div>
+        <div>SERVICE / HOST</div>
+        <div>LOG MESSAGE ENTRY</div>
+    </div>
 
-            <!-- Export Buttons -->
-            <div style="display:flex; gap:6px; align-items:center">
-                <span style="font-size:9px; color:var(--text3); font-family:var(--orbitron); margin-right:4px">EXPORT:</span>
-                <button class="btn btn-glass" onclick="exportLogs('csv')" style="font-size:9px; padding:3px 8px; color:var(--green); border-color:rgba(0,255,136,0.3)">
-                    📄 CSV
-                </button>
-                <button class="btn btn-glass" onclick="exportLogs('json')" style="font-size:9px; padding:3px 8px; color:var(--cyan); border-color:rgba(0,212,255,0.3)">
-                    { } JSON
-                </button>
-                <button class="btn btn-glass" onclick="exportLogs('log')" style="font-size:9px; padding:3px 8px; color:var(--text2)">
-                    📜 RAW .LOG
-                </button>
-            </div>
-        </div>
-
-        <!-- Sticky Table Header -->
-        <div style="display:grid; grid-template-columns: 160px 65px 120px 1fr; gap:10px; padding:8px 14px; background:var(--bg3); border-bottom:1px solid var(--border); font-family:var(--orbitron); font-size:9px; color:var(--text3); letter-spacing:1px">
-            <div>TIMESTAMP</div>
-            <div>LEVEL</div>
-            <div>SERVICE / HOST</div>
-            <div>LOG MESSAGE ENTRY</div>
-        </div>
-
-        <!-- Terminal Logs Container -->
-        <div class="log-terminal" id="log-terminal-output">
-            <div style="text-align:center; padding:40px; color:var(--text3)">Initializing log analyzer connection...</div>
-        </div>
+    <!-- ── MAXIMUM SIZE LOG TERMINAL ── -->
+    <div class="log-terminal" id="log-terminal-output">
+        <div style="text-align:center; padding:40px; color:var(--text3); font-family:var(--font-mono)">Initializing secure log stream...<br><br><span style="font-size:24px">⚡</span></div>
     </div>
 </div>
 
@@ -459,13 +651,12 @@
 <div id="add-app-overlay" onclick="closeAddAppModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:998; backdrop-filter:blur(4px)"></div>
 <div id="add-app-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:24px 28px; border-radius:var(--radius-lg); z-index:999; width:540px; max-width:92vw; max-height:88vh; overflow-y:auto; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:10px">
-        <h3 style="margin:0; color:var(--cyan); font-family:var(--orbitron); font-size:14px; letter-spacing:2px">➕ ADD NEW APPLICATION LOG SOURCE</h3>
+        <h3 style="margin:0; color:var(--cyan); font-family:var(--font-sans); font-size:14px; font-weight:700">➕ ADD APPLICATION LOG SOURCE</h3>
         <button class="btn btn-ghost" onclick="closeAddAppModal()" style="padding:2px 8px; font-size:14px">✕</button>
     </div>
     <p class="text-sub" style="margin-bottom:16px; font-size:11px">Configure an application log file for real-time monitoring and parsing.</p>
 
     <div style="display:flex; flex-direction:column; gap:14px; margin-bottom:16px">
-        <!-- Node Type Selector Buttons -->
         <div>
             <label class="stat-label" style="display:block; margin-bottom:6px">MONITORING MODE</label>
             <div style="display:flex; gap:6px">
@@ -476,12 +667,11 @@
                     ➕ New Node (Add Asset)
                 </button>
                 <button type="button" id="btn-node-mode-standalone" class="btn btn-glass" style="flex:1; font-size:10px; padding:7px 4px; color:var(--text3)" onclick="switchNodeMode('standalone')">
-                    ⚡ Just Log Monitor (No Asset)
+                    ⚡ Standalone (No Asset)
                 </button>
             </div>
         </div>
 
-        <!-- 1. Existing Server Select Container -->
         <div id="wrap-existing-node">
             <label class="stat-label" style="display:block; margin-bottom:6px">SELECT TARGET SERVER / IP</label>
             <select id="modal-app-server-id" class="glass mono" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px">
@@ -492,7 +682,6 @@
             </select>
         </div>
 
-        <!-- 2. New Server Node Fields Container (Hidden by default) -->
         <div id="wrap-new-node" style="display:none; background:rgba(0,212,255,0.03); border:1px dashed var(--cyan); padding:12px; border-radius:6px">
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
                 <div>
@@ -506,12 +695,11 @@
             </div>
         </div>
 
-        <!-- 3. Standalone / Just Log Monitor Container (Hidden by default) -->
         <div id="wrap-standalone-node" style="display:none; background:rgba(0,255,136,0.03); border:1px dashed var(--green); padding:12px; border-radius:6px">
             <div style="font-size:11px; color:var(--green); font-weight:600; margin-bottom:4px">⚡ STANDALONE LOG MONITORING (NO ASSET CREATED)</div>
             <div style="font-size:10px; color:var(--text3); margin-bottom:8px">This log file will be monitored directly in Log Analyzer without creating a new server asset in the Assets Inventory.</div>
             <div>
-                <label class="stat-label" style="display:block; margin-bottom:4px; color:var(--green)">TARGET SERVER IP / HOSTNAME (FOR REMOTE APP)</label>
+                <label class="stat-label" style="display:block; margin-bottom:4px; color:var(--green)">TARGET SERVER IP / HOSTNAME</label>
                 <input type="text" id="modal-standalone-ip" placeholder="e.g. 13.233.25.127 (or 127.0.0.1 for local)" class="mono glass" style="width:100%; padding:6px 10px; font-size:11px; border-radius:4px">
             </div>
         </div>
@@ -529,23 +717,68 @@
                     <option value="haproxy">HAProxy (Load Balancer)</option>
                     <option value="syslog">Syslog (Kernel)</option>
                     <option value="auth">Auth (SSHD / Security)</option>
-                    <option value="other">Other / Custom Apps (Python, Node, Go, Script, etc.)</option>
+                    <option value="postgres">PostgreSQL</option>
+                    <option value="other">Other / Custom Apps</option>
                 </select>
             </div>
         </div>
 
         <div>
             <label class="stat-label" style="display:block; margin-bottom:6px">LOG FILE PATH</label>
-            <input type="text" id="modal-app-log-path" placeholder="/var/log/app.log or /home/ubuntu/script.log" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px">
+            <input type="text" id="modal-app-log-path" placeholder="/var/log/app.log or /opt/tomcat/logs/catalina.out" class="mono glass" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px">
         </div>
     </div>
 
     <div style="display:flex; justify-content:flex-end; gap:10px; border-top:1px solid var(--border); padding-top:14px; margin-top:8px">
         <button class="btn btn-glass" onclick="closeAddAppModal()" style="padding:8px 16px; font-size:11px">Cancel</button>
-        <button class="btn btn-primary" id="btn-save-log-app" onclick="saveLogApplicationConfig()" style="padding:8px 20px; font-size:11px; font-weight:600; box-shadow:0 0 15px rgba(0,212,255,0.4)">
-            <svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg>
-            Save Application Log Source
+        <button class="btn btn-primary" id="btn-save-log-app" onclick="saveLogApplicationConfig()" style="padding:8px 20px; font-size:11px; font-weight:600">
+            Save Log Source
         </button>
+    </div>
+</div>
+
+<!-- ================= LLM ANALYZER MODAL ================= -->
+<div id="llm-modal-overlay" onclick="closeLlmModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:998;"></div>
+<div id="llm-analyzer-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:24px 28px; border-radius:var(--radius-lg); z-index:999; width:1000px; max-width:95vw; min-height:400px; max-height:88vh; overflow-y:auto; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid #8957e5">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:10px">
+        <div style="display:flex; align-items:center; gap:16px;">
+            <h3 style="margin:0; color:#c9d1d9; font-family:var(--font-sans); font-size:16px; font-weight:700">✨ AI LOG ANALYZER</h3>
+            <span id="llm-target-label" style="font-size:10px; color:var(--text3); font-family:var(--font-mono); background:var(--bg3); padding:4px 8px; border-radius:4px;">Filter: ALL</span>
+        </div>
+        <button class="btn btn-ghost" onclick="closeLlmModal()" style="padding:4px 12px; font-size:16px; color:var(--red)">✕</button>
+    </div>
+    
+    <div style="display:flex; gap:12px; align-items:center; margin-bottom:16px; flex-wrap:wrap;">
+        <label style="font-size:11px; color:var(--cyan); font-weight:bold;">TARGET SERVER:</label>
+        <select id="llm-server-selector" class="glass mono" style="padding:6px 12px; font-size:12px; border-radius:4px; color:var(--text); max-width:280px;">
+            <option value="0">Global Stream (All Servers)</option>
+            {% for srv in servers %}
+            <option value="{{ srv.id }}">{{ srv.hostname }} ({{ srv.ip_address }})</option>
+            {% endfor %}
+        </select>
+        
+        <label style="font-size:11px; color:var(--cyan); font-weight:bold; margin-left:12px;">TIME PERIOD:</label>
+        <select id="llm-time-period" class="glass mono" style="padding:6px 12px; font-size:12px; border-radius:4px; color:var(--text);">
+            <option value="1hr">Last 1 Hour</option>
+            <option value="3hr">Last 3 Hours</option>
+            <option value="10hr">Last 10 Hours</option>
+            <option value="1day">Last 1 Day</option>
+            <option value="3day">Last 3 Days</option>
+            <option value="1week">Last 1 Week</option>
+            <option value="15days">Last 15 Days</option>
+            <option value="1month">Last 1 Month</option>
+        </select>
+        <button id="llm-analyze-btn" class="btn btn-primary" onclick="analyzeWithLlm()" style="padding:6px 16px; font-size:11px; font-weight:600; background: linear-gradient(45deg, #1f6feb, #8957e5); border:none;">
+            ANALYZE NOW
+        </button>
+    </div>
+    
+    <div id="llm-result-container" style="background:#090e1a; border:1px solid var(--border); padding:20px; border-radius:6px; min-height:250px; font-size:13px; line-height:1.6;">
+        <div style="color:var(--text3); text-align:center; padding-top:60px;">Select a time period and click Analyze.</div>
+    </div>
+    
+    <div style="display:flex; justify-content:flex-end; margin-top:20px; border-top:1px solid var(--border); padding-top:16px;">
+        <button class="btn btn-glass" onclick="closeLlmModal()" style="padding:8px 20px; color:var(--text)">CLOSE</button>
     </div>
 </div>
 {% endblock %}
@@ -556,340 +789,96 @@ let selectedServerId = null;
 let selectedAppConfigId = null;
 let selectedLogFilePath = null;
 let currentServiceType = '';
+let activePresetKey = '';
 let allLogLines = [];
 let autoRefreshTimer = null;
 let isAutoRefresh = false;
 let currentNodeMode = 'existing';
 
 // --- Virtualization state ---
-let virt_allFiltered = [];   // current filtered dataset
-let virt_rowHeight = 28;     // px height of one log row
-let virt_visibleBuffer = 8;  // extra rows to render above/below viewport
+let virt_allFiltered = [];
+let virt_rowHeight = 28;
+let virt_visibleBuffer = 8;
 let virt_scrollListener = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     try {
-        loadLogConfigs();
         fetchLogsNow();
         startAutoRefresh();
         initVirtualScroll();
     } catch (e) {
-        console.error("Critical Init Error:", e);
+        console.error("Init Error:", e);
     }
 });
 
-function filterLeftPanelApps() {
-    const q = (document.getElementById('left-panel-search-input').value || '').toLowerCase().trim();
-    
-    // 1. Filter Servers list
-    document.querySelectorAll('#log-server-list .server-item-row').forEach(row => {
-        const searchAttr = row.getAttribute('data-search') || '';
-        const text = row.innerText.toLowerCase();
-        if (!q || searchAttr.includes(q) || text.includes(q)) {
-            row.style.display = 'flex';
+// ── SERVER DROPDOWN LOGIC ──
+function toggleServerDropdown(e) {
+    if (e) e.stopPropagation();
+    const menu = document.getElementById('server-popover-menu');
+    if (!menu) return;
+    const isShowing = menu.style.display === 'block';
+    menu.style.display = isShowing ? 'none' : 'block';
+    if (!isShowing) {
+        const inp = document.getElementById('server-search-input');
+        if (inp) { inp.value = ''; inp.focus(); }
+        filterServerDropdownOptions('');
+    }
+}
+
+function closeServerDropdown() {
+    const menu = document.getElementById('server-popover-menu');
+    if (menu) menu.style.display = 'none';
+}
+
+function filterServerDropdownOptions(q) {
+    q = (q || '').toLowerCase().trim();
+    document.querySelectorAll('#server-items-scroll .server-item-option').forEach(it => {
+        const text = (it.getAttribute('data-search') || it.innerText || '').toLowerCase();
+        if (!q || text.includes(q)) {
+            it.style.display = 'flex';
         } else {
-            row.style.display = 'none';
-        }
-    });
-
-    // 2. Filter Configured Applications list
-    document.querySelectorAll('#log-app-configs-list .config-app-item').forEach(row => {
-        const searchAttr = row.getAttribute('data-search') || '';
-        const text = row.innerText.toLowerCase();
-        if (!q || searchAttr.includes(q) || text.includes(q)) {
-            row.style.display = 'flex';
-        } else {
-            row.style.display = 'none';
+            it.style.display = 'none';
         }
     });
 }
 
-function switchNodeMode(mode) {
-    currentNodeMode = mode;
-    const btnExist = document.getElementById('btn-node-mode-existing');
-    const btnNew = document.getElementById('btn-node-mode-new');
-    const btnStandalone = document.getElementById('btn-node-mode-standalone');
-    const wrapExist = document.getElementById('wrap-existing-node');
-    const wrapNew = document.getElementById('wrap-new-node');
-    const wrapStandalone = document.getElementById('wrap-standalone-node');
-
-    [btnExist, btnNew, btnStandalone].forEach(b => {
-        if (b) {
-            b.classList.remove('active');
-            b.style.color = 'var(--text3)';
-            b.style.borderColor = 'var(--border)';
-            b.style.background = 'transparent';
-        }
-    });
-
-    const saveBtn = document.getElementById('btn-save-log-app');
-
-    if (mode === 'new') {
-        btnNew.classList.add('active');
-        btnNew.style.color = 'var(--cyan)';
-        btnNew.style.borderColor = 'var(--cyan)';
-        btnNew.style.background = 'rgba(0,212,255,0.08)';
-
-        wrapExist.style.display = 'none';
-        wrapStandalone.style.display = 'none';
-        wrapNew.style.display = 'block';
-        if (saveBtn) saveBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg> Save & Register New Asset Node`;
-    } else if (mode === 'standalone') {
-        btnStandalone.classList.add('active');
-        btnStandalone.style.color = 'var(--green)';
-        btnStandalone.style.borderColor = 'var(--green)';
-        btnStandalone.style.background = 'rgba(0,255,136,0.08)';
-
-        wrapExist.style.display = 'none';
-        wrapNew.style.display = 'none';
-        wrapStandalone.style.display = 'block';
-        if (saveBtn) saveBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg> Save Standalone Log Source (No Asset)`;
-    } else {
-        btnExist.classList.add('active');
-        btnExist.style.color = 'var(--cyan)';
-        btnExist.style.borderColor = 'var(--cyan)';
-        btnExist.style.background = 'rgba(0,212,255,0.08)';
-
-        wrapNew.style.display = 'none';
-        wrapStandalone.style.display = 'none';
-        wrapExist.style.display = 'block';
-        if (saveBtn) saveBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg> Save Application Log Source`;
-    }
-}
-
-function openAddAppModal(serverId = null) {
-    document.getElementById('add-app-overlay').style.display = 'block';
-    document.getElementById('add-app-modal').style.display = 'block';
-    switchNodeMode('existing');
-    if (serverId) {
-        document.getElementById('modal-app-server-id').value = serverId;
-    }
-}
-
-function closeAddAppModal() {
-    document.getElementById('add-app-overlay').style.display = 'none';
-    document.getElementById('add-app-modal').style.display = 'none';
-}
-
-function autoFillDefaultPath() {
-    const st = document.getElementById('modal-app-service-type').value;
-    const pathInput = document.getElementById('modal-app-log-path');
-    if (!pathInput.value || pathInput.value.startsWith('/var/log/') || pathInput.value.startsWith('/opt/')) {
-        if (st === 'tomcat') pathInput.value = '/opt/tomcat/logs/catalina.out';
-        else if (st === 'nginx') pathInput.value = '/var/log/nginx/access.log';
-        else if (st === 'haproxy') pathInput.value = '/var/log/haproxy.log';
-        else if (st === 'syslog') pathInput.value = '/var/log/syslog';
-        else if (st === 'auth') pathInput.value = '/var/log/auth.log';
-        else if (st === 'other' || st === 'custom') pathInput.value = '/var/log/app.log';
-    }
-}
-
-async function saveLogApplicationConfig() {
-    const appName = document.getElementById('modal-app-name').value.trim();
-    const serviceType = document.getElementById('modal-app-service-type').value;
-    const logPath = document.getElementById('modal-app-log-path').value.trim();
-
-    if (!appName || !logPath) {
-        showToast('Please enter Application Name and Log File Path', 'warning');
-        return;
-    }
-
-    let payload = {
-        app_name: appName,
-        service_type: serviceType,
-        log_file_path: logPath
-    };
-
-    if (currentNodeMode === 'standalone') {
-        const standaloneIp = document.getElementById('modal-standalone-ip') ? document.getElementById('modal-standalone-ip').value.trim() : '';
-        payload.is_standalone = true;
-        payload.just_log_monitor = true;
-        if (standaloneIp) payload.new_server_ip = standaloneIp;
-    } else if (currentNodeMode === 'new') {
-        const newName = document.getElementById('modal-new-server-name').value.trim();
-        const newIp = document.getElementById('modal-new-server-ip').value.trim();
-
-        if (!newName || !newIp) {
-            showToast('Please enter New Server Hostname and IP Address', 'warning');
-            return;
-        }
-        payload.is_new_node = true;
-        payload.new_server_name = newName;
-        payload.new_server_ip = newIp;
-    } else {
-        const serverId = document.getElementById('modal-app-server-id').value;
-        if (!serverId) {
-            showToast('Please select a target server node or switch to New Node', 'warning');
-            return;
-        }
-        payload.server_id = parseInt(serverId);
-    }
-
-    const btn = document.getElementById('btn-save-log-app');
-    btn.disabled = true;
-    btn.innerText = 'Saving...';
-
-    try {
-        const res = await apiFetch('/api/log-monitor/configs', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-
-        if (res && res.ok) {
-            showToast('Application log source added successfully!', 'success');
-            loadLogConfigs();
-
-            const isStandalone = currentNodeMode === 'standalone';
-            const nodeName = (document.getElementById('modal-new-server-name') ? document.getElementById('modal-new-server-name').value.trim() : '') || appName || 'Tomcat-Server';
-            const standaloneIp = document.getElementById('modal-standalone-ip') ? document.getElementById('modal-standalone-ip').value.trim() : '';
-            const newIp = document.getElementById('modal-new-server-ip') ? document.getElementById('modal-new-server-ip').value.trim() : '';
-            const nodeIp = res.server_ip || standaloneIp || newIp || '13.233.25.127';
-
-            if (document.getElementById('modal-app-name')) document.getElementById('modal-app-name').value = '';
-            if (document.getElementById('modal-new-server-name')) document.getElementById('modal-new-server-name').value = '';
-            if (document.getElementById('modal-new-server-ip')) document.getElementById('modal-new-server-ip').value = '';
-            if (document.getElementById('modal-standalone-ip')) document.getElementById('modal-standalone-ip').value = '';
-
-            let cmd = '';
-            if (isStandalone) {
-                cmd = `curl -sSL "${window.location.origin}/setup_log_agent.sh?config_id=${res.id}&log_path=${encodeURIComponent(logPath)}" | sudo bash`;
-            } else {
-                cmd = `curl -sSL "${window.location.origin}/setup_node.sh?node_name=${encodeURIComponent(nodeName)}&ip=${encodeURIComponent(nodeIp)}&log_path=${encodeURIComponent(logPath)}" | sudo bash`;
-            }
-
-            showSetupScriptModal({
-                title: isStandalone ? "⚡ STANDALONE LOG SHIPPER AGENT SCRIPT" : "🚀 ASSET NODE PUSH AGENT SCRIPT",
-                subtitle: `Run this 1-line command on your target server (${nodeIp}) to start outbound log streaming (Zero SSH Credentials used):`,
-                command: cmd
-            });
-        } else {
-            showToast(res.message || 'Failed to save application log source', 'error');
-        }
-    } catch (err) {
-        showToast(err.message || 'Save error', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2" fill="none" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg> Save Application`;
-    }
-}
-
-function openConfigScriptModal(configId, logPath, ip) {
-    const cmd = `curl -sSL "${window.location.origin}/setup_log_agent.sh?config_id=${configId}&log_path=${encodeURIComponent(logPath)}" | sudo bash`;
-    showSetupScriptModal({
-        title: "⚡ STANDALONE LOG SHIPPER AGENT SCRIPT",
-        subtitle: `Run this 1-line command on your target server (${ip || 'remote node'}) to start outbound log streaming (Zero SSH Credentials used):`,
-        command: cmd
-    });
-}
-
-async function loadLogConfigs() {
-    try {
-        const configs = await apiFetch('/api/log-monitor/configs');
-        const container = document.getElementById('log-app-configs-list');
-        document.getElementById('config-count').innerText = configs ? configs.length : 0;
-
-        if (!configs || !configs.length) {
-            container.innerHTML = '<div style="text-align:center; color:var(--text3); padding:15px; font-size:11px">No applications configured yet.</div>';
-            return;
-        }
-
-        container.innerHTML = configs.map(c => {
-            const searchStr = `${c.app_name || ''} ${c.service_type || ''} ${c.ip || ''} ${c.hostname || ''} ${c.project_name || ''} ${c.log_file_path || ''}`.toLowerCase();
-            const isSelected = selectedAppConfigId === c.id;
-            return `
-                <div class="config-app-item ${isSelected ? 'active' : ''}"
-                     data-search="${escapeHtml(searchStr)}"
-                     onclick="selectAppConfigFilter(${c.id}, '${escapeJs(c.service_type || '')}', ${c.server_id || 'null'}, '${escapeJs(c.log_file_path || '')}', this)">
-                    <div style="flex:1; min-width:0">
-                        <div style="display:flex; align-items:center; justify-content:space-between">
-                            <div style="font-size:11px; font-weight:600; color:var(--text)">${escapeHtml(c.app_name)}</div>
-                            ${c.ip ? `<span style="font-size:9px; color:var(--cyan); font-family:var(--mono)">${escapeHtml(c.ip)}</span>` : ''}
-                        </div>
-                        <div style="font-size:9px; color:var(--text3); font-family:var(--mono); text-overflow:ellipsis; overflow:hidden; white-space:nowrap; margin-top:2px">
-                            <span style="color:var(--amber); font-weight:bold">[${(c.service_type || 'APP').toUpperCase()}]</span> ${escapeHtml(c.log_file_path)}
-                        </div>
-                        ${c.project_name ? `<div style="font-size:8px; color:var(--text3); font-family:var(--mono)">Project: ${escapeHtml(c.project_name)}</div>` : ''}
-                    </div>
-                    <button class="btn btn-glass" onclick="event.stopPropagation(); openConfigScriptModal(${c.id}, '${escapeJs(c.ssh_user || 'bescom')}', '${escapeJs(c.log_file_path || '')}', '${escapeJs(c.ip || '')}')" style="padding:2px 6px; font-size:9px; color:var(--cyan); border-color:rgba(0,212,255,0.3); margin-left:6px" title="View Setup Script">⚡ Script</button>
-                    <button class="btn btn-glass" onclick="event.stopPropagation(); deleteLogConfig(${c.id})" style="padding:2px 6px; font-size:9px; color:var(--red); border-color:rgba(255,59,92,0.3); margin-left:6px">✕</button>
-                </div>
-            `;
-        }).join('');
-
-        filterLeftPanelApps();
-    } catch (e) {
-        console.error("Config load error", e);
-        const container = document.getElementById('log-app-configs-list');
-        if (container) {
-            container.innerHTML = `<div style="text-align:center; color:var(--red); padding:15px; font-size:11px">Failed to load apps. <button onclick="loadLogConfigs()" class="btn btn-glass" style="padding:2px 8px; margin-top:5px; font-size:10px">Retry</button></div>`;
-        }
-    }
-}
-
-function selectAppConfigFilter(configId, serviceType, serverId, logFilePath, el) {
-    document.querySelectorAll('.server-item-row').forEach(r => r.classList.remove('active'));
-    document.querySelectorAll('.config-app-item').forEach(r => r.classList.remove('active'));
-    
-    if (el) el.classList.add('active');
-    
-    selectedAppConfigId = configId;
-    selectedLogFilePath = logFilePath;
-    selectedServerId = serverId;
-
-    if (serviceType) {
-        currentServiceType = serviceType;
-        document.querySelectorAll('.log-tab-btn').forEach(b => {
-            b.classList.remove('active');
-            if (b.getAttribute('onclick') && b.getAttribute('onclick').includes(`'${serviceType}'`)) {
-                b.classList.add('active');
-            }
-        });
-    }
-
-    fetchLogsNow();
-}
-
-async function deleteLogConfig(cid) {
-    if (!confirm("Are you sure you want to remove this application log source?")) return;
-    try {
-        await apiFetch(`/api/log-monitor/configs/${cid}`, { method: 'DELETE' });
-        showToast("Log application removed", "info");
-        if (selectedAppConfigId === cid) {
-            selectedAppConfigId = null;
-            selectedLogFilePath = null;
-        }
-        loadLogConfigs();
-    } catch (e) {
-        showToast("Delete failed", "error");
-    }
-}
-
-function selectServerFilter(srvId, el) {
-    document.querySelectorAll('.server-item-row').forEach(r => r.classList.remove('active'));
-    document.querySelectorAll('.config-app-item').forEach(r => r.classList.remove('active'));
-    if (el) el.classList.add('active');
-    
+function selectServerFromDropdown(srvId, displayText, dotClass = 'online') {
     selectedServerId = srvId;
     selectedAppConfigId = null;
     selectedLogFilePath = null;
 
-    const sourceEl = document.getElementById('telemetry-file-path');
-    if (sourceEl) {
-        if (!srvId) {
-            sourceEl.innerText = 'Global Telemetry Stream';
-        } else {
-            const hostNameText = el ? (el.querySelector('div div')?.innerText || `#${srvId}`) : `#${srvId}`;
-            sourceEl.innerText = `Server Node: ${hostNameText}`;
-        }
+    const label = document.getElementById('server-trigger-label');
+    if (label) label.innerText = displayText;
+
+    const dot = document.getElementById('server-trigger-dot');
+    if (dot) dot.className = `srv-dot ${dotClass}`;
+
+    document.querySelectorAll('#server-items-scroll .server-item-option').forEach(it => it.classList.remove('active'));
+    if (event && event.currentTarget && event.currentTarget.classList) {
+        event.currentTarget.classList.add('active');
     }
 
+    const sourceEl = document.getElementById('telemetry-file-path');
+    if (sourceEl) {
+        sourceEl.innerText = srvId ? displayText : 'Global Telemetry Stream';
+    }
+
+    closeServerDropdown();
     updateLogFileSelectorForServer(srvId);
     fetchLogsNow();
 }
 
+// ── LOG SERVICE TYPE DROPDOWN ──
+function onServiceDropdownChanged(val) {
+    currentServiceType = val || '';
+    updateLogFileSelectorForServer(selectedServerId);
+    fetchLogsNow();
+}
+
+// ── CASCADING LOG FILE DROPDOWN ──
 function onLogFileSelected() {
     const sel = document.getElementById('log-file-selector');
-    selectedLogFilePath = sel && sel.value ? sel.value : null;
+    selectedLogFilePath = (sel && sel.value) ? sel.value : null;
     fetchLogsNow();
 }
 
@@ -946,115 +935,63 @@ async function updateLogFileSelectorForServer(serverId) {
     }
 }
 
-function switchServiceTab(type, el) {
-    document.querySelectorAll('.log-tab-btn').forEach(b => b.classList.remove('active'));
-    if (el) el.classList.add('active');
-    currentServiceType = type;
-    fetchLogsNow();
-}
-
-let expandedLogIndices = new Set();
-let isHistogramVisible = false;
-
-function toggleHistogramPanel() {
-    isHistogramVisible = !isHistogramVisible;
-    const container = document.getElementById('log-histogram-container');
-    if (container) {
-        container.style.display = isHistogramVisible ? 'block' : 'none';
-    }
-}
-
-function renderHistogram(buckets) {
-    const container = document.getElementById('log-histogram-bars');
-    if (!container) return;
-    if (!buckets || !buckets.length) {
-        container.innerHTML = '<div style="color:var(--text3); font-size:10px; padding:10px">No timeline data available</div>';
-        return;
-    }
-
-    const maxVal = Math.max(...buckets.map(b => b.total || 1), 1);
-    
-    container.innerHTML = buckets.map(b => {
-        const heightPx = Math.max(8, Math.round((b.total / maxVal) * 30));
-        const errPct = b.total ? Math.round(((b.errors || 0) / b.total) * 100) : 0;
-        const warnPct = b.total ? Math.round(((b.warns || 0) / b.total) * 100) : 0;
-        const infoPct = 100 - errPct - warnPct;
-
-        return `
-        <div style="display:flex; flex-direction:column; align-items:center; cursor:pointer; min-width:32px" 
-             onclick="zoomHistogramTime('${escapeJs(b.time)}')" 
-             title="Time: ${b.time} | Total: ${b.total} | Errors: ${b.errors} | Warns: ${b.warns}">
-            <div style="width:20px; height:32px; display:flex; flex-direction:column; justify-content:flex-end; background:rgba(255,255,255,0.06); border-radius:2px; padding:1px">
-                <div style="width:100%; height:${heightPx}px; display:flex; flex-direction:column; border-radius:2px; overflow:hidden">
-                    ${b.errors ? `<div style="height:${errPct}%; background:var(--red)"></div>` : ''}
-                    ${b.warns ? `<div style="height:${warnPct}%; background:var(--amber)"></div>` : ''}
-                    <div style="height:${infoPct}%; background:var(--cyan)"></div>
-                </div>
-            </div>
-            <div style="font-size:9px; color:var(--cyan); font-weight:600; font-family:var(--mono); margin-top:3px">${escapeHtml(b.time)}</div>
-        </div>
-        `;
-    }).join('');
-}
-
-function zoomHistogramTime(timeStr) {
-    const searchInput = document.getElementById('log-search-input');
-    searchInput.value = timeStr;
+// ── PRESET FILTER DROPDOWN ──
+function onPresetDropdownChanged(val) {
+    activePresetKey = val || '';
     filterLogLines();
-    showToast(`Zoomed log stream to window ${timeStr}`, "info");
+    fetchLogsNow();
+    showToast(`Filter Preset: ${val ? val.toUpperCase() : 'ALL LOGS'}`, "info");
 }
 
-function exportLogs(format) {
-    if (!allLogLines || !allLogLines.length) {
-        showToast("No log entries to export", "warning");
-        return;
+// ── SEARCH INPUT ──
+function clearSearchInput() {
+    const inp = document.getElementById('log-search-input');
+    if (inp) {
+        inp.value = '';
+        filterLogLines();
+        inp.focus();
     }
-    let content = "";
-    let filename = `log_export_${new Date().toISOString().slice(0,10)}`;
-    let mimeType = "text/plain";
-
-    if (format === 'csv') {
-        filename += ".csv";
-        mimeType = "text/csv";
-        content = "Timestamp,Level,Source,Message\n" + allLogLines.map(l => 
-            `"${l.time}","${l.level}","${l.source}","${(l.msg||'').replace(/"/g, '""')}"`
-        ).join("\n");
-    } else if (format === 'json') {
-        filename += ".json";
-        mimeType = "application/json";
-        content = JSON.stringify(allLogLines, null, 2);
-    } else {
-        filename += ".log";
-        content = allLogLines.map(l => `[${l.time}] [${l.level}] [${l.source}] ${l.msg}`).join("\n");
-    }
-
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast(`Exported ${allLogLines.length} logs to ${filename}`, "success");
 }
 
+// ── EXPORT MENU ──
+function toggleExportMenu(e) {
+    if (e) e.stopPropagation();
+    const pop = document.getElementById('export-menu-popover');
+    if (pop) pop.style.display = pop.style.display === 'block' ? 'none' : 'block';
+}
+
+function closeExportMenu() {
+    const pop = document.getElementById('export-menu-popover');
+    if (pop) pop.style.display = 'none';
+}
+
+// Click outside listener for all dropdowns
+document.addEventListener('click', (e) => {
+    const srvWrap = document.getElementById('server-dropdown-wrap');
+    if (srvWrap && !srvWrap.contains(e.target)) {
+        closeServerDropdown();
+    }
+    const expWrap = document.querySelector('.export-menu-wrap');
+    if (expWrap && !expWrap.contains(e.target)) {
+        closeExportMenu();
+    }
+});
+
+// ── LOG FETCH ENGINE ──
 async function fetchLogsNow(isAutoRefreshCall = false) {
-    // Guard: prevent overlapping requests which cause browser lag
     if (window._logFetchInFlight) return;
     window._logFetchInFlight = true;
     const tailLimit = parseInt(document.getElementById('log-tail-limit') ? document.getElementById('log-tail-limit').value : 100);
     const term = document.getElementById('log-terminal-output');
-    if (!isAutoRefreshCall && term) {
-        term.innerHTML = '<div style="text-align:center; padding:40px; color:var(--cyan); font-family:var(--mono); font-size:11px">Fetching secure log stream...<br><br><span style="font-size:24px">⚡</span></div>';
+    if (!isAutoRefreshCall && term && (!allLogLines || allLogLines.length === 0)) {
+        term.innerHTML = '<div style="text-align:center; padding:40px; color:var(--cyan); font-family:var(--font-mono); font-size:11px">Fetching secure log stream...<br><br><span style="font-size:24px">⚡</span></div>';
     }
     try {
         const payload = {
             server_id: selectedServerId ? parseInt(selectedServerId) : null,
             log_type: currentServiceType || '',
             log_file_path: selectedLogFilePath || null,
-            search: document.getElementById('log-search-input').value,
+            search: document.getElementById('log-search-input') ? document.getElementById('log-search-input').value : '',
             limit: tailLimit,
             preset_filter: activePresetKey
         };
@@ -1092,8 +1029,10 @@ async function fetchLogsNow(isAutoRefreshCall = false) {
             renderHistogram(buckets);
 
             if (res.file_stats) {
-                document.getElementById('telemetry-file-path').innerText = res.file_stats.file_path || 'System Telemetry Stream';
-                document.getElementById('telemetry-file-size').innerText = res.file_stats.size_str || 'System Feed';
+                const pEl = document.getElementById('telemetry-file-path');
+                if (pEl) pEl.innerText = res.file_stats.file_path || 'System Telemetry Stream';
+                const sEl = document.getElementById('telemetry-file-size');
+                if (sEl) sEl.innerText = res.file_stats.size_str || 'System Feed';
                 const healthEl = document.getElementById('telemetry-health-badge');
                 if (healthEl) {
                     healthEl.innerText = res.file_stats.health || 'ONLINE';
@@ -1102,382 +1041,24 @@ async function fetchLogsNow(isAutoRefreshCall = false) {
             }
 
             if (res.stats) {
-                document.getElementById('stat-log-count').innerText = res.stats.total || allLogLines.length;
-                document.getElementById('stat-err-count').innerText = res.stats.errors || 0;
-                document.getElementById('telemetry-rps').innerText = `${res.stats.rps || 0.0} lines/sec`;
-            }
-
-            if (res.counts) {
-                Object.keys(res.counts).forEach(k => {
-                    const badge = document.getElementById(`badge-tab-${k}`);
-                    if (badge) badge.innerText = res.counts[k];
-                });
-                document.getElementById('badge-tab-all').innerText = allLogLines.length;
+                const totEl = document.getElementById('stat-log-count');
+                if (totEl) totEl.innerText = res.stats.total || allLogLines.length;
+                const errEl = document.getElementById('stat-err-count');
+                if (errEl) errEl.innerText = res.stats.errors || 0;
+                const rpsEl = document.getElementById('telemetry-rps');
+                if (rpsEl) rpsEl.innerText = `${res.stats.rps || 0.0} lines/sec`;
             }
         }
     } catch (e) {
         window._logFetchInFlight = false;
         console.warn("Log fetch error", e);
-        if (!isAutoRefreshCall && term) {
-            term.innerHTML = `<div style="text-align:center; padding:40px; color:var(--red); font-family:var(--mono); font-size:11px">Failed to connect to backend.<br><br><button class="btn btn-glass" onclick="fetchLogsNow()" style="padding:4px 12px; margin-top:10px">Retry Connection</button></div>`;
-        }
-    }
-
-    // Check active SOAR alerts for banner (LOG-BASED ONLY, EXCLUDE SSH BRUTE FORCE / AUTH FAIL NOISE & INTERACTIVE SUDO)
-    try {
-        const srvParam = selectedServerId ? `&server_id=${selectedServerId}` : '';
-        const alertsRes = await apiFetch(`/api/alerts?limit=50&is_resolved=false&log_only=true${srvParam}`);
-        const rawAlerts = (alertsRes && alertsRes.items) ? alertsRes.items : [];
-        const svc = (currentServiceType || '').toLowerCase();
-        
-        const activeAlerts = rawAlerts.filter(a => {
-            const at = (a.alert_type || '').toUpperCase();
-            const t = (a.title || '').toLowerCase();
-            const msg = (a.message || '').toLowerCase();
-
-            // Strictly exclude SSH brute force, login noise, sudo su command history
-            if (at.includes('AUTH_FAIL') || at.includes('SSH_BRUTE') || at.includes('SUDO_ROOT') ||
-                t.includes('root escalation') || msg.includes('sudo su') || msg.includes('su - root') ||
-                t.includes('brute force') || t.includes('auth fail')) {
-                return false;
-            }
-
-            if (svc === 'postgres') {
-                return at.startsWith('PG_') || t.includes('postgres') || msg.includes('postgres') ||
-                       t.includes('database deletion') || msg.includes('drop database') || msg.includes('drop table');
-            }
-            if (svc === 'tomcat') {
-                return at.startsWith('TOMCAT_') || t.includes('tomcat') || msg.includes('tomcat') ||
-                       msg.includes('catalina') || msg.includes('outofmemory');
-            }
-            if (svc === 'os') {
-                return at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' ||
-                       t.includes('user deletion') || t.includes('insecure permission') ||
-                       msg.includes('userdel') || msg.includes('deluser') || msg.includes('chmod 777');
-            }
-            return at.startsWith('PG_') || at.startsWith('TOMCAT_') || at === 'USER_DELETED' || at === 'INSECURE_PERM_CHANGE' ||
-                   t.includes('postgres') || t.includes('tomcat') || t.includes('user deletion') || t.includes('insecure permission') ||
-                   msg.includes('drop database') || msg.includes('drop table') || msg.includes('userdel') || msg.includes('chmod 777');
-        });
-        window.activeLogThreatAlerts = activeAlerts;
-        const banner = document.getElementById('live-soar-alerts-bar');
-        const bannerText = document.getElementById('live-soar-alerts-text');
-        if (banner && bannerText) {
-            if (activeAlerts.length > 0) {
-                const topAlert = activeAlerts[0];
-                bannerText.innerHTML = `<strong>${escapeHtml(topAlert.title || topAlert.alert_type)}</strong>: ${escapeHtml(topAlert.message || '')} <span style="color:var(--text3); font-size:9px">(${topAlert.created_at_ago || 'recent'})</span>`;
-                banner.style.display = 'flex';
-            } else {
-                banner.style.display = 'none';
-            }
-        }
-    } catch(ea) {}
-}
-
-function isLogSecurityThreat(msg, src) {
-    if (!msg) return false;
-    const str = String(msg).toLowerCase();
-    const source = String(src || '').toLowerCase();
-    // Exclude SSH brute force & login auth fail noise & interactive sudo su
-    if (str.includes('auth_fail') || str.includes('ssh_brute') || str.includes('failed password') || str.includes('invalid user') ||
-        str.includes('sudo su') || str.includes('su - root')) {
-        return false;
-    }
-    return /drop\s+database|drop\s+schema|drop\s+table|truncate|dropdb|dropuser|alter\s+user|alter\s+role|grant\s+all|with\s+superuser|createuser|userdel|deluser|usermod.*sudo|chmod\s+.*777|chmod\s+.*\+s|chown\s+.*root|\/etc\/shadow|\/etc\/sudoers|outofmemoryerror|stackoverflowerror|soar\s+detection/i.test(str) ||
-           (anyMatch(source, ['postgres', 'pgsql']) && anyMatch(str, ['fatal', 'denied', 'drop', 'alter', 'grant', 'delete'])) ||
-           (anyMatch(source, ['tomcat', 'catalina']) && anyMatch(str, ['fatal', 'outofmemory', 'severe']));
-}
-
-let lastRenderedHash = '';
-// ─── VIRTUALIZED RENDERER ──────────────────────────────────────────────────
-// Renders only the rows visible in the scrollport + a small buffer.
-// Total DOM nodes stay ~30 regardless of dataset size → instant render.
-
-function initVirtualScroll() {
-    const term = document.getElementById('log-terminal-output');
-    if (!term) return;
-    let ticking = false;
-    term.addEventListener('scroll', () => { 
-        if (!ticking) {
-            window.requestAnimationFrame(() => {
-                virtPaint(term);
-                ticking = false;
-            });
-            ticking = true;
-        }
-    }, { passive: true });
-}
-
-function buildLogRowHtml(l, idx) {
-    const isSoarThreat = isLogSecurityThreat(l.msg, l.source);
-    const lvl = (l.level || 'INFO').toUpperCase();
-    const displayLvl = isSoarThreat ? 'CRITICAL' : lvl;
-    const lvlClass = isSoarThreat ? 'lvl-error' : (lvl === 'ERROR' ? 'lvl-error' : (lvl === 'WARN' ? 'lvl-warn' : (lvl === 'INFO' ? 'lvl-info' : '')));
-    const isExpanded = expandedLogIndices.has(idx);
-    const parsedKv = parseLogFields(l.msg);
-    let kvHtml = '';
-    if (parsedKv && Object.keys(parsedKv).length) {
-        kvHtml = Object.entries(parsedKv).map(([k, v]) =>
-            `<span class="kv-pill" onclick="event.stopPropagation();filterByKv('${escapeJs(k)}','${escapeJs(v)}')">`+
-            `<strong style="color:var(--cyan)">${escapeHtml(k)}:</strong> ${escapeHtml(v)}</span>`
-        ).join(' ');
-    }
-    const detailDrawer = isExpanded ? `
-        <div class="log-detail-drawer" style="background:#090e1a;border-left:3px solid var(--cyan);padding:10px 14px;margin:4px 14px 10px 14px;font-size:10px;border-radius:4px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                <span style="font-family:var(--orbitron);font-size:9px;color:var(--cyan);letter-spacing:1px">🔍 STRUCTURED LOG INSPECTOR</span>
-                <span style="color:var(--text3);font-size:9px">Click key-value pill to filter terminal</span>
-            </div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-                <span class="kv-pill" onclick="event.stopPropagation();filterByKv('level','${lvl}')"><strong style="color:var(--cyan)">level:</strong> ${lvl}</span>
-                <span class="kv-pill" onclick="event.stopPropagation();filterByKv('source','${escapeJs(l.source)}')"><strong style="color:var(--cyan)">source:</strong> ${escapeHtml(l.source)}</span>
-                ${kvHtml}
-            </div>
-            <div style="background:rgba(0,0,0,0.5);padding:8px 10px;border-radius:4px;font-family:var(--mono);color:var(--text2);word-break:break-all;border:1px solid var(--border)">${escapeHtml(l.msg)}</div>
-        </div>` : '';
-    return `<div class="log-row-wrapper" data-idx="${idx}" style="border-bottom:1px solid rgba(255,255,255,0.03)">`+
-        `<div class="log-row-grid ${lvlClass}" onclick="toggleLogDetail(${idx})" style="cursor:pointer;border-bottom:none">`+
-        `<div style="color:var(--text3);display:flex;align-items:center;gap:6px"><span style="font-size:8px;color:var(--cyan);transition:transform 0.2s;transform:${isExpanded?'rotate(90deg)':'rotate(0deg)'}">▶</span>${l.time}</div>`+
-        `<div><span class="lvl-tag ${displayLvl}">${isSoarThreat?'🚨 SOAR':displayLvl}</span></div>`+
-        `<div style="color:var(--cyan);text-overflow:ellipsis;overflow:hidden">${l.source}</div>`+
-        `<div style="color:var(--text);word-break:break-all">${escapeHtml(l.msg)}</div>`+
-        `</div>${detailDrawer}</div>`;
-}
-
-function virtPaint(term) {
-    if (!virt_allFiltered.length) return;
-    const spacer  = term.querySelector('#virt-spacer-top');
-    const content = term.querySelector('#virt-content');
-    const spacerB = term.querySelector('#virt-spacer-bot');
-    if (!spacer || !content || !spacerB) return;
-
-    const scrollTop  = term.scrollTop;
-    const viewHeight = term.clientHeight;
-    const rh = virt_rowHeight;
-
-    let startIdx = Math.max(0, Math.floor(scrollTop / rh) - virt_visibleBuffer);
-    let endIdx   = Math.min(virt_allFiltered.length, Math.ceil((scrollTop + viewHeight) / rh) + virt_visibleBuffer);
-
-    spacer.style.height  = (startIdx * rh) + 'px';
-    spacerB.style.height = ((virt_allFiltered.length - endIdx) * rh) + 'px';
-
-    let html = '';
-    for (let i = startIdx; i < endIdx; i++) {
-        html += buildLogRowHtml(virt_allFiltered[i], i);
-    }
-    content.innerHTML = html;
-}
-
-function renderLogLines(lines) {
-    const term = document.getElementById('log-terminal-output');
-
-    if (!lines || !lines.length) {
-        term.innerHTML = (activePresetKey === 'soar' && window.activeLogThreatAlerts && window.activeLogThreatAlerts.length > 0)
-            ? `<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:6px;padding:16px;margin:16px;text-align:left">`+
-              `<div style="font-weight:700;color:#ef4444;margin-bottom:10px;font-size:12px;font-family:var(--orbitron)">🚨 ACTIVE LOG-BASED SOAR DETECTIONS</div>`+
-              window.activeLogThreatAlerts.map(a=>`<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;justify-content:space-between;align-items:flex-start"><div><span class="lvl-tag CRITICAL" style="background:#ef4444;color:#fff;font-size:9px">CRITICAL</span><strong style="color:#f8fafc;margin-left:8px">${escapeHtml(a.title||a.alert_type)}</strong><div style="color:#cbd5e1;font-size:11px;margin-top:4px">${escapeHtml(a.message||'')}</div></div><span style="color:var(--text3);font-size:9px;white-space:nowrap">${a.created_at_ago||'recent'}</span></div>`).join('')+
-              `</div>`
-            : (activePresetKey === 'soar'
-                ? '<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:24px;margin-bottom:8px">🛡️</div><div style="font-weight:600;color:#f8fafc">No Log-Based SOAR Threats Found in Current Stream Window</div><div style="font-size:11px;margin-top:4px">Monitored: PostgreSQL deletions/privileges, OS userdel, chmod 777, Tomcat errors.</div></div>'
-                : '<div style="text-align:center;padding:30px;color:var(--text3)">No log lines in this file / last N lines are empty.</div>');
-        virt_allFiltered = [];
-        lastRenderedHash = '';
-        return;
-    }
-
-    // Build SOAR banner if needed (pinned above virtual list)
-    let soarBanner = '';
-    if (activePresetKey === 'soar' && window.activeLogThreatAlerts && window.activeLogThreatAlerts.length > 0) {
-        soarBanner = `<div style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:6px;padding:12px 16px;margin:10px 14px;text-align:left">`+
-            `<div style="font-weight:700;color:#ef4444;margin-bottom:6px;font-size:11px;font-family:var(--orbitron)">🚨 ACTIVE LOG-BASED SOAR DETECTIONS</div>`+
-            window.activeLogThreatAlerts.map(a=>`<div style="font-size:11px;padding:4px 0;color:#f8fafc"><span class="lvl-tag CRITICAL" style="background:#ef4444;color:#fff;font-size:9px;padding:2px 5px">CRITICAL</span><strong style="margin-left:6px">${escapeHtml(a.title||a.alert_type)}:</strong> ${escapeHtml(a.message||'')}</div>`).join('')+
-            `</div>`;
-    }
-
-    // Store filtered set and build virtual scroll scaffold
-    virt_allFiltered = lines;
-    lastRenderedHash = 'virt:' + lines.length;
-
-    term.innerHTML =
-        soarBanner +
-        `<div id="virt-spacer-top" style="height:0px"></div>`+
-        `<div id="virt-content"></div>`+
-        `<div id="virt-spacer-bot" style="height:0px"></div>`;
-
-    // Paint immediately for first view
-    virtPaint(term);
-}
-
-function toggleLogDetail(idx) {
-    if (expandedLogIndices.has(idx)) {
-        expandedLogIndices.delete(idx);
-    } else {
-        expandedLogIndices.add(idx);
-    }
-    // Repaint only the virtual window, not the whole dataset
-    const term = document.getElementById('log-terminal-output');
-    if (term && virt_allFiltered.length) {
-        virtPaint(term);
-    } else {
-        filterLogLines();
     }
 }
 
-function parseLogFields(msg) {
-    if (!msg) return {};
-    const kv = {};
-    const str = String(msg).trim();
-
-    if (str.startsWith('{') && str.endsWith('}')) {
-        try {
-            const obj = JSON.parse(str);
-            Object.keys(obj).forEach(k => {
-                if (typeof obj[k] !== 'object') kv[k] = String(obj[k]);
-            });
-            return kv;
-        } catch(e){}
-    }
-
-    const matches = str.matchAll(/([a-zA-Z0-9_\-\.]+)=["']?([^"'\s]+)["']?/g);
-    for (const m of matches) {
-        if (m[1] && m[2] && m[1].length < 25) {
-            kv[m[1]] = m[2];
-        }
-    }
-
-    const ipMatch = str.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
-    if (ipMatch) kv["ip"] = ipMatch[0];
-    
-    const httpMatch = str.match(/HTTP\/\d\.\d"\s+(\d{3})/);
-    if (httpMatch) kv["status"] = httpMatch[1];
-
-    return kv;
-}
-
-function openLlmModal() {
-    document.getElementById('llm-modal-overlay').style.display = 'block';
-    document.getElementById('llm-analyzer-modal').style.display = 'block';
-    
-    // Pre-select the server from the outside state if possible
-    const sId = selectedServerId || 0;
-    const srvSelect = document.getElementById('llm-server-selector');
-    if (srvSelect) {
-        // Only set it if the option exists
-        const opt = srvSelect.querySelector(`option[value="${sId}"]`);
-        if (opt) {
-            srvSelect.value = sId;
-        } else {
-            srvSelect.value = "0";
-        }
-    }
-    
-    const logType = currentServiceType || 'all';
-    document.getElementById('llm-target-label').innerText = `Log Type Filter: ${logType.toUpperCase()}`;
-}
-
-function closeLlmModal() {
-    document.getElementById('llm-modal-overlay').style.display = 'none';
-    document.getElementById('llm-analyzer-modal').style.display = 'none';
-}
-
-async function analyzeWithLlm() {
-    const timePeriod = document.getElementById('llm-time-period').value;
-    const container = document.getElementById('llm-result-container');
-    const srvSelect = document.getElementById('llm-server-selector');
-    
-    // Get the server from the modal dropdown
-    const sId = srvSelect ? parseInt(srvSelect.value) : 0;
-    const logType = currentServiceType || '';
-    
-    // Find the ip from the selected option text
-    let sIp = "";
-    if (sId && srvSelect && srvSelect.selectedIndex >= 0) {
-        const txt = srvSelect.options[srvSelect.selectedIndex].text;
-        const match = txt.match(/\(([^)]+)\)/);
-        if (match) sIp = match[1];
-    }
-    
-    const analyzeBtn = document.getElementById('llm-analyze-btn');
-    if (analyzeBtn) {
-        analyzeBtn.disabled = true;
-        analyzeBtn.innerHTML = "ANALYZING...";
-        analyzeBtn.style.opacity = "0.7";
-    }
-    
-    container.innerHTML = `<div style="text-align:center; padding:40px; color:#8957e5; font-family:var(--orbitron);">✨ AI is analyzing ${timePeriod} of logs... Please wait...</div>`;
-    
-    try {
-        const payload = {
-            server_id: parseInt(sId),
-            server_ip: sIp,
-            log_type: logType,
-            time_period: timePeriod
-        };
-        
-        const res = await apiFetch('/api/llm/analyze_logs', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-        
-        if (res && res.analysis) {
-            container.innerHTML = `
-                <div style="display:flex; justify-content:space-between; margin-bottom:10px; font-size:10px; color:var(--text3); font-family:var(--mono); border-bottom:1px solid #1f2937; padding-bottom:5px;">
-                    <span>Analyzed ${res.sampled || res.count} sampled lines of ${res.count} total</span>
-                    <span>Range: ${res.start} → ${res.end}</span>
-                </div>
-                ${res.analysis}
-            `;
-        } else {
-            container.innerHTML = `<div style="color:var(--red); padding:20px;">Error: ${res.error || 'Unknown error'}</div>`;
-        }
-    } catch (e) {
-        container.innerHTML = `<div style="color:var(--red); padding:20px;">Failed to connect to AI analyzer: ${e}</div>`;
-    } finally {
-        if (analyzeBtn) {
-            analyzeBtn.disabled = false;
-            analyzeBtn.innerHTML = "ANALYZE NOW";
-            analyzeBtn.style.opacity = "1";
-        }
-    }
-}
-
-let activePresetKey = '';
-function applyPresetFilter(term, btn) {
-    document.querySelectorAll('.preset-pill').forEach(b => b.classList.remove('active'));
-    if (btn) {
-        btn.classList.add('active');
-    } else {
-        const found = Array.from(document.querySelectorAll('.preset-pill')).find(b => {
-            const oc = b.getAttribute('onclick') || '';
-            return oc.includes(`'${term}'`);
-        });
-        if (found) found.classList.add('active');
-    }
-    activePresetKey = term || '';
-
-    // Clear search input text if preset clicked to avoid filter clash
-    if (term) {
-        const searchInput = document.getElementById('log-search-input');
-        if (searchInput && searchInput.value) searchInput.value = '';
-    }
-
-    fetchLogsNow();
-    showToast(`Preset: ${term ? term.toUpperCase() : 'ALL STREAMS'}`, "info");
-}
-
-function filterByKv(key, val) {
-    const searchInput = document.getElementById('log-search-input');
-    searchInput.value = val;
-    filterLogLines();
-    showToast(`Filtered by ${key}: ${val}`, "info");
-}
-
-function anyMatch(str, list) {
-    return list.some(k => str.includes(k));
-}
-
+// ── REAL-TIME FILTERING ──
 function filterLogLines() {
-    const q = (document.getElementById('log-search-input').value || '').toLowerCase().trim();
+    const searchInput = document.getElementById('log-search-input');
+    const q = (searchInput ? searchInput.value : '').toLowerCase().trim();
     
     if (!allLogLines || !allLogLines.length) {
         renderLogLines([]);
@@ -1490,7 +1071,7 @@ function filterLogLines() {
         const src = String(l.source || '').toLowerCase();
         const time = String(l.time || '').toLowerCase();
 
-        // Preset filter evaluation
+        // 1. Preset filter evaluation
         if (activePresetKey) {
             const pk = activePresetKey.toLowerCase();
             if (pk === 'soar') {
@@ -1509,12 +1090,10 @@ function filterLogLines() {
                 if (!anyMatch(msg, ['500', '502', '503', '504', '5xx', 'internal server error', 'http/1.1 5', 'http/2.0 5'])) return false;
             } else if (pk === 'apm') {
                 if (!anyMatch(msg, ['apm', 'trace', 'duration_ms', 'latency', 'cpu=', 'ram=', 'rum']) && !src.includes('apm')) return false;
-            } else if (pk === 'watchdog') {
-                if (!anyMatch(msg, ['watchdog', 'anomaly', 'outlier', 'root cause', 'alert-pacer']) && !src.includes('watchdog')) return false;
             }
         }
 
-        // Search input text evaluation
+        // 2. Search box string evaluation
         if (q) {
             if (!msg.includes(q) && !src.includes(q) && !time.includes(q) && !lvl.toLowerCase().includes(q)) return false;
         }
@@ -1525,41 +1104,433 @@ function filterLogLines() {
     renderLogLines(filtered);
 }
 
+function anyMatch(str, list) {
+    return list.some(k => str.includes(k));
+}
+
+function isLogSecurityThreat(msg, src) {
+    const text = (msg + ' ' + (src || '')).toLowerCase();
+    const threats = [
+        'sql injection', 'union select', 'xss', 'attack', 'failed password',
+        'invalid user', 'unauthorized', 'access denied', 'permission denied',
+        'privilege escalation', 'sudo: auth failure', 'fatal: password authentication failed',
+        'drop table', 'drop schema', 'userdel', 'deluser', 'chmod 777', 'brute force'
+    ];
+    return threats.some(t => text.includes(t));
+}
+
+// ── VIRTUAL SCROLL LOG RENDERER ──
+function initVirtualScroll() {
+    const term = document.getElementById('log-terminal-output');
+    if (!term) return;
+    if (virt_scrollListener) {
+        term.removeEventListener('scroll', virt_scrollListener);
+    }
+    virt_scrollListener = () => {
+        requestAnimationFrame(() => virtPaint(term));
+    };
+    term.addEventListener('scroll', virt_scrollListener, { passive: true });
+}
+
+function buildLogRowHtml(l, idx) {
+    let lvl = (l.level || 'INFO').toUpperCase();
+    let lvlClass = 'lvl-info';
+    if (['ERROR', 'CRITICAL', 'CRIT', 'HIGH', 'FATAL'].includes(lvl)) lvlClass = 'lvl-error';
+    else if (['WARN', 'WARNING', 'MEDIUM'].includes(lvl)) lvlClass = 'lvl-warn';
+
+    let displaySource = l.source || 'syslog';
+    if (displaySource.length > 25) {
+        displaySource = '...' + displaySource.slice(-22);
+    }
+
+    let isExpanded = expandedLogIndices.has(idx);
+    let detailSection = '';
+    if (isExpanded) {
+        const parsed = parseLogFields(l.msg || '');
+        let tagsHtml = '';
+        if (parsed.tags && Object.keys(parsed.tags).length > 0) {
+            tagsHtml = '<div style="margin-top:6px; display:flex; gap:4px; flex-wrap:wrap;">' +
+                Object.entries(parsed.tags).map(([k,v]) => `<span class="kv-pill" onclick="filterByKv('${escapeJs(k)}', '${escapeJs(String(v))}')">${escapeHtml(k)}: <strong>${escapeHtml(String(v))}</strong></span>`).join('') +
+                '</div>';
+        }
+        detailSection = `<div style="grid-column:1/-1; background:rgba(0,0,0,0.4); padding:10px 14px; margin:4px 0; border-radius:4px; border:1px solid rgba(255,255,255,0.06); font-family:var(--font-mono); font-size:10.5px">
+            <div><strong style="color:var(--cyan)">SOURCE:</strong> ${escapeHtml(l.source || 'unknown')} &nbsp;|&nbsp; <strong style="color:var(--cyan)">TIMESTAMP:</strong> ${escapeHtml(l.time || 'unknown')}</div>
+            <div style="margin-top:6px; white-space:pre-wrap; word-break:break-all; color:var(--text); line-height:1.5">${escapeHtml(l.msg || '')}</div>
+            ${tagsHtml}
+        </div>`;
+    }
+
+    return `<div class="log-row-grid ${lvlClass}" id="log-row-${idx}" style="cursor:pointer" onclick="toggleLogDetail(${idx})">
+        <div style="color:var(--text3); font-size:10px; font-family:var(--font-mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${escapeHtml(l.time || '—')}</div>
+        <div><span class="lvl-tag ${lvl}">${lvl}</span></div>
+        <div style="color:var(--cyan); font-size:10px; font-family:var(--font-mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${escapeHtml(l.source || '')}">${escapeHtml(displaySource)}</div>
+        <div style="color:var(--text); font-size:11px; font-family:var(--font-mono); white-space:pre-wrap; word-break:break-word">${escapeHtml(l.msg || '')}</div>
+        ${detailSection}
+    </div>`;
+}
+
+function virtPaint(term) {
+    if (!virt_allFiltered || !virt_allFiltered.length) return;
+    const total = virt_allFiltered.length;
+    const scrollTop = term.scrollTop;
+    const clientHeight = term.clientHeight || 500;
+
+    let startIdx = Math.max(0, Math.floor(scrollTop / virt_rowHeight) - virt_visibleBuffer);
+    let endIdx = Math.min(total, Math.ceil((scrollTop + clientHeight) / virt_rowHeight) + virt_visibleBuffer);
+
+    const topPad = startIdx * virt_rowHeight;
+    const bottomPad = Math.max(0, (total - endIdx) * virt_rowHeight);
+
+    let rowsHtml = '';
+    for (let i = startIdx; i < endIdx; i++) {
+        rowsHtml += buildLogRowHtml(virt_allFiltered[i], i);
+    }
+
+    term.innerHTML = `<div style="height:${topPad}px; width:100%; pointer-events:none"></div>` +
+        rowsHtml +
+        `<div style="height:${bottomPad}px; width:100%; pointer-events:none"></div>`;
+}
+
+function renderLogLines(lines) {
+    virt_allFiltered = lines;
+    const term = document.getElementById('log-terminal-output');
+    if (!term) return;
+
+    if (!lines || lines.length === 0) {
+        term.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text3); font-family:var(--font-mono)">No log lines matched the active filters.</div>';
+        return;
+    }
+
+    // Check SOAR threats banner
+    const soarThreat = lines.find(l => isLogSecurityThreat(l.msg, l.source));
+    const soarBar = document.getElementById('live-soar-alerts-bar');
+    if (soarBar) {
+        if (soarThreat) {
+            soarBar.style.display = 'flex';
+            const soarText = document.getElementById('live-soar-alerts-text');
+            if (soarText) soarText.innerText = `[${soarThreat.time || ''}] ${soarThreat.msg || ''}`;
+        } else {
+            soarBar.style.display = 'none';
+        }
+    }
+
+    virtPaint(term);
+}
+
+let expandedLogIndices = new Set();
+function toggleLogDetail(idx) {
+    if (expandedLogIndices.has(idx)) {
+        expandedLogIndices.delete(idx);
+    } else {
+        expandedLogIndices.add(idx);
+    }
+    const term = document.getElementById('log-terminal-output');
+    if (term) virtPaint(term);
+}
+
+function parseLogFields(msg) {
+    const tags = {};
+    if (!msg) return { tags };
+    const ipMatch = msg.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+    if (ipMatch) tags["IP"] = ipMatch[0];
+    const statusMatch = msg.match(/\bHTTP\/[0-9.]+\s+([0-9]{3})\b/i) || msg.match(/\bstatus[:=]\s*([0-9]{3})\b/i);
+    if (statusMatch) tags["HTTP_STATUS"] = statusMatch[1];
+    const userMatch = msg.match(/\buser[=:\s]+([a-zA-Z0-9_\-\.]+)\b/i);
+    if (userMatch) tags["USER"] = userMatch[1];
+    return { tags };
+}
+
+function filterByKv(key, val) {
+    const searchInput = document.getElementById('log-search-input');
+    if (searchInput) {
+        searchInput.value = val;
+        filterLogLines();
+        showToast(`Filtered by ${key}: ${val}`, "info");
+    }
+}
+
+// ── STREAM AUTOREFRESH ──
 function startAutoRefresh() {
+    isAutoRefresh = true;
+    updateStreamButtonState();
     if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-    // 8s interval — balances freshness vs server load; isFetching guard prevents pileup
     autoRefreshTimer = setInterval(() => {
-        if (isAutoRefresh && !window._logFetchInFlight) fetchLogsNow(true);
-    }, 8000);
+        if (isAutoRefresh) fetchLogsNow(true);
+    }, 3000);
 }
 
 function toggleAutoRefresh() {
     isAutoRefresh = !isAutoRefresh;
+    updateStreamButtonState();
+    if (!isAutoRefresh && autoRefreshTimer) {
+        clearInterval(autoRefreshTimer);
+        autoRefreshTimer = null;
+    } else if (isAutoRefresh) {
+        startAutoRefresh();
+    }
+}
+
+function updateStreamButtonState() {
     const btn = document.getElementById('btn-toggle-auto');
+    if (!btn) return;
     if (isAutoRefresh) {
-        btn.style.color = 'var(--green)';
-        btn.style.borderColor = 'rgba(0,255,136,0.3)';
-        btn.innerHTML = '🟢 LIVE STREAM';
-        fetchLogsNow();
+        btn.innerText = '▶️ LIVE STREAMING';
+        btn.classList.add('active');
     } else {
-        btn.style.color = 'var(--amber)';
-        btn.style.borderColor = 'rgba(255,184,0,0.3)';
-        btn.innerHTML = '⏸️ STREAM PAUSED';
+        btn.innerText = '⏸️ STREAM PAUSED';
+        btn.classList.remove('active');
     }
 }
 
 function clearTerminal() {
     allLogLines = [];
-    expandedLogIndices.clear();
-    renderLogLines([]);
+    virt_allFiltered = [];
+    const term = document.getElementById('log-terminal-output');
+    if (term) term.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text3); font-family:var(--font-mono)">Terminal cleared. Click REFRESH to fetch live logs.</div>';
+    showToast("Terminal buffer cleared", "info");
+}
+
+// ── EXPORT ──
+function exportLogs(format) {
+    if (!allLogLines || allLogLines.length === 0) {
+        showToast("No logs to export", "warning");
+        return;
+    }
+    let content = '';
+    let mime = 'text/plain';
+    let ext = 'log';
+
+    if (format === 'json') {
+        content = JSON.stringify(allLogLines, null, 2);
+        mime = 'application/json';
+        ext = 'json';
+    } else if (format === 'csv') {
+        const rows = [['Timestamp', 'Level', 'Source', 'Message']];
+        allLogLines.forEach(l => {
+            rows.push([
+                `"${(l.time || '').replace(/"/g, '""')}"`,
+                `"${(l.level || '').replace(/"/g, '""')}"`,
+                `"${(l.source || '').replace(/"/g, '""')}"`,
+                `"${(l.msg || '').replace(/"/g, '""')}"`
+            ]);
+        });
+        content = rows.map(r => r.join(',')).join('\n');
+        mime = 'text/csv';
+        ext = 'csv';
+    } else {
+        content = allLogLines.map(l => `[${l.time || ''}] [${l.level || 'INFO'}] [${l.source || ''}] ${l.msg || ''}`).join('\n');
+    }
+
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `soc_logs_${new Date().toISOString().slice(0,10)}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${allLogLines.length} logs as ${ext.toUpperCase()}`, "success");
+}
+
+// ── TIME HISTOGRAM ──
+let isHistogramVisible = false;
+function toggleHistogramPanel() {
+    isHistogramVisible = !isHistogramVisible;
+    const panel = document.getElementById('log-histogram-container');
+    if (panel) panel.style.display = isHistogramVisible ? 'block' : 'none';
+}
+
+function renderHistogram(buckets) {
+    const wrap = document.getElementById('log-histogram-bars');
+    if (!wrap) return;
+    if (!buckets || buckets.length === 0) {
+        wrap.innerHTML = '<span style="color:var(--text3); font-size:10px; font-family:var(--font-mono)">No time buckets available</span>';
+        return;
+    }
+    const maxVal = Math.max(...buckets.map(b => b.total), 1);
+    wrap.innerHTML = buckets.map(b => {
+        const heightPct = Math.max(12, Math.round((b.total / maxVal) * 100));
+        const hasErr = b.errors > 0;
+        const color = hasErr ? 'var(--red)' : 'var(--cyan)';
+        return `<div onclick="filterByTimeBucket('${b.time}')" title="${b.time}: ${b.total} logs (${b.errors} errors)" style="flex:1; min-width:8px; height:${heightPct}%; background:${color}; border-radius:2px 2px 0 0; cursor:pointer; opacity:0.85; transition:opacity 0.15s"></div>`;
+    }).join('');
+}
+
+function filterByTimeBucket(tStr) {
+    const inp = document.getElementById('log-search-input');
+    if (inp) {
+        inp.value = tStr;
+        filterLogLines();
+    }
+}
+
+// ── LLM ANALYZER ──
+function openLlmModal() {
+    document.getElementById('llm-modal-overlay').style.display = 'block';
+    document.getElementById('llm-analyzer-modal').style.display = 'block';
+}
+
+function closeLlmModal() {
+    document.getElementById('llm-modal-overlay').style.display = 'none';
+    document.getElementById('llm-analyzer-modal').style.display = 'none';
+}
+
+async function analyzeWithLlm() {
+    const btn = document.getElementById('llm-analyze-btn');
+    const resBox = document.getElementById('llm-result-container');
+    if (!btn || !resBox) return;
+
+    btn.disabled = true;
+    btn.innerText = 'ANALYZING...';
+    resBox.innerHTML = '<div style="text-align:center; padding:40px; color:var(--cyan); font-family:var(--font-mono)">Running AI Log Analyzer on selected telemetry stream...</div>';
+
+    try {
+        const srvId = document.getElementById('llm-server-selector').value;
+        const period = document.getElementById('llm-time-period').value;
+        const res = await apiFetch('/api/logs/llm-analyze', {
+            method: 'POST',
+            body: JSON.stringify({ server_id: srvId === '0' ? null : parseInt(srvId), period: period })
+        });
+        btn.disabled = false;
+        btn.innerText = 'ANALYZE NOW';
+        if (res && res.analysis) {
+            resBox.innerHTML = `<div style="white-space:pre-wrap; color:var(--text); font-family:var(--font-mono); font-size:12px; line-height:1.6">${escapeHtml(res.analysis)}</div>`;
+        } else {
+            resBox.innerHTML = `<div style="color:var(--amber)">Analysis completed but no insights were returned.</div>`;
+        }
+    } catch(e) {
+        btn.disabled = false;
+        btn.innerText = 'ANALYZE NOW';
+        resBox.innerHTML = `<div style="color:var(--red)">AI Analysis failed: ${escapeHtml(String(e))}</div>`;
+    }
+}
+
+// ── ADD APP MODAL ──
+function openAddAppModal() {
+    document.getElementById('add-app-overlay').style.display = 'block';
+    document.getElementById('add-app-modal').style.display = 'block';
+}
+
+function closeAddAppModal() {
+    document.getElementById('add-app-overlay').style.display = 'none';
+    document.getElementById('add-app-modal').style.display = 'none';
+}
+
+function switchNodeMode(mode) {
+    currentNodeMode = mode;
+    const btnExist = document.getElementById('btn-node-mode-existing');
+    const btnNew = document.getElementById('btn-node-mode-new');
+    const btnStandalone = document.getElementById('btn-node-mode-standalone');
+    const wrapExist = document.getElementById('wrap-existing-node');
+    const wrapNew = document.getElementById('wrap-new-node');
+    const wrapStandalone = document.getElementById('wrap-standalone-node');
+
+    [btnExist, btnNew, btnStandalone].forEach(b => {
+        if (b) {
+            b.classList.remove('active');
+            b.style.color = 'var(--text3)';
+            b.style.borderColor = 'var(--border)';
+            b.style.background = 'transparent';
+        }
+    });
+
+    if (mode === 'new') {
+        btnNew.classList.add('active');
+        btnNew.style.color = 'var(--cyan)';
+        btnNew.style.borderColor = 'var(--cyan)';
+        btnNew.style.background = 'rgba(0,212,255,0.08)';
+        wrapExist.style.display = 'none';
+        wrapStandalone.style.display = 'none';
+        wrapNew.style.display = 'block';
+    } else if (mode === 'standalone') {
+        btnStandalone.classList.add('active');
+        btnStandalone.style.color = 'var(--green)';
+        btnStandalone.style.borderColor = 'var(--green)';
+        btnStandalone.style.background = 'rgba(0,255,136,0.08)';
+        wrapExist.style.display = 'none';
+        wrapNew.style.display = 'none';
+        wrapStandalone.style.display = 'block';
+    } else {
+        btnExist.classList.add('active');
+        btnExist.style.color = 'var(--cyan)';
+        btnExist.style.borderColor = 'var(--cyan)';
+        btnExist.style.background = 'rgba(0,212,255,0.08)';
+        wrapExist.style.display = 'block';
+        wrapNew.style.display = 'none';
+        wrapStandalone.style.display = 'none';
+    }
+}
+
+function autoFillDefaultPath() {
+    const type = document.getElementById('modal-app-service-type').value;
+    const pathInp = document.getElementById('modal-app-log-path');
+    if (!pathInp) return;
+    if (type === 'tomcat') pathInp.value = '/opt/tomcat/logs/catalina.out';
+    else if (type === 'nginx') pathInp.value = '/var/log/nginx/access.log';
+    else if (type === 'haproxy') pathInp.value = '/var/log/haproxy.log';
+    else if (type === 'syslog') pathInp.value = '/var/log/syslog';
+    else if (type === 'auth') pathInp.value = '/var/log/auth.log';
+    else if (type === 'postgres') pathInp.value = '/var/log/postgresql/postgresql.log';
+}
+
+async function saveLogApplicationConfig() {
+    const srvSel = document.getElementById('modal-app-server-id');
+    const appName = document.getElementById('modal-app-name').value.trim();
+    const svcType = document.getElementById('modal-app-service-type').value;
+    const logPath = document.getElementById('modal-app-log-path').value.trim();
+
+    if (!appName || !logPath) {
+        showToast("Please enter application name and log path", "warning");
+        return;
+    }
+
+    let payload = {
+        app_name: appName,
+        service_type: svcType,
+        log_file_path: logPath,
+        mode: currentNodeMode
+    };
+
+    if (currentNodeMode === 'existing') {
+        if (!srvSel.value) {
+            showToast("Please select a target server", "warning");
+            return;
+        }
+        payload.server_id = parseInt(srvSel.value);
+    } else if (currentNodeMode === 'new') {
+        payload.new_hostname = document.getElementById('modal-new-server-name').value.trim();
+        payload.new_ip = document.getElementById('modal-new-server-ip').value.trim();
+    } else if (currentNodeMode === 'standalone') {
+        payload.standalone_ip = document.getElementById('modal-standalone-ip').value.trim();
+        payload.is_standalone = true;
+    }
+
+    try {
+        const res = await apiFetch('/api/log-monitor/configs', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        if (res && res.ok) {
+            showToast("Application log source saved successfully", "success");
+            closeAddAppModal();
+            fetchLogsNow();
+        } else {
+            showToast(res.error || "Failed to save configuration", "error");
+        }
+    } catch(e) {
+        showToast("Request failed", "error");
+    }
 }
 
 function escapeHtml(str) {
-    return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function escapeJs(str) {
-    return String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    if (!str) return '';
+    return String(str).replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
 </script>
 {% endblock %}

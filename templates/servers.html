@@ -60,7 +60,7 @@
 <!-- Add Server Modal -->
 <div id="add-server-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:32px 36px; border-radius:var(--radius-lg); z-index:1000; width:550px; max-width:92vw; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-        <h3 style="margin:0; color:var(--cyan); font-family:var(--orbitron); font-size:15px; letter-spacing:2px">➕ ONBOARD NEW ASSET NODE</h3>
+        <h3 style="margin:0; color:var(--cyan); font-family:var(--font-sans); font-size:15px; font-weight:700; letter-spacing:0.5px">➕ ONBOARD NEW ASSET NODE</h3>
         <button class="btn btn-ghost" onclick="closeAddServerModal()" style="padding:2px 8px; font-size:14px">✕</button>
     </div>
     <p class="text-sub" style="margin-bottom:20px; font-size:11px">Enter asset details to generate your 1-line agent push script (Zero SSH credentials required).</p>
@@ -94,7 +94,7 @@
 <div id="srv-log-config-overlay" onclick="closeServerLogConfigModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:998; backdrop-filter:blur(4px)"></div>
 <div id="srv-log-config-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:32px; border-radius:var(--radius-lg); z-index:999; width:520px; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-        <h3 style="margin:0; color:var(--cyan); font-family:var(--orbitron); font-size:15px; letter-spacing:2px">⚙ LOG ANALYZER CONFIGURATION</h3>
+        <h3 style="margin:0; color:var(--cyan); font-family:var(--font-sans); font-size:15px; font-weight:700; letter-spacing:0.5px">⚙ LOG ANALYZER CONFIGURATION</h3>
         <button class="btn btn-ghost" onclick="closeServerLogConfigModal()" style="padding:2px 8px; font-size:14px">✕</button>
     </div>
     <p class="text-sub" style="margin-bottom:16px; font-size:11px" id="srv-log-modal-subtitle">Configure application log paths for this server asset.</p>
@@ -109,7 +109,7 @@
 
     <!-- Add New Config Form for Server -->
     <div style="background:rgba(0,212,255,0.03); border:1px dashed var(--border); padding:14px; border-radius:6px; margin-bottom:20px">
-        <h4 style="color:var(--text); font-size:12px; margin-bottom:10px; font-family:var(--orbitron)">+ Add Application Log Source</h4>
+        <h4 style="color:var(--text); font-size:12px; margin-bottom:10px; font-family:var(--font-sans); font-weight:700">+ Add Application Log Source</h4>
         <input type="hidden" id="srv-log-modal-server-id">
         <input type="hidden" id="srv-log-modal-server-ip">
 
@@ -273,7 +273,7 @@
                         <input type="text" id="modal-log-search" placeholder="🔍 Filter lines..." oninput="renderModalLogs()" style="font-size:11px; background:var(--bg3); border:1px solid rgba(255,255,255,0.12); color:var(--text); padding:4px 10px; border-radius:4px; width:150px; font-family:monospace">
                         <button class="btn btn-glass" style="font-size:10px; padding:4px 8px" onclick="refreshModalLogs()" title="Refresh Logs">🔄</button>
                         
-                        <span style="font-size:10px; color:#64748b; font-family:'Orbitron',monospace; margin-left:4px">EXPORT:</span>
+                        <span style="font-size:10px; color:#64748b; font-family:var(--font-sans); font-weight:700; margin-left:4px">EXPORT:</span>
                         <button class="btn btn-glass" onclick="exportModalLogs('csv')" style="font-size:9px; padding:3px 7px; color:var(--green); border-color:rgba(16,185,129,0.3)">📄 CSV</button>
                         <button class="btn btn-glass" onclick="exportModalLogs('json')" style="font-size:9px; padding:3px 7px; color:var(--cyan); border-color:rgba(0, 229, 255,0.3)">{ } JSON</button>
                         <button class="btn btn-glass" onclick="exportModalLogs('raw')" style="font-size:9px; padding:3px 7px; color:var(--amber); border-color:rgba(245,158,11,0.3)">📜 RAW</button>
