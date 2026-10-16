@@ -1232,6 +1232,13 @@ async def scanner_page(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     return render_template(request, "scanner.html")
 
+@app.get("/vulnerabilities", response_class=HTMLResponse)
+async def vulnerabilities_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return render_template(request, "vulnerabilities.html")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # REST API ENDPOINTS (Expected by UI & test_prod.py)
@@ -2910,19 +2917,34 @@ def api_server_scan_now(server_id: int, request: Request):
     if not srv:
         return JSONResponse(status_code=404, content={"error": "Server not found"})
     _inventory_scan_queue.add(server_id)
+    u = getattr(request.state, "user", None)
+    username = u.get("username", "admin") if isinstance(u, dict) else "admin"
+    try:
+        db.log_audit(username, "VULN_SCAN_REQUESTED", "server", str(server_id), f"On-demand inventory and vulnerability scan requested for server {server_id}")
+    except: pass
     return {"ok": True, "message": f"On-demand inventory scan requested for server {server_id}."}
 
 
 @app.post("/api/servers/{server_id}/scan-vulns")
-def api_server_scan_vulns(server_id: int):
+def api_server_scan_vulns(server_id: int, request: Request):
     """Run vulnerability scan/matching for a server immediately."""
+    u = getattr(request.state, "user", None)
+    username = u.get("username", "admin") if isinstance(u, dict) else "admin"
+    try:
+        db.log_audit(username, "VULN_MATCHING_TRIGGERED", "server", str(server_id), f"Vulnerability matching triggered for server {server_id}")
+    except: pass
     import vuln_matcher
     return vuln_matcher.scan_server_vulnerabilities(server_id)
 
 
 @app.post("/api/vulnerabilities/scan-all")
-def api_scan_all_vulnerabilities():
+def api_scan_all_vulnerabilities(request: Request):
     """Run fleet-wide vulnerability scan in a background thread."""
+    u = getattr(request.state, "user", None)
+    username = u.get("username", "admin") if isinstance(u, dict) else "admin"
+    try:
+        db.log_audit(username, "VULN_FLEET_SCAN_REQUESTED", "fleet", "all", "Fleet-wide vulnerability scan requested")
+    except: pass
     import vuln_matcher
     threading.Thread(target=vuln_matcher.scan_all_servers_vulnerabilities, daemon=True).start()
     return {"ok": True, "message": "Fleet vulnerability scan launched in background."}
@@ -2932,6 +2954,53 @@ def api_scan_all_vulnerabilities():
 def api_get_vulns_summary():
     """Fleet-wide vulnerability summary metrics."""
     return db.get_fleet_vulnerabilities_summary()
+
+
+@app.get("/api/vulnerabilities/fleet-cves")
+def api_get_fleet_cves(severity: Optional[str] = None):
+    """Retrieve all active vulnerability findings fleet-wide with server metadata."""
+    conn = db.get_db_connection()
+    if not conn: return {"findings": []}
+    try:
+        with conn.cursor() as cur:
+            query = """
+                SELECT v.*, s.name as server_name, s.hostname, s.ip as server_ip
+                FROM server_vulnerabilities v
+                JOIN servers s ON v.server_id = s.id
+                WHERE v.status = 'active'
+            """
+            params = []
+            if severity and severity.upper() != 'ALL':
+                query += " AND UPPER(v.severity) = %s"
+                params.append(severity.upper())
+            query += """
+                ORDER BY
+                    CASE UPPER(v.severity)
+                        WHEN 'CRITICAL' THEN 1
+                        WHEN 'HIGH' THEN 2
+                        WHEN 'MEDIUM' THEN 3
+                        WHEN 'LOW' THEN 4
+                        ELSE 5
+                    END,
+                    v.cvss_score DESC;
+            """
+            cur.execute(query, tuple(params))
+            return {"findings": cur.fetchall() or []}
+    finally:
+        conn.close()
+
+
+@app.post("/api/vulnerabilities/sync-advisories")
+def api_sync_advisories(request: Request):
+    """Trigger advisory sync in background thread."""
+    u = getattr(request.state, "user", None)
+    username = u.get("username", "admin") if isinstance(u, dict) else "admin"
+    try:
+        db.log_audit(username, "VULN_ADVISORY_SYNC", "system", "advisories", "Advisories and CISA KEV synchronization started")
+    except: pass
+    import vuln_sync_engine
+    threading.Thread(target=vuln_sync_engine.sync_all_advisories, daemon=True).start()
+    return {"ok": True, "message": "Advisories and CISA KEV synchronization started in background."}
 
 
 @app.get("/api/servers/{server_id}/inventory")

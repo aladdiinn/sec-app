@@ -1,0 +1,442 @@
+{% extends "base.html" %}
+{% set active = 'vulnerabilities' %}
+{% block title %}Vulnerability & Patch Visibility — BSMART SOC{% endblock %}
+{% block page_title %}VULNERABILITY & PATCH VISIBILITY{% endblock %}
+{% block page_sub %}Fleet-wide CVE Tracking, Distro Backport Auditing & Patch Posture{% endblock %}
+
+{% block topbar_actions %}
+<div style="display:flex; gap:8px; align-items:center">
+    <button class="btn btn-glass" onclick="exportFleetVulns('csv')" style="display:flex; align-items:center; gap:5px; padding:7px 12px; font-size:12px; color:var(--green); border-color:rgba(16,185,129,0.3)">
+        📄 Export CSV
+    </button>
+    <button class="btn btn-glass" onclick="exportFleetVulns('json')" style="display:flex; align-items:center; gap:5px; padding:7px 12px; font-size:12px; color:var(--cyan); border-color:rgba(0,212,255,0.3)">
+        { } Export JSON
+    </button>
+    <button class="btn btn-glass" onclick="syncAdvisories()" id="btn-sync-adv"
+        style="display:flex; align-items:center; gap:7px; padding:7px 14px; font-size:12px">
+        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+        Sync Advisories & KEV
+    </button>
+    <button class="btn btn-primary" onclick="scanFleetNow()" id="btn-scan-fleet"
+        style="display:flex; align-items:center; gap:7px; padding:7px 14px; font-size:12px; box-shadow:0 0 15px rgba(0,212,255,0.25)">
+        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <polygon points="12 8 15 12 12 16 9 12 12 8"/>
+        </svg>
+        Scan Fleet Now
+    </button>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.vuln-stats-bar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 22px; }
+.vuln-stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; position: relative; overflow: hidden; }
+.vuln-stat-val { font-size: 26px; font-weight: 800; font-family: var(--font-sans); margin-bottom: 4px; line-height: 1; }
+.vuln-stat-lbl { font-size: 10px; font-weight: 700; color: var(--text2); letter-spacing: 0.5px; text-transform: uppercase; }
+
+.vuln-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; font-family: monospace; text-transform: uppercase; white-space: nowrap; }
+.vuln-badge-critical { background: rgba(239,68,68,0.2); color: #ef4444; border: 1px solid rgba(239,68,68,0.4); }
+.vuln-badge-high { background: rgba(245,158,11,0.2); color: #f59e0b; border: 1px solid rgba(245,158,11,0.4); }
+.vuln-badge-medium { background: rgba(234,179,8,0.2); color: #eab308; border: 1px solid rgba(234,179,8,0.4); }
+.vuln-badge-low { background: rgba(56,189,248,0.2); color: #38bdf8; border: 1px solid rgba(56,189,248,0.4); }
+.vuln-badge-kev { background: rgba(168,85,247,0.2); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); }
+.vuln-badge-reboot { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+
+.tab-btn { padding: 9px 16px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; background: transparent; color: var(--text2); border-bottom: 2px solid transparent; transition: all 0.2s; }
+.tab-btn.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+
+.filter-pill { padding: 4px 10px; font-size: 11px; font-weight: 600; border-radius: 20px; cursor: pointer; border: 1px solid var(--border); background: var(--bg3); color: var(--text2); transition: all 0.15s; }
+.filter-pill:hover, .filter-pill.active { background: rgba(0,212,255,0.15); border-color: var(--cyan); color: var(--cyan); }
+
+.vuln-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.vuln-table th { background: var(--bg3); padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+.vuln-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.vuln-table tr:hover { background: rgba(255,255,255,0.02); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page fade-in">
+    <!-- Fleet KPI Stat Bar -->
+    <div class="vuln-stats-bar">
+        <div class="vuln-stat-card">
+            <div class="vuln-stat-val" id="kpi-total-vulns" style="color:var(--cyan)">--</div>
+            <div class="vuln-stat-lbl">Fleet Vulnerabilities</div>
+        </div>
+        <div class="vuln-stat-card">
+            <div class="vuln-stat-val" id="kpi-critical" style="color:var(--red)">--</div>
+            <div class="vuln-stat-lbl">Critical (CVSS &ge; 9.0)</div>
+        </div>
+        <div class="vuln-stat-card">
+            <div class="vuln-stat-val" id="kpi-high" style="color:var(--amber)">--</div>
+            <div class="vuln-stat-lbl">High Severity</div>
+        </div>
+        <div class="vuln-stat-card">
+            <div class="vuln-stat-val" id="kpi-kev" style="color:#c084fc">--</div>
+            <div class="vuln-stat-lbl">Exploited in Wild (KEV)</div>
+        </div>
+        <div class="vuln-stat-card">
+            <div class="vuln-stat-val" id="kpi-reboot" style="color:#f87171">--</div>
+            <div class="vuln-stat-lbl">Reboot Pending Nodes</div>
+        </div>
+    </div>
+
+    <!-- Main Content Container -->
+    <div class="card" style="background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:0; overflow:hidden">
+        <!-- Tabs Header -->
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding:0 16px; background:var(--bg)">
+            <div style="display:flex; gap:6px;">
+                <button class="tab-btn active" id="tab-btn-cves" onclick="switchVulnTab('cves')">
+                    Affected Components &amp; CVEs
+                </button>
+                <button class="tab-btn" id="tab-btn-servers" onclick="switchVulnTab('servers')">
+                    Servers Risk Posture
+                </button>
+            </div>
+            <div style="font-size:11px; color:var(--text3); font-family:monospace;" id="last-sync-label">
+                Loading sync status...
+            </div>
+        </div>
+
+        <!-- Filter and Search Toolbar -->
+        <div style="padding:14px 18px; border-bottom:1px solid var(--border); display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; align-items:center; background:var(--bg2)">
+            <div style="display:flex; align-items:center; gap:8px; flex:1; max-width:440px;">
+                <div style="position:relative; width:100%">
+                    <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text3)">
+                        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <input type="text" id="vuln-search-input" oninput="applyFilters()" placeholder="Search CVE-XXXX-YYYY, package, or server name..."
+                        style="width:100%; background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:7px 10px 7px 30px; font-size:12px; color:var(--text); box-sizing:border-box;">
+                </div>
+            </div>
+
+            <!-- Severity Filter Pills -->
+            <div style="display:flex; gap:6px; align-items:center;">
+                <span style="font-size:11px; color:var(--text3); margin-right:4px;">Severity:</span>
+                <span class="filter-pill active" onclick="setSeverityFilter('ALL', this)">ALL</span>
+                <span class="filter-pill" onclick="setSeverityFilter('CRITICAL', this)">CRITICAL</span>
+                <span class="filter-pill" onclick="setSeverityFilter('HIGH', this)">HIGH</span>
+                <span class="filter-pill" onclick="setSeverityFilter('MEDIUM', this)">MEDIUM</span>
+                <span class="filter-pill" onclick="setSeverityFilter('KEV', this)">CISA KEV</span>
+            </div>
+        </div>
+
+        <!-- TAB 1: FLEET CVEs LIST -->
+        <div id="panel-cves" style="display:block;">
+            <div style="overflow-x:auto;">
+                <table class="vuln-table">
+                    <thead>
+                        <tr>
+                            <th>CVE ID</th>
+                            <th>Severity</th>
+                            <th>Affected Server</th>
+                            <th>Component / Package</th>
+                            <th>Installed Version</th>
+                            <th>Fixed In</th>
+                            <th>CVSS</th>
+                            <th>Advisory &amp; Summary</th>
+                            <th style="text-align:right">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="vuln-table-body">
+                        <tr>
+                            <td colspan="9" style="text-align:center; padding:30px; color:var(--text2)">
+                                Loading vulnerability findings...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB 2: SERVERS RISK POSTURE LIST -->
+        <div id="panel-servers" style="display:none;">
+            <div style="overflow-x:auto;">
+                <table class="vuln-table">
+                    <thead>
+                        <tr>
+                            <th>Server Hostname</th>
+                            <th>IP Address</th>
+                            <th>Operating System</th>
+                            <th>Agent</th>
+                            <th>Risk Breakdown (C · H · M · L)</th>
+                            <th>Reboot Status</th>
+                            <th>Last Scanned</th>
+                            <th style="text-align:right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="servers-table-body">
+                        <tr>
+                            <td colspan="8" style="text-align:center; padding:30px; color:var(--text2)">
+                                Loading servers posture...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let allFindings = [];
+let allServers = [];
+let activeSeverity = 'ALL';
+let currentTab = 'cves';
+
+function switchVulnTab(tab) {
+    currentTab = tab;
+    document.getElementById('tab-btn-cves').classList.toggle('active', tab === 'cves');
+    document.getElementById('tab-btn-servers').classList.toggle('active', tab === 'servers');
+    document.getElementById('panel-cves').style.display = (tab === 'cves') ? 'block' : 'none';
+    document.getElementById('panel-servers').style.display = (tab === 'servers') ? 'block' : 'none';
+}
+
+function setSeverityFilter(sev, el) {
+    activeSeverity = sev;
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    el.classList.add('active');
+    applyFilters();
+}
+
+async function loadFleetData() {
+    try {
+        const [sumRes, srvRes, cveRes] = await Promise.all([
+            fetch('/api/vulnerabilities/summary').then(r => r.json()),
+            fetch('/api/servers').then(r => r.json()),
+            fetch('/api/vulnerabilities/fleet-cves').then(r => r.json())
+        ]);
+
+        // KPIs
+        document.getElementById('kpi-total-vulns').innerText = sumRes.total_vulnerabilities || 0;
+        document.getElementById('kpi-critical').innerText = sumRes.critical || 0;
+        document.getElementById('kpi-high').innerText = sumRes.high || 0;
+        document.getElementById('kpi-kev').innerText = sumRes.kev_count || 0;
+        document.getElementById('kpi-reboot').innerText = sumRes.reboot_pending_servers || 0;
+
+        allServers = srvRes.servers || [];
+        allFindings = cveRes.findings || [];
+
+        renderFindingsTable(allFindings);
+        renderServersTable(allServers);
+
+        document.getElementById('last-sync-label').innerText = `Fleet: ${allServers.length} Servers Monitored`;
+    } catch (e) {
+        console.error('Failed to load fleet data:', e);
+    }
+}
+
+function applyFilters() {
+    const q = (document.getElementById('vuln-search-input').value || '').toLowerCase().trim();
+
+    if (currentTab === 'cves') {
+        let filtered = allFindings.filter(f => {
+            const matchesQuery = !q || 
+                (f.cve_id && f.cve_id.toLowerCase().includes(q)) ||
+                (f.package_name && f.package_name.toLowerCase().includes(q)) ||
+                (f.server_name && f.server_name.toLowerCase().includes(q)) ||
+                (f.summary && f.summary.toLowerCase().includes(q));
+
+            let matchesSev = true;
+            if (activeSeverity === 'KEV') {
+                matchesSev = f.is_cisa_kev === true;
+            } else if (activeSeverity !== 'ALL') {
+                matchesSev = f.severity.toUpperCase() === activeSeverity;
+            }
+
+            return matchesQuery && matchesSev;
+        });
+        renderFindingsTable(filtered);
+    } else {
+        let filteredSrv = allServers.filter(s => {
+            return !q || 
+                (s.hostname && s.hostname.toLowerCase().includes(q)) ||
+                (s.ip && s.ip.includes(q)) ||
+                (s.os_info && s.os_info.toLowerCase().includes(q));
+        });
+        renderServersTable(filteredSrv);
+    }
+}
+
+function renderFindingsTable(findings) {
+    const tbody = document.getElementById('vuln-table-body');
+    if (!findings.length) {
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--text2)">No matching vulnerabilities found.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = findings.map(f => {
+        let sevClass = 'vuln-badge-low';
+        const s = (f.severity || '').toUpperCase();
+        if (s === 'CRITICAL') sevClass = 'vuln-badge-critical';
+        else if (s === 'HIGH') sevClass = 'vuln-badge-high';
+        else if (s === 'MEDIUM') sevClass = 'vuln-badge-medium';
+
+        let kevBadge = f.is_cisa_kev ? `<span class="vuln-badge vuln-badge-kev" title="CISA Known Exploited Vulnerability">CISA KEV</span>` : '';
+        let rebootBadge = f.reboot_required ? `<span class="vuln-badge vuln-badge-reboot" title="Pending reboot to activate patch">REBOOT</span>` : '';
+
+        return `
+        <tr>
+            <td>
+                <strong style="font-family:monospace; color:var(--text)">${f.cve_id}</strong>
+                ${kevBadge}
+            </td>
+            <td><span class="vuln-badge ${sevClass}">${f.severity}</span></td>
+            <td>
+                <div style="font-weight:600; color:var(--text)">${escapeHtml(f.server_name || '')}</div>
+                <div style="font-size:10px; font-family:monospace; color:var(--cyan)">${f.server_ip || ''}</div>
+            </td>
+            <td><strong style="color:var(--text)">${escapeHtml(f.package_name)}</strong></td>
+            <td><span style="font-family:monospace; color:var(--red)">${escapeHtml(f.installed_version)}</span></td>
+            <td><span style="font-family:monospace; color:var(--green)">${escapeHtml(f.fixed_version || 'None')}</span> ${rebootBadge}</td>
+            <td><strong style="color:${f.cvss_score >= 9 ? 'var(--red)' : f.cvss_score >= 7 ? 'var(--amber)' : 'var(--text)'}">${f.cvss_score ? f.cvss_score.toFixed(1) : '--'}</strong></td>
+            <td style="max-width:280px">
+                <div style="font-size:11px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${escapeHtml(f.summary || '')}">
+                    ${escapeHtml(f.summary || f.advisory_id || 'Security patch available')}
+                </div>
+                <div style="font-size:10px; color:var(--text3); font-family:monospace">${f.advisory_id || ''}</div>
+            </td>
+            <td style="text-align:right">
+                <button class="btn btn-glass" style="padding:3px 8px; font-size:10px" onclick="window.location.href='/servers?focus=${f.server_id}'">
+                    Inspect
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function renderServersTable(servers) {
+    const tbody = document.getElementById('servers-table-body');
+    if (!servers.length) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text2)">No servers found.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = servers.map(s => {
+        const agentVer = s.agent_version || '0.2';
+        const isOld = parseFloat(agentVer) < 1.6;
+        let riskHtml = '';
+
+        if (isOld) {
+            riskHtml = `<span style="color:var(--amber); font-size:11px">Agent v${agentVer}: update agent</span>`;
+        } else if (s.vuln_scan_status && s.vuln_scan_status.startsWith('No security data')) {
+            riskHtml = `<span style="color:var(--text3); font-size:11px">${escapeHtml(s.vuln_scan_status)}</span>`;
+        } else {
+            riskHtml = `
+            <span style="font-family:monospace; font-weight:700">
+                <span style="color:var(--red)">C ${s.vuln_critical || 0}</span> · 
+                <span style="color:var(--amber)">H ${s.vuln_high || 0}</span> · 
+                <span style="color:#eab308">M ${s.vuln_medium || 0}</span> · 
+                <span style="color:var(--cyan)">L ${s.vuln_low || 0}</span>
+            </span>`;
+        }
+
+        const rebootBadge = s.reboot_required 
+            ? `<span class="vuln-badge vuln-badge-reboot">REBOOT PENDING</span>` 
+            : `<span style="color:var(--green); font-size:11px">Clean</span>`;
+
+        return `
+        <tr>
+            <td><strong>${escapeHtml(s.hostname || s.name)}</strong></td>
+            <td><span style="font-family:monospace; color:var(--cyan)">${s.ip || s.ip_address}</span></td>
+            <td><span style="font-size:11px; color:var(--text2)">${escapeHtml(s.os_info || 'Linux')}</span></td>
+            <td><span class="badge" style="font-size:10px">${isOld ? 'v' + agentVer + ' (legacy)' : 'v1.6'}</span></td>
+            <td>${riskHtml}</td>
+            <td>${rebootBadge}</td>
+            <td style="font-size:11px; color:var(--text3)">${s.last_vuln_scan ? new Date(s.last_vuln_scan).toLocaleString() : 'Never'}</td>
+            <td style="text-align:right">
+                <button class="btn btn-glass" style="padding:3px 8px; font-size:10px" onclick="window.location.href='/servers?focus=${s.id}'">
+                    View Asset
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function scanFleetNow() {
+    const btn = document.getElementById('btn-scan-fleet');
+    btn.disabled = true;
+    btn.innerText = 'Scanning Fleet...';
+    try {
+        const res = await fetch('/api/vulnerabilities/scan-all', { method: 'POST' }).then(r => r.json());
+        showToast(res.message || 'Fleet scan started', 'success');
+        setTimeout(loadFleetData, 1500);
+    } catch (e) {
+        showToast('Fleet scan error: ' + e, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polygon points="12 8 15 12 12 16 9 12 12 8"/></svg> Scan Fleet Now`;
+    }
+}
+
+async function syncAdvisories() {
+    const btn = document.getElementById('btn-sync-adv');
+    btn.disabled = true;
+    btn.innerText = 'Syncing...';
+    try {
+        const res = await fetch('/api/vulnerabilities/sync-advisories', { method: 'POST' }).then(r => r.json());
+        showToast('Advisories and CISA KEV synced', 'success');
+        setTimeout(loadFleetData, 1000);
+    } catch (e) {
+        showToast('Advisory sync error: ' + e, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Sync Advisories & KEV`;
+    }
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function exportFleetVulns(format) {
+    if (!allFindings.length) {
+        showToast('No vulnerability records to export', 'warning');
+        return;
+    }
+    const filename = `fleet_vulnerabilities_${new Date().toISOString().slice(0, 10)}`;
+    if (format === 'csv') {
+        const headers = ["CVE ID", "Severity", "CVSS", "Server Hostname", "Server IP", "Component", "Installed Version", "Fixed Version", "CISA KEV", "Reboot Required", "Summary", "Advisory ID"];
+        const rows = allFindings.map(f => [
+            `"${f.cve_id || ''}"`,
+            `"${f.severity || ''}"`,
+            `"${f.cvss_score || ''}"`,
+            `"${(f.server_name || '').replace(/"/g, '""')}"`,
+            `"${f.server_ip || ''}"`,
+            `"${(f.package_name || '').replace(/"/g, '""')}"`,
+            `"${(f.installed_version || '').replace(/"/g, '""')}"`,
+            `"${(f.fixed_version || '').replace(/"/g, '""')}"`,
+            `"${f.is_cisa_kev ? 'YES' : 'NO'}"`,
+            `"${f.reboot_required ? 'YES' : 'NO'}"`,
+            `"${(f.summary || '').replace(/"/g, '""')}"`,
+            `"${(f.advisory_id || '').replace(/"/g, '""')}"`
+        ]);
+        const csvContent = headers.join(",") + "\n" + rows.map(r => r.join(",")).join("\n");
+        downloadFile(csvContent, `${filename}.csv`, 'text/csv');
+        showToast(`Exported ${allFindings.length} findings as CSV`, 'success');
+    } else {
+        const jsonContent = JSON.stringify(allFindings, null, 2);
+        downloadFile(jsonContent, `${filename}.json`, 'application/json');
+        showToast(`Exported ${allFindings.length} findings as JSON`, 'success');
+    }
+}
+
+function downloadFile(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+document.addEventListener('DOMContentLoaded', loadFleetData);
+</script>
+{% endblock %}

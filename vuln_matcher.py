@@ -67,6 +67,41 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
             kernel_release = (os_info.get("kernel_release") or "").strip()
             reboot_req = bool(os_info.get("reboot_required") or server.get("reboot_required"))
 
+            # Rule: Unsupported / End-of-Life OS check
+            is_eol = bool(os_info.get("is_eol"))
+            eol_reason = os_info.get("eol_reason") or ""
+            if not is_eol:
+                if "ubuntu" in os_id:
+                    try:
+                        v_num = float(os_ver[:5])
+                        if v_num < 20.04:
+                            is_eol = True
+                            eol_reason = f"Ubuntu {os_ver} reached end of standard support"
+                    except: pass
+                elif "centos" in os_id:
+                    try:
+                        if int(os_ver.split('.')[0]) <= 7:
+                            is_eol = True
+                            eol_reason = f"CentOS {os_ver} reached end of life"
+                    except: pass
+                elif "debian" in os_id:
+                    try:
+                        if int(os_ver.split('.')[0]) < 10:
+                            is_eol = True
+                            eol_reason = f"Debian {os_ver} reached end of life"
+                    except: pass
+
+            if is_eol:
+                status_msg = f"No security data for this OS (reason: {eol_reason or 'End of standard support'})"
+                cur.execute("UPDATE servers SET vuln_scan_status = %s, last_vuln_scan = NOW() WHERE id = %s;", (status_msg, server_id))
+                return {
+                    "server_id": server_id,
+                    "status": "unsupported_os",
+                    "scan_status": status_msg,
+                    "findings_count": 0,
+                    "findings": []
+                }
+
             # Determine ecosystem for matching
             if "ubuntu" in os_id:
                 ecosystem = f"Ubuntu:{os_ver}"
@@ -220,6 +255,40 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
                     last_vuln_scan = NOW()
                 WHERE id = %s;
             """, (crit_cnt, high_cnt, med_cnt, low_cnt, server_id))
+
+            # Step 6: Alerts & Audit Log for Critical vulnerabilities
+            server_name = server.get("hostname") or server.get("name") or f"Server #{server_id}"
+            for f in findings:
+                if f["severity"] == "CRITICAL" and (f["is_cisa_kev"] or f["cvss_score"] >= 9.0) and f["fixed_version"] and f["fixed_version"] != "None":
+                    try:
+                        cur.execute("""
+                            SELECT id FROM alerts 
+                            WHERE server_id = %s AND alert_type = 'VULNERABILITY_CRITICAL' 
+                              AND title LIKE %s AND is_resolved IS NOT TRUE;
+                        """, (server_id, f"%{f['cve_id']}%"))
+                        if not cur.fetchone():
+                            alert_title = f"CRITICAL CVE DETECTED: {f['cve_id']} on {server_name}"
+                            alert_msg = f"Package {f['package_name']} ({f['installed_version']}) is vulnerable to {f['cve_id']} (CVSS {f['cvss_score']:.1f}). Fixed in {f['fixed_version']}."
+                            db.log_alert(
+                                server_id=server_id,
+                                alert_type="VULNERABILITY_CRITICAL",
+                                message=alert_msg,
+                                severity="critical",
+                                title=alert_title
+                            )
+                    except Exception as ex_a:
+                        logger.error(f"Failed to log vulnerability alert: {ex_a}")
+
+            try:
+                db.log_audit(
+                    username="system",
+                    action="VULN_SCAN_DETECTED",
+                    target_type="server",
+                    target_id=str(server_id),
+                    detail=f"Detected {len(findings)} vulnerabilities ({crit_cnt} critical, {high_cnt} high)"
+                )
+            except Exception as ex_aud:
+                logger.error(f"Failed to log audit entry: {ex_aud}")
 
             logger.info(f"Server {server_id} scanned: {len(findings)} findings (C:{crit_cnt} H:{high_cnt} M:{med_cnt} L:{low_cnt})")
             return {

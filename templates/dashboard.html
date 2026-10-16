@@ -419,6 +419,7 @@
         <div class="i3-tab" onclick="switchI3Tab('incidents', this)">Incidents / Outages</div>
         <div class="i3-tab" onclick="switchI3Tab('logs', this)">Log Streams</div>
         <div class="i3-tab" onclick="switchI3Tab('ports', this)">Ports</div>
+        <div class="i3-tab" onclick="switchI3Tab('vulns', this)">Vulnerabilities</div>
         <div class="i3-tab" onclick="switchI3Tab('network', this)">Network</div>
         <div class="i3-tab" onclick="switchI3Tab('settings', this)">Settings</div>
     </div>
@@ -547,6 +548,146 @@
                 <div class="i3-panel-title">🔌 Open Ports & Connections</div>
                 <div style="font-size:12px; color:var(--text-sub); margin-bottom:16px">Detected by SOC Agent via ss/netstat</div>
                 <div id="i3t-ports-list" style="display:flex; flex-direction:column; gap:8px">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: VULNERABILITIES -->
+        <div id="i3t-vulns" style="display:none">
+            <!-- Header card with OS, Agent & Scan Action -->
+            <div style="background:var(--bg3); padding:16px 20px; border-radius:8px; margin-bottom:16px; border:1px solid rgba(255,255,255,0.08); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px">
+                <div>
+                    <div style="font-size:14px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:8px;">
+                        <span>🛡️ Vulnerability &amp; Patch Posture</span>
+                        <span id="i3-vuln-os-badge" class="badge" style="font-size:10px; font-family:monospace">--</span>
+                    </div>
+                    <div style="font-size:11px; color:var(--text-sub); margin-top:4px;" id="i3-vuln-meta">
+                        Agent: <span id="i3-vuln-agent-ver">--</span> · Kernel: <span id="i3-vuln-kernel">--</span> · Scanned: <span id="i3-vuln-scanned">--</span>
+                    </div>
+                </div>
+                <div>
+                    <button class="btn btn-primary" onclick="scanNowCurrentServer()" id="btn-modal-scan-now"
+                        style="padding:6px 14px; font-size:11px; display:flex; align-items:center; gap:6px;">
+                        <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                        </svg>
+                        Scan now
+                    </button>
+                </div>
+            </div>
+
+            <!-- Dynamic Alert Banners: Reboot Required / Older Agent / Unsupported OS -->
+            <div id="i3-vuln-reboot-banner" style="display:none; background:rgba(239,68,68,0.12); border:1px solid var(--red); border-radius:6px; padding:12px 16px; margin-bottom:16px; color:#fca5a5; font-size:12px;">
+                <strong>⚠️ REBOOT REQUIRED:</strong> Security patches or kernel updates were applied. System reboot is pending to activate patched kernel and services.
+            </div>
+
+            <div id="i3-vuln-agent-banner" style="display:none; background:rgba(245,158,11,0.12); border:1px solid var(--amber); border-radius:6px; padding:12px 16px; margin-bottom:16px; color:#fcd34d; font-size:12px;">
+                <strong>⚠️ <span id="i3-vuln-agent-banner-text">Agent v1.5: inventory not supported, update the agent</span></strong>
+                <p style="margin:4px 0 0 0; font-size:11px; color:var(--text-sub)">This target node is running an older agent version that does not support read-only package collection. Update the agent to enable CVE visibility.</p>
+            </div>
+
+            <div id="i3-vuln-os-banner" style="display:none; background:rgba(56,189,248,0.1); border:1px solid var(--cyan); border-radius:6px; padding:12px 16px; margin-bottom:16px; color:var(--text); font-size:12px;">
+                <strong>ℹ️ <span id="i3-vuln-os-banner-text">No security data for this OS</span></strong>
+            </div>
+
+            <!-- KPI Chips -->
+            <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:10px; margin-bottom:18px;">
+                <div style="background:var(--bg3); padding:10px; border-radius:6px; text-align:center; border:1px solid var(--border);">
+                    <div style="font-size:20px; font-weight:800; color:var(--text)" id="i3-kpi-total">0</div>
+                    <div style="font-size:9px; font-weight:700; color:var(--text-sub)">TOTAL VULNS</div>
+                </div>
+                <div style="background:var(--bg3); padding:10px; border-radius:6px; text-align:center; border:1px solid var(--border);">
+                    <div style="font-size:20px; font-weight:800; color:var(--red)" id="i3-kpi-critical">0</div>
+                    <div style="font-size:9px; font-weight:700; color:var(--text-sub)">CRITICAL</div>
+                </div>
+                <div style="background:var(--bg3); padding:10px; border-radius:6px; text-align:center; border:1px solid var(--border);">
+                    <div style="font-size:20px; font-weight:800; color:var(--amber)" id="i3-kpi-high">0</div>
+                    <div style="font-size:9px; font-weight:700; color:var(--text-sub)">HIGH</div>
+                </div>
+                <div style="background:var(--bg3); padding:10px; border-radius:6px; text-align:center; border:1px solid var(--border);">
+                    <div style="font-size:20px; font-weight:800; color:#eab308" id="i3-kpi-medium">0</div>
+                    <div style="font-size:9px; font-weight:700; color:var(--text-sub)">MEDIUM</div>
+                </div>
+                <div style="background:var(--bg3); padding:10px; border-radius:6px; text-align:center; border:1px solid var(--border);">
+                    <div style="font-size:20px; font-weight:800; color:#c084fc" id="i3-kpi-kev">0</div>
+                    <div style="font-size:9px; font-weight:700; color:var(--text-sub)">CISA KEV</div>
+                </div>
+            </div>
+
+            <!-- Sub-tabs navigation -->
+            <div style="display:flex; gap:8px; border-bottom:1px solid var(--border); margin-bottom:14px; padding-bottom:6px;">
+                <button class="filter-pill active" onclick="switchVulnSubTab('cves', this)">Vulnerabilities (<span id="cnt-sub-cves">0</span>)</button>
+                <button class="filter-pill" onclick="switchVulnSubTab('packages', this)">Installed Packages (<span id="cnt-sub-pkgs">0</span>)</button>
+                <button class="filter-pill" onclick="switchVulnSubTab('software', this)">Standalone Software (<span id="cnt-sub-sw">0</span>)</button>
+                <button class="filter-pill" onclick="switchVulnSubTab('history', this)">Change History (<span id="cnt-sub-hist">0</span>)</button>
+            </div>
+
+            <!-- SUB-PANEL 1: VULNERABILITIES LIST -->
+            <div id="sub-vuln-cves">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:10px;">
+                    <input type="text" id="modal-cve-search" oninput="filterModalCVEs()" placeholder="Filter CVE, component, advisory..."
+                        style="background:var(--bg3); border:1px solid var(--border); border-radius:4px; padding:6px 10px; font-size:11px; color:var(--text); width:260px;">
+                    <div style="display:flex; gap:4px;">
+                        <button class="filter-pill active" onclick="setModalSevFilter('ALL', this)" style="padding:2px 8px; font-size:10px">ALL</button>
+                        <button class="filter-pill" onclick="setModalSevFilter('CRITICAL', this)" style="padding:2px 8px; font-size:10px">CRIT</button>
+                        <button class="filter-pill" onclick="setModalSevFilter('HIGH', this)" style="padding:2px 8px; font-size:10px">HIGH</button>
+                        <button class="filter-pill" onclick="setModalSevFilter('MEDIUM', this)" style="padding:2px 8px; font-size:10px">MED</button>
+                    </div>
+                </div>
+                <div style="max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:6px;">
+                    <table class="vuln-table" style="font-size:11px; width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">CVE ID</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Severity</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Component</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Installed</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Fixed Version</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">CVSS</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Summary</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modal-vuln-table-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- SUB-PANEL 2: INSTALLED PACKAGES -->
+            <div id="sub-vuln-packages" style="display:none">
+                <div style="margin-bottom:10px">
+                    <input type="text" id="modal-pkg-search" oninput="filterModalPackages()" placeholder="Search installed packages..."
+                        style="background:var(--bg3); border:1px solid var(--border); border-radius:4px; padding:6px 10px; font-size:11px; color:var(--text); width:300px;">
+                </div>
+                <div style="max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:6px;">
+                    <table class="vuln-table" style="font-size:11px; width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Package Name</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Version</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Arch</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Source Package</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modal-pkg-table-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- SUB-PANEL 3: STANDALONE SOFTWARE -->
+            <div id="sub-vuln-software" style="display:none">
+                <div id="modal-sw-list" style="display:flex; flex-direction:column; gap:8px;">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- SUB-PANEL 4: CHANGE HISTORY -->
+            <div id="sub-vuln-history" style="display:none">
+                <div id="modal-hist-list" style="display:flex; flex-direction:column; gap:6px;">
                     <!-- Populated by JS -->
                 </div>
             </div>
@@ -831,6 +972,29 @@ function renderServicesGrid() {
         // Border color based on status (fallback to empty so default theme border applies)
         const borderColor = isDown ? 'var(--red)' : (isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : '')));
 
+        let vulnBadge = '';
+        const agentVer = s.agent_version || '1.5';
+        const isOldAgent = !agentVer || parseFloat(agentVer) < 1.6;
+        if (isOldAgent) {
+            vulnBadge = `<span style="font-size:9.5px; font-weight:600; color:var(--amber); background:rgba(245,158,11,0.15); padding:2px 5px; border-radius:3px; border:1px solid rgba(245,158,11,0.3)">Agent v${agentVer} (update needed)</span>`;
+        } else if (s.vuln_scan_status && s.vuln_scan_status.startsWith('No security data')) {
+            vulnBadge = `<span style="font-size:9.5px; font-weight:600; color:var(--text3); background:rgba(255,255,255,0.05); padding:2px 5px; border-radius:3px; border:1px solid var(--border)">No security data for this OS</span>`;
+        } else {
+            let rebootPart = s.reboot_required ? `<span style="font-size:8.5px; font-weight:700; color:#fff; background:var(--red); padding:1px 4px; border-radius:2px; margin-right:4px">REBOOT REQ</span>` : '';
+            const crit = s.vuln_critical || 0;
+            const high = s.vuln_high || 0;
+            const med = s.vuln_medium || 0;
+            const low = s.vuln_low || 0;
+            const total = crit + high + med + low;
+            if (total > 0) {
+                vulnBadge = `${rebootPart}<span style="font-size:9.5px; font-weight:700; font-family:monospace"><span style="color:var(--red)">C ${crit}</span> · <span style="color:var(--amber)">H ${high}</span> · <span style="color:#eab308">M ${med}</span></span>`;
+            } else if (s.last_vuln_scan) {
+                vulnBadge = `${rebootPart}<span style="font-size:9.5px; font-weight:600; color:var(--green); background:rgba(16,185,129,0.15); padding:2px 5px; border-radius:3px; border:1px solid rgba(16,185,129,0.3)">0 Known Vulns</span>`;
+            } else {
+                vulnBadge = `${rebootPart}<span style="font-size:9.5px; color:var(--text3)">Not scanned</span>`;
+            }
+        }
+
         if (currentDashboardView === 'list') {
             const listBorderColor = borderColor || 'var(--mint)';
             return `
@@ -847,8 +1011,8 @@ function renderServicesGrid() {
                     <div><span class="list-metric-label" style="color:var(--muted)">RAM</span> <span class="list-metric-val" style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--navy)'}; font-weight:600">${ram}%</span></div>
                     <div><span class="list-metric-label" style="color:var(--muted)">Disk</span> <span class="list-metric-val" style="color:var(--navy); font-weight:600">${disk}%</span></div>
                 </div>
-                <div style="flex: 1; font-size: 12px; text-align: center;">
-                    <span style="color:${alertCount>0?'var(--red)':'var(--mint)'}; font-weight:700;">${alertCount} Alerts</span>
+                <div style="flex: 1; font-size: 11px; text-align: center;">
+                    ${vulnBadge}
                 </div>
                 <div style="flex: 1.5; transform: scale(0.9); transform-origin: right; display: flex; justify-content: flex-end;">
                     ${alertBox}
@@ -877,6 +1041,11 @@ function renderServicesGrid() {
                     </div>
                 </div>
 
+                <div style="margin-top:8px; margin-bottom:8px; padding:4px 8px; background:rgba(0,0,0,0.2); border-radius:4px; display:flex; align-items:center; justify-content:space-between; border:1px solid rgba(255,255,255,0.05)">
+                    <span style="font-size:9px; font-weight:700; color:var(--text-sub); letter-spacing:0.5px">SECURITY</span>
+                    <div>${vulnBadge}</div>
+                </div>
+
                 <div>
                     ${alertBox}
                 </div>
@@ -900,10 +1069,14 @@ function filterServicesByStatus(st) {
 /* Image 3 Centered Popup Modal Logic */
 function switchI3Tab(tabName, btn) {
     document.querySelectorAll('.i3-tab').forEach(t => t.classList.remove('active'));
-    btn.classList.add('active');
-    ['overview', 'incidents', 'logs', 'ports', 'network', 'settings'].forEach(t => {
-        document.getElementById(`i3t-${t}`).style.display = (t === tabName) ? 'block' : 'none';
+    if (btn) btn.classList.add('active');
+    ['overview', 'incidents', 'logs', 'ports', 'vulns', 'network', 'settings'].forEach(t => {
+        const el = document.getElementById(`i3t-${t}`);
+        if (el) el.style.display = (t === tabName) ? 'block' : 'none';
     });
+    if (tabName === 'vulns' && activeModalServerId) {
+        loadModalVulnerabilities(activeModalServerId);
+    }
 }
 
 function closeImage3Modal() {
@@ -1086,6 +1259,7 @@ async function openImage3Modal(serverId) {
         }
 
         renderModalLogs();
+        loadModalVulnerabilities(serverId);
 
     } catch(e) {
         console.error('Modal load error:', e);
@@ -1640,6 +1814,304 @@ async function saveServerNetwork(e) {
         btn.innerText = 'Save Network Settings';
     }
 }
+
+    // --- VULNERABILITY MODAL LOGIC ---
+    let modalServerVulns = [];
+    let modalServerPkgs = [];
+    let modalServerSw = [];
+    let modalServerHist = [];
+    let modalActiveSevFilter = 'ALL';
+
+    async function loadModalVulnerabilities(serverId) {
+        if (!serverId) return;
+        try {
+            const data = await apiFetch(`/api/servers/${serverId}/inventory`);
+            const os = data.os_info || {};
+            const agentVer = data.agent_version || '1.5';
+            const isOldAgent = !agentVer || parseFloat(agentVer) < 1.6;
+
+            // Top bar
+            const osBadge = document.getElementById('i3-vuln-os-badge');
+            if (osBadge) {
+                osBadge.innerText = os.pretty_name || os.name || 'Linux';
+                osBadge.style.background = 'rgba(0, 229, 255, 0.15)';
+                osBadge.style.color = 'var(--cyan)';
+            }
+            const agentVerEl = document.getElementById('i3-vuln-agent-ver');
+            if (agentVerEl) agentVerEl.innerText = `Agent v${agentVer}`;
+            const kernelEl = document.getElementById('i3-vuln-kernel');
+            if (kernelEl) kernelEl.innerText = os.kernel_release || 'Unknown';
+            const scannedEl = document.getElementById('i3-vuln-scanned');
+            if (scannedEl) scannedEl.innerText = os.last_vuln_scan ? new Date(os.last_vuln_scan).toLocaleString() : (data.recent_runs && data.recent_runs.length ? new Date(data.recent_runs[0].scan_time).toLocaleString() : 'Never');
+
+            // Banners
+            const rebootBanner = document.getElementById('i3-vuln-reboot-banner');
+            if (rebootBanner) {
+                if (os.reboot_required) {
+                    let reasons = (os.reboot_reasons && os.reboot_reasons.length) ? os.reboot_reasons.join(', ') : 'Kernel or system libraries upgraded';
+                    rebootBanner.innerHTML = `<strong>⚠️ REBOOT REQUIRED:</strong> ${escapeHtml(reasons)} — reboot required to activate patched kernel and services.`;
+                    rebootBanner.style.display = 'block';
+                } else {
+                    rebootBanner.style.display = 'none';
+                }
+            }
+
+            const agentBanner = document.getElementById('i3-vuln-agent-banner');
+            if (agentBanner) {
+                if (isOldAgent) {
+                    const bannerText = document.getElementById('i3-vuln-agent-banner-text');
+                    if (bannerText) bannerText.innerText = `Agent v${agentVer}: inventory not supported, update the agent`;
+                    agentBanner.style.display = 'block';
+                } else {
+                    agentBanner.style.display = 'none';
+                }
+            }
+
+            const osBanner = document.getElementById('i3-vuln-os-banner');
+            if (osBanner) {
+                if (os.is_eol) {
+                    const osText = document.getElementById('i3-vuln-os-banner-text');
+                    if (osText) osText.innerText = `No security data for this OS (reason: ${os.eol_reason || 'End of standard support'})`;
+                    osBanner.style.display = 'block';
+                } else {
+                    osBanner.style.display = 'none';
+                }
+            }
+
+            // Store data
+            modalServerVulns = data.vulnerabilities || [];
+            modalServerPkgs = data.packages || [];
+            modalServerSw = data.standalone_software || [];
+            modalServerHist = data.recent_changes || [];
+
+            // KPIs
+            let critCount = 0, highCount = 0, medCount = 0, kevCount = 0;
+            modalServerVulns.forEach(v => {
+                const sev = (v.severity || '').toUpperCase();
+                if (sev === 'CRITICAL') critCount++;
+                else if (sev === 'HIGH') highCount++;
+                else if (sev === 'MEDIUM') medCount++;
+                if (v.is_cisa_kev) kevCount++;
+            });
+
+            if (document.getElementById('i3-kpi-total')) {
+                document.getElementById('i3-kpi-total').innerText = isOldAgent ? '--' : modalServerVulns.length;
+                document.getElementById('i3-kpi-critical').innerText = isOldAgent ? '--' : critCount;
+                document.getElementById('i3-kpi-high').innerText = isOldAgent ? '--' : highCount;
+                document.getElementById('i3-kpi-medium').innerText = isOldAgent ? '--' : medCount;
+                document.getElementById('i3-kpi-kev').innerText = isOldAgent ? '--' : kevCount;
+            }
+
+            // Counts on Sub-tabs
+            if (document.getElementById('cnt-sub-cves')) document.getElementById('cnt-sub-cves').innerText = modalServerVulns.length;
+            if (document.getElementById('cnt-sub-pkgs')) document.getElementById('cnt-sub-pkgs').innerText = modalServerPkgs.length;
+            if (document.getElementById('cnt-sub-sw')) document.getElementById('cnt-sub-sw').innerText = modalServerSw.length;
+            if (document.getElementById('cnt-sub-hist')) document.getElementById('cnt-sub-hist').innerText = modalServerHist.length;
+
+            renderModalCVEs();
+            renderModalPackages();
+            renderModalSoftware();
+            renderModalHistory();
+        } catch (e) {
+            console.error('Failed to load vulnerabilities for modal:', e);
+        }
+    }
+
+    function switchVulnSubTab(tab, btn) {
+        ['cves', 'packages', 'software', 'history'].forEach(t => {
+            const el = document.getElementById(`sub-vuln-${t}`);
+            if (el) el.style.display = (t === tab) ? 'block' : 'none';
+        });
+        if (btn && btn.parentElement) {
+            btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+    }
+
+    function setModalSevFilter(sev, btn) {
+        modalActiveSevFilter = sev;
+        if (btn && btn.parentElement) {
+            btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+        renderModalCVEs();
+    }
+
+    function filterModalCVEs() {
+        renderModalCVEs();
+    }
+
+    function filterModalPackages() {
+        renderModalPackages();
+    }
+
+    function renderModalCVEs() {
+        const tbody = document.getElementById('modal-vuln-table-body');
+        if (!tbody) return;
+        const q = (document.getElementById('modal-cve-search')?.value || '').toLowerCase().trim();
+        const filtered = modalServerVulns.filter(v => {
+            const matchesQuery = !q ||
+                (v.cve_id && v.cve_id.toLowerCase().includes(q)) ||
+                (v.package_name && v.package_name.toLowerCase().includes(q)) ||
+                (v.summary && v.summary.toLowerCase().includes(q)) ||
+                (v.advisory_id && v.advisory_id.toLowerCase().includes(q));
+            let matchesSev = true;
+            if (modalActiveSevFilter !== 'ALL') {
+                matchesSev = (v.severity || '').toUpperCase() === modalActiveSevFilter;
+            }
+            return matchesQuery && matchesSev;
+        });
+
+        if (!filtered.length) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:25px; color:var(--text-sub)">No matching vulnerabilities found.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = filtered.map(v => {
+            const sev = (v.severity || '').toUpperCase();
+            let sevColor = 'var(--text-sub)';
+            if (sev === 'CRITICAL') sevColor = 'var(--red)';
+            else if (sev === 'HIGH') sevColor = 'var(--amber)';
+            else if (sev === 'MEDIUM') sevColor = '#eab308';
+            else if (sev === 'LOW') sevColor = 'var(--cyan)';
+
+            const kevBadge = v.is_cisa_kev ? `<span style="background:var(--red); color:#fff; font-size:9px; padding:1px 5px; border-radius:3px; margin-left:6px; font-weight:700">CISA KEV</span>` : '';
+            const advisoryUrl = v.advisory_url || (v.cve_id ? `https://nvd.nist.gov/vuln/detail/${v.cve_id}` : '#');
+
+            return `
+            <tr>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)">
+                    <a href="${advisoryUrl}" target="_blank" style="color:var(--cyan); font-family:var(--mono); font-weight:700; text-decoration:none">
+                        ${escapeHtml(v.cve_id)}
+                    </a>
+                    ${kevBadge}
+                </td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong style="color:${sevColor}">${sev}</strong></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong>${escapeHtml(v.package_name)}</strong></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><span style="font-family:var(--mono); color:var(--red)">${escapeHtml(v.installed_version)}</span></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong style="font-family:var(--mono); color:var(--green)">${escapeHtml(v.fixed_version || 'None')}</strong></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong>${v.cvss_score ? v.cvss_score.toFixed(1) : '--'}</strong></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); max-width:260px; font-size:11px; color:var(--text-sub); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${escapeHtml(v.summary || '')}">
+                    ${escapeHtml(v.summary || v.advisory_id || 'Fix available in upstream repository')}
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function renderModalPackages() {
+        const tbody = document.getElementById('modal-pkg-table-body');
+        if (!tbody) return;
+        const q = (document.getElementById('modal-pkg-search')?.value || '').toLowerCase().trim();
+        const filtered = modalServerPkgs.filter(p => {
+            return !q ||
+                (p.name && p.name.toLowerCase().includes(q)) ||
+                (p.version && p.version.toLowerCase().includes(q)) ||
+                (p.source_name && p.source_name.toLowerCase().includes(q));
+        });
+
+        if (!filtered.length) {
+            tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:25px; color:var(--text-sub)">No packages found.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = filtered.slice(0, 300).map(p => `
+            <tr>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong style="color:var(--text)">${escapeHtml(p.name)}</strong></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><span style="font-family:var(--mono); color:var(--cyan)">${escapeHtml(p.version)}</span></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><span style="color:var(--text-sub)">${escapeHtml(p.arch || '--')}</span></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><span style="color:var(--text3); font-family:var(--mono)">${escapeHtml(p.source_name || p.name)}</span></td>
+            </tr>
+        `).join('');
+    }
+
+    function renderModalSoftware() {
+        const container = document.getElementById('modal-sw-list');
+        if (!container) return;
+        if (!modalServerSw.length) {
+            container.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-sub); font-size:12px">No standalone Tomcat, Java or PostgreSQL installations discovered.</div>`;
+            return;
+        }
+
+        container.innerHTML = modalServerSw.map(sw => {
+            let icon = '📦';
+            const sn = (sw.product || sw.software_name || '').toLowerCase();
+            if (sn.includes('tomcat')) icon = '☕';
+            else if (sn.includes('java')) icon = '☕';
+            else if (sn.includes('postgres')) icon = '🐘';
+
+            return `
+            <div style="background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center">
+                <div style="display:flex; align-items:center; gap:12px">
+                    <span style="font-size:20px">${icon}</span>
+                    <div>
+                        <div style="font-size:12px; font-weight:700; color:var(--text)">${escapeHtml(sw.product || sw.software_name)}</div>
+                        <div style="font-size:10px; color:var(--cyan); font-family:var(--mono)">${escapeHtml(sw.path || sw.install_path || '')}</div>
+                    </div>
+                </div>
+                <div style="text-align:right">
+                    <div style="font-size:12px; font-family:var(--mono); font-weight:700; color:var(--green)">v${escapeHtml(sw.version || 'unknown')}</div>
+                    <div style="font-size:9px; color:var(--text3)">${escapeHtml(sw.detection_evidence || sw.source_detection || 'agent discovery')}</div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    function renderModalHistory() {
+        const container = document.getElementById('modal-hist-list');
+        if (!container) return;
+        if (!modalServerHist.length) {
+            container.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-sub); font-size:12px">No recent package change events recorded for this node.</div>`;
+            return;
+        }
+
+        container.innerHTML = modalServerHist.map(h => {
+            let typeColor = 'var(--cyan)';
+            let typeLabel = (h.change_type || 'CHANGE').toUpperCase();
+            if (typeLabel === 'UPGRADED') typeColor = 'var(--green)';
+            else if (typeLabel === 'REMOVED') typeColor = 'var(--red)';
+            else if (typeLabel === 'INSTALLED') typeColor = '#38bdf8';
+
+            return `
+            <div style="background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:10px 14px; display:flex; justify-content:space-between; align-items:center">
+                <div>
+                    <span style="font-size:9px; font-weight:700; padding:2px 6px; border-radius:3px; background:rgba(255,255,255,0.06); color:${typeColor}; margin-right:8px">${typeLabel}</span>
+                    <strong style="font-size:12px; color:var(--text)">${escapeHtml(h.package_name)}</strong>
+                    <span style="font-size:11px; font-family:var(--mono); color:var(--text-sub); margin-left:8px">
+                        ${h.old_version ? escapeHtml(h.old_version) + ' ➔ ' : ''}${escapeHtml(h.new_version || '')}
+                    </span>
+                </div>
+                <div style="font-size:10px; color:var(--text3)">
+                    ${h.detected_at ? new Date(h.detected_at).toLocaleString() : ''}
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    async function scanNowCurrentServer() {
+        if (!activeModalServerId) return;
+        const btn = document.getElementById('btn-modal-scan-now');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = `<span class="loader-spinner" style="width:12px; height:12px; display:inline-block; margin-right:4px"></span> Scanning...`;
+        }
+
+        try {
+            await apiFetch(`/api/servers/${activeModalServerId}/scan-vulns`, { method: 'POST' });
+            await apiFetch(`/api/servers/${activeModalServerId}/scan-now`, { method: 'POST' });
+            showToast('Vulnerability matching executed & inventory requested', 'success');
+            setTimeout(() => {
+                loadModalVulnerabilities(activeModalServerId);
+                loadDashboardData();
+            }, 1200);
+        } catch (e) {
+            showToast('Scan request error: ' + e, 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Scan now`;
+            }
+        }
+    }
 
 window.addEventListener('DOMContentLoaded', () => {
     loadDashboardData();

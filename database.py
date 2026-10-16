@@ -542,9 +542,13 @@ def init_db():
                     reboot_reasons TEXT,
                     packages_hash VARCHAR(64),
                     package_count INT DEFAULT 0,
+                    is_eol BOOLEAN DEFAULT FALSE,
+                    eol_reason TEXT,
                     last_scanned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
+                ALTER TABLE server_os_info ADD COLUMN IF NOT EXISTS is_eol BOOLEAN DEFAULT FALSE;
+                ALTER TABLE server_os_info ADD COLUMN IF NOT EXISTS eol_reason TEXT;
                 CREATE INDEX IF NOT EXISTS idx_server_os_info_sid ON server_os_info(server_id);
             """)
 
@@ -760,10 +764,12 @@ def init_db():
                 ('last_inventory_hash', 'VARCHAR(64)'),
                 ('last_inventory_scan', 'TIMESTAMP WITH TIME ZONE'),
                 ('last_vuln_scan', 'TIMESTAMP WITH TIME ZONE'),
-                ('vuln_scan_status', "VARCHAR(64) DEFAULT 'never_scanned'")
+                ('vuln_scan_status', "VARCHAR(255) DEFAULT 'never_scanned'")
             ]:
                 try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass
+            try: cur.execute("ALTER TABLE servers ALTER COLUMN vuln_scan_status TYPE VARCHAR(255);")
+            except: pass
 
             # Seed a default EC2 server if empty
             cur.execute("SELECT id FROM servers LIMIT 1;")
@@ -4114,12 +4120,14 @@ def record_server_inventory(server_id: int, payload: dict) -> dict:
                     return {"status": "ok", "full_inventory_required": True, "message": "Full package list required"}
 
             # Upsert server_os_info
+            is_eol = bool(os_info.get("is_eol", False))
+            eol_reason = os_info.get("eol_reason") or ""
             cur.execute("""
                 INSERT INTO server_os_info (
                     server_id, os_id, os_name, os_version_id, os_version_codename,
                     os_pretty_name, architecture, kernel_release, reboot_required,
-                    reboot_reasons, packages_hash, package_count, last_scanned_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    reboot_reasons, packages_hash, package_count, is_eol, eol_reason, last_scanned_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                 ON CONFLICT (server_id) DO UPDATE SET
                     os_id = EXCLUDED.os_id,
                     os_name = EXCLUDED.os_name,
@@ -4132,21 +4140,25 @@ def record_server_inventory(server_id: int, payload: dict) -> dict:
                     reboot_reasons = EXCLUDED.reboot_reasons,
                     packages_hash = EXCLUDED.packages_hash,
                     package_count = EXCLUDED.package_count,
+                    is_eol = EXCLUDED.is_eol,
+                    eol_reason = EXCLUDED.eol_reason,
                     last_scanned_at = NOW(),
                     updated_at = NOW();
             """, (
                 server_id,
-                os_info.get("id"),
-                os_info.get("name"),
-                os_info.get("version_id"),
-                os_info.get("version_codename"),
-                os_info.get("pretty_name"),
-                os_info.get("architecture"),
-                os_info.get("kernel_release"),
+                os_info.get("os_id") or os_info.get("id"),
+                os_info.get("os_name") or os_info.get("name"),
+                os_info.get("os_version_id") or os_info.get("version_id"),
+                os_info.get("os_version_codename") or os_info.get("version_codename"),
+                os_info.get("os_pretty_name") or os_info.get("pretty_name"),
+                os_info.get("architecture") or os_info.get("arch"),
+                os_info.get("kernel_release") or os_info.get("kernel"),
                 reboot_req,
                 reboot_reasons_str,
                 pkg_hash,
-                pkg_count
+                pkg_count,
+                is_eol,
+                eol_reason
             ))
 
             # Standalone software
@@ -4375,7 +4387,7 @@ def get_server_package_history(server_id: int, limit: int = 50):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT * FROM server_package_history
+                SELECT *, action as change_type FROM server_package_history
                 WHERE server_id = %s
                 ORDER BY detected_at DESC LIMIT %s;
             """, (server_id, limit))
