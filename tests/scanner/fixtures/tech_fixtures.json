@@ -1,0 +1,31 @@
+{
+  "cloudflare_sample": {
+    "headers": {
+      "server": "cloudflare",
+      "cf-ray": "8e3c45b80981",
+      "cf-cache-status": "DYNAMIC"
+    },
+    "body": "<html><head><title>Cloudflare Shielded Site</title></head><body>Hello</body></html>",
+    "expected_technologies": [
+      {
+        "name": "Cloudflare",
+        "category": "CDN / WAF",
+        "is_shield": true
+      }
+    ]
+  },
+  "aws_alb_sample": {
+    "headers": {
+      "server": "awselb/2.0",
+      "set-cookie": "AWSALB=xyz; Path=/; Expires=Wed, 21 Oct 2026 07:00:00 GMT"
+    },
+    "body": "<html><body>Backend Application</body></html>",
+    "expected_technologies": [
+      {
+        "name": "AWS Elastic Load Balancer (ALB)",
+        "category": "Load Balancer",
+        "is_shield": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "example_com": {
+    "domain": "example.com",
+    "has_a": true,
+    "has_ns": true,
+    "dnssec_status": "SECURE / VALIDATED",
+    "spf_present": true,
+    "dmarc_present": true
+  },
+  "cloudflare_com": {
+    "domain": "cloudflare.com",
+    "has_a": true,
+    "dnssec_status": "SECURE / VALIDATED",
+    "spf_present": true
+  }
+}

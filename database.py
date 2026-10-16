@@ -681,6 +681,47 @@ def init_db():
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_server_vulns_unique ON server_vulnerabilities(server_id, cve_id, package_name);
             """)
 
+            # 9. Domain Scanner History & Evidence Store
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS domain_scanner_history (
+                    id SERIAL PRIMARY KEY,
+                    target VARCHAR(512) NOT NULL,
+                    tab VARCHAR(64) NOT NULL,
+                    status VARCHAR(64) NOT NULL,
+                    result JSONB,
+                    evidence JSONB,
+                    scanned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_domain_scanner_hist_target ON domain_scanner_history(target);
+                CREATE INDEX IF NOT EXISTS idx_domain_scanner_hist_tab ON domain_scanner_history(tab);
+            """)
+
+            # 10. Domain Scanner False Positives
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS domain_scanner_false_positives (
+                    id SERIAL PRIMARY KEY,
+                    target VARCHAR(512) NOT NULL,
+                    finding_hash VARCHAR(128) NOT NULL,
+                    finding_title VARCHAR(255) NOT NULL,
+                    reason TEXT NOT NULL,
+                    user_email VARCHAR(255),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_target_finding_hash UNIQUE(target, finding_hash)
+                );
+                CREATE INDEX IF NOT EXISTS idx_domain_fp_target ON domain_scanner_false_positives(target);
+            """)
+
+            # 11. Domain Scanner Approved Targets
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS domain_scanner_approved_targets (
+                    id SERIAL PRIMARY KEY,
+                    target VARCHAR(512) UNIQUE NOT NULL,
+                    verification_method VARCHAR(64) DEFAULT 'admin_approved',
+                    verified_by VARCHAR(255),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
 
             # Alerts Alter
             for col, col_type in [
@@ -2706,8 +2747,132 @@ def toggle_maintenance(server_id):
         conn.close()
 
 
+def record_domain_scan(target: str, tab: str, status: str, result: dict, evidence: dict = None):
+    """Save an executed scan result and evidence for history and audit tracking."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO domain_scanner_history (target, tab, status, result, evidence)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id;
+            """, (target, tab, status, json.dumps(result or {}), json.dumps(evidence or {})))
+            row = cur.fetchone()
+            scan_id = row["id"] if isinstance(row, dict) else row[0]
+            conn.commit()
+            return scan_id
+    except Exception as e:
+        logger.error(f"Error in record_domain_scan: {e}")
+        return None
+    finally:
+        conn.close()
 
 
+def add_domain_false_positive(target: str, finding_hash: str, finding_title: str, reason: str, user_email: str = None):
+    """Mark a domain VAPT finding as a false positive with audit trail."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO domain_scanner_false_positives (target, finding_hash, finding_title, reason, user_email)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (target, finding_hash) DO UPDATE
+                SET reason = EXCLUDED.reason, user_email = EXCLUDED.user_email, created_at = CURRENT_TIMESTAMP
+                RETURNING id;
+            """, (target, finding_hash, finding_title, reason, user_email))
+            row = cur.fetchone()
+            fp_id = row["id"] if isinstance(row, dict) else row[0]
+            conn.commit()
+            return fp_id
+    except Exception as e:
+        logger.error(f"Error in add_domain_false_positive: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def get_domain_false_positives(target: str):
+    """Retrieve all active false positive hashes for a target."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT finding_hash, finding_title, reason, user_email, created_at
+                FROM domain_scanner_false_positives
+                WHERE target = %s;
+            """, (target,))
+            rows = cur.fetchall()
+            return {r["finding_hash"]: dict(r) for r in rows}
+    except Exception as e:
+        logger.error(f"Error in get_domain_false_positives: {e}")
+        return {}
+    finally:
+        conn.close()
+
+
+def delete_domain_false_positive(target: str, finding_hash: str):
+    """Remove a false positive mark so finding is active again."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM domain_scanner_false_positives
+                WHERE target = %s AND finding_hash = %s;
+            """, (target, finding_hash))
+            deleted = cur.rowcount > 0
+            conn.commit()
+            return deleted
+    except Exception as e:
+        logger.error(f"Error in delete_domain_false_positive: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def is_target_approved_for_scanning(target_host: str) -> bool:
+    """Checks whether a target domain or IP has been verified or approved for scanning."""
+    # Pre-approved test targets (safe defensive targets)
+    pre_approved = {
+        "scanme.nmap.org", "example.com", "cloudflare.com", "github.com",
+        "wfm-apdcl.co", "wfm-apraava-mdm.apdcl.co", "apraava-mdm.apdcl.co"
+    }
+    clean_host = (target_host or "").strip().lower().split(":")[0].split("/")[0]
+    if clean_host in pre_approved or clean_host.endswith(".badssl.com"):
+        return True
+    
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM domain_scanner_approved_targets
+                WHERE target = %s;
+            """, (clean_host,))
+            return cur.fetchone() is not None
+    except Exception as e:
+        logger.error(f"Error checking approved target: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def approve_scanner_target(target_host: str, method: str = "admin_approved", user_email: str = None):
+    """Approve a target for scanning."""
+    clean_host = (target_host or "").strip().lower().split(":")[0].split("/")[0]
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO domain_scanner_approved_targets (target, verification_method, verified_by)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (target) DO UPDATE SET verified_by = EXCLUDED.verified_by, created_at = CURRENT_TIMESTAMP;
+            """, (clean_host, method, user_email))
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error approving scanner target: {e}")
+        return False
+    finally:
+        conn.close()
 import urllib.request
 
 _geo_cache = {}

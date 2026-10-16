@@ -1,0 +1,18 @@
+{
+  "soft_404_response": {
+    "status_code": 200,
+    "body": "<html><head><title>Page Not Found</title></head><body>Sorry, the page you requested does not exist. Error 404.</body></html>",
+    "is_soft_404": true
+  },
+  "real_git_head": {
+    "status_code": 200,
+    "body": "ref: refs/heads/main\n",
+    "is_vulnerability": true,
+    "confidence": "CONFIRMED"
+  },
+  "false_git_custom_404": {
+    "status_code": 200,
+    "body": "<html><body>Welcome to our corporate home page. ref: nothing to see here</body></html>",
+    "is_vulnerability": false
+  }
+}

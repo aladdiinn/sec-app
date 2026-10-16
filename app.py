@@ -452,7 +452,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, Depends, Form, HTTPException, status, Query
+from fastapi import FastAPI, Request, Response, Depends, Form, HTTPException, status, Query, Body
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -6043,69 +6043,115 @@ async def api_export_server_report(server_id: int):
 import scanner_engine
 
 @app.post("/api/scanner/headers")
-async def api_scanner_headers(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+def api_scanner_headers(request: Request, body: dict = Body(default={})):
     url = body.get("url", "")
     follow = body.get("follow_redirects", True)
-    return scanner_engine.analyze_http_headers(url, follow_redirects=follow)
+    refresh = body.get("force_refresh", False)
+    user = get_session_user(request)
+    uname = user.get("username", "system") if user else "anonymous"
+    db.log_audit(uname, "SCANNER_HEADERS_SCAN", "domain", 0, f"Target: {url}")
+    return scanner_engine.analyze_http_headers(url, follow_redirects=follow, force_refresh=refresh)
+
 
 @app.post("/api/scanner/ssl")
-async def api_scanner_ssl(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+def api_scanner_ssl(request: Request, body: dict = Body(default={})):
     url = body.get("url", "")
-    return scanner_engine.analyze_ssl_certificate(url)
+    refresh = body.get("force_refresh", False)
+    user = get_session_user(request)
+    uname = user.get("username", "system") if user else "anonymous"
+    db.log_audit(uname, "SCANNER_SSL_SCAN", "domain", 0, f"Target: {url}")
+    return scanner_engine.analyze_ssl_certificate(url, force_refresh=refresh)
+
 
 @app.post("/api/scanner/ports")
-async def api_scanner_ports(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+def api_scanner_ports(request: Request, body: dict = Body(default={})):
     host = body.get("host", "")
     prange = body.get("range", "common")
-    return scanner_engine.scan_common_ports(host, port_range=prange)
+    refresh = body.get("force_refresh", False)
+    user = get_session_user(request)
+    uname = user.get("username", "system") if user else "anonymous"
+    db.log_audit(uname, "SCANNER_PORT_SCAN", "domain", 0, f"Host: {host}")
+    return scanner_engine.scan_common_ports(host, port_range=prange, force_refresh=refresh)
+
 
 @app.post("/api/scanner/dns")
-async def api_scanner_dns(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+def api_scanner_dns(request: Request, body: dict = Body(default={})):
     domain = body.get("domain", "")
-    return scanner_engine.lookup_dns_records(domain)
+    refresh = body.get("force_refresh", False)
+    user = get_session_user(request)
+    uname = user.get("username", "system") if user else "anonymous"
+    db.log_audit(uname, "SCANNER_DNS_SCAN", "domain", 0, f"Domain: {domain}")
+    return scanner_engine.lookup_dns_records(domain, force_refresh=refresh)
+
 
 @app.post("/api/scanner/whois")
-async def api_scanner_whois(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+def api_scanner_whois(request: Request, body: dict = Body(default={})):
     domain = body.get("domain", "")
-    return scanner_engine.lookup_whois_rdap(domain)
+    refresh = body.get("force_refresh", False)
+    user = get_session_user(request)
+    uname = user.get("username", "system") if user else "anonymous"
+    db.log_audit(uname, "SCANNER_WHOIS_SCAN", "domain", 0, f"Domain: {domain}")
+    return scanner_engine.lookup_whois_rdap(domain, force_refresh=refresh)
+
 
 @app.post("/api/scanner/tech")
-async def api_scanner_tech(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+def api_scanner_tech(request: Request, body: dict = Body(default={})):
     url = body.get("url", "")
-    return scanner_engine.fingerprint_technologies(url)
+    refresh = body.get("force_refresh", False)
+    user = get_session_user(request)
+    uname = user.get("username", "system") if user else "anonymous"
+    db.log_audit(uname, "SCANNER_TECH_SCAN", "domain", 0, f"Target: {url}")
+    return scanner_engine.fingerprint_technologies(url, force_refresh=refresh)
+
 
 @app.post("/api/scanner/vapt")
-async def api_scanner_vapt(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+def api_scanner_vapt(request: Request, body: dict = Body(default={})):
     url = body.get("url", "")
-    return scanner_engine.run_full_domain_vapt(url)
+    refresh = body.get("force_refresh", False)
+    user = get_session_user(request)
+    uname = user.get("username", "system") if user else "anonymous"
+    db.log_audit(uname, "SCANNER_VAPT_SCAN", "domain", 0, f"Target: {url}")
+    return scanner_engine.run_full_domain_vapt(url, force_refresh=refresh)
+
+
+@app.post("/api/scanner/false-positive")
+def api_scanner_add_false_positive(request: Request, body: dict = Body(default={})):
+    target = body.get("target", "")
+    f_hash = body.get("hash", "")
+    title = body.get("title", "")
+    reason = body.get("reason", "Marked as false positive by analyst")
+    user = get_session_user(request)
+    uemail = user.get("email", "analyst") if user else "analyst"
+    uname = user.get("username", "analyst") if user else "analyst"
+    
+    fp_id = db.add_domain_false_positive(target, f_hash, title, reason, uemail)
+    db.log_audit(uname, "SCANNER_FALSE_POSITIVE_ADDED", "domain_vapt", fp_id or 0, f"Target: {target}, Finding: {title}, Reason: {reason}")
+    return {"status": "success", "id": fp_id, "hash": f_hash}
+
+
+@app.delete("/api/scanner/false-positive")
+def api_scanner_delete_false_positive(request: Request, body: dict = Body(default={})):
+    target = body.get("target", "")
+    f_hash = body.get("hash", "")
+    user = get_session_user(request)
+    uname = user.get("username", "analyst") if user else "analyst"
+    
+    deleted = db.delete_domain_false_positive(target, f_hash)
+    db.log_audit(uname, "SCANNER_FALSE_POSITIVE_REMOVED", "domain_vapt", 0, f"Target: {target}, Hash: {f_hash}")
+    return {"status": "success", "deleted": deleted}
+
+
+@app.post("/api/scanner/approve-target")
+def api_scanner_approve_target(request: Request, body: dict = Body(default={})):
+    target = body.get("target", "")
+    method = body.get("method", "admin_approved")
+    user = get_session_user(request)
+    uemail = user.get("email", "admin") if user else "admin"
+    uname = user.get("username", "admin") if user else "admin"
+    
+    approved = db.approve_scanner_target(target, method, uemail)
+    db.log_audit(uname, "SCANNER_TARGET_APPROVED", "domain_target", 0, f"Target: {target}, Method: {method}")
+    return {"status": "success", "approved": approved, "target": target}
 
 
 # Alert Suppressions API

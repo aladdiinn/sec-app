@@ -1,0 +1,22 @@
+{
+  "rdap_iana_sample": {
+    "handle": "EXAMPLE-COM",
+    "ldhName": "EXAMPLE.COM",
+    "status": ["client transfer prohibited", "client delete prohibited"],
+    "events": [
+      {"eventAction": "registration", "eventDate": "1995-08-14T04:00:00Z"},
+      {"eventAction": "expiration", "eventDate": "2027-08-13T04:00:00Z"},
+      {"eventAction": "last changed", "eventDate": "2024-08-14T07:01:38Z"}
+    ],
+    "entities": [
+      {
+        "roles": ["registrar"],
+        "vcardArray": ["vcard", [["fn", {}, "text", "RESERVED-Internet Assigned Numbers Authority"]]]
+      }
+    ],
+    "nameservers": [
+      {"ldhName": "a.iana-servers.net"},
+      {"ldhName": "b.iana-servers.net"}
+    ]
+  }
+}

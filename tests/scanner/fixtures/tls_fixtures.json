@@ -1,0 +1,30 @@
+{
+  "expired_cert": {
+    "target": "expired.badssl.com",
+    "port": 443,
+    "expected_valid": false,
+    "expected_expired": true,
+    "expected_grade": "F"
+  },
+  "wrong_host_cert": {
+    "target": "wrong.host.badssl.com",
+    "port": 443,
+    "expected_valid": false,
+    "expected_san_match": false,
+    "expected_grade": "F"
+  },
+  "self_signed_cert": {
+    "target": "self-signed.badssl.com",
+    "port": 443,
+    "expected_valid": false,
+    "expected_self_signed": true,
+    "expected_grade": "F"
+  },
+  "untrusted_root_cert": {
+    "target": "untrusted-root.badssl.com",
+    "port": 443,
+    "expected_valid": false,
+    "expected_trusted": false,
+    "expected_grade": "F"
+  }
+}
