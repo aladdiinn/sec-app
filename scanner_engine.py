@@ -1443,10 +1443,14 @@ def fingerprint_technologies(raw_url: str, force_refresh: bool = False):
         or port in (8080, 8443) and "awsalb" in cookies
     )
     if is_tomcat:
+        v_match = re.search(r'(?:tomcat|coyote)[ /]([\d\.]+)', server_hdr, re.I)
+        if not v_match and body_sample:
+            v_match = re.search(r'Apache Tomcat/([\d\.]+)', body_sample, re.I)
+        ver = v_match.group(1) if v_match else "Version suppressed"
         techs.append({
             "name": "Apache Tomcat / Java Servlet Container",
             "category": "Java Application Container",
-            "version": "Version suppressed",
+            "version": ver,
             "confidence": "CONFIRMED" if ("jsessionid" in cookies or "coyote" in server_hdr.lower()) else "LIKELY",
             "evidence": f"JSESSIONID cookie present={('jsessionid' in cookies)}, Server='{server_hdr}', Port={port}",
             "risk": "MEDIUM"
