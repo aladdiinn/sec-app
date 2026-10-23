@@ -12,7 +12,7 @@
 .det-cat-title { font-size: 13px; font-weight: 700; color: #f8fafc; font-family: var(--font-sans); letter-spacing: 0.5px; }
 .det-cat-sub { font-size: 10px; color: #94a3b8; margin-top: 2px; }
 .det-cat-badge { margin-left: auto; background: rgba(239,68,68,0.2); color: #ef4444; border: 1px solid rgba(239,68,68,0.4); font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 700; white-space: nowrap; }
-.det-cat-badge.ok { background: rgba(16,185,129,0.2); color: #10b981; border-color: rgba(16,185,129,0.4); }
+.det-cat-badge.ok { background: var(--tint); color: var(--green); border-color: rgba(17,69,119,0.3); }
 .det-rule-list { padding: 8px 0; }
 .det-rule-item { padding: 10px 20px; display: flex; align-items: flex-start; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.15s; }
 .det-rule-item:hover { background: rgba(255,255,255,0.02); }
@@ -27,8 +27,8 @@
 .det-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
 .det-toggle-slider { position: absolute; inset: 0; background: #1e293b; border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; transition: all 0.3s; }
 .det-toggle-slider:before { content: ''; position: absolute; width: 14px; height: 14px; left: 2px; bottom: 2px; background: #64748b; border-radius: 50%; transition: all 0.3s; }
-.det-toggle input:checked + .det-toggle-slider { background: rgba(16,185,129,0.3); border-color: #10b981; }
-.det-toggle input:checked + .det-toggle-slider:before { transform: translateX(16px); background: #10b981; }
+.det-toggle input:checked + .det-toggle-slider { background: rgba(17,69,119,0.25); border-color: var(--green); }
+.det-toggle input:checked + .det-toggle-slider:before { transform: translateX(16px); background: var(--green); }
 .det-threshold { display: flex; align-items: center; gap: 6px; font-size: 10px; color: #94a3b8; margin-top: 6px; }
 .det-threshold input[type=number] { width: 50px; background: #1e293b; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 6px; color: #f8fafc; font-size: 11px; text-align: center; }
 .stats-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
@@ -46,7 +46,7 @@
             <div class="stat-box-label">TOTAL RULES</div>
         </div>
         <div class="stat-box">
-            <div class="stat-box-val" id="stat-active-rules" style="color:#10b981">0</div>
+            <div class="stat-box-val" id="stat-active-rules" style="color:var(--green)">0</div>
             <div class="stat-box-label">ACTIVE</div>
         </div>
         <div class="stat-box">
@@ -187,7 +187,7 @@ function renderCategories() {
                     ${thresholdHtml}
                 </div>
                 <span class="det-rule-sev sev-${rule.sev}">${rule.sev.toUpperCase()}</span>
-                ${rule.always_on ? `<span style="background: rgba(16,185,129,0.15); color: #10b981; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; border: 1px solid rgba(16,185,129,0.3); white-space: nowrap;">ALWAYS ON</span>` : `<label class="det-toggle" title="${enabled?'Enabled - click to disable':'Disabled - click to enable'}">
+                ${rule.always_on ? `<span style="background: var(--tint); color: var(--green); padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; border: 1px solid rgba(17,69,119,0.3); white-space: nowrap;">ALWAYS ON</span>` : `<label class="det-toggle" title="${enabled?'Enabled - click to disable':'Disabled - click to enable'}">
                     <input type="checkbox" ${enabled?'checked':''} onchange="toggleRule('${rule.id}','${rule.name}',this.checked)">
                     <span class="det-toggle-slider"></span>
                 </label>`}

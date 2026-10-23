@@ -95,7 +95,7 @@
     flex-shrink: 0;
     display: inline-block;
 }
-.srv-dot.online { background: var(--green); box-shadow: 0 0 6px rgba(0,255,136,0.5); }
+.srv-dot.online { background: var(--green); box-shadow: 0 0 6px rgba(17,69,119,0.5); }
 .srv-dot.offline { background: var(--red); }
 .srv-dot.maint { background: var(--amber); }
 
@@ -165,11 +165,11 @@
 }
 
 .server-item-option:hover {
-    background: rgba(27, 154, 108, 0.12);
+    background: rgba(17, 69, 119, 0.12);
 }
 
 .server-item-option.active {
-    background: rgba(27, 154, 108, 0.18);
+    background: rgba(17, 69, 119, 0.18);
     border-left: 3px solid var(--primary-green);
 }
 
@@ -290,8 +290,8 @@
 
 .btn-ctrl.btn-stream.active {
     color: var(--green);
-    border-color: rgba(0,255,136,0.3);
-    background: rgba(0,255,136,0.06);
+    border-color: rgba(17,69,119,0.3);
+    background: rgba(17,69,119,0.06);
 }
 
 .btn-ctrl.btn-clear {
@@ -300,8 +300,8 @@
 
 .btn-ctrl.btn-add {
     color: var(--cyan);
-    border-color: rgba(27, 154, 108, 0.4);
-    background: rgba(27, 154, 108, 0.08);
+    border-color: rgba(17, 69, 119, 0.4);
+    background: rgba(17, 69, 119, 0.08);
 }
 
 .export-menu-wrap {
@@ -334,7 +334,7 @@
 }
 
 .export-menu-item:hover {
-    background: rgba(27, 154, 108, 0.15);
+    background: rgba(17, 69, 119, 0.15);
     color: var(--cyan);
 }
 
@@ -695,7 +695,7 @@
             </div>
         </div>
 
-        <div id="wrap-standalone-node" style="display:none; background:rgba(0,255,136,0.03); border:1px dashed var(--green); padding:12px; border-radius:6px">
+        <div id="wrap-standalone-node" style="display:none; background:rgba(17,69,119,0.04); border:1px dashed var(--green); padding:12px; border-radius:6px">
             <div style="font-size:11px; color:var(--green); font-weight:600; margin-bottom:4px">⚡ STANDALONE LOG MONITORING (NO ASSET CREATED)</div>
             <div style="font-size:10px; color:var(--text3); margin-bottom:8px">This log file will be monitored directly in Log Analyzer without creating a new server asset in the Assets Inventory.</div>
             <div>
@@ -1447,7 +1447,7 @@ function switchNodeMode(mode) {
         btnStandalone.classList.add('active');
         btnStandalone.style.color = 'var(--green)';
         btnStandalone.style.borderColor = 'var(--green)';
-        btnStandalone.style.background = 'rgba(0,255,136,0.08)';
+        btnStandalone.style.background = 'rgba(17,69,119,0.1)';
         wrapExist.style.display = 'none';
         wrapNew.style.display = 'none';
         wrapStandalone.style.display = 'block';

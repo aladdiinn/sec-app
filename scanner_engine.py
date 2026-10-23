@@ -1778,7 +1778,7 @@ def run_full_domain_vapt(raw_url: str, force_refresh: bool = False):
 
     if vapt_score >= 85:
         posture = "STRONG POSTURE (LOW RISK)"
-        posture_color = "#00ff88"
+        posture_color = "#114577"
     elif vapt_score >= 60:
         posture = "MODERATE RISK (ATTENTION REQUIRED)"
         posture_color = "#ffaa00"

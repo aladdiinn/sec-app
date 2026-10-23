@@ -81,7 +81,7 @@
 .circle-critical { background: transparent; border: 3px solid #ff7700; color: #ff7700; box-shadow: inset 0 0 10px rgba(255,119,0,0.2), 0 0 10px rgba(255,119,0,0.4); }
 .circle-trouble { background: transparent; border: 3px solid var(--amber); color: var(--amber); box-shadow: inset 0 0 10px rgba(255,204,0,0.2), 0 0 10px rgba(255,204,0,0.4); }
 .circle-maint { background: transparent; border: 3px solid var(--cyan); color: var(--cyan); box-shadow: inset 0 0 10px rgba(0,229,255,0.2), 0 0 10px rgba(0,229,255,0.4); }
-.circle-up { background: transparent; border: 3px solid var(--green); color: var(--green); box-shadow: inset 0 0 10px rgba(0,250,154,0.2), 0 0 10px rgba(0,250,154,0.4); }
+.circle-up { background: transparent; border: 3px solid var(--green); color: var(--green); box-shadow: inset 0 0 10px rgba(17,69,119,0.2), 0 0 10px rgba(17,69,119,0.4); }
 .circle-suspended { display: none; }
 
 /* Nodes Summary Boxes */
@@ -173,7 +173,7 @@
     white-space: nowrap;
 }
 .st-database { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
-.st-server { background: rgba(0, 250, 154, 0.2); color: #34d399; border: 1px solid rgba(0, 250, 154, 0.4); }
+.st-server { background: rgba(17, 69, 119, 0.15); color: #2575BC; border: 1px solid rgba(17, 69, 119, 0.35); }
 .st-app { background: rgba(0, 229, 255, 0.2); color: var(--cyan); border: 1px solid rgba(0, 229, 255, 0.4); }
 
 .service-metrics {
@@ -212,9 +212,9 @@
     color: #fde68a;
 }
 .sab-normal {
-    background: rgba(0, 250, 154, 0.1);
-    border-color: rgba(0, 250, 154, 0.3);
-    color: #6ee7b7;
+    background: rgba(17, 69, 119, 0.1);
+    border-color: rgba(17, 69, 119, 0.3);
+    color: #38bdf8;
 }
 
 /* Image 3 Centered Popup Modal */
@@ -857,7 +857,7 @@ function renderDonutGauge(pct, label, colorOverride) {
     if (!color) {
         if (val > 85) color = '#FF5A5F'; // Red
         else if (val > 70) color = '#F7931A'; // Amber/Orange
-        else color = '#10B981'; // Vibrant Green
+        else color = '#114577'; // Corporate Blue
     }
 
     return `
