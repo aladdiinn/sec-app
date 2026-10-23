@@ -1228,6 +1228,158 @@ body,
   border: 1px solid rgba(192, 132, 252, 0.35) !important;
 }
 
+/* ── SERVER CARD SECURITY STRIP (HIGH CONTRAST & ADAPTIVE) ── */
+.card-security-bar {
+  margin-top: 6px !important;
+  margin-bottom: 6px !important;
+  padding: 4px 8px !important;
+  background: #F1F5F9 !important;
+  border: 1px solid #CBD5E1 !important;
+  border-radius: 6px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 6px !important;
+  min-height: 25px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+:root[data-theme="dark"] .card-security-bar {
+  background: #181C21 !important;
+  border: 1px solid #2B313A !important;
+}
+
+.card-sec-label {
+  font-size: 8.5px !important;
+  font-weight: 800 !important;
+  color: #1E293B !important;
+  letter-spacing: 0.5px !important;
+  text-transform: uppercase !important;
+  flex-shrink: 0 !important;
+  line-height: 1 !important;
+  font-family: var(--font-sans) !important;
+}
+
+:root[data-theme="dark"] .card-sec-label {
+  color: #CBD5E1 !important;
+}
+
+.sec-badge-wrap {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+}
+
+/* Reboot pill */
+.sec-pill-reboot {
+  font-size: 8px !important;
+  font-weight: 800 !important;
+  color: #FFFFFF !important;
+  background: #DC2626 !important;
+  padding: 1.5px 4.5px !important;
+  border-radius: 3px !important;
+  letter-spacing: 0.3px !important;
+  line-height: 1.2 !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+/* Agent Update Needed Pill */
+.sec-pill-update {
+  font-size: 8.5px !important;
+  font-weight: 700 !important;
+  color: #B45309 !important;
+  background: #FEF3C7 !important;
+  border: 1px solid #FCD34D !important;
+  padding: 1.5px 5px !important;
+  border-radius: 3px !important;
+  white-space: nowrap !important;
+  line-height: 1.2 !important;
+  display: inline-block !important;
+}
+
+:root[data-theme="dark"] .sec-pill-update {
+  color: #FBBF24 !important;
+  background: rgba(245, 158, 11, 0.15) !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+
+/* Zero Vulns Pill */
+.sec-pill-clean {
+  font-size: 8.5px !important;
+  font-weight: 700 !important;
+  color: #114577 !important;
+  background: #EAF2FA !important;
+  border: 1px solid #B9D5F2 !important;
+  padding: 1.5px 5px !important;
+  border-radius: 3px !important;
+  white-space: nowrap !important;
+  line-height: 1.2 !important;
+}
+
+:root[data-theme="dark"] .sec-pill-clean {
+  color: #38BDF8 !important;
+  background: rgba(56, 189, 248, 0.12) !important;
+  border-color: rgba(56, 189, 248, 0.3) !important;
+}
+
+/* Unsupported OS Pill */
+.sec-pill-unsupported {
+  font-size: 8.5px !important;
+  font-weight: 600 !important;
+  color: #475569 !important;
+  background: #E2E8F0 !important;
+  border: 1px solid #CBD5E1 !important;
+  padding: 1.5px 5px !important;
+  border-radius: 3px !important;
+  white-space: nowrap !important;
+  line-height: 1.2 !important;
+}
+
+:root[data-theme="dark"] .sec-pill-unsupported {
+  color: #94A3B8 !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Not Scanned */
+.sec-pill-unscanned {
+  font-size: 8.5px !important;
+  color: #64748B !important;
+  font-style: normal !important;
+  white-space: nowrap !important;
+  line-height: 1.2 !important;
+}
+
+:root[data-theme="dark"] .sec-pill-unscanned {
+  color: #64748B !important;
+}
+
+/* CVE Counts Strip */
+.sec-cve-counts {
+  font-size: 9px !important;
+  font-weight: 800 !important;
+  font-family: var(--font-mono), monospace !important;
+  white-space: nowrap !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+}
+
+.sec-cve-c { color: #DC2626 !important; font-weight: 800 !important; }
+.sec-cve-h { color: #D97706 !important; font-weight: 800 !important; }
+.sec-cve-m { color: #B45309 !important; font-weight: 800 !important; }
+.sec-cve-dot { color: #94A3B8 !important; font-weight: 400 !important; padding: 0 1px !important; }
+
+:root[data-theme="dark"] .sec-cve-c { color: #FF5A5F !important; }
+:root[data-theme="dark"] .sec-cve-h { color: #F5B83D !important; }
+:root[data-theme="dark"] .sec-cve-m { color: #FCD34D !important; }
+:root[data-theme="dark"] .sec-cve-dot { color: #4B5563 !important; }
+
 /* ── DONUT GAUGES (MATCHING IMAGE 1 REFERENCE: 98% GREEN, 7% RED, 23% AMBER) ── */
 .donut-gauges-row {
   display: flex !important;
