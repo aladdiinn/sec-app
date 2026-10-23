@@ -27,7 +27,7 @@
         <!-- ── SIDEBAR ── -->
         <aside class="sidebar">
             <!-- Brand -->
-            <div class="sb-brand" style="justify-content: space-between;">
+            <a href="/dashboard" onclick="goToMainDashboard(event)" class="sb-brand" style="justify-content: space-between; text-decoration: none; cursor: pointer; color: inherit; display: flex;" title="Go to Main Dashboard">
                   <div style="display:flex; align-items:center; gap:9px;">
                       <div style="display:flex; align-items:center; justify-content:center; width:38px; height:38px; border:1px solid rgba(0,191,255,0.3); border-radius:6px; background:rgba(0,191,255,0.05); margin-right:4px;">
           <div style="width:32px; height:32px; display:flex; align-items:center; justify-content:center;">
@@ -67,7 +67,7 @@
             </div>
         </div>
                     </div>
-            </div>
+            </a>
             {% if current_project or session.get('project_id') %}
             <div class="project-badge" style="margin:8px 12px; background:rgba(0,212,255,0.08); border:1px solid rgba(0,212,255,0.2); border-radius:4px; padding:8px 10px; font-size:9px; letter-spacing:1px; color:#00d4ff; text-transform:uppercase;">
                 <div style="color:#4a6080; margin-bottom:2px; font-size:8px">PROJECT</div>
@@ -209,7 +209,7 @@
                     <span>PROJECT MODE: <strong style="color:#ffffff">{{ current_project.name.upper() if current_project else ('PROJECT #' ~ session.get('project_id')) }}</strong></span>
                 </div>
                 <button onclick="exitProjectMode()" style="background:rgba(255,68,102,0.15); border:1px solid #ff4466; color:#ff4466; padding:5px 14px; border-radius:4px; font-family:var(--font-sans); font-size:11px; cursor:pointer; letter-spacing:0.5px; display:flex; align-items:center; gap:6px; transition:all 0.2s">
-                    ← EXIT PROJECT MODE
+                    ← MAIN DASHBOARD
                 </button>
             </div>
             {% endif %}
@@ -406,9 +406,21 @@
         async function exitProjectMode() {
             try {
                 const res = await apiFetch('/api/projects/exit', { method: 'POST' });
-                if (res.ok) window.location.href = res.redirect || '/dashboard';
+                if (res && res.ok) window.location.href = res.redirect || '/dashboard';
                 else window.location.href = '/dashboard';
             } catch(e) {
+                window.location.href = '/dashboard';
+            }
+        }
+
+        async function goToMainDashboard(event) {
+            if (event) {
+                if (event.ctrlKey || event.metaKey || event.button === 1) return;
+                event.preventDefault();
+            }
+            if (PROJECT_ID) {
+                await exitProjectMode();
+            } else {
                 window.location.href = '/dashboard';
             }
         }
@@ -417,16 +429,20 @@
             if (event) {
                 event.stopPropagation();
                 if (event.currentTarget) {
-                    event.currentTarget.textContent = 'ENTERING...';
-                    event.currentTarget.disabled = true;
+                    event.currentTarget.style.opacity = '0.6';
+                    event.currentTarget.style.pointerEvents = 'none';
                 }
             }
             try {
+                if (typeof showToast === 'function') showToast(`Entering ${projectName || 'Project'}...`, 'info');
                 const res = await apiFetch(`/api/projects/select/${projectId}`, { method: 'POST' });
-                if (res.ok) {
-                    if (typeof showToast === 'function') showToast(`Entering ${projectName || 'Project'}...`, 'success');
-                    setTimeout(() => window.location.href = res.redirect || '/dashboard', 400);
+                if (res && res.ok) {
+                    window.location.href = res.redirect || '/dashboard';
                 } else {
+                    if (event && event.currentTarget) {
+                        event.currentTarget.style.opacity = '1';
+                        event.currentTarget.style.pointerEvents = 'auto';
+                    }
                     if (typeof showToast === 'function') showToast('Failed to select project', 'error');
                 }
             } catch(e) {

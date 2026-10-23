@@ -159,7 +159,7 @@ function renderProjects() {
         const userCount = p.user_count || 0;
 
         return `
-        <div class="card glass glass-hover fade-in" id="proj-${id}" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:20px">
+        <div class="card glass glass-hover fade-in" id="proj-${id}" onclick="enterProjectView(${id})" title="Click to enter ${p.name || 'Project'}" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:20px; cursor:pointer;">
             <div>
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
                     <h3 class="card-title" style="font-size:16px; font-family:var(--font-sans); font-weight:700; color:var(--cyan); letter-spacing:0.5px">${p.name}</h3>
@@ -190,15 +190,12 @@ function renderProjects() {
                     <span class="badge badge-purple" style="font-size:10px">${groupCount} groups (${userCount} users)</span>
                 </div>
 
-                <div style="display:flex; gap:6px; flex-wrap:wrap">
-                    <button class="btn btn-glass" style="flex:1; font-size:9px; padding:6px 8px; border-color:var(--cyan); color:var(--cyan)" onclick="openManageAssetsModal(${id}, '${name}')">
+                <div style="display:flex; gap:8px; flex-wrap:wrap">
+                    <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:6px 8px; border-color:var(--cyan); color:var(--cyan)" onclick="event.stopPropagation(); openManageAssetsModal(${id}, '${name}')">
                         ⚙ ASSETS
                     </button>
-                    <button class="btn btn-glass" style="flex:1; font-size:9px; padding:6px 8px; border-color:var(--amber); color:var(--amber)" onclick="openManageGroupsModal(${id}, '${name}')">
+                    <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:6px 8px; border-color:var(--amber); color:var(--amber)" onclick="event.stopPropagation(); openManageGroupsModal(${id}, '${name}')">
                         👥 GROUPS
-                    </button>
-                    <button class="btn btn-primary" style="font-size:10px; padding:6px 10px" onclick="enterProjectView(${id})">
-                        ENTER ›
                     </button>
                 </div>
             </div>
@@ -211,8 +208,21 @@ function renderProjects() {
 /* ── Enter project mode ───────────────────────────────────── */
 async function enterProjectView(projectId) {
     try {
+        const card = document.getElementById(`proj-${projectId}`);
+        if (card) {
+            card.style.opacity = '0.6';
+            card.style.pointerEvents = 'none';
+        }
+        if (typeof showToast === 'function') showToast('Entering project...', 'info');
         const res = await apiFetch(`/api/projects/select/${projectId}`, { method: 'POST' });
         if (res.ok) window.location.href = res.redirect || '/dashboard';
+        else {
+            if (card) {
+                card.style.opacity = '1';
+                card.style.pointerEvents = 'auto';
+            }
+            if (typeof showToast === 'function') showToast('Failed to enter project', 'error');
+        }
     } catch(e) {
         window.location.href = `/dashboard?project_id=${projectId}`;
     }

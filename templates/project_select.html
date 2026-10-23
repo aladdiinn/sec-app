@@ -111,6 +111,8 @@ function renderProjects(){
     card.className = 'project-card' + (hasCrit ? ' has-critical' : '');
     card.dataset.id = p.id;
     card.dataset.name = (p.name || '').toLowerCase();
+    card.title = `Click to enter ${p.name || 'Project'}`;
+    card.onclick = (e) => enterProject(p.id, p.name, e);
 
     card.innerHTML = `
       <div class="card-header">
@@ -145,10 +147,6 @@ function renderProjects(){
 
       <div class="card-footer">
         <div class="card-meta">Last activity: ${p.last_activity || 'Active'}</div>
-        <button class="enter-btn" onclick="enterProject(${p.id}, '${(p.name || '').replace(/'/g, "\\'")}', event)">
-          ENTER PROJECT
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        </button>
       </div>
     `;
     grid.appendChild(card);

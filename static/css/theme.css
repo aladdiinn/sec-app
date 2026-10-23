@@ -299,6 +299,13 @@ body,
   border-bottom: 1px solid var(--border) !important;
   margin-bottom: 10px !important;
   background: var(--sidebar) !important;
+  cursor: pointer !important;
+  text-decoration: none !important;
+  transition: opacity 0.2s ease !important;
+}
+
+.sb-brand:hover {
+  opacity: 0.9 !important;
 }
 
 .sb-brand .sb-logo,
