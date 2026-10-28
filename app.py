@@ -3006,15 +3006,16 @@ def api_get_vulns_summary():
 
 @app.get("/api/vulnerabilities/fleet-cves")
 def api_get_fleet_cves(severity: Optional[str] = None):
-    """Retrieve all active vulnerability findings fleet-wide with server metadata."""
+    """Retrieve all active vulnerability findings fleet-wide with server metadata and full advisory details."""
     conn = db.get_db_connection()
     if not conn: return {"findings": []}
     try:
         with conn.cursor() as cur:
             query = """
-                SELECT v.*, s.name as server_name, s.hostname, s.ip as server_ip
+                SELECT v.*, a.details, a.cvss_vector, a.source, s.name as server_name, s.hostname, s.ip as server_ip
                 FROM server_vulnerabilities v
                 JOIN servers s ON v.server_id = s.id
+                LEFT JOIN advisory_cves a ON v.cve_id = a.cve_id
                 WHERE v.status = 'active'
             """
             params = []
@@ -3033,7 +3034,14 @@ def api_get_fleet_cves(severity: Optional[str] = None):
                     v.cvss_score DESC;
             """
             cur.execute(query, tuple(params))
-            return {"findings": cur.fetchall() or []}
+            rows = cur.fetchall() or []
+            clean_rows = []
+            for r in rows:
+                item = dict(r)
+                raw_name = item.get("server_name") or item.get("hostname") or ""
+                item["server_name"] = re.sub(r'^\[.*?\]\s*', '', raw_name).strip()
+                clean_rows.append(item)
+            return {"findings": clean_rows}
     finally:
         conn.close()
 

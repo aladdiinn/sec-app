@@ -2025,7 +2025,7 @@ async function saveServerNetwork(e) {
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><span style="font-family:var(--mono); color:var(--red)">${escapeHtml(v.installed_version)}</span></td>
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong style="font-family:var(--mono); color:var(--green)">${escapeHtml(v.fixed_version || 'None')}</strong></td>
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong>${v.cvss_score ? v.cvss_score.toFixed(1) : '--'}</strong></td>
-                <td style="padding:6px 10px; border-bottom:1px solid var(--border); max-width:260px; font-size:11px; color:var(--text-sub); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${escapeHtml(v.summary || '')}">
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); min-width:260px; max-width:440px; font-size:11.5px; line-height:1.45; color:var(--text); word-break:break-word;">
                     ${escapeHtml(v.summary || v.advisory_id || 'Fix available in upstream repository')}
                 </td>
             </tr>`;

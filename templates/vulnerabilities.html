@@ -277,31 +277,40 @@ function renderFindingsTable(findings) {
 
         let kevBadge = f.is_cisa_kev ? `<span class="vuln-badge vuln-badge-kev" title="CISA Known Exploited Vulnerability">CISA KEV</span>` : '';
         let rebootBadge = f.reboot_required ? `<span class="vuln-badge vuln-badge-reboot" title="Pending reboot to activate patch">REBOOT</span>` : '';
+        const cleanServer = escapeHtml((f.server_name || '').replace(/^\[.*?\]\s*/, ''));
 
         return `
         <tr>
             <td>
-                <strong style="font-family:monospace; color:var(--text)">${f.cve_id}</strong>
+                <a href="javascript:void(0)" onclick="openCveDetailModal('${escapeHtml(f.cve_id)}', '${escapeHtml(f.package_name)}')" style="font-family:monospace; font-weight:700; color:var(--cyan); text-decoration:none;" title="Click to view full advisory details">
+                    ${f.cve_id}
+                </a>
                 ${kevBadge}
             </td>
             <td><span class="vuln-badge ${sevClass}">${f.severity}</span></td>
             <td>
-                <div style="font-weight:600; color:var(--text)">${escapeHtml(f.server_name || '')}</div>
+                <div style="font-weight:600; color:var(--text)">${cleanServer}</div>
                 <div style="font-size:10px; font-family:monospace; color:var(--cyan)">${f.server_ip || ''}</div>
             </td>
             <td><strong style="color:var(--text)">${escapeHtml(f.package_name)}</strong></td>
-            <td><span style="font-family:monospace; color:var(--red)">${escapeHtml(f.installed_version)}</span></td>
-            <td><span style="font-family:monospace; color:var(--green)">${escapeHtml(f.fixed_version || 'None')}</span> ${rebootBadge}</td>
+            <td><span style="font-family:monospace; color:var(--red); font-weight:600">${escapeHtml(f.installed_version)}</span></td>
+            <td><span style="font-family:monospace; color:var(--green); font-weight:600">${escapeHtml(f.fixed_version || 'None')}</span> ${rebootBadge}</td>
             <td><strong style="color:${f.cvss_score >= 9 ? 'var(--red)' : f.cvss_score >= 7 ? 'var(--amber)' : 'var(--text)'}">${f.cvss_score ? f.cvss_score.toFixed(1) : '--'}</strong></td>
-            <td style="max-width:280px">
-                <div style="font-size:11px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${escapeHtml(f.summary || '')}">
+            <td style="min-width:280px; max-width:480px;">
+                <div style="font-size:11.5px; line-height:1.45; color:var(--text); word-break:break-word;">
                     ${escapeHtml(f.summary || f.advisory_id || 'Security patch available')}
                 </div>
-                <div style="font-size:10px; color:var(--text3); font-family:monospace">${f.advisory_id || ''}</div>
+                <div style="font-size:10px; color:var(--text3); font-family:monospace; margin-top:3px; display:flex; gap:8px; align-items:center;">
+                    <span>${escapeHtml(f.advisory_id || '')}</span>
+                    ${f.cvss_vector ? `<span style="color:var(--text3); font-size:10px" title="CVSS Vector">${escapeHtml(f.cvss_vector)}</span>` : ''}
+                </div>
             </td>
-            <td style="text-align:right">
-                <button class="btn btn-glass" style="padding:3px 8px; font-size:10px" onclick="window.location.href='/servers?focus=${f.server_id}'">
+            <td style="text-align:right; white-space:nowrap;">
+                <button class="btn btn-primary" style="padding:4px 9px; font-size:11px; margin-right:4px;" onclick="openCveDetailModal('${escapeHtml(f.cve_id)}', '${escapeHtml(f.package_name)}')">
                     Inspect
+                </button>
+                <button class="btn btn-glass" style="padding:4px 8px; font-size:11px" onclick="window.location.href='/servers?focus=${f.server_id}'" title="View Server Asset">
+                    Asset
                 </button>
             </td>
         </tr>`;
@@ -438,5 +447,195 @@ function downloadFile(content, filename, mimeType) {
 }
 
 document.addEventListener('DOMContentLoaded', loadFleetData);
+
+// ── CVE DETAIL MODAL CONTROLLER ──
+let activeCveFinding = null;
+
+function openCveDetailModal(cveId, pkgName) {
+    const f = allFindings.find(x => x.cve_id === cveId && (!pkgName || x.package_name === pkgName)) || allFindings.find(x => x.cve_id === cveId);
+    if (!f) return;
+    activeCveFinding = f;
+
+    const modal = document.getElementById('cve-detail-modal');
+    document.getElementById('cdm-cve-id').innerText = f.cve_id || 'CVE Details';
+    
+    // Severity badge
+    const sevBadge = document.getElementById('cdm-severity-badge');
+    const sev = (f.severity || 'UNKNOWN').toUpperCase();
+    sevBadge.innerText = sev;
+    sevBadge.className = 'vuln-badge ' + (sev === 'CRITICAL' ? 'vuln-badge-critical' : sev === 'HIGH' ? 'vuln-badge-high' : sev === 'MEDIUM' ? 'vuln-badge-medium' : 'vuln-badge-low');
+    
+    // KEV badge
+    document.getElementById('cdm-kev-badge').style.display = f.is_cisa_kev ? 'inline-block' : 'none';
+
+    // Key metrics
+    document.getElementById('cdm-package-name').innerText = f.package_name || '--';
+    document.getElementById('cdm-installed-ver').innerText = f.installed_version || '--';
+    document.getElementById('cdm-fixed-ver').innerText = f.fixed_version || 'None';
+    document.getElementById('cdm-cvss-score').innerText = f.cvss_score ? f.cvss_score.toFixed(1) : '--';
+    document.getElementById('cdm-epss-score').innerText = f.epss_score ? (f.epss_score * 100).toFixed(1) + '%' : '--';
+
+    // Server
+    const cleanServer = (f.server_name || '').replace(/^\[.*?\]\s*/, '');
+    document.getElementById('cdm-server-info').innerText = `${cleanServer} (${f.server_ip || 'Internal'})`;
+
+    // Reboot info
+    const rebootEl = document.getElementById('cdm-reboot-info');
+    if (f.reboot_required) {
+        rebootEl.innerHTML = '<span class="vuln-badge vuln-badge-reboot">REBOOT REQUIRED TO APPLY FIX</span>';
+    } else {
+        rebootEl.innerHTML = '<span style="color:var(--green)">No system reboot required</span>';
+    }
+
+    // Summary & Details
+    document.getElementById('cdm-summary').innerText = f.summary || f.advisory_id || 'Security patch available.';
+    const detailsText = f.details || f.summary || 'Refer to authoritative advisory for extended vulnerability technical specifications.';
+    document.getElementById('cdm-details').innerText = detailsText;
+
+    // Vector
+    const vecEl = document.getElementById('cdm-cvss-vector');
+    if (f.cvss_vector) {
+        vecEl.innerText = f.cvss_vector;
+        document.getElementById('cdm-vector-box').style.display = 'block';
+    } else {
+        document.getElementById('cdm-vector-box').style.display = 'none';
+    }
+
+    // Remediation command
+    const pkg = (f.package_name || '').toLowerCase();
+    let cmd = '';
+    if (pkg.includes('tomcat')) {
+        cmd = `# Apache Tomcat Upgrade:\n# 1. Download official Apache Tomcat >= ${f.fixed_version} from https://tomcat.apache.org\n# 2. Stop running Tomcat service and replace catalina.jar / binaries\n# 3. Restart Tomcat and verify version: catalina.sh version`;
+    } else if (pkg === 'java' || pkg.includes('openjdk')) {
+        cmd = `sudo apt-get update && sudo apt-get --only-upgrade install -y openjdk-21-jdk openjdk-21-jre-headless`;
+    } else {
+        cmd = `sudo apt-get update && sudo apt-get --only-upgrade install -y ${f.package_name}`;
+    }
+    document.getElementById('cdm-remedy-cmd').innerText = cmd;
+
+    // Links
+    document.getElementById('cdm-link-nvd').href = `https://nvd.nist.gov/vuln/detail/${f.cve_id}`;
+    document.getElementById('cdm-link-usn').href = `https://ubuntu.com/security/${f.cve_id}`;
+
+    modal.style.display = 'flex';
+}
+
+function closeCveDetailModal() {
+    const modal = document.getElementById('cve-detail-modal');
+    if (modal) modal.style.display = 'none';
+    activeCveFinding = null;
+}
+
+function copyRemediationCommand() {
+    const cmd = document.getElementById('cdm-remedy-cmd')?.innerText;
+    if (!cmd) return;
+    navigator.clipboard.writeText(cmd).then(() => {
+        const btn = document.getElementById('btn-copy-remedy');
+        if (btn) {
+            btn.innerText = 'Copied! ✓';
+            setTimeout(() => { btn.innerText = 'Copy Command'; }, 2000);
+        }
+    }).catch(e => {
+        console.error('Clipboard copy failed:', e);
+    });
+}
+
+// Close on backdrop click or ESC
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeCveDetailModal();
+});
+document.addEventListener('click', (e) => {
+    const modal = document.getElementById('cve-detail-modal');
+    if (e.target === modal) closeCveDetailModal();
+});
+
 </script>
+
+<!-- CVE DETAIL INSPECTION MODAL -->
+<div id="cve-detail-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.82); backdrop-filter:blur(6px); z-index:99999; align-items:center; justify-content:center; padding:20px;">
+    <div style="background:var(--bg2); border:1px solid var(--border); border-radius:12px; width:100%; max-width:760px; max-height:90vh; overflow-y:auto; box-shadow:0 25px 50px -12px rgba(0,0,0,0.6); display:flex; flex-direction:column;">
+        <!-- Header -->
+        <div style="padding:16px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--bg3);">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <h3 id="cdm-cve-id" style="margin:0; font-family:monospace; font-size:19px; color:var(--text); font-weight:700;">CVE-XXXX-YYYY</h3>
+                <span id="cdm-severity-badge" class="vuln-badge">HIGH</span>
+                <span id="cdm-kev-badge" style="display:none;" class="vuln-badge vuln-badge-kev">CISA KEV</span>
+            </div>
+            <button onclick="closeCveDetailModal()" style="background:transparent; border:none; color:var(--text2); font-size:22px; cursor:pointer; line-height:1;" title="Close">&times;</button>
+        </div>
+
+        <!-- Body -->
+        <div style="padding:22px; display:flex; flex-direction:column; gap:18px;">
+            <!-- Key Metrics Grid -->
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px;">
+                <div style="background:var(--bg3); padding:10px 14px; border-radius:8px; border:1px solid var(--border);">
+                    <div style="font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.5px;">Component</div>
+                    <div id="cdm-package-name" style="font-weight:700; color:var(--text); font-size:13px; margin-top:2px;">--</div>
+                </div>
+                <div style="background:var(--bg3); padding:10px 14px; border-radius:8px; border:1px solid var(--border);">
+                    <div style="font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.5px;">Installed Ver</div>
+                    <div id="cdm-installed-ver" style="font-family:monospace; font-weight:700; color:var(--red); font-size:13px; margin-top:2px;">--</div>
+                </div>
+                <div style="background:var(--bg3); padding:10px 14px; border-radius:8px; border:1px solid var(--border);">
+                    <div style="font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.5px;">Fixed in Ver</div>
+                    <div id="cdm-fixed-ver" style="font-family:monospace; font-weight:700; color:var(--green); font-size:13px; margin-top:2px;">--</div>
+                </div>
+                <div style="background:var(--bg3); padding:10px 14px; border-radius:8px; border:1px solid var(--border);">
+                    <div style="font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.5px;">CVSS Score</div>
+                    <div id="cdm-cvss-score" style="font-weight:700; color:var(--text); font-size:13px; margin-top:2px;">--</div>
+                </div>
+                <div style="background:var(--bg3); padding:10px 14px; border-radius:8px; border:1px solid var(--border);">
+                    <div style="font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.5px;">EPSS Probability</div>
+                    <div id="cdm-epss-score" style="font-weight:700; color:var(--cyan); font-size:13px; margin-top:2px;">--</div>
+                </div>
+            </div>
+
+            <!-- Affected Server Node -->
+            <div style="background:rgba(56,189,248,0.06); border:1px solid rgba(56,189,248,0.22); border-radius:8px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <div style="font-size:11px; color:var(--text3);">Affected Host / Server:</div>
+                    <div id="cdm-server-info" style="font-weight:700; color:var(--text); font-size:13px; margin-top:2px;">--</div>
+                </div>
+                <div id="cdm-reboot-info" style="font-size:11px; font-weight:600;"></div>
+            </div>
+
+            <!-- Full Advisory Summary -->
+            <div>
+                <h4 style="margin:0 0 6px 0; font-size:12px; color:var(--text2); text-transform:uppercase; letter-spacing:0.5px;">Advisory Summary</h4>
+                <div id="cdm-summary" style="background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-size:12.5px; line-height:1.55; color:var(--text); word-break:break-word;">
+                    --
+                </div>
+            </div>
+
+            <!-- Technical Details / Flaw Mechanism -->
+            <div id="cdm-details-box">
+                <h4 style="margin:0 0 6px 0; font-size:12px; color:var(--text2); text-transform:uppercase; letter-spacing:0.5px;">Technical Details &amp; Flaw Mechanism</h4>
+                <div id="cdm-details" style="background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-size:12px; line-height:1.6; color:var(--text2); white-space:pre-wrap; word-break:break-word;">
+                    --
+                </div>
+            </div>
+
+            <!-- CVSS Vector -->
+            <div id="cdm-vector-box" style="font-size:11px; color:var(--text3);">
+                CVSS v3.1 Vector: <code id="cdm-cvss-vector" style="font-family:monospace; color:var(--cyan); margin-left:6px; font-size:11.5px;">--</code>
+            </div>
+
+            <!-- Remediation Command -->
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                    <h4 style="margin:0; font-size:12px; color:var(--text2); text-transform:uppercase; letter-spacing:0.5px;">Remediation &amp; Mitigation Guidance</h4>
+                    <button id="btn-copy-remedy" class="btn btn-glass" style="padding:3px 9px; font-size:11px;" onclick="copyRemediationCommand()">Copy Command</button>
+                </div>
+                <pre id="cdm-remedy-cmd" style="background:#090d16; border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-family:monospace; font-size:12px; color:#38bdf8; margin:0; overflow-x:auto;">--</pre>
+            </div>
+
+            <!-- External References -->
+            <div style="display:flex; gap:12px; padding-top:6px; border-top:1px solid var(--border);">
+                <a id="cdm-link-nvd" href="#" target="_blank" class="btn btn-glass" style="font-size:11px; text-decoration:none;">View on NIST NVD ↗</a>
+                <a id="cdm-link-usn" href="#" target="_blank" class="btn btn-glass" style="font-size:11px; text-decoration:none;">Ubuntu / Upstream Advisory ↗</a>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}

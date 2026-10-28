@@ -154,11 +154,17 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
             # Fetch applicable advisories from database
             cur.execute("""
                 SELECT * FROM advisory_cves 
-                WHERE ecosystem IN (%s, 'Standalone', 'Ubuntu:22.04', 'Debian:11', 'Red Hat:8');
-            """, (ecosystem,))
+                WHERE ecosystem = %s 
+                   OR ecosystem = 'Standalone' 
+                   OR ecosystem = 'Ubuntu:Universal'
+                   OR (ecosystem LIKE 'Ubuntu%%' AND %s LIKE 'Ubuntu%%')
+                   OR (ecosystem LIKE 'Debian%%' AND %s LIKE 'Debian%%')
+                   OR (ecosystem LIKE 'Red Hat%%' AND %s LIKE 'Red Hat%%');
+            """, (ecosystem, ecosystem, ecosystem, ecosystem))
             advisories = cur.fetchall() or []
 
             findings = []
+            findings_seen = set()
             pkgs_by_name = {}
             for p in packages:
                 pkgs_by_name[p["name"]] = p
@@ -167,12 +173,31 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
 
             # 1. Match Packages
             for adv in advisories:
-                adv_pkg = adv["package_name"]
-                if adv_pkg in pkgs_by_name:
-                    pkg = pkgs_by_name[adv_pkg]
-                    inst_v = pkg["version"]
+                adv_pkg = (adv["package_name"] or "").lower()
+                matched_pkg = None
+                for pname, p in pkgs_by_name.items():
+                    pname_l = pname.lower()
+                    if pname_l == adv_pkg:
+                        matched_pkg = p
+                        break
+                    # Support alias matching for openssl / libssl
+                    if adv_pkg == "openssl" and pname_l in ("openssl", "libssl3", "libssl1.1", "libssl1.0.0"):
+                        matched_pkg = p
+                        break
+                    elif adv_pkg == "libssl" and "libssl" in pname_l:
+                        matched_pkg = p
+                        break
+
+                if matched_pkg:
+                    cve_key = (adv["cve_id"], matched_pkg["name"])
+                    if cve_key in findings_seen:
+                        continue
+                    inst_v = matched_pkg["version"]
                     fix_v = adv.get("fixed_version")
-                    if vuln_version.is_package_vulnerable(inst_v, fix_v, ecosystem):
+                    adv_eco = adv.get("ecosystem") or ecosystem
+                    cmp_eco = ecosystem if adv_eco in ("Standalone", "Ubuntu:Universal") else adv_eco
+                    if vuln_version.is_package_vulnerable(inst_v, fix_v, cmp_eco):
+                        findings_seen.add(cve_key)
                         # Check if kernel package is affected
                         is_kernel = "linux-image" in adv_pkg or "kernel" in adv_pkg
                         running_kernel_aff = False
@@ -181,7 +206,7 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
 
                         findings.append({
                             "cve_id": adv["cve_id"],
-                            "package_name": adv_pkg,
+                            "package_name": matched_pkg["name"],
                             "installed_version": inst_v,
                             "fixed_version": fix_v or "None",
                             "severity": (adv.get("severity") or "UNKNOWN").upper(),
@@ -200,8 +225,12 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
                 ver = sw["version"]
                 for adv in advisories:
                     if adv["ecosystem"] == "Standalone" and adv["package_name"].lower() == prod.lower():
+                        cve_key = (adv["cve_id"], prod)
+                        if cve_key in findings_seen:
+                            continue
                         fix_v = adv.get("fixed_version")
                         if vuln_version.compare_semver(ver, fix_v) < 0:
+                            findings_seen.add(cve_key)
                             findings.append({
                                 "cve_id": adv["cve_id"],
                                 "package_name": prod,

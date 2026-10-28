@@ -4662,8 +4662,10 @@ def get_server_vulnerabilities(server_id: int, severity: str = None, status: str
     try:
         with conn.cursor() as cur:
             query = """
-                SELECT * FROM server_vulnerabilities
-                WHERE server_id = %s
+                SELECT v.*, a.details, a.cvss_vector, a.source
+                FROM server_vulnerabilities v
+                LEFT JOIN advisory_cves a ON v.cve_id = a.cve_id
+                WHERE v.server_id = %s
             """
             params = [server_id]
             if status:

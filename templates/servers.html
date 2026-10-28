@@ -1579,7 +1579,7 @@ function formatLocal(dateStr) {
                 <td><span style="font-family:monospace; color:var(--red)">${escapeHtml(v.installed_version)}</span></td>
                 <td><strong style="font-family:monospace; color:var(--green)">${escapeHtml(v.fixed_version || 'None')}</strong></td>
                 <td><strong>${v.cvss_score ? v.cvss_score.toFixed(1) : '--'}</strong></td>
-                <td style="max-width:260px; font-size:11px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${escapeHtml(v.summary || '')}">
+                <td style="min-width:260px; max-width:440px; font-size:11.5px; line-height:1.45; color:var(--text); word-break:break-word;">
                     ${escapeHtml(v.summary || v.advisory_id || 'Fix available in upstream repository')}
                 </td>
             </tr>`;
