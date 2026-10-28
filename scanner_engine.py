@@ -32,15 +32,23 @@ import urllib3
 from urllib3.exceptions import InsecureRequestWarning
 urllib3.disable_warnings(InsecureRequestWarning)
 
-import cryptography.x509
-from cryptography.hazmat.backends import default_backend
+try:
+    import cryptography.x509
+    from cryptography.hazmat.backends import default_backend
+    _HAS_CRYPTO = True
+except ImportError:
+    _HAS_CRYPTO = False
 
-import dns.resolver
-import dns.dnssec
-import dns.name
-import dns.message
-import dns.query
-import dns.rdatatype
+try:
+    import dns.resolver
+    import dns.dnssec
+    import dns.name
+    import dns.message
+    import dns.query
+    import dns.rdatatype
+    _HAS_DNS = True
+except ImportError:
+    _HAS_DNS = False
 
 import database
 
@@ -616,6 +624,16 @@ def analyze_ssl_certificate(raw_url: str, force_refresh: bool = False):
     ssl_port = port if port not in (80,) else 443
     target_key = f"{domain}:{ssl_port}"
 
+    if not _HAS_CRYPTO:
+        return {
+            "status": "NOT CHECKED",
+            "reason": "cryptography package is not installed on this host. Run: pip install cryptography",
+            "domain": domain,
+            "port": ssl_port,
+            "valid": False,
+            "grade": "N/A"
+        }
+
     cached = _get_from_cache("ssl", target_key, force_refresh)
     if cached:
         return cached
@@ -1012,6 +1030,15 @@ def lookup_dns_records(raw_domain: str, force_refresh: bool = False):
             "status": "NOT CHECKED",
             "reason": err,
             "domain": domain or raw_domain,
+            "records": [],
+            "security": []
+        }
+
+    if not _HAS_DNS:
+        return {
+            "status": "NOT CHECKED",
+            "reason": "dnspython is not installed on this host. Run: pip install dnspython",
+            "domain": domain,
             "records": [],
             "security": []
         }

@@ -16,3 +16,5 @@ itsdangerous>=2.1.2
 boto3>=1.34.0
 google-genai>=0.7.0
 bcrypt>=4.0.0
+dnspython>=2.4.0
+cryptography>=41.0.0
