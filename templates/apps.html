@@ -112,11 +112,12 @@
                 <select id="events-filter-severity" class="glass" 
                         style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
                         onchange="renderFilteredEvents()">
-                    <option value="all">All Severities</option>
+                    <option value="security" selected>Security Events (Attacks & Warnings)</option>
+                    <option value="all">All Telemetry (Including Info Logs)</option>
                     <option value="critical">Critical Only</option>
                     <option value="high">High & Critical</option>
                     <option value="medium">Medium, High, Critical</option>
-                    <option value="info">Info Only</option>
+                    <option value="info">Info Logs Only</option>
                 </select>
             </div>
             <div style="display:flex; gap:8px; align-items:center">
@@ -467,9 +468,10 @@ function renderFilteredEvents() {
     if (!container) return;
 
     const q = (document.getElementById('events-filter-query')?.value || '').toLowerCase().trim();
-    const sev = document.getElementById('events-filter-severity')?.value || 'all';
+    const sev = document.getElementById('events-filter-severity')?.value || 'security';
 
     const filtered = cachedEvents.filter(ev => {
+        if (sev === 'security' && !['medium', 'high', 'critical'].includes(ev.severity)) return false;
         if (sev === 'critical' && ev.severity !== 'critical') return false;
         if (sev === 'high' && !['high', 'critical'].includes(ev.severity)) return false;
         if (sev === 'medium' && !['medium', 'high', 'critical'].includes(ev.severity)) return false;
@@ -522,7 +524,7 @@ function renderFilteredEvents() {
                         <span style="font-family:var(--font-mono), monospace">${escapeHtml(ev.url_path || '-')}</span>
                     </td>
                     <td style="padding:8px 12px; font-family:var(--font-mono), monospace">
-                        <span style="color:${ev.status_code >= 400 ? 'var(--amber)' : 'var(--green)'}">${ev.status_code || 200}</span>
+                        <span style="color:${ev.status_code >= 400 ? 'var(--amber)' : ev.status_code ? 'var(--green)' : 'var(--text3)'}">${ev.status_code || '-'}</span>
                     </td>
                 </tr>
                 `;
@@ -627,11 +629,14 @@ async function loadAppUsers(appId) {
             }
 
             container.innerHTML = `
+            <div style="font-size:11.5px; color:var(--text3); padding:10px 14px; background:rgba(56,189,248,0.06); border-bottom:1px solid var(--border)">
+                ℹ️ <b>Identity Attribution</b>: Web traffic without an active logged-in session is tracked by <b>Client IP</b>. Authenticated sessions and login attempts track the specific <b>User Account</b>.
+            </div>
             <table style="width:100%; border-collapse:collapse; text-align:left; font-size:11.5px">
                 <thead>
                     <tr style="border-bottom:1px solid var(--border); color:var(--text3); font-size:10.5px; background:var(--bg)">
                         <th style="padding:8px 12px">IDENTIFIER / IP</th>
-                        <th style="padding:8px 12px">USER NAME</th>
+                        <th style="padding:8px 12px">USER ACCOUNT</th>
                         <th style="padding:8px 12px">TOTAL REQUESTS</th>
                         <th style="padding:8px 12px">SECURITY ATTACKS</th>
                         <th style="padding:8px 12px">PEAK SEVERITY</th>
@@ -640,23 +645,35 @@ async function loadAppUsers(appId) {
                     </tr>
                 </thead>
                 <tbody>
-                    ${users.map(u => `
-                    <tr style="border-bottom:1px solid var(--border)">
-                        <td style="padding:8px 12px; font-family:var(--font-mono), monospace; font-weight:700; color:var(--cyan)">${escapeHtml(u.identifier)}</td>
-                        <td style="padding:8px 12px; color:var(--text)">${escapeHtml(u.user_name || 'Anonymous')}</td>
-                        <td style="padding:8px 12px">${u.total_requests || 0}</td>
-                        <td style="padding:8px 12px">
-                            <span style="font-weight:700; color:${u.attack_events > 0 ? 'var(--red)' : 'var(--green)'}">
-                                ${u.attack_events || 0}
-                            </span>
-                        </td>
-                        <td style="padding:8px 12px">
-                            <span class="badge" style="font-size:9.5px">${u.peak_severity || 'info'}</span>
-                        </td>
-                        <td style="padding:8px 12px; color:var(--text3)">${u.first_seen ? new Date(u.first_seen).toLocaleTimeString() : '-'}</td>
-                        <td style="padding:8px 12px; color:var(--text3)">${u.last_seen ? new Date(u.last_seen).toLocaleTimeString() : '-'}</td>
-                    </tr>
-                    `).join('')}
+                    ${users.map(u => {
+                        const isAnon = !u.user_name || u.user_name === 'Anonymous' || u.user_name === '-';
+                        const userBadge = isAnon 
+                            ? `<span style="color:var(--text3); font-size:11px; font-style:italic">Unauthenticated Guest</span>`
+                            : `<b style="color:var(--cyan); font-family:var(--font-mono), monospace">👤 ${escapeHtml(u.user_name)}</b>`;
+                        let sevBg = 'rgba(148,163,184,0.1)'; let sevFg = 'var(--text3)';
+                        if (u.peak_severity === 'critical') { sevBg = 'rgba(239,68,68,0.2)'; sevFg = 'var(--red)'; }
+                        else if (u.peak_severity === 'high') { sevBg = 'rgba(245,158,11,0.2)'; sevFg = 'var(--amber)'; }
+                        else if (u.peak_severity === 'medium') { sevBg = 'rgba(56,189,248,0.2)'; sevFg = 'var(--cyan)'; }
+                        return `
+                        <tr style="border-bottom:1px solid var(--border)">
+                            <td style="padding:8px 12px; font-family:var(--font-mono), monospace; font-weight:700; color:var(--text)">${escapeHtml(u.identifier)}</td>
+                            <td style="padding:8px 12px">${userBadge}</td>
+                            <td style="padding:8px 12px">${u.total_requests || 0}</td>
+                            <td style="padding:8px 12px">
+                                <span style="font-weight:700; color:${u.attack_events > 0 ? 'var(--red)' : 'var(--green)'}">
+                                    ${u.attack_events || 0}
+                                </span>
+                            </td>
+                            <td style="padding:8px 12px">
+                                <span style="padding:2px 6px; border-radius:4px; font-size:9.5px; font-weight:700; text-transform:uppercase; background:${sevBg}; color:${sevFg}">
+                                    ${u.peak_severity || 'info'}
+                                </span>
+                            </td>
+                            <td style="padding:8px 12px; color:var(--text3)">${u.first_seen ? new Date(u.first_seen).toLocaleTimeString() : '-'}</td>
+                            <td style="padding:8px 12px; color:var(--text3)">${u.last_seen ? new Date(u.last_seen).toLocaleTimeString() : '-'}</td>
+                        </tr>
+                        `;
+                    }).join('')}
                 </tbody>
             </table>
             `;

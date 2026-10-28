@@ -7574,6 +7574,11 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     status_code = int(m.group("status"))
                     bytes_sent = int(m.group("bytes")) if m.group("bytes").isdigit() else 0
 
+                    if user == "-" or not user:
+                        m_u = re.search(r'(?:\?|&)(?:user|username|login|email)=([^& \t\r\n\'"]+)', raw_path, re.IGNORECASE)
+                        if m_u:
+                            user = urllib.parse.unquote(m_u.group(1))
+
                     event_type, severity, rule_title, mitre_tag = evaluate_web_security_event(
                         method, raw_path, status_code, user, client_ip
                     )
@@ -7666,15 +7671,127 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                             highest_severity = "high"
 
                 else:
-                    # Non-access log (catalina.out or general error)
+                    # Application stdout / catalina.out / stderr log
+                    cat_lower = raw_line.lower()
+                    
+                    # Skip routine noisy INFO/startup lines from catalina.out
+                    if any(k in cat_lower for k in [
+                        "info [main]", "info [catalina", "server startup in", 
+                        "deploying web application", "deployment of web application",
+                        "at org.apache.catalina", "at org.apache.coyote", "at org.apache.tomcat"
+                    ]) and not any(k in cat_lower for k in ["exception", "error", "auth", "fail", "attack"]):
+                        continue
+
+                    ev_type = "APP_LOG"
+                    sev = "info"
+                    cat_user = None
+                    cat_ip = None
+                    rule_title = None
+                    mitre_tag = None
+                    url_path = None
+                    status_code = None
+
+                    # Check for [AUTH_FAILURE] or failed login pattern in application logs
+                    m_auth = re.search(r'(?:\[AUTH_FAILURE\]|failed login attempt for user:?\s*[\'"]?([^\s\'"]+)[\'"]?.*?from ip:?\s*([^\s]+))', raw_line, re.IGNORECASE)
+                    if m_auth:
+                        cat_user = m_auth.group(1) if m_auth.lastindex and m_auth.lastindex >= 1 else None
+                        cat_ip = m_auth.group(2) if m_auth.lastindex and m_auth.lastindex >= 2 else None
+                        ev_type = "LOGIN_FAILURE"
+                        sev = "medium"
+                        rule_title = f"Failed User Authentication ({cat_user or 'unknown'})"
+                        mitre_tag = "T1110 - Brute Force"
+                        url_path = "/login.jsp"
+                        status_code = 401
+                    elif "privilege_violation" in cat_lower or "restricted admin access" in cat_lower:
+                        m_priv = re.search(r'user\s*[\'"]([^\'"]+)[\'"].*?to\s*([^\s]+).*?from ip:?\s*([^\s]+)', raw_line, re.IGNORECASE)
+                        if m_priv:
+                            cat_user = m_priv.group(1)
+                            url_path = m_priv.group(2)
+                            cat_ip = m_priv.group(3)
+                        ev_type = "ADMIN_ACCESS_ABUSE"
+                        sev = "high"
+                        rule_title = f"Restricted Admin Privilege Violation ({cat_user or 'unknown'})"
+                        mitre_tag = "T1078 - Valid Accounts"
+                        status_code = 403
+                    elif any(k in cat_lower for k in ("exception", "severe", "fatal")):
+                        ev_type = "APP_EXCEPTION"
+                        sev = "medium"
+                        rule_title = "Application Runtime Exception"
+                    elif "warn" in cat_lower:
+                        ev_type = "APP_WARN"
+                        sev = "info"
+
+                    # Insert partitioned event
                     cur.execute("""
                         INSERT INTO app_events (
                             event_time, application_id, component_id, node, source_type, event_type,
-                            severity, raw
+                            client_ip, user_name, url_path, status_code, severity, raw
                         )
-                        VALUES (NOW(), %s, %s, %s, %s, 'APP_LOG', 'info', %s);
-                    """, (actual_app_id, comp_id, node_name, source_type, psycopg2.extras.Json(ev)))
+                        VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (
+                        actual_app_id, comp_id, node_name, source_type, ev_type,
+                        cat_ip, cat_user, url_path, status_code, sev, psycopg2.extras.Json(ev)
+                    ))
+                    ev_row = cur.fetchone()
+                    raw_ev_id = ev_row["id"] if ev_row else None
                     ingested_count += 1
+
+                    # Correlate into incident timeline if security alert from app log
+                    if sev in ("medium", "high", "critical") and (cat_ip or cat_user):
+                        attacker_key = f"ip:{cat_ip}" if cat_ip else f"user:{cat_user}"
+                        cur.execute("""
+                            SELECT id, events_count, severity, mitre_tactics
+                            FROM app_incidents
+                            WHERE application_id = %s AND attacker_key = %s AND status = 'Open'
+                            ORDER BY id DESC LIMIT 1;
+                        """, (actual_app_id, attacker_key))
+                        existing_inc = cur.fetchone()
+
+                        if existing_inc:
+                            inc_id = existing_inc["id"]
+                            new_count = (existing_inc.get("events_count") or 0) + 1
+                            curr_sev = existing_inc.get("severity") or "medium"
+                            calc_sev = "high" if sev == "high" or curr_sev == "high" else "medium"
+                            tactics = existing_inc.get("mitre_tactics") or []
+                            if isinstance(tactics, str):
+                                try: tactics = json.loads(tactics)
+                                except Exception: tactics = []
+                            if mitre_tag and mitre_tag not in tactics:
+                                tactics.append(mitre_tag)
+
+                            cur.execute("""
+                                UPDATE app_incidents
+                                SET events_count = %s, last_event_at = NOW(), severity = %s,
+                                    mitre_tactics = %s, updated_at = NOW()
+                                WHERE id = %s;
+                            """, (new_count, calc_sev, psycopg2.extras.Json(tactics), inc_id))
+                        else:
+                            tactics = [mitre_tag] if mitre_tag else []
+                            cur.execute("""
+                                INSERT INTO app_incidents (
+                                    application_id, title, attacker_key, attacker_type, client_ip, user_name,
+                                    severity, status, first_event_at, last_event_at, events_count, stages_count, mitre_tactics
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, 'Open', NOW(), NOW(), 1, 1, %s)
+                                RETURNING id;
+                            """, (
+                                actual_app_id, f"{rule_title or ev_type} ({cat_user or cat_ip})", attacker_key,
+                                'user' if cat_user else 'ip', cat_ip, cat_user, sev, psycopg2.extras.Json(tactics)
+                            ))
+                            inc_row = cur.fetchone()
+                            inc_id = inc_row["id"] if inc_row else None
+
+                        if inc_id:
+                            cur.execute("""
+                                INSERT INTO app_incident_events (
+                                    incident_id, event_time, node_name, role, rule_name, mitre_technique, step_summary, raw_event_id
+                                )
+                                VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s);
+                            """, (
+                                inc_id, node_name, role, rule_title or ev_type,
+                                mitre_tag or "", raw_line[:200], raw_ev_id
+                            ))
 
             # Update component last event, last seen, status and counter
             cur.execute("""

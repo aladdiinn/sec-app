@@ -385,6 +385,17 @@ def run_collector():
                         if f"@{CONFIG['TARGET_DB_NAME']}" not in line and "FATAL" not in line:
                             continue
 
+                    # Suppress routine noisy INFO/startup lines from catalina.out (only send security/errors)
+                    if tailer.source_type == "tomcat_catalina":
+                        line_l = line.lower()
+                        is_security_or_error = any(k in line_l for k in [
+                            "auth_failure", "privilege_violation", "security", "denied", 
+                            "forbidden", "unauthorized", "login", "attack", "exploit",
+                            "error", "fatal", "severe", "exception", "warn", "warning", "sqli", "xss"
+                        ])
+                        if not is_security_or_error:
+                            continue
+
                     buffered_events.append({
                         "source": tailer.source_type,
                         "file": fpath,
