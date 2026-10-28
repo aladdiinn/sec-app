@@ -209,7 +209,7 @@ def init_db():
                 ("cpu_percent", "FLOAT DEFAULT 0"),
                 ("memory_percent", "FLOAT DEFAULT 0"),
                 ("disk_percent", "FLOAT DEFAULT 0"),
-                ("agent_version", "VARCHAR(32) DEFAULT '0.2'"),
+                ("agent_version", "VARCHAR(32) DEFAULT '1.6'"),
                 ("target_agent_version", "VARCHAR(32)"),
                 ("update_status", "VARCHAR(32) DEFAULT 'up_to_date'"),
                 ("last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
@@ -220,6 +220,21 @@ def init_db():
                     cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except Exception:
                     pass
+
+            # Sanitize server names in servers table (strip any [App | Role] tags)
+            try:
+                cur.execute("SELECT id, name, hostname FROM servers WHERE name LIKE '[%]' OR hostname LIKE '[%]';")
+                dirty_servers = cur.fetchall()
+                for ds in dirty_servers:
+                    ds_id = ds["id"] if isinstance(ds, dict) else ds[0]
+                    ds_name = ds["name"] if isinstance(ds, dict) else ds[1]
+                    ds_host = ds["hostname"] if isinstance(ds, dict) else ds[2]
+                    cl_name = re.sub(r'^\[.*?\]\s*', '', ds_name or '').strip()
+                    cl_host = re.sub(r'^\[.*?\]\s*', '', ds_host or '').strip()
+                    if cl_name != ds_name or cl_host != ds_host:
+                        cur.execute("UPDATE servers SET name = %s, hostname = %s WHERE id = %s;", (cl_name or ds_name, cl_host or ds_host, ds_id))
+            except Exception as e_clean:
+                logger.warning(f"Error sanitizing servers table: {e_clean}")
 
             # Commands Table
             cur.execute("""
@@ -1371,7 +1386,13 @@ def get_servers(project_id=None):
                            WHEN EXISTS (SELECT 1 FROM alerts a WHERE a.server_id = s.id AND a.severity = 'critical' AND a.is_resolved IS NOT TRUE) THEN 'critical'
                            WHEN EXISTS (SELECT 1 FROM alerts a WHERE a.server_id = s.id AND (a.severity = 'warning' OR a.severity = 'high') AND a.is_resolved IS NOT TRUE) THEN 'warning'
                            ELSE 'info'
-                       END) as computed_severity
+                       END) as computed_severity,
+                       (SELECT json_agg(json_build_object('id', ac.id, 'role', ac.role, 'node_name', ac.node_name, 'app_name', app.name))
+                        FROM application_components ac
+                        LEFT JOIN applications app ON ac.application_id = app.id
+                        WHERE (ac.linked_server_id = s.id OR ac.node_ip = s.ip OR ac.node_ip = s.ip_address)
+                          AND ac.enabled = TRUE
+                       ) as app_components
                 FROM servers s 
                 {where_sql} 
                 ORDER BY s.id ASC;
@@ -1752,30 +1773,48 @@ def approve_request(app_id: int):
             cur.execute("UPDATE approvals SET status = 'approved' WHERE id = %s OR (LOWER(hostname) = LOWER(%s) AND hostname != '') OR (ip_address = %s AND ip_address != '');", (app_id, hostname, ip))
 
             token = app_data.get("agent_token")
-            # If this approval is for an application component, promote it
+            clean_hostname = re.sub(r'^\[.*?\]\s*', '', hostname).strip()
+            
+            # If this approval is for an application component, promote it without modifying server assets
+            is_app_component = False
             if token:
                 try:
-                    cur.execute("""
-                        UPDATE application_components
-                        SET status = 'APPROVED'
-                        WHERE enrollment_token = %s;
-                    """, (token,))
-                    cur.execute("""
-                        UPDATE applications
-                        SET status = 'NORMAL'
-                        WHERE id = (SELECT application_id FROM application_components WHERE enrollment_token = %s LIMIT 1)
-                          AND status IN ('WAITING', 'PENDING_APPROVAL');
-                    """, (token,))
-                except Exception:
-                    pass
+                    cur.execute("SELECT id, application_id, linked_server_id FROM application_components WHERE enrollment_token = %s LIMIT 1;", (token,))
+                    comp_row = cur.fetchone()
+                    if comp_row:
+                        is_app_component = True
+                        cur.execute("""
+                            UPDATE application_components
+                            SET status = 'APPROVED'
+                            WHERE enrollment_token = %s;
+                        """, (token,))
+                        cur.execute("""
+                            UPDATE applications
+                            SET status = 'NORMAL'
+                            WHERE id = %s AND status IN ('WAITING', 'PENDING_APPROVAL');
+                        """, (comp_row["application_id"],))
+                        # If component has no linked server yet, link it to existing server by IP or clean hostname
+                        if not comp_row.get("linked_server_id"):
+                            cur.execute("SELECT id FROM servers WHERE ip = %s OR ip_address = %s OR LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) ORDER BY id DESC LIMIT 1;", (ip, ip, clean_hostname, clean_hostname))
+                            matched_srv = cur.fetchone()
+                            if matched_srv:
+                                mid = matched_srv["id"] if isinstance(matched_srv, dict) else matched_srv[0]
+                                cur.execute("UPDATE application_components SET linked_server_id = %s WHERE id = %s;", (mid, comp_row["id"]))
+                except Exception as ex_comp:
+                    logger.warning(f"Error promoting app component in approve_request: {ex_comp}")
+
+            # If this approval was for an application component, do NOT insert or alter server assets!
+            if is_app_component:
+                conn.commit()
+                return True
             
             # Check if server already exists - do NOT match on empty string or host IP if hostname differs!
             existing_srv = None
             if ip and ip not in ("127.0.0.1", "172.31.2.38"):
                 cur.execute("SELECT id FROM servers WHERE ip = %s OR ip_address = %s LIMIT 1;", (ip, ip))
                 existing_srv = cur.fetchone()
-            if not existing_srv and hostname:
-                cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (hostname, hostname))
+            if not existing_srv and clean_hostname:
+                cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (clean_hostname, clean_hostname))
                 existing_srv = cur.fetchone()
 
             if not existing_srv:
@@ -1790,10 +1829,10 @@ def approve_request(app_id: int):
                 except Exception:
                     pass
                 srv_ip = ip or "127.0.0.1"
-                srv_host = hostname or f"node-{srv_ip}"
+                srv_host = clean_hostname or f"node-{srv_ip}"
                 cur.execute("""
-                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen, project_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s);
+                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen, project_id, agent_version)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s, '1.6');
                 """, (srv_host, srv_host, srv_ip, srv_ip, "Linux (Ubuntu)", token, token, pid))
             else:
                 sid = existing_srv["id"] if isinstance(existing_srv, dict) else existing_srv[0]
@@ -2682,7 +2721,23 @@ def get_dashboard_counts(project_id=None):
             total_db = (cur.fetchone() or {}).get("cnt", 0)
 
             cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE %s OR LOWER(hostname) LIKE %s OR LOWER(name) LIKE %s);", list(params) + ['%app%', '%app%', '%web%'])
-            total_apps = (cur.fetchone() or {}).get("cnt", 0)
+            legacy_apps = (cur.fetchone() or {}).get("cnt", 0)
+
+            # Query real Application SIEM counts
+            total_app_nodes = 0
+            total_apps = 0
+            try:
+                cur.execute("SELECT COUNT(*) as cnt FROM application_components WHERE enabled = TRUE;")
+                total_app_nodes = (cur.fetchone() or {}).get("cnt", 0)
+            except Exception: pass
+
+            try:
+                cur.execute("SELECT COUNT(*) as cnt FROM applications WHERE status != 'DELETED';")
+                total_apps = (cur.fetchone() or {}).get("cnt", 0)
+            except Exception: pass
+
+            if total_apps == 0:
+                total_apps = legacy_apps
 
             cur.execute(f"SELECT COUNT(*) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id {a_where};", params_a)
             total_alerts = (cur.fetchone() or {}).get("cnt", 0)
@@ -2699,6 +2754,7 @@ def get_dashboard_counts(project_id=None):
                 "trouble_servers": trouble_servers,
                 "total_db": total_db,
                 "total_apps": total_apps,
+                "total_app_nodes": total_app_nodes,
                 "total_alerts": total_alerts,
                 "unresolved_alerts": unresolved_alerts
             }

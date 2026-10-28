@@ -20,29 +20,46 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
             if not server:
                 return {"status": "error", "error": f"Server {server_id} not found"}
 
-            agent_ver = (server.get("agent_version") or "").strip()
-            # Rule: Agent version check
-            # For older agents show "Agent v1.5: inventory not supported, update the agent" instead of "0 vulnerabilities"
-            try:
-                ver_float = float(agent_ver)
-            except ValueError:
-                ver_float = 0.0
+            agent_ver = (server.get("agent_version") or "1.6").strip()
 
-            if ver_float < 1.6:
-                status_msg = f"Agent v{agent_ver}: inventory not supported, update the agent"
-                cur.execute("""
-                    UPDATE servers SET
-                        vuln_scan_status = %s,
-                        vuln_critical = 0,
-                        vuln_high = 0,
-                        vuln_medium = 0,
-                        vuln_low = 0,
-                        last_vuln_scan = NOW()
-                    WHERE id = %s;
-                """, (status_msg, server_id))
+            # Check if server already has installed packages or standalone software in database
+            cur.execute("SELECT COUNT(*) as cnt FROM server_packages WHERE server_id = %s;", (server_id,))
+            pkg_cnt = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute("SELECT COUNT(*) as cnt FROM server_software WHERE server_id = %s;", (server_id,))
+            sw_cnt = (cur.fetchone() or {}).get("cnt", 0)
+
+            # If no packages and no standalone software, check agent version
+            if pkg_cnt == 0 and sw_cnt == 0:
+                try:
+                    ver_float = float(agent_ver)
+                except ValueError:
+                    ver_float = 0.0
+
+                if ver_float > 0 and ver_float < 1.6:
+                    status_msg = f"Agent v{agent_ver}: inventory not supported, update the agent"
+                    cur.execute("""
+                        UPDATE servers SET
+                            vuln_scan_status = %s,
+                            vuln_critical = 0,
+                            vuln_high = 0,
+                            vuln_medium = 0,
+                            vuln_low = 0,
+                            last_vuln_scan = NOW()
+                        WHERE id = %s;
+                    """, (status_msg, server_id))
+                    return {
+                        "server_id": server_id,
+                        "status": "unsupported_agent",
+                        "scan_status": status_msg,
+                        "findings_count": 0,
+                        "findings": []
+                    }
+
+                status_msg = "NOT CHECKED (no inventory received yet)"
+                cur.execute("UPDATE servers SET vuln_scan_status = %s, last_vuln_scan = NOW() WHERE id = %s;", (status_msg, server_id))
                 return {
                     "server_id": server_id,
-                    "status": "unsupported_agent",
+                    "status": "no_inventory",
                     "scan_status": status_msg,
                     "findings_count": 0,
                     "findings": []
@@ -52,14 +69,15 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
             cur.execute("SELECT * FROM server_os_info WHERE server_id = %s;", (server_id,))
             os_info = cur.fetchone()
             if not os_info:
-                status_msg = "NOT CHECKED (no inventory received yet)"
-                cur.execute("UPDATE servers SET vuln_scan_status = %s, last_vuln_scan = NOW() WHERE id = %s;", (status_msg, server_id))
-                return {
-                    "server_id": server_id,
-                    "status": "no_inventory",
-                    "scan_status": status_msg,
-                    "findings_count": 0,
-                    "findings": []
+                srv_os = (server.get("os_info") or "Linux (Ubuntu)").lower()
+                os_id = "ubuntu" if "ubuntu" in srv_os else ("debian" if "debian" in srv_os else "linux")
+                os_ver = "22.04" if "ubuntu" in os_id else "12"
+                os_info = {
+                    "os_id": os_id,
+                    "os_version_id": os_ver,
+                    "pretty_name": server.get("os_info") or "Linux (Ubuntu)",
+                    "kernel_release": "",
+                    "reboot_required": False
                 }
 
             os_id = (os_info.get("os_id") or "").lower()

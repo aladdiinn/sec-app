@@ -87,8 +87,8 @@
 /* Nodes Summary Boxes */
 .nodes-summary-row {
     display: grid;
-    grid-template-columns: 1fr;
-    gap: 10px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
 }
 .node-sum-box {
     background: var(--bg3);
@@ -325,10 +325,18 @@
             <div class="noc-panel-title">
                 <span style="color:var(--cyan)">☁️</span> NODES SUMMARY
             </div>
-            <div class="nodes-summary-row">
-                <div class="node-sum-box">
+            <div class="nodes-summary-row" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
+                <div class="node-sum-box" style="cursor:pointer;" onclick="window.location.href='/servers'" title="View All Infrastructure Servers">
                     <div class="node-sum-label">SERVERS</div>
                     <div class="node-sum-val" id="sum-servers">0</div>
+                </div>
+                <div class="node-sum-box" style="cursor:pointer;" onclick="window.location.href='/apps'" title="View All Monitored Application Nodes">
+                    <div class="node-sum-label">APP NODES</div>
+                    <div class="node-sum-val" id="sum-app-nodes" style="color:var(--purple, #c084fc)">0</div>
+                </div>
+                <div class="node-sum-box" style="cursor:pointer;" onclick="window.location.href='/apps'" title="View All Applications">
+                    <div class="node-sum-label">APPLICATIONS</div>
+                    <div class="node-sum-val" id="sum-apps" style="color:var(--blue, #38bdf8)">0</div>
                 </div>
             </div>
         </div>
@@ -364,6 +372,7 @@
             
             <select id="srv-filter-select" class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:var(--bg2)" onchange="renderServicesGrid()">
                 <option value="all">All Nodes</option>
+                <option value="app_nodes">Application Nodes Only</option>
                 <option value="critical">Critical Issues Only</option>
                 <option value="trouble">Trouble / Warning Only</option>
                 <option value="online">Online / Normal Only</option>
@@ -825,10 +834,13 @@ async function loadDashboardData() {
         
 
         document.getElementById('sum-servers').innerText = counts.total_servers ?? 0;
-        
-        
-
-        document.getElementById('sum-monitored').innerText = counts.total_servers ?? 0;
+        if (document.getElementById('sum-app-nodes')) {
+            document.getElementById('sum-app-nodes').innerText = counts.total_app_nodes ?? 0;
+        }
+        if (document.getElementById('sum-apps')) {
+            document.getElementById('sum-apps').innerText = counts.total_apps ?? 0;
+        }
+        document.getElementById('sum-monitored').innerText = (counts.total_servers ?? 0) + (counts.total_app_nodes ?? 0);
         document.getElementById('sum-active-issues').innerText = (counts.critical_alerts ?? 0) + (counts.trouble_servers ?? 0);
 
         // Load Servers List for Grid
@@ -914,6 +926,9 @@ function renderServicesGrid() {
         const ip = (s.ip_address || s.ip || '').toLowerCase();
         if (search && !name.includes(search) && !ip.includes(search)) return false;
 
+        const hasAppComp = Boolean(s.app_components && s.app_components.length > 0);
+        const isAppNode = hasAppComp || name.includes('app') || name.includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
+
         const st = (s.status || 'online').toLowerCase();
         const sev = (s.severity || 'info').toLowerCase();
         const isMaint = s.is_maintenance || st === 'maintenance' || st === 'isolated';
@@ -923,6 +938,7 @@ function renderServicesGrid() {
         const isTrouble = !isDown && !isMaint && !isCrit && (sev === 'warning' || sev === 'high');
         const isUp = !isDown && !isMaint && !isCrit && !isTrouble;
 
+        if (filter === 'app_nodes') return isAppNode;
         if (filter === 'down') return isDown;
         if (filter === 'maint') return isMaint;
         if (filter === 'critical') return isCrit;
@@ -942,10 +958,20 @@ function renderServicesGrid() {
         const sid = s.id;
         const name = s.hostname || s.name || 'Unknown Node';
         const ip = s.ip_address || s.ip || '0.0.0.0';
+        const hasAppComp = Boolean(s.app_components && s.app_components.length > 0);
         const isDb = name.toLowerCase().includes('db') || (s.os_info||'').toLowerCase().includes('postgres');
-        const isApp = name.toLowerCase().includes('app') || name.toLowerCase().includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
+        const isApp = hasAppComp || name.toLowerCase().includes('app') || name.toLowerCase().includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
         
-        const rawBadge = isDb ? '<span class="service-type-badge st-database">DATABASE</span>' : (isApp ? '<span class="service-type-badge st-app">APP NODE</span>' : '<span class="service-type-badge st-server">LINUX SERVER</span>');
+        let rawBadge = '<span class="service-type-badge st-server">LINUX SERVER</span>';
+        if (hasAppComp) {
+            const firstApp = s.app_components[0];
+            const appRole = (firstApp.role || 'WEB').toUpperCase();
+            rawBadge = `<span class="service-type-badge st-app" title="${escapeHtml(firstApp.app_name || 'App')}">${escapeHtml(appRole)} APP NODE</span>`;
+        } else if (isDb) {
+            rawBadge = '<span class="service-type-badge st-database">DATABASE</span>';
+        } else if (isApp) {
+            rawBadge = '<span class="service-type-badge st-app">APP NODE</span>';
+        }
         const typeBadge = `<div style="text-align:right">${rawBadge}<div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">v${s.agent_version || '1.5'}</div></div>`;
 
         const cpu = s.cpu_percent || 0;
@@ -1842,7 +1868,15 @@ async function saveServerNetwork(e) {
             const kernelEl = document.getElementById('i3-vuln-kernel');
             if (kernelEl) kernelEl.innerText = os.kernel_release || 'Unknown';
             const scannedEl = document.getElementById('i3-vuln-scanned');
-            if (scannedEl) scannedEl.innerText = os.last_vuln_scan ? new Date(os.last_vuln_scan).toLocaleString() : (data.recent_runs && data.recent_runs.length ? new Date(data.recent_runs[0].scan_time).toLocaleString() : 'Never');
+            function formatScanDate(dt) {
+                if (!dt) return 'Never';
+                const d = new Date(dt);
+                return isNaN(d.getTime()) ? 'Never' : d.toLocaleString();
+            }
+            if (scannedEl) {
+                const sDate = os.last_vuln_scan || (data.recent_runs && data.recent_runs.length ? data.recent_runs[0].scan_time : null) || os.last_scanned_at;
+                scannedEl.innerText = formatScanDate(sDate);
+            }
 
             // Banners
             const rebootBanner = document.getElementById('i3-vuln-reboot-banner');

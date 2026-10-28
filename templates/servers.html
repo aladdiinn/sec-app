@@ -1422,7 +1422,15 @@ function formatLocal(dateStr) {
             const kernelEl = document.getElementById('i3-vuln-kernel');
             if (kernelEl) kernelEl.innerText = os.kernel_release || 'Unknown';
             const scannedEl = document.getElementById('i3-vuln-scanned');
-            if (scannedEl) scannedEl.innerText = os.last_vuln_scan ? new Date(os.last_vuln_scan).toLocaleString() : (data.recent_runs && data.recent_runs.length ? new Date(data.recent_runs[0].scan_time).toLocaleString() : 'Never');
+            function formatScanDate(dt) {
+                if (!dt) return 'Never';
+                const d = new Date(dt);
+                return isNaN(d.getTime()) ? 'Never' : d.toLocaleString();
+            }
+            if (scannedEl) {
+                const sDate = os.last_vuln_scan || (data.recent_runs && data.recent_runs.length ? data.recent_runs[0].scan_time : null) || os.last_scanned_at;
+                scannedEl.innerText = formatScanDate(sDate);
+            }
 
             // Banners
             const rebootBanner = document.getElementById('i3-vuln-reboot-banner');

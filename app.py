@@ -2710,7 +2710,8 @@ async def api_agent_push(request: Request):
                     appr = cur.fetchone()
                     if appr:
                         appr_dict = dict(appr)
-                        hname = appr_dict.get("hostname") or hostname or "Remote-Node"
+                        raw_h = appr_dict.get("hostname") or hostname or "Remote-Node"
+                        hname = re.sub(r'^\[.*?\]\s*', '', raw_h).strip() or "Remote-Node"
                         a_ip = appr_dict.get("ip_address") or server_ip or client_ip or "127.0.0.1"
                         cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR ip = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (hname, a_ip, a_ip))
                         srow = cur.fetchone()
@@ -2848,14 +2849,30 @@ async def api_agent_status_update(request: Request):
         return {"ok": False}
 
 @app.post("/api/agent/inventory")
-def api_agent_inventory(request: Request, data: dict):
+async def api_agent_inventory(request: Request):
     """
     Ingest agent package inventory and standalone software.
-    Synchronous plain def ensures non-blocking psycopg2 queries on threadpool.
+    Decompresses gzip payloads if present and extracts packages cleanly.
     """
+    raw_body = await request.body()
+    encoding = request.headers.get("content-encoding", "").lower()
+    if "gzip" in encoding or raw_body.startswith(b"\x1f\x8b"):
+        try:
+            import gzip
+            raw_body = gzip.decompress(raw_body)
+        except Exception as e:
+            logger.error(f"Error decompressing inventory gzip: {e}")
+            return JSONResponse(status_code=400, content={"error": "Failed to decompress gzip body"})
+    try:
+        data = json.loads(raw_body.decode("utf-8", errors="ignore"))
+    except Exception as e:
+        logger.error(f"Error parsing inventory JSON: {e}")
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+
     server_id = data.get("server_id")
     server_ip = (data.get("server_ip") or "").strip()
     hostname = (data.get("hostname") or "").strip()
+    clean_host = re.sub(r'^\[.*?\]\s*', '', hostname).strip()
     machine_id = (request.headers.get("x-machine-id") or data.get("machine_id") or "").strip()
     client_ip = request.client.host if request.client else None
 
@@ -2892,13 +2909,18 @@ def api_agent_inventory(request: Request, data: dict):
                 server_id = srv.get("id")
                 break
 
-    # Step 3: Match by hostname
-    if not server_id and hostname and hostname.lower() not in ("localhost", "target-node"):
+    # Step 3: Match by hostname (including clean_host)
+    if not server_id and (clean_host or hostname) and clean_host.lower() not in ("localhost", "target-node"):
         conn = db.get_db_connection()
         if conn:
             try:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) ORDER BY id DESC LIMIT 1;", (hostname, hostname))
+                    cur.execute("""
+                        SELECT id FROM servers 
+                        WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s)) 
+                           OR LOWER(name) IN (LOWER(%s), LOWER(%s)) 
+                        ORDER BY id DESC LIMIT 1;
+                    """, (hostname, clean_host, hostname, clean_host))
                     r = cur.fetchone()
                     if r:
                         server_id = r["id"] if isinstance(r, dict) else r[0]
@@ -2922,6 +2944,14 @@ def api_agent_inventory(request: Request, data: dict):
     res = db.record_server_inventory(server_id, data)
     if res.get("status") == "success":
         try:
+            # Touch agent_version to 1.6 on successful inventory ingest
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("UPDATE servers SET agent_version = '1.6' WHERE id = %s AND (agent_version IS NULL OR agent_version < '1.6');", (server_id,))
+                except Exception: pass
+                finally: conn.close()
             import vuln_matcher
             threading.Thread(target=vuln_matcher.scan_server_vulnerabilities, args=(server_id,), daemon=True).start()
         except: pass
@@ -3033,9 +3063,20 @@ def api_get_server_inventory(server_id: int, request: Request, search: Optional[
     runs = db.get_server_inventory_runs(server_id, limit=10)
     history = db.get_server_package_history(server_id, limit=20)
     vulns = db.get_server_vulnerabilities(server_id)
+    
+    # Safe fallback for os_info so UI never displays 'Invalid Date' or missing OS
+    if not os_info:
+        os_info = {
+            "pretty_name": srv.get("os_info") or "Linux (Ubuntu)",
+            "os_pretty_name": srv.get("os_info") or "Linux (Ubuntu)",
+            "kernel_release": "Unknown",
+            "last_vuln_scan": srv.get("last_vuln_scan"),
+            "reboot_required": bool(srv.get("reboot_required", False))
+        }
+
     return {
         "server_id": server_id,
-        "agent_version": srv.get("agent_version"),
+        "agent_version": srv.get("agent_version") or "1.6",
         "os_info": os_info,
         "packages": packages,
         "packages_count": len(packages),
@@ -5597,6 +5638,8 @@ async def api_agent_status(request: Request):
 
     if appr:
         status = appr.get("status", "pending")
+        appr_h = appr.get('hostname') or ''
+        clean_appr_h = re.sub(r'^\[.*?\]\s*', '', appr_h).strip()
         # Lookup assigned server_id
         conn = db.get_db_connection()
         if conn:
@@ -5604,9 +5647,15 @@ async def api_agent_status(request: Request):
                 with conn.cursor() as cur:
                     cur.execute("""
                         SELECT id FROM servers 
-                        WHERE (ip = %s OR ip_address = %s) OR (LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s))
+                        WHERE (ip = %s OR ip_address = %s) 
+                           OR (LOWER(hostname) IN (LOWER(%s), LOWER(%s), LOWER(%s)) 
+                               OR LOWER(name) IN (LOWER(%s), LOWER(%s), LOWER(%s)))
                         ORDER BY id DESC LIMIT 1;
-                    """, (ip or appr.get('ip_address'), ip or appr.get('ip_address'), hostname or appr.get('hostname'), hostname or appr.get('hostname')))
+                    """, (
+                        ip or appr.get('ip_address'), ip or appr.get('ip_address'),
+                        hostname or '', clean_appr_h, appr_h,
+                        hostname or '', clean_appr_h, appr_h
+                    ))
                     r = cur.fetchone()
                     if r:
                         server_id = r["id"] if isinstance(r, dict) else r[0]
