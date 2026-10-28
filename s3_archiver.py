@@ -11,14 +11,17 @@ logger = logging.getLogger("s3_archiver")
 logger.setLevel(logging.INFO)
 
 # Default to a specific bucket name. You can override this via ENV variables.
-S3_BUCKET_NAME = os.environ.get("S3_LOG_ARCHIVE_BUCKET", "securepulse-logs-archive-bucket-2026")
-AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+S3_BUCKET_NAME = os.environ.get("AWS_S3_BUCKET_NAME") or os.environ.get("S3_LOG_ARCHIVE_BUCKET", "securepulse-logs-archive-bucket-2026")
+AWS_REGION = os.environ.get("AWS_S3_REGION") or os.environ.get("AWS_REGION", "us-east-1")
 
 def get_s3_client():
-    """Initializes the boto3 S3 client."""
-    # Note: Boto3 will automatically use IAM roles if deployed on EC2, 
-    # or ~/.aws/credentials if running locally.
-    return boto3.client('s3', region_name=AWS_REGION)
+    """Initializes the boto3 S3 client supporting both AWS_S3_* and standard AWS_* env variables."""
+    key_id = os.environ.get("AWS_S3_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
+    secret_key = os.environ.get("AWS_S3_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY")
+    region = os.environ.get("AWS_S3_REGION") or os.environ.get("AWS_REGION", "us-east-1")
+    if key_id and secret_key:
+        return boto3.client('s3', region_name=region, aws_access_key_id=key_id, aws_secret_access_key=secret_key)
+    return boto3.client('s3', region_name=region)
 
 def ensure_bucket_exists(s3_client):
     """Creates the S3 bucket if it doesn't already exist."""
