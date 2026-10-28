@@ -1,4 +1,4 @@
-import os, sys, time, logging, json
+import os, sys, time, logging, json, re
 import database as db
 import vuln_version
 
