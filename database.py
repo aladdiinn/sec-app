@@ -2723,18 +2723,38 @@ def get_dashboard_counts(project_id=None):
             cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE %s OR LOWER(hostname) LIKE %s OR LOWER(name) LIKE %s);", list(params) + ['%app%', '%app%', '%web%'])
             legacy_apps = (cur.fetchone() or {}).get("cnt", 0)
 
-            # Query real Application SIEM counts
+            # Query real Application SIEM counts and health posture
             total_app_nodes = 0
             total_apps = 0
+            crit_apps = 0
+            trouble_apps = 0
+            down_apps = 0
+            maint_apps = 0
+            up_apps = 0
+
             try:
                 cur.execute("SELECT COUNT(*) as cnt FROM application_components WHERE enabled = TRUE;")
                 total_app_nodes = (cur.fetchone() or {}).get("cnt", 0)
             except Exception: pass
 
             try:
-                cur.execute("SELECT COUNT(*) as cnt FROM applications WHERE status != 'DELETED';")
-                total_apps = (cur.fetchone() or {}).get("cnt", 0)
-            except Exception: pass
+                import app_siem_db
+                app_list = app_siem_db.get_applications(conn, project_id=project_id)
+                total_apps = len(app_list)
+                for ap in app_list:
+                    dyn = (ap.get("dynamic_status") or "").upper()
+                    if dyn == "CRITICAL":
+                        crit_apps += 1
+                    elif dyn == "TROUBLE":
+                        trouble_apps += 1
+                    elif dyn == "MAINT":
+                        maint_apps += 1
+                    elif dyn == "DOWN":
+                        down_apps += 1
+                    elif dyn in ("NORMAL", "WAITING"):
+                        up_apps += 1
+            except Exception as e:
+                logger.error(f"Error querying app status counts: {e}")
 
             if total_apps == 0:
                 total_apps = legacy_apps
@@ -2747,16 +2767,18 @@ def get_dashboard_counts(project_id=None):
 
             return {
                 "total_servers": total_servers,
-                "online_servers": up_servers,
-                "critical_alerts": crit_servers,
-                "maintenance_servers": maint_servers,
-                "down_servers": down_servers,
-                "trouble_servers": trouble_servers,
+                "online_servers": up_servers + up_apps,
+                "critical_alerts": crit_servers + crit_apps,
+                "maintenance_servers": maint_servers + maint_apps,
+                "down_servers": down_servers + down_apps,
+                "trouble_servers": trouble_servers + trouble_apps,
                 "total_db": total_db,
                 "total_apps": total_apps,
                 "total_app_nodes": total_app_nodes,
                 "total_alerts": total_alerts,
-                "unresolved_alerts": unresolved_alerts
+                "unresolved_alerts": unresolved_alerts,
+                "crit_servers": crit_servers,
+                "crit_apps": crit_apps
             }
     except Exception as e:
         logger.error(f"Error in get_dashboard_counts: {e}")

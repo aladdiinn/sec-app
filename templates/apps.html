@@ -863,6 +863,13 @@ async function deleteAppFromModal() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', loadApplications);
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadApplications();
+    const urlParams = new URLSearchParams(window.location.search);
+    const openAppId = urlParams.get('app_id') || urlParams.get('open');
+    if (openAppId) {
+        openAppDetailsModal(parseInt(openAppId));
+    }
+});
 </script>
 {% endblock %}

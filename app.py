@@ -4006,7 +4006,7 @@ def get_installed_packages(os_id, os_version):
             out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=60).decode("utf-8", errors="ignore")
             ecosystem = f"Ubuntu:{{os_version}}" if os_id == "ubuntu" else ("Debian" if os_id == "debian" else "Debian")
             for line in out.splitlines():
-                parts = line.split("\\t")
+                parts = line.split("\t") if "\t" in line else line.split("\\t")
                 if len(parts) >= 6:
                     bin_pkg, ver, arch, src_pkg, src_ver, status = parts[:6]
                     if status.strip().startswith("ii"):
@@ -4031,7 +4031,7 @@ def get_installed_packages(os_id, os_version):
             out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=60).decode("utf-8", errors="ignore")
             ecosystem = os_id.upper() if os_id else "RHEL"
             for line in out.splitlines():
-                parts = line.split("\\t")
+                parts = line.split("\t") if "\t" in line else line.split("\\t")
                 if len(parts) >= 6:
                     name, epoch, ver, rel, arch, src_rpm = parts[:6]
                     epoch_clean = "" if epoch in ("(none)", "None", "") else epoch.strip()

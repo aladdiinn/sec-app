@@ -282,6 +282,81 @@
 }
 .dash-alert-row:hover { background: var(--bg3); transform: translateX(2px); }
 .dash-alert-row.sev-warning { border-left-color: var(--amber); }
+
+/* ============================================================
+   APP NODE CARD DIFFERENTIATED STYLING (Dark & Light Themes)
+   ============================================================ */
+
+/* DARK THEME (Black theme) */
+.service-card.appnode-card {
+    background: linear-gradient(145deg, #181433 0%, #101932 100%) !important;
+    border: 1px solid rgba(168, 85, 247, 0.45) !important;
+    box-shadow: 0 4px 20px rgba(147, 51, 234, 0.12) !important;
+}
+.service-card.appnode-card:hover {
+    border-color: #c084fc !important;
+    box-shadow: 0 10px 30px rgba(168, 85, 247, 0.3) !important;
+    transform: translateY(-2px);
+}
+.service-card-list.appnode-card {
+    background: linear-gradient(90deg, #181433 0%, #101932 100%) !important;
+    border: 1px solid rgba(168, 85, 247, 0.4) !important;
+}
+.appnode-card .appnode-title {
+    color: #f3e8ff !important;
+}
+.appnode-card .appnode-url {
+    color: #c084fc !important;
+}
+.appnode-card .st-appnode {
+    background: rgba(168, 85, 247, 0.25) !important;
+    color: #c084fc !important;
+    border: 1px solid rgba(192, 132, 252, 0.45) !important;
+    font-weight: 700;
+}
+.appnode-card .appnode-sec-bar {
+    background: rgba(147, 51, 234, 0.08) !important;
+    border-top: 1px solid rgba(168, 85, 247, 0.2) !important;
+    border-bottom: 1px solid rgba(168, 85, 247, 0.2) !important;
+}
+
+/* LIGHT THEME (White / Light theme) */
+[data-theme="light"] .service-card.appnode-card {
+    background: linear-gradient(145deg, #f5f3ff 0%, #ede9fe 100%) !important;
+    border: 1px solid rgba(139, 92, 246, 0.4) !important;
+    box-shadow: 0 4px 16px rgba(124, 58, 237, 0.08) !important;
+}
+[data-theme="light"] .service-card.appnode-card:hover {
+    border-color: #7c3aed !important;
+    box-shadow: 0 8px 26px rgba(124, 58, 237, 0.2) !important;
+    transform: translateY(-2px);
+}
+[data-theme="light"] .service-card-list.appnode-card {
+    background: linear-gradient(90deg, #f5f3ff 0%, #ede9fe 100%) !important;
+    border: 1px solid rgba(139, 92, 246, 0.4) !important;
+}
+[data-theme="light"] .appnode-card .appnode-title {
+    color: #3b0764 !important;
+}
+[data-theme="light"] .appnode-card .appnode-url {
+    color: #6d28d9 !important;
+}
+[data-theme="light"] .appnode-card .st-appnode {
+    background: #e0e7ff !important;
+    color: #4338ca !important;
+    border: 1px solid #a5b4fc !important;
+    font-weight: 700;
+}
+[data-theme="light"] .appnode-card .appnode-sec-bar {
+    background: rgba(139, 92, 246, 0.08) !important;
+    border-top: 1px solid rgba(139, 92, 246, 0.2) !important;
+    border-bottom: 1px solid rgba(139, 92, 246, 0.2) !important;
+}
+[data-theme="light"] .appnode-card .service-alert-box.sab-normal {
+    background: rgba(16, 185, 129, 0.12) !important;
+    color: #047857 !important;
+    border: 1px solid rgba(16, 185, 129, 0.3) !important;
+}
 </style>
 {% endblock %}
 
@@ -373,6 +448,7 @@
             <select id="srv-filter-select" class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:var(--bg2)" onchange="renderServicesGrid()">
                 <option value="all">All Nodes</option>
                 <option value="app_nodes">Application Nodes Only</option>
+                <option value="servers">Servers / Assets Only</option>
                 <option value="critical">Critical Issues Only</option>
                 <option value="trouble">Trouble / Warning Only</option>
                 <option value="online">Online / Normal Only</option>
@@ -820,6 +896,7 @@ function formatLocal(dateStr) {
     }
 
 let globalServersList = [];
+let globalAppsList = [];
 let activeModalServerId = null;
 
 async function loadDashboardData() {
@@ -843,9 +920,13 @@ async function loadDashboardData() {
         document.getElementById('sum-monitored').innerText = (counts.total_servers ?? 0) + (counts.total_app_nodes ?? 0);
         document.getElementById('sum-active-issues').innerText = (counts.critical_alerts ?? 0) + (counts.trouble_servers ?? 0);
 
-        // Load Servers List for Grid
-        const serversRes = await apiFetch('/api/servers');
+        // Load Servers List and Applications List for Grid
+        const [serversRes, appsRes] = await Promise.all([
+            apiFetch('/api/servers'),
+            apiFetch('/api/apps').catch(() => [])
+        ]);
         globalServersList = Array.isArray(serversRes) ? serversRes : (serversRes.servers || []);
+        globalAppsList = Array.isArray(appsRes) ? appsRes : [];
         
         renderServicesGrid();
     } catch(e) {
@@ -901,6 +982,10 @@ function updateModalDonuts(cpu, ram, disk) {
     }
 }
 
+function openAppDetailsFromDash(appId) {
+    window.location.href = `/apps?open=${appId}`;
+}
+
 function renderServicesGrid() {
     const container = document.getElementById('services-cards-grid');
     if (container) {
@@ -921,29 +1006,75 @@ function renderServicesGrid() {
     const search = (document.getElementById('srv-search-input').value || '').toLowerCase().trim();
     const filter = document.getElementById('srv-filter-select').value;
 
-    let filtered = globalServersList.filter(s => {
-        const name = (s.hostname || s.name || '').toLowerCase();
-        const ip = (s.ip_address || s.ip || '').toLowerCase();
-        if (search && !name.includes(search) && !ip.includes(search)) return false;
-
+    // 1. Build unified items list (Servers + Applications)
+    const serverItems = (globalServersList || []).map(s => {
+        const name = (s.hostname || s.name || 'Unknown Node');
+        const ip = (s.ip_address || s.ip || '0.0.0.0');
         const hasAppComp = Boolean(s.app_components && s.app_components.length > 0);
-        const isAppNode = hasAppComp || name.includes('app') || name.includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
-
+        const isAppNode = hasAppComp || name.toLowerCase().includes('app') || name.toLowerCase().includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
         const st = (s.status || 'online').toLowerCase();
         const sev = (s.severity || 'info').toLowerCase();
+        const alertCount = s.alert_count || 0;
         const isMaint = s.is_maintenance || st === 'maintenance' || st === 'isolated';
         const isDown = st === 'offline' || st === 'down';
-        
-        const isCrit = !isDown && !isMaint && sev === 'critical';
+        const isCrit = !isDown && !isMaint && (sev === 'critical' || alertCount > 0);
         const isTrouble = !isDown && !isMaint && !isCrit && (sev === 'warning' || sev === 'high');
         const isUp = !isDown && !isMaint && !isCrit && !isTrouble;
 
-        if (filter === 'app_nodes') return isAppNode;
-        if (filter === 'down') return isDown;
-        if (filter === 'maint') return isMaint;
-        if (filter === 'critical') return isCrit;
-        if (filter === 'trouble') return isTrouble;
-        if (filter === 'online') return isUp;
+        return {
+            _type: 'server',
+            raw: s,
+            id: s.id,
+            name: name,
+            ip: ip,
+            isAppNode: isAppNode,
+            isDown: isDown,
+            isMaint: isMaint,
+            isCrit: isCrit,
+            isTrouble: isTrouble,
+            isUp: isUp
+        };
+    });
+
+    const appItems = (globalAppsList || []).map(a => {
+        const dyn = (a.dynamic_status || 'NORMAL').toUpperCase();
+        const isDown = dyn === 'DOWN';
+        const isMaint = dyn === 'MAINT';
+        const openInc = a.open_incidents || 0;
+        const critInc = a.critical_incidents || 0;
+        const isCrit = dyn === 'CRITICAL' || critInc > 0 || openInc > 0;
+        const isTrouble = !isCrit && (dyn === 'TROUBLE' || (a.high_incidents && a.high_incidents > 0));
+        const isUp = !isDown && !isMaint && !isCrit && !isTrouble;
+
+        return {
+            _type: 'app',
+            raw: a,
+            id: a.id,
+            name: a.name || 'Unnamed Application',
+            ip: a.primary_url || 'http://localhost',
+            isAppNode: true,
+            isDown: isDown,
+            isMaint: isMaint,
+            isCrit: isCrit,
+            isTrouble: isTrouble,
+            isUp: isUp
+        };
+    });
+
+    const allItems = [...serverItems, ...appItems];
+
+    let filtered = allItems.filter(item => {
+        const name = (item.name || '').toLowerCase();
+        const ip = (item.ip || '').toLowerCase();
+        if (search && !name.includes(search) && !ip.includes(search)) return false;
+
+        if (filter === 'app_nodes') return item.isAppNode;
+        if (filter === 'servers') return item._type === 'server';
+        if (filter === 'down') return item.isDown;
+        if (filter === 'maint') return item.isMaint;
+        if (filter === 'critical') return item.isCrit;
+        if (filter === 'trouble') return item.isTrouble;
+        if (filter === 'online') return item.isUp;
         return true;
     });
 
@@ -954,7 +1085,126 @@ function renderServicesGrid() {
         return;
     }
 
-    container.innerHTML = filtered.map((s, index) => {
+    container.innerHTML = filtered.map((item, index) => {
+        // ========================================================
+        // A. APPLICATION NODE CARD RENDERING (Differentiated Style)
+        // ========================================================
+        if (item._type === 'app') {
+            const a = item.raw;
+            const aid = a.id;
+            const name = a.name || 'Unnamed Application';
+            const url = a.primary_url || '';
+            const openInc = a.open_incidents || 0;
+            const critInc = a.critical_incidents || 0;
+            const evMin = a.events_per_min || 0;
+            const compRatio = a.components_ratio || '1/1';
+            const [repComp, totComp] = (compRatio.includes('/') ? compRatio.split('/') : ['1','1']).map(Number);
+            const compPct = (totComp && totComp > 0) ? Math.round(((repComp || 0) / totComp) * 100) : 100;
+            const compColor = compPct === 100 ? '#10b981' : (compPct > 0 ? '#f59e0b' : '#ef4444');
+            const incPct = openInc > 0 ? 100 : 0;
+            const incColor = openInc > 0 ? '#ef4444' : '#10b981';
+
+            // Security badge
+            let secBadge = '';
+            if (item.isCrit) {
+                secBadge = `<span class="sec-pill-reboot" style="background:rgba(239,68,68,0.2); color:#ff5a5f; border:1px solid #ff5a5f; font-weight:700;">CRITICAL THREAT</span> <span class="sec-cve-counts"><span class="sec-cve-c">${openInc} INCIDENT${openInc>1?'S':''}</span></span>`;
+            } else if (item.isTrouble) {
+                secBadge = `<span class="sec-pill-update" style="background:rgba(245,158,11,0.2); color:#f59e0b; border:1px solid #f59e0b; font-weight:700;">SUSPICIOUS ANOMALY</span>`;
+            } else {
+                secBadge = `<span class="sec-pill-clean" style="font-weight:600;">Threat Protected</span>`;
+            }
+
+            // Alert Box
+            let alertBox = '';
+            if (item.isDown) {
+                alertBox = `<div class="service-alert-box" style="background:rgba(239,68,68,0.15); color:var(--red); border:1px solid rgba(239,68,68,0.3);"><strong>OFFLINE / SILENT</strong> Telemetry disconnected</div>`;
+            } else if (item.isMaint) {
+                alertBox = `<div class="service-alert-box sab-trouble"><strong>MAINTENANCE</strong> Maintenance Mode Active</div>`;
+            } else if (item.isCrit) {
+                alertBox = `<div class="service-alert-box" style="background:rgba(239,68,68,0.15); color:var(--red); border:1px solid rgba(239,68,68,0.4);"><strong>CRITICAL</strong> ${openInc} Open Incident(s) | Threat Detected</div>`;
+            } else if (item.isTrouble) {
+                alertBox = `<div class="service-alert-box sab-trouble"><strong>TROUBLE</strong> Application anomaly detected</div>`;
+            } else {
+                alertBox = `<div class="service-alert-box sab-normal"><strong>NORMAL</strong> Application Telemetry Active</div>`;
+            }
+
+            const borderColor = item.isDown ? 'var(--red)' : (item.isMaint ? 'var(--cyan)' : (item.isCrit ? 'var(--red)' : (item.isTrouble ? 'var(--amber)' : '')));
+
+            if (currentDashboardView === 'list') {
+                const listBorderColor = borderColor || '#c084fc';
+                return `
+                <div class="service-card-list appnode-card fade-in delay-${(index % 5) + 1}" onclick="openAppDetailsFromDash(${aid})" style="border-left: 4px solid ${listBorderColor} !important;">
+                    <div style="flex: 1.5; min-width: 140px;">
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <span style="color:#c084fc; font-size:12px">⬡</span>
+                            <div class="list-srv-name appnode-title" style="font-weight: 700; font-size: 13px;">${escapeHtml(name)}</div>
+                        </div>
+                        <div class="list-srv-ip appnode-url" style="font-size: 11px; font-family: monospace;">${escapeHtml(url)}</div>
+                    </div>
+                    <div style="flex: 1.5; font-size: 11px; transform: scale(0.9); transform-origin: left;">
+                        <div style="text-align:right">
+                            <span class="service-type-badge st-appnode">APP NODE</span>
+                            <div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">${escapeHtml(a.environment || 'Production')}</div>
+                        </div>
+                    </div>
+                    <div style="flex: 2; display: flex; gap: 16px; font-size: 11px; align-items: center;">
+                        <div><span class="list-metric-label" style="color:var(--muted)">Comps</span> <span class="list-metric-val" style="color:#c084fc; font-weight:600">${escapeHtml(compRatio)}</span></div>
+                        <div><span class="list-metric-label" style="color:var(--muted)">Rate</span> <span class="list-metric-val" style="color:#38bdf8; font-weight:600">${evMin}/m</span></div>
+                        <div><span class="list-metric-label" style="color:var(--muted)">Incidents</span> <span class="list-metric-val" style="color:${openInc>0?'var(--red)':'var(--green)'}; font-weight:600">${openInc}</span></div>
+                    </div>
+                    <div style="flex: 1; font-size: 11px; text-align: center;">
+                        ${secBadge}
+                    </div>
+                    <div style="flex: 1.5; transform: scale(0.9); transform-origin: right; display: flex; justify-content: flex-end;">
+                        ${alertBox}
+                    </div>
+                </div>
+                `;
+            } else {
+                return `
+                <div class="service-card appnode-card fade-in delay-${(index % 5) + 1}" onclick="openAppDetailsFromDash(${aid})" style="${borderColor ? 'border-color:' + borderColor + ' !important;' : ''}">
+                    <div>
+                        <div class="service-header">
+                            <div style="min-width:0; flex:1;">
+                                <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
+                                    <div class="appnode-icon" style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:5px; background:rgba(168,85,247,0.2); color:#c084fc; flex-shrink:0;">
+                                        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                                    </div>
+                                    <h4 class="service-title appnode-title" title="${escapeHtml(name)}">${escapeHtml(name)}</h4>
+                                    ${openInc > 0 ? `<span class="badge-alert-pill" style="background:rgba(239,68,68,0.2); color:var(--red); border:1px solid rgba(239,68,68,0.4);" title="${openInc} active incident(s)">🚨 ${openInc}</span>` : ''}
+                                </div>
+                                <div class="appnode-url" style="font-family:monospace; font-size:9.5px; margin-top:3px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="${escapeHtml(url)}">${escapeHtml(url)}</div>
+                            </div>
+                            <div style="text-align:right; flex-shrink:0;">
+                                <span class="service-type-badge st-appnode">APP NODE</span>
+                                <div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">${escapeHtml(a.environment || 'Production')}</div>
+                            </div>
+                        </div>
+
+                        <div class="donut-gauges-row">
+                            ${renderDonutGauge(compPct, 'COMPS', compColor)}
+                            ${renderDonutGauge(evMin > 100 ? 100 : evMin, 'EV/MIN', '#38bdf8')}
+                            ${renderDonutGauge(incPct, 'THREAT', incColor)}
+                        </div>
+                    </div>
+
+                    <div class="card-security-bar appnode-sec-bar">
+                        <span class="card-sec-label" style="color:var(--purple, #c084fc); font-weight:700;">APP DEFENSE</span>
+                        <div class="sec-badge-wrap">${secBadge}</div>
+                    </div>
+
+                    <div>
+                        ${alertBox}
+                    </div>
+                </div>
+                `;
+            }
+        }
+
+        // ========================================================
+        // B. STANDARD ASSET / SERVER CARD RENDERING (UNTOUCHED)
+        // ========================================================
+        const s = item.raw;
         const sid = s.id;
         const name = s.hostname || s.name || 'Unknown Node';
         const ip = s.ip_address || s.ip || '0.0.0.0';
@@ -1013,7 +1263,7 @@ function renderServicesGrid() {
             const low = s.vuln_low || 0;
             const total = crit + high + med + low;
             if (total > 0) {
-                vulnBadge = `${rebootPart}<span class="sec-cve-counts"><span class="sec-cve-c">C ${crit}</span><span class="sec-cve-dot">·</span><span class="sec-cve-h">H ${high}</span><span class="sec-cve-dot">·</span><span class="sec-cve-m">M ${med}</span></span>`;
+                vulnBadge = `${rebootPart}<span class="sec-cve-counts"><span class="sec-cve-c">C ${crit}</span><span class="sec-cve-dot">•</span><span class="sec-cve-h">H ${high}</span><span class="sec-cve-dot">•</span><span class="sec-cve-m">M ${med}</span></span>`;
             } else if (s.last_vuln_scan) {
                 vulnBadge = `${rebootPart}<span class="sec-pill-clean">0 Known Vulns</span>`;
             } else {
