@@ -3,7 +3,8 @@
 # EMBEDDED REAL-TIME HOST SECURITY WATCHER + FIM (FILE INTEGRITY MONITORING)
 # Continuously monitors SSH logs, shell commands, process execution, and FIM
 # ══════════════════════════════════════════════════════════════════════════════
-import time, subprocess, glob, threading, os, re, socket, json
+import time, subprocess, glob, threading, os, re, socket, json, urllib.parse
+import psycopg2, psycopg2.extras
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -5537,7 +5538,28 @@ async def api_approval_request(request: Request):
     ip = (body.get("ip_address") or body.get("ip") or "").strip()
     if not ip or ip in ("127.0.0.1", "0.0.0.0"):
         ip = client_ip
-    res = db.add_approval_request(hostname, ip)
+    token = body.get("token") or body.get("agent_token")
+    app_id = body.get("app_id")
+    role = body.get("role")
+
+    display_hostname = hostname
+    if app_id and role:
+        app_name = f"App #{app_id}"
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT name FROM applications WHERE id = %s;", (app_id,))
+                    r = cur.fetchone()
+                    if r:
+                        app_name = r.get("name") if isinstance(r, dict) else r[0]
+            except Exception:
+                pass
+            finally:
+                conn.close()
+        display_hostname = f"[{app_name} | {role.upper()}] {hostname}"
+
+    res = db.add_approval_request(display_hostname, ip, token=token)
     return {"ok": True, "id": res.get("id"), "token": res.get("token"), "status": res.get("status")}
 
 @app.get("/api/agent/status")
@@ -7436,37 +7458,38 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
         conn.close()
 
 TOMCAT_ACCESS_RE = re.compile(
-    r'^(?P<ip>[^ ]+)\s+(?P<ident>[^ ]+)\s+(?P<user>[^ ]+)\s+\[(?P<time>[^\]]+)\]\s+"(?P<method>[A-Z]+)\s+(?P<path>[^ ]+)\s+HTTP/[0-9\.]+"\s+(?P<status>\d+)\s+(?P<bytes>[^ ]+)'
+    r'^(?P<ip>[^ ]+)\s+(?P<ident>[^ ]+)\s+(?P<user>[^ ]+)\s+\[(?P<time>[^\]]+)\]\s+"(?P<method>[A-Z]+)\s+(?P<path>.+?)\s+HTTP/[0-9\.]+"\s+(?P<status>\d+)\s+(?P<bytes>[^ ]+)(?:\s+.*)?$'
 )
 
 def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str):
-    """Real-time heuristics detecting web attacks from parsed access logs."""
-    p_lower = path.lower()
-    
+    """Real-time heuristics detecting web attacks from parsed access logs with full URL-decode support."""
+    p_unquoted = urllib.parse.unquote(path).lower()
+    p_lower = path.lower() + " " + p_unquoted
+
     # 1. SQL Injection
     sqli_regex = r"(\%27|')\s*(or|and)\s*.*(=|<|>)|union\s+(all\s+)?select|sleep\(|--|information_schema|waitfor\s+delay"
     if re.search(sqli_regex, p_lower):
         return "SQL_INJECTION", "critical", "SQL Injection Exploit Attempt", "T1190 - Exploit Public-Facing Application"
 
     # 2. Log4j / JNDI Exploit
-    if "${jndi:" in p_lower:
+    if "${jndi:" in p_lower or "%24%7bjndi" in path.lower() or "jndi:ldap" in p_lower or "jndi:rmi" in p_lower:
         return "JNDI_EXPLOIT", "critical", "Log4Shell (JNDI) Remote Code Execution Attempt", "T1190 - Exploit Public-Facing Application"
 
-    # 3. Path Traversal / LFI
+    # 3. Cross-Site Scripting (XSS)
+    if "<script" in p_lower or "%3cscript" in path.lower() or "javascript:" in p_lower or "onerror=" in p_lower or "onload=" in p_lower or "alert(" in p_lower:
+        return "XSS_ATTACK", "medium", "Cross-Site Scripting (XSS) Injection", "T1059.007 - Cross-Site Scripting"
+
+    # 4. Path Traversal / LFI
     if "../" in p_lower or "..%2f" in p_lower or "/etc/passwd" in p_lower or "win.ini" in p_lower:
         return "PATH_TRAVERSAL", "high", "Directory / Path Traversal Attack", "T1083 - File and Directory Discovery"
 
-    # 4. Cross-Site Scripting (XSS)
-    if "<script" in p_lower or "javascript:" in p_lower or "onerror=" in p_lower or "onload=" in p_lower:
-        return "XSS_ATTACK", "medium", "Cross-Site Scripting (XSS) Injection", "T1059.007 - Cross-Site Scripting"
-
     # 5. Admin Path Abuse / Privilege Violation
     if "/admin" in p_lower:
-        if status == 403 or (user and user != "-" and user.lower() != "admin"):
+        if status in (401, 403) or (user and user != "-" and user.lower() != "admin"):
             return "ADMIN_ACCESS_ABUSE", "high", "Restricted Admin Function Access Abuse", "T1078 - Valid Accounts"
 
     # 6. Authentication Failure / Brute Force
-    if any(k in p_lower for k in ("login", "auth", "signin")) and status == 401:
+    if any(k in p_lower for k in ("login", "auth", "signin")) and status in (401, 403):
         return "LOGIN_FAILURE", "medium", "Failed User Authentication (HTTP 401)", "T1110 - Brute Force"
 
     return "HTTP_ACCESS", "info", None, None
@@ -7525,47 +7548,87 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                         method, raw_path, status_code, user, client_ip
                     )
 
-                    # Insert partitioned event
+                    # Insert partitioned event and get its ID
                     cur.execute("""
                         INSERT INTO app_events (
                             event_time, application_id, component_id, node, source_type, event_type,
                             client_ip, user_name, method, url_path, status_code, bytes_sent, severity, raw
                         )
-                        VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                        VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id;
                     """, (
                         actual_app_id, comp_id, node_name, source_type, event_type,
                         client_ip, user if user != "-" else None, method, raw_path,
                         status_code, bytes_sent, severity, psycopg2.extras.Json(ev)
                     ))
+                    ev_row = cur.fetchone()
+                    raw_ev_id = ev_row["id"] if ev_row else None
                     ingested_count += 1
 
                     # If attack detected, record or update incident timeline
                     if severity in ("medium", "high", "critical"):
                         attacker_key = f"ip:{client_ip}"
                         cur.execute("""
-                            INSERT INTO app_incidents (
-                                application_id, attacker_key, title, severity, status, attack_types,
-                                event_count, client_ip, first_seen, last_seen
-                            )
-                            VALUES (%s, %s, %s, %s, 'Open', ARRAY[%s], 1, %s, NOW(), NOW())
-                            ON CONFLICT (application_id, attacker_key) DO UPDATE
-                            SET event_count = app_incidents.event_count + 1,
-                                last_seen = NOW(),
-                                severity = CASE 
-                                    WHEN EXCLUDED.severity = 'critical' OR app_incidents.severity = 'critical' THEN 'critical'
-                                    WHEN EXCLUDED.severity = 'high' OR app_incidents.severity = 'high' THEN 'high'
-                                    ELSE 'medium'
-                                END,
-                                attack_types = array_cat(app_incidents.attack_types, ARRAY[%s]::varchar[])
-                            RETURNING id;
-                        """, (actual_app_id, attacker_key, f"{rule_title} from {client_ip}", severity, event_type, client_ip, event_type))
-                        
-                        inc_row = cur.fetchone()
-                        if inc_row:
+                            SELECT id, events_count, severity, mitre_tactics
+                            FROM app_incidents
+                            WHERE application_id = %s AND attacker_key = %s AND status = 'Open'
+                            ORDER BY id DESC LIMIT 1;
+                        """, (actual_app_id, attacker_key))
+                        existing_inc = cur.fetchone()
+
+                        if existing_inc:
+                            inc_id = existing_inc["id"]
+                            new_count = (existing_inc.get("events_count") or 0) + 1
+                            curr_sev = existing_inc.get("severity") or "medium"
+                            if severity == "critical" or curr_sev == "critical":
+                                calc_sev = "critical"
+                            elif severity == "high" or curr_sev == "high":
+                                calc_sev = "high"
+                            else:
+                                calc_sev = "medium"
+
+                            tactics = existing_inc.get("mitre_tactics") or []
+                            if isinstance(tactics, str):
+                                try: tactics = json.loads(tactics)
+                                except Exception: tactics = []
+                            if mitre_tag and mitre_tag not in tactics:
+                                tactics.append(mitre_tag)
+
                             cur.execute("""
-                                INSERT INTO app_incident_events (incident_id, step_order, event_type, detail, timestamp)
-                                VALUES (%s, (SELECT COALESCE(MAX(step_order), 0) + 1 FROM app_incident_events WHERE incident_id = %s), %s, %s, NOW());
-                            """, (inc_row["id"], inc_row["id"], event_type, f"{method} {raw_path} -> HTTP {status_code}"))
+                                UPDATE app_incidents
+                                SET events_count = %s,
+                                    last_event_at = NOW(),
+                                    severity = %s,
+                                    mitre_tactics = %s,
+                                    updated_at = NOW()
+                                WHERE id = %s;
+                            """, (new_count, calc_sev, psycopg2.extras.Json(tactics), inc_id))
+                        else:
+                            tactics = [mitre_tag] if mitre_tag else []
+                            cur.execute("""
+                                INSERT INTO app_incidents (
+                                    application_id, title, attacker_key, attacker_type, client_ip, user_name,
+                                    severity, status, first_event_at, last_event_at, events_count, stages_count, mitre_tactics
+                                )
+                                VALUES (%s, %s, %s, 'ip', %s, %s, %s, 'Open', NOW(), NOW(), 1, 1, %s)
+                                RETURNING id;
+                            """, (
+                                actual_app_id, f"{rule_title} from {client_ip}", attacker_key,
+                                client_ip, user if user != "-" else None, severity, psycopg2.extras.Json(tactics)
+                            ))
+                            inc_row = cur.fetchone()
+                            inc_id = inc_row["id"] if inc_row else None
+
+                        if inc_id:
+                            cur.execute("""
+                                INSERT INTO app_incident_events (
+                                    incident_id, event_time, node_name, role, rule_name, mitre_technique, step_summary, raw_event_id
+                                )
+                                VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s);
+                            """, (
+                                inc_id, node_name, role, rule_title or event_type,
+                                mitre_tag or "", f"{method} {raw_path} -> HTTP {status_code}", raw_ev_id
+                            ))
 
                         if severity == "critical":
                             highest_severity = "critical"
@@ -7639,11 +7702,100 @@ def api_get_app_incidents(request: Request, app_id: int):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT i.*, 
-                    (SELECT json_agg(e ORDER BY e.step_order ASC) FROM app_incident_events e WHERE e.incident_id = i.id) as timeline
+                    (SELECT json_agg(e ORDER BY e.event_time ASC) FROM app_incident_events e WHERE e.incident_id = i.id) as timeline
                 FROM app_incidents i
                 WHERE i.application_id = %s
-                ORDER BY i.last_seen DESC;
+                ORDER BY i.last_event_at DESC;
             """, (app_id,))
             return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+@app.get("/api/apps/{app_id}/users")
+def api_get_app_users(request: Request, app_id: int):
+    """Retrieves observed users and attacker client IPs for an application."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    conn = db.get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    COALESCE(user_name, client_ip) AS identifier,
+                    client_ip,
+                    user_name,
+                    COUNT(*) AS total_requests,
+                    COUNT(*) FILTER (WHERE severity IN ('medium', 'high', 'critical')) AS attack_events,
+                    MAX(event_time) AS last_seen,
+                    MIN(event_time) AS first_seen,
+                    MAX(severity) AS peak_severity
+                FROM app_events
+                WHERE application_id = %s AND client_ip IS NOT NULL
+                GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
+                ORDER BY attack_events DESC, total_requests DESC
+                LIMIT 50;
+            """, (app_id,))
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Error in api_get_app_users: {e}")
+        return []
+    finally:
+        conn.close()
+
+@app.get("/api/apps/{app_id}/rules")
+def api_get_app_rules(request: Request, app_id: int):
+    """Retrieves active detection rules for an application."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    conn = db.get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, name, description, rule_type, severity, mitre_technique_id, mitre_tactic, enabled, threshold, window_seconds
+                FROM app_rules
+                WHERE application_id IS NULL OR application_id = %s
+                ORDER BY id ASC;
+            """, (app_id,))
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Error in api_get_app_rules: {e}")
+        return []
+    finally:
+        conn.close()
+
+@app.post("/api/apps/{app_id}/components/{comp_id}/approve")
+def api_approve_app_component(request: Request, app_id: int, comp_id: int):
+    """Manually approves an application component."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    conn = db.get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, enrollment_token, node_name FROM application_components WHERE id = %s AND application_id = %s;", (comp_id, app_id))
+            comp = cur.fetchone()
+            if not comp:
+                raise HTTPException(status_code=404, detail="Component not found")
+            token = comp["enrollment_token"]
+            cur.execute("UPDATE application_components SET status = 'APPROVED' WHERE id = %s;", (comp_id,))
+            if token:
+                cur.execute("UPDATE approvals SET status = 'approved' WHERE agent_token = %s;", (token,))
+            cur.execute("UPDATE applications SET status = 'NORMAL', updated_at = NOW() WHERE id = %s AND status = 'WAITING';", (app_id,))
+            conn.commit()
+            return {"status": "success", "message": f"Component {comp_id} approved"}
+    except Exception as e:
+        logger.error(f"Error approving component {comp_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()

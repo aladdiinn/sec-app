@@ -1650,12 +1650,13 @@ def delete_server(server_id: int):
     finally:
         conn.close()
 
-def add_approval_request(hostname: str, ip_address: str):
+def add_approval_request(hostname: str, ip_address: str, token: str = None):
     conn = get_db_connection()
     if not conn:
-        return {"id": 1, "token": f"sp-token-{int(time.time())}", "status": "pending"}
+        return {"id": 1, "token": token or f"sp-token-{int(time.time())}", "status": "pending"}
     try:
-        token = f"sp-token-{int(time.time())}-{random.randint(1000, 9999)}"
+        if not token:
+            token = f"sp-token-{int(time.time())}-{random.randint(1000, 9999)}"
         with conn.cursor() as cur:
             # Delete any unapproved server record from servers table so it does not appear in Assets until approved
             try:
@@ -1742,6 +1743,24 @@ def approve_request(app_id: int):
             
             # Approve ALL approval requests for this hostname/IP so no pending duplicates remain
             cur.execute("UPDATE approvals SET status = 'approved' WHERE id = %s OR (LOWER(hostname) = LOWER(%s) AND hostname != '') OR (ip_address = %s AND ip_address != '');", (app_id, hostname, ip))
+
+            token = app_data.get("agent_token")
+            # If this approval is for an application component, promote it
+            if token:
+                try:
+                    cur.execute("""
+                        UPDATE application_components
+                        SET status = 'APPROVED'
+                        WHERE enrollment_token = %s;
+                    """, (token,))
+                    cur.execute("""
+                        UPDATE applications
+                        SET status = 'NORMAL'
+                        WHERE id = (SELECT application_id FROM application_components WHERE enrollment_token = %s LIMIT 1)
+                          AND status = 'WAITING';
+                    """, (token,))
+                except Exception:
+                    pass
             
             # Check if server already exists - do NOT match on empty string or host IP if hostname differs!
             existing_srv = None

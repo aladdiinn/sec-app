@@ -214,8 +214,12 @@ class LogFileTailer:
             stat = os.stat(self.filepath)
             self.inode = stat.st_ino
             self.file_obj = open(self.filepath, "r", encoding="utf-8", errors="replace")
-            # First open: seek to end of file to prevent shipping years of historical data
-            self.file_obj.seek(0, os.SEEK_END)
+            # Tailer seek: if file < 100KB read from start so recent test curls aren't skipped
+            file_size = stat.st_size
+            if file_size < 100 * 1024:
+                self.file_obj.seek(0, os.SEEK_SET)
+            else:
+                self.file_obj.seek(max(0, file_size - 50 * 1024), os.SEEK_SET)
             self.last_pos = self.file_obj.tell()
         except Exception as e:
             print(f"[WARN] Error opening {self.filepath}: {e}")

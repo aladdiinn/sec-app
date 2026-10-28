@@ -1,39 +1,37 @@
 {% extends "base.html" %}
 {% set active = 'apps' %}
-{% block title %}Application Inventory — SOC Command Center{% endblock %}
-{% block page_title %}Application Inventory{% endblock %}
-{% block page_sub %}Business applications monitored at application level{% endblock %}
+{% block page_title %}Application SIEM{% endblock %}
+{% block page_sub %}Application-level telemetry, security monitoring & threat detection{% endblock %}
 
 {% block content %}
 <div class="fade-in">
-    <!-- Action Controls Bar -->
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; flex-wrap:wrap; gap:16px">
-        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
-            <!-- Search -->
-            <input type="text" id="app-search-input" placeholder="🔍 Search application, URL or domain..." class="glass mono" 
-                   style="padding:8px 14px; border-radius:6px; font-size:12px; border:1px solid var(--border); color:var(--text); background:var(--bg2); width:280px" 
+    <!-- Header Action Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px">
+        <div>
+            <h3 style="margin:0; font-size:18px; font-weight:700; color:var(--text)">Application Inventory & Threat Defense</h3>
+            <div style="font-size:12px; color:var(--text3); margin-top:2px">
+                Continuous application-layer monitoring for Apache Tomcat and PostgreSQL instances
+            </div>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center">
+            <input type="text" id="app-search-input" placeholder="Search applications..." 
+                   class="glass" 
+                   style="padding:8px 14px; border-radius:8px; border:1px solid var(--border); font-size:12px; width:220px; color:var(--text)"
                    oninput="renderApplicationsGrid()">
-
-            <!-- Status Filter -->
-            <select id="app-status-filter" class="glass mono" 
-                    style="padding:8px 14px; border-radius:6px; font-size:12px; border:1px solid var(--border); color:var(--text); background:var(--bg2)" 
+            
+            <select id="app-status-filter" class="glass" 
+                    style="padding:8px 12px; border-radius:8px; border:1px solid var(--border); font-size:12px; color:var(--text)"
                     onchange="loadApplications()">
                 <option value="all">All Statuses</option>
-                <option value="normal">Normal Only</option>
-                <option value="trouble">Trouble / Warning Only</option>
-                <option value="critical">Critical Issues Only</option>
-                <option value="down">Offline / Down Only</option>
-                <option value="maint">Maintenance Mode</option>
-                <option value="waiting">Waiting for First Event</option>
+                <option value="CRITICAL">Critical Threats</option>
+                <option value="TROUBLE">Active Warnings</option>
+                <option value="NORMAL">Normal</option>
+                <option value="WAITING">Waiting Telemetry</option>
+                <option value="MAINT">Maintenance</option>
             </select>
-        </div>
 
-        <div style="display:flex; align-items:center; gap:10px">
-            <button class="btn btn-primary" onclick="openAddAppWizard()" style="padding:8px 18px; font-size:12px; font-weight:700">
-                + ADD NEW APP
-            </button>
-            <button class="btn btn-glass" onclick="loadApplications()" style="padding:8px 14px; font-size:12px" title="Refresh Applications">
-                🔄 Refresh
+            <button class="btn btn-primary" onclick="openAddAppWizard()" style="padding:8px 16px; font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px">
+                <span>+</span> Add Application
             </button>
         </div>
     </div>
@@ -47,9 +45,10 @@
 <!-- Include Shared Add Application Wizard -->
 {% include "add_app_wizard_modal.html" %}
 
-<!-- Application Details Popup Shell (Step 6 placeholder preview) -->
+<!-- Application Details Popup Shell with Interactive Tabs -->
 <div id="app-details-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9998; backdrop-filter:blur(6px)" onclick="closeAppDetailsModal()"></div>
-<div id="app-details-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; border-radius:16px; z-index:9999; width:920px; max-width:94vw; max-height:90vh; overflow-y:auto; box-shadow:0 30px 90px rgba(0,0,0,0.9); border:1px solid var(--cyan); background:var(--card)">
+<div id="app-details-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; border-radius:16px; z-index:9999; width:960px; max-width:95vw; max-height:90vh; overflow-y:auto; box-shadow:0 30px 90px rgba(0,0,0,0.9); border:1px solid var(--cyan); background:var(--card)">
+    <!-- Header -->
     <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; border-bottom:1px solid var(--border); padding-bottom:12px">
         <div>
             <div style="display:flex; align-items:center; gap:10px">
@@ -65,19 +64,19 @@
         </div>
     </div>
 
-    <!-- Tabs Header -->
+    <!-- Interactive Tabs Header -->
     <div class="tabs" style="display:flex; gap:18px; border-bottom:1px solid var(--border); margin-bottom:18px">
-        <span class="tab-item active" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--cyan); border-bottom:2px solid var(--cyan); cursor:pointer">Overview</span>
-        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Events</span>
-        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Incidents</span>
-        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Users</span>
-        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Rules</span>
-        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Components</span>
-        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Settings</span>
+        <span class="tab-item active" id="tab-btn-overview" onclick="switchModalTab('overview')" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--cyan); border-bottom:2px solid var(--cyan); cursor:pointer">Overview</span>
+        <span class="tab-item" id="tab-btn-events" onclick="switchModalTab('events')" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Events</span>
+        <span class="tab-item" id="tab-btn-incidents" onclick="switchModalTab('incidents')" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Incidents</span>
+        <span class="tab-item" id="tab-btn-users" onclick="switchModalTab('users')" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Users</span>
+        <span class="tab-item" id="tab-btn-rules" onclick="switchModalTab('rules')" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Rules</span>
+        <span class="tab-item" id="tab-btn-components" onclick="switchModalTab('components')" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Components</span>
+        <span class="tab-item" id="tab-btn-settings" onclick="switchModalTab('settings')" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Settings</span>
     </div>
 
-    <!-- Popup Body Preview -->
-    <div id="pop-app-body">
+    <!-- 1. OVERVIEW TAB -->
+    <div id="pop-tab-overview" class="modal-tab-pane">
         <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:20px">
             <div style="background:var(--bg2); padding:12px; border-radius:8px; border:1px solid var(--border); text-align:center">
                 <div style="font-size:9.5px; color:var(--text3); text-transform:uppercase; font-weight:700">COMPONENTS</div>
@@ -102,6 +101,108 @@
             <div id="pop-components-table" style="font-size:12px">Loading components...</div>
         </div>
     </div>
+
+    <!-- 2. EVENTS TAB -->
+    <div id="pop-tab-events" class="modal-tab-pane" style="display:none">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:10px">
+            <div style="display:flex; gap:8px; flex:1">
+                <input type="text" id="events-filter-query" placeholder="Filter events by IP, path, method..." 
+                       class="glass" style="padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; width:260px; color:var(--text)"
+                       oninput="renderFilteredEvents()">
+                <select id="events-filter-severity" class="glass" 
+                        style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
+                        onchange="renderFilteredEvents()">
+                    <option value="all">All Severities</option>
+                    <option value="critical">Critical Only</option>
+                    <option value="high">High & Critical</option>
+                    <option value="medium">Medium, High, Critical</option>
+                    <option value="info">Info Only</option>
+                </select>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center">
+                <label style="font-size:11px; color:var(--text3); display:flex; align-items:center; gap:4px; cursor:pointer">
+                    <input type="checkbox" id="events-auto-refresh" checked> Auto-refresh (3s)
+                </label>
+                <button class="btn btn-glass" onclick="loadAppEvents(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+            </div>
+        </div>
+        <div id="pop-events-content" style="max-height:480px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; background:var(--bg2)">
+            <div style="padding:30px; text-align:center; color:var(--text3)">Loading live event stream...</div>
+        </div>
+    </div>
+
+    <!-- 3. INCIDENTS TAB -->
+    <div id="pop-tab-incidents" class="modal-tab-pane" style="display:none">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+            <span style="font-size:12px; color:var(--text3)">Correlated attack timelines aggregated by attacker key</span>
+            <button class="btn btn-glass" onclick="loadAppIncidents(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+        </div>
+        <div id="pop-incidents-content" style="max-height:480px; overflow-y:auto; display:flex; flex-direction:column; gap:12px">
+            <div style="padding:30px; text-align:center; color:var(--text3)">Loading correlated incidents...</div>
+        </div>
+    </div>
+
+    <!-- 4. USERS & ATTACKERS TAB -->
+    <div id="pop-tab-users" class="modal-tab-pane" style="display:none">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+            <span style="font-size:12px; color:var(--text3)">Observed client IPs and authenticated users interacting with this application</span>
+            <button class="btn btn-glass" onclick="loadAppUsers(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+        </div>
+        <div id="pop-users-content" style="max-height:480px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; background:var(--bg2)">
+            <div style="padding:30px; text-align:center; color:var(--text3)">Loading user activity...</div>
+        </div>
+    </div>
+
+    <!-- 5. RULES TAB -->
+    <div id="pop-tab-rules" class="modal-tab-pane" style="display:none">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+            <span style="font-size:12px; color:var(--text3)">Application SIEM heuristic and signature detection rules</span>
+            <button class="btn btn-glass" onclick="loadAppRules(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+        </div>
+        <div id="pop-rules-content" style="max-height:480px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; background:var(--bg2)">
+            <div style="padding:30px; text-align:center; color:var(--text3)">Loading detection rules...</div>
+        </div>
+    </div>
+
+    <!-- 6. COMPONENTS TAB -->
+    <div id="pop-tab-components" class="modal-tab-pane" style="display:none">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+            <span style="font-size:12px; color:var(--text3)">Registered application components, enrollment tokens & telemetry collector status</span>
+            <button class="btn btn-glass" onclick="loadAppComponentsTab(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+        </div>
+        <div id="pop-components-tab-content" style="max-height:480px; overflow-y:auto; display:flex; flex-direction:column; gap:12px">
+            <div style="padding:30px; text-align:center; color:var(--text3)">Loading components...</div>
+        </div>
+    </div>
+
+    <!-- 7. SETTINGS TAB -->
+    <div id="pop-tab-settings" class="modal-tab-pane" style="display:none">
+        <div style="background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:20px; margin-bottom:16px">
+            <h4 style="margin:0 0 12px 0; font-size:13px; font-weight:700; color:var(--text)">Application Information</h4>
+            <div style="display:grid; grid-template-columns:120px 1fr; gap:10px; font-size:12px">
+                <span style="color:var(--text3)">Application Name:</span> <span id="set-app-name" style="font-weight:700; color:var(--text)">-</span>
+                <span style="color:var(--text3)">Primary URL:</span> <span id="set-app-url" style="font-family:var(--font-mono), monospace; color:var(--cyan)">-</span>
+                <span style="color:var(--text3)">Environment:</span> <span id="set-app-env" style="color:var(--text)">-</span>
+                <span style="color:var(--text3)">Created:</span> <span id="set-app-created" style="color:var(--text3)">-</span>
+            </div>
+        </div>
+
+        <div style="background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:20px; margin-bottom:16px">
+            <h4 style="margin:0 0 8px 0; font-size:13px; font-weight:700; color:var(--text)">Maintenance Mode</h4>
+            <p style="margin:0 0 12px 0; font-size:11.5px; color:var(--text3)">When maintenance mode is active, alert email notifications are silenced while telemetry ingestion continues uninterrupted.</p>
+            <button class="btn btn-glass" id="set-btn-maint" onclick="toggleAppMaintenanceFromModal()" style="font-size:11.5px; padding:6px 16px">
+                Toggle Maintenance Mode
+            </button>
+        </div>
+
+        <div style="background:rgba(239,68,68,0.06); border:1px solid rgba(239,68,68,0.3); border-radius:8px; padding:20px">
+            <h4 style="margin:0 0 6px 0; font-size:13px; font-weight:700; color:var(--red)">Danger Zone</h4>
+            <p style="margin:0 0 14px 0; font-size:11.5px; color:var(--text3)">Deleting this application will permanently remove all attached components, rules, and incident records.</p>
+            <button class="btn" onclick="deleteAppFromModal()" style="background:var(--red); color:#fff; border:none; padding:7px 18px; border-radius:6px; font-size:11.5px; font-weight:700; cursor:pointer">
+                🗑️ Delete Application
+            </button>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -109,6 +210,9 @@
 <script>
 let currentApplications = [];
 let activeModalAppId = null;
+let currentAppDetails = null;
+let cachedEvents = [];
+let eventRefreshTimer = null;
 
 async function loadApplications() {
     const grid = document.getElementById('apps-grid');
@@ -159,137 +263,116 @@ function renderApplicationsGrid() {
         const id = a.id;
         const name = escapeHtml(a.name || 'Unnamed App');
         const url = escapeHtml(a.primary_url || '');
+        const env = escapeHtml(a.environment || 'Production');
+        const status = a.computed_status || a.status || 'WAITING';
+        const badgeColor = a.status_color || 'm';
         const compRatio = a.components_ratio || '0/0';
         const epm = a.events_per_min || 0;
         const inc = a.open_incidents || 0;
         const lastEv = a.last_event_formatted || 'never';
         const proj = escapeHtml(a.project_name || 'No project');
-        const status = a.computed_status || 'WAITING';
-        const statusColor = a.status_color || 'm';
-        const statusDesc = escapeHtml(a.status_desc || '');
 
-        // Color mapper for status strip
-        let badgeBg = 'rgba(148,163,184,0.15)', badgeFg = 'var(--text3)', badgeBorder = 'var(--border)';
-        if (statusColor === 'ok') {
-            badgeBg = 'rgba(16,185,129,0.15)'; badgeFg = 'var(--green)'; badgeBorder = 'rgba(16,185,129,0.3)';
-        } else if (statusColor === 'a') {
-            badgeBg = 'rgba(245,158,11,0.15)'; badgeFg = 'var(--amber)'; badgeBorder = 'rgba(245,158,11,0.3)';
-        } else if (statusColor === 'r') {
-            badgeBg = 'rgba(239,68,68,0.15)'; badgeFg = 'var(--red)'; badgeBorder = 'rgba(239,68,68,0.3)';
-        } else if (statusColor === 'b') {
-            badgeBg = 'rgba(56,189,248,0.15)'; badgeFg = 'var(--cyan)'; badgeBorder = 'rgba(56,189,248,0.3)';
+        let statusBg = 'rgba(148,163,184,0.12)';
+        let statusFg = 'var(--text3)';
+        let statusBorder = 'rgba(148,163,184,0.3)';
+
+        if (status === 'CRITICAL') {
+            statusBg = 'rgba(239,68,68,0.15)'; statusFg = 'var(--red)'; statusBorder = 'rgba(239,68,68,0.4)';
+        } else if (status === 'TROUBLE') {
+            statusBg = 'rgba(245,158,11,0.15)'; statusFg = 'var(--amber)'; statusBorder = 'rgba(245,158,11,0.4)';
+        } else if (status === 'NORMAL') {
+            statusBg = 'rgba(16,185,129,0.15)'; statusFg = 'var(--green)'; statusBorder = 'rgba(16,185,129,0.4)';
+        } else if (status === 'MAINT') {
+            statusBg = 'rgba(56,189,248,0.15)'; statusFg = 'var(--cyan)'; statusBorder = 'rgba(56,189,248,0.4)';
+        } else if (status === 'PENDING_APPROVAL' || status === 'WAITING') {
+            statusBg = 'rgba(245,158,11,0.12)'; statusFg = 'var(--amber)'; statusBorder = 'rgba(245,158,11,0.3)';
         }
 
         return `
-        <div class="card glass glass-hover fade-in" onclick="openAppDetailsModal(${id})" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:20px; border-radius:12px; cursor:pointer; border:1px solid var(--border)">
-            <div>
-                <!-- Top Tags (MAINT & DEL) -->
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-                    <span class="badge" style="background:rgba(56,189,248,0.12); color:var(--cyan); border:1px solid rgba(56,189,248,0.3); font-weight:800; font-size:9.5px; letter-spacing:0.5px">APP</span>
-                    <div style="display:flex; gap:6px" onclick="event.stopPropagation()">
-                        <button onclick="toggleAppMaintenance(${id}, event)" title="Toggle Maintenance Mode" 
-                                style="background:${status==='MAINT'?'rgba(56,189,248,0.2)':'var(--bg2)'}; border:1px solid var(--border); color:${status==='MAINT'?'var(--cyan)':'var(--text2)'}; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:9.5px; font-weight:700">
-                            MAINT
-                        </button>
-                        <button onclick="deleteAppConfirm(${id}, '${name}', event)" title="Delete Application" 
-                                style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:var(--red); border-radius:4px; padding:3px 8px; cursor:pointer; font-size:9.5px; font-weight:700">
-                            DEL
-                        </button>
+        <div class="card glass hover-card" onclick="openAppDetailsModal(${id})" 
+             style="cursor:pointer; border-radius:12px; padding:20px; transition:transform 0.15s ease, border-color 0.15s ease; border:1px solid var(--border)">
+            
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
+                <div style="overflow:hidden">
+                    <div style="display:flex; align-items:center; gap:8px">
+                        <h4 style="margin:0; font-size:16px; font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${name}">
+                            ${name}
+                        </h4>
+                    </div>
+                    <div style="font-size:11.5px; color:var(--text3); font-family:var(--font-mono), monospace; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${url}">
+                        ${url}
                     </div>
                 </div>
+                <span class="badge" style="background:${statusBg}; color:${statusFg}; border:1px solid ${statusBorder}; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px">
+                    ${status === 'WAITING' ? 'WAITING DATA' : status}
+                </span>
+            </div>
 
-                <!-- Title & URL -->
-                <div style="margin-bottom:12px">
-                    <h3 style="margin:0 0 4px 0; font-size:16px; font-weight:800; color:var(--text); font-family:var(--font-sans)">${name}</h3>
-                    <div style="font-size:11.5px; color:var(--text3); font-family:var(--font-mono), monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${url}</div>
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; background:var(--bg2); padding:10px 12px; border-radius:8px; margin-bottom:14px; font-size:11px; text-align:center; border:1px solid var(--border)">
+                <div>
+                    <span style="color:var(--text3); display:block; font-size:9.5px; text-transform:uppercase; font-weight:700">COMPONENTS</span>
+                    <b style="display:block; font-size:14px; color:var(--text); font-family:var(--font-sans); margin-top:2px">${compRatio}</b>
                 </div>
-
-                <!-- KV Box -->
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:10px; color:var(--text3)">
-                    <div>
-                        <span>COMPONENTS</span>
-                        <b style="display:block; font-size:14px; color:var(--text); font-family:var(--font-sans); margin-top:2px">${compRatio}</b>
-                    </div>
-                    <div>
-                        <span>EVENTS / MIN</span>
-                        <b style="display:block; font-size:14px; color:var(--text); font-family:var(--font-sans); margin-top:2px">${epm}</b>
-                    </div>
-                    <div>
-                        <span>OPEN INCIDENTS</span>
-                        <b style="display:block; font-size:14px; color:${inc>0?'var(--red)':'var(--text)'}; font-family:var(--font-sans); margin-top:2px">${inc}</b>
-                    </div>
-                    <div>
-                        <span>LAST EVENT</span>
-                        <b style="display:block; font-size:13px; color:var(--text2); font-family:var(--font-sans); margin-top:2px">${lastEv}</b>
-                    </div>
+                <div>
+                    <span style="color:var(--text3); display:block; font-size:9.5px; text-transform:uppercase; font-weight:700">EVENTS/MIN</span>
+                    <b style="display:block; font-size:14px; color:var(--text); font-family:var(--font-sans); margin-top:2px">${epm}</b>
                 </div>
-
-                <!-- Status Strip -->
-                <div style="background:${badgeBg}; border:1px solid ${badgeBorder}; color:${badgeFg}; border-radius:6px; padding:6px 10px; font-size:11px; font-weight:700; display:flex; align-items:center; gap:6px">
-                    <span>${status}</span>
-                    <span style="font-weight:400; opacity:0.85">· ${statusDesc}</span>
+                <div>
+                    <span style="color:var(--text3); display:block; font-size:9.5px; text-transform:uppercase; font-weight:700">OPEN INCIDENTS</span>
+                    <b style="display:block; font-size:14px; color:${inc>0?'var(--red)':'var(--text)'}; font-family:var(--font-sans); margin-top:2px">${inc}</b>
                 </div>
             </div>
 
-            <!-- Footer Project Tag -->
-            <div style="margin-top:12px; padding-top:8px; border-top:1px solid var(--border); font-size:11px; color:var(--text3); display:flex; justify-content:space-between; align-items:center">
-                <span>Project: <strong style="color:var(--text2)">${proj}</strong></span>
-                <span style="font-size:11px; color:var(--cyan)">View Details →</span>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--text3); border-top:1px solid var(--border); padding-top:10px">
+                <span style="display:flex; align-items:center; gap:4px">
+                    <span>📁</span> <span>${proj}</span>
+                </span>
+                <span>Last event: <b style="color:var(--text2)">${lastEv}</b></span>
             </div>
         </div>
         `;
     }).join('');
 }
 
-async function toggleAppMaintenance(id, event) {
-    if (event) event.stopPropagation();
-    try {
-        const res = await fetch(`/api/apps/${id}/maintenance`, { method: 'POST' });
-        if (res.ok) {
-            showToast('Toggled maintenance mode', 'success');
-            loadApplications();
-        } else {
-            showToast('Failed toggling maintenance', 'error');
-        }
-    } catch(e) {
-        showToast('Network error', 'error');
+// Tab Switching Controller
+function switchModalTab(tabName) {
+    document.querySelectorAll('.tab-item').forEach(el => {
+        el.classList.remove('active');
+        el.style.color = 'var(--text3)';
+        el.style.borderBottom = 'none';
+    });
+    const btn = document.getElementById(`tab-btn-${tabName}`);
+    if (btn) {
+        btn.classList.add('active');
+        btn.style.color = 'var(--cyan)';
+        btn.style.borderBottom = '2px solid var(--cyan)';
     }
-}
 
-function toggleAppMaintenanceFromModal() {
+    document.querySelectorAll('.modal-tab-pane').forEach(el => el.style.display = 'none');
+    const pane = document.getElementById(`pop-tab-${tabName}`);
+    if (pane) pane.style.display = 'block';
+
     if (activeModalAppId) {
-        toggleAppMaintenance(activeModalAppId);
-        closeAppDetailsModal();
+        if (tabName === 'events') loadAppEvents(activeModalAppId);
+        else if (tabName === 'incidents') loadAppIncidents(activeModalAppId);
+        else if (tabName === 'users') loadAppUsers(activeModalAppId);
+        else if (tabName === 'rules') loadAppRules(activeModalAppId);
+        else if (tabName === 'components') loadAppComponentsTab(activeModalAppId);
     }
 }
 
-async function deleteAppConfirm(id, name, event) {
-    if (event) event.stopPropagation();
-    if (!confirm(`Are you sure you want to delete application "${name}"?\nThis will remove collector configurations and audit-log the deletion.`)) {
-        return;
-    }
-    try {
-        const res = await fetch(`/api/apps/${id}`, { method: 'DELETE' });
-        if (res.ok) {
-            showToast(`Deleted application ${name}`, 'success');
-            loadApplications();
-        } else {
-            showToast('Failed to delete application', 'error');
-        }
-    } catch(e) {
-        showToast('Network error deleting application', 'error');
-    }
-}
-
+// Modal Open & Close
 async function openAppDetailsModal(id) {
     activeModalAppId = id;
     document.getElementById('app-details-overlay').style.display = 'block';
     document.getElementById('app-details-modal').style.display = 'block';
+    switchModalTab('overview');
 
     try {
         const res = await fetch(`/api/apps/${id}`);
         if (res.ok) {
             const app = await res.json();
+            currentAppDetails = app;
             document.getElementById('pop-app-name').innerText = app.name;
             document.getElementById('pop-app-url').innerText = app.primary_url;
             document.getElementById('pop-metric-comps').innerText = (app.components || []).length;
@@ -297,9 +380,15 @@ async function openAppDetailsModal(id) {
             document.getElementById('pop-metric-inc').innerText = app.open_incidents || 0;
             document.getElementById('pop-metric-last').innerText = app.last_event_formatted || 'never';
 
+            // Settings tab preview
+            document.getElementById('set-app-name').innerText = app.name;
+            document.getElementById('set-app-url').innerText = app.primary_url;
+            document.getElementById('set-app-env').innerText = app.environment || 'Production';
+            document.getElementById('set-app-created').innerText = app.created_at ? new Date(app.created_at).toLocaleString() : 'Recently';
+
             const compTable = document.getElementById('pop-components-table');
             if (!app.components || app.components.length === 0) {
-                compTable.innerHTML = '<div style="color:var(--text3)">No components attached to this application.</div>';
+                compTable.innerHTML = '<div style="color:var(--text3); padding:10px 0">No components attached to this application.</div>';
             } else {
                 compTable.innerHTML = `
                 <table style="width:100%; border-collapse:collapse; text-align:left">
@@ -319,7 +408,11 @@ async function openAppDetailsModal(id) {
                             <td style="padding:6px">${escapeHtml(c.node_name)}</td>
                             <td style="padding:6px; font-family:var(--font-mono), monospace">${escapeHtml(c.node_ip)}</td>
                             <td style="padding:6px; color:var(--cyan)">${c.linked_server_hostname ? escapeHtml(c.linked_server_hostname) : '<span style="color:var(--text3)">Unlinked</span>'}</td>
-                            <td style="padding:6px"><span class="badge" style="font-size:9.5px">${c.status}</span></td>
+                            <td style="padding:6px">
+                                <span class="badge" style="font-size:9.5px; ${c.status === 'RECEIVING' ? 'background:rgba(16,185,129,0.15); color:var(--green); border:1px solid var(--green)' : 'background:rgba(245,158,11,0.15); color:var(--amber); border:1px solid var(--amber)'}">
+                                    ${c.status}
+                                </span>
+                            </td>
                         </tr>
                         `).join('')}
                     </tbody>
@@ -330,12 +423,427 @@ async function openAppDetailsModal(id) {
     } catch(e) {
         console.error("Error fetching app details", e);
     }
+
+    // Auto-refresh events timer
+    if (eventRefreshTimer) clearInterval(eventRefreshTimer);
+    eventRefreshTimer = setInterval(() => {
+        const autoRef = document.getElementById('events-auto-refresh');
+        const evPane = document.getElementById('pop-tab-events');
+        if (autoRef && autoRef.checked && evPane && evPane.style.display !== 'none' && activeModalAppId) {
+            loadAppEvents(activeModalAppId, true);
+        }
+    }, 3000);
 }
 
 function closeAppDetailsModal() {
     activeModalAppId = null;
+    currentAppDetails = null;
+    if (eventRefreshTimer) clearInterval(eventRefreshTimer);
     document.getElementById('app-details-overlay').style.display = 'none';
     document.getElementById('app-details-modal').style.display = 'none';
+}
+
+// Load Events Tab
+async function loadAppEvents(appId, silent = false) {
+    const container = document.getElementById('pop-events-content');
+    if (!container) return;
+    if (!silent) container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">Fetching live events...</div>';
+
+    try {
+        const res = await fetch(`/api/apps/${appId}/events?limit=100`);
+        if (res.ok) {
+            cachedEvents = await res.json();
+            renderFilteredEvents();
+        } else {
+            container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Failed to load events.</div>';
+        }
+    } catch (e) {
+        container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Network error loading events.</div>';
+    }
+}
+
+function renderFilteredEvents() {
+    const container = document.getElementById('pop-events-content');
+    if (!container) return;
+
+    const q = (document.getElementById('events-filter-query')?.value || '').toLowerCase().trim();
+    const sev = document.getElementById('events-filter-severity')?.value || 'all';
+
+    const filtered = cachedEvents.filter(ev => {
+        if (sev === 'critical' && ev.severity !== 'critical') return false;
+        if (sev === 'high' && !['high', 'critical'].includes(ev.severity)) return false;
+        if (sev === 'medium' && !['medium', 'high', 'critical'].includes(ev.severity)) return false;
+        if (sev === 'info' && ev.severity !== 'info') return false;
+
+        if (!q) return true;
+        const str = `${ev.client_ip || ''} ${ev.url_path || ''} ${ev.method || ''} ${ev.event_type || ''} ${ev.node || ''}`.toLowerCase();
+        return str.includes(q);
+    });
+
+    if (filtered.length === 0) {
+        container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3)">No security events match the active filters.</div>';
+        return;
+    }
+
+    container.innerHTML = `
+    <table style="width:100%; border-collapse:collapse; text-align:left; font-size:11.5px">
+        <thead>
+            <tr style="border-bottom:1px solid var(--border); color:var(--text3); font-size:10.5px; background:var(--bg)">
+                <th style="padding:8px 12px">TIMESTAMP</th>
+                <th style="padding:8px 12px">EVENT TYPE</th>
+                <th style="padding:8px 12px">SEVERITY</th>
+                <th style="padding:8px 12px">SOURCE / NODE</th>
+                <th style="padding:8px 12px">CLIENT IP</th>
+                <th style="padding:8px 12px">REQUEST / PATH</th>
+                <th style="padding:8px 12px">STATUS</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${filtered.map(ev => {
+                let sevBg = 'rgba(148,163,184,0.1)'; let sevFg = 'var(--text3)';
+                if (ev.severity === 'critical') { sevBg = 'rgba(239,68,68,0.2)'; sevFg = 'var(--red)'; }
+                else if (ev.severity === 'high') { sevBg = 'rgba(245,158,11,0.2)'; sevFg = 'var(--amber)'; }
+                else if (ev.severity === 'medium') { sevBg = 'rgba(56,189,248,0.2)'; sevFg = 'var(--cyan)'; }
+
+                const timeStr = ev.event_time ? new Date(ev.event_time).toLocaleTimeString() : 'now';
+                return `
+                <tr style="border-bottom:1px solid var(--border); transition:background 0.15s" class="table-row-hover">
+                    <td style="padding:8px 12px; font-family:var(--font-mono), monospace; color:var(--text3)">${timeStr}</td>
+                    <td style="padding:8px 12px; font-weight:700; color:var(--text)">${escapeHtml(ev.event_type || 'HTTP_ACCESS')}</td>
+                    <td style="padding:8px 12px">
+                        <span style="padding:2px 8px; border-radius:4px; font-size:9.5px; font-weight:700; text-transform:uppercase; background:${sevBg}; color:${sevFg}">
+                            ${ev.severity}
+                        </span>
+                    </td>
+                    <td style="padding:8px 12px; color:var(--text2)">${escapeHtml(ev.source_type || '')} (${escapeHtml(ev.node || '')})</td>
+                    <td style="padding:8px 12px; font-family:var(--font-mono), monospace; color:var(--cyan)">${escapeHtml(ev.client_ip || '-')}</td>
+                    <td style="padding:8px 12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(ev.url_path || '')}">
+                        <b style="color:var(--text3)">${escapeHtml(ev.method || '')}</b> 
+                        <span style="font-family:var(--font-mono), monospace">${escapeHtml(ev.url_path || '-')}</span>
+                    </td>
+                    <td style="padding:8px 12px; font-family:var(--font-mono), monospace">
+                        <span style="color:${ev.status_code >= 400 ? 'var(--amber)' : 'var(--green)'}">${ev.status_code || 200}</span>
+                    </td>
+                </tr>
+                `;
+            }).join('')}
+        </tbody>
+    </table>
+    `;
+}
+
+// Load Incidents Tab
+async function loadAppIncidents(appId) {
+    const container = document.getElementById('pop-incidents-content');
+    if (!container) return;
+    container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">Fetching correlated incidents...</div>';
+
+    try {
+        const res = await fetch(`/api/apps/${appId}/incidents`);
+        if (res.ok) {
+            const incs = await res.json();
+            if (!incs || incs.length === 0) {
+                container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3); border:1px dashed var(--border); border-radius:8px">🛡️ No security incidents currently detected for this application.</div>';
+                return;
+            }
+
+            container.innerHTML = incs.map(i => {
+                let sevBg = 'rgba(239,68,68,0.15)'; let sevFg = 'var(--red)'; let sevBorder = 'rgba(239,68,68,0.4)';
+                if (i.severity === 'medium') {
+                    sevBg = 'rgba(56,189,248,0.15)'; sevFg = 'var(--cyan)'; sevBorder = 'rgba(56,189,248,0.4)';
+                } else if (i.severity === 'high') {
+                    sevBg = 'rgba(245,158,11,0.15)'; sevFg = 'var(--amber)'; sevBorder = 'rgba(245,158,11,0.4)';
+                }
+
+                const tactics = i.mitre_tactics || [];
+                const timeline = i.timeline || [];
+
+                return `
+                <div style="background:var(--bg2); border:1px solid ${sevBorder}; border-radius:10px; padding:18px; box-shadow:0 4px 12px rgba(0,0,0,0.2)">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
+                        <div>
+                            <div style="display:flex; align-items:center; gap:8px">
+                                <span class="badge" style="background:${sevBg}; color:${sevFg}; border:1px solid ${sevBorder}; font-size:10px; font-weight:800; text-transform:uppercase">
+                                    ${i.severity}
+                                </span>
+                                <h4 style="margin:0; font-size:14.5px; font-weight:700; color:var(--text)">${escapeHtml(i.title || 'Security Incident')}</h4>
+                            </div>
+                            <div style="font-size:11.5px; color:var(--text3); margin-top:4px">
+                                Attacker: <b style="color:var(--cyan); font-family:var(--font-mono), monospace">${escapeHtml(i.client_ip || i.attacker_key)}</b> • 
+                                Observed Events: <b style="color:var(--text)">${i.events_count || 1}</b> • 
+                                Status: <b style="color:${i.status === 'Open' ? 'var(--red)' : 'var(--green)'}">${i.status}</b>
+                            </div>
+                        </div>
+                        <div style="font-size:11px; color:var(--text3); text-align:right">
+                            Last seen: <b>${i.last_event_at ? new Date(i.last_event_at).toLocaleTimeString() : 'now'}</b>
+                        </div>
+                    </div>
+
+                    ${tactics.length > 0 ? `
+                    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px">
+                        ${tactics.map(t => `<span class="badge" style="font-size:9.5px; background:rgba(0,212,255,0.08); color:var(--cyan); border:1px solid rgba(0,212,255,0.25)">🎯 ${escapeHtml(t)}</span>`).join('')}
+                    </div>
+                    ` : ''}
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px; margin-top:8px">
+                        <div style="font-size:11px; font-weight:700; color:var(--text2); margin-bottom:6px">ATTACK TIMELINE STEPS:</div>
+                        ${timeline.length === 0 ? '<div style="font-size:11px; color:var(--text3)">No detailed event steps recorded.</div>' : `
+                        <div style="display:flex; flex-direction:column; gap:6px">
+                            ${timeline.map((step, idx) => `
+                            <div style="display:flex; align-items:center; gap:8px; font-size:11px; background:var(--bg); padding:6px 10px; border-radius:6px; border:1px solid var(--border)">
+                                <span style="font-weight:700; color:var(--cyan); font-family:var(--font-mono), monospace">#${idx+1}</span>
+                                <span style="color:var(--text3); font-size:10px">${step.event_time ? new Date(step.event_time).toLocaleTimeString() : ''}</span>
+                                <span style="color:var(--text); font-weight:600">${escapeHtml(step.rule_name || '')}:</span>
+                                <span style="color:var(--text2); font-family:var(--font-mono), monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(step.step_summary || '')}</span>
+                            </div>
+                            `).join('')}
+                        </div>
+                        `}
+                    </div>
+                </div>
+                `;
+            }).join('');
+        } else {
+            container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Failed to load incidents.</div>';
+        }
+    } catch (e) {
+        container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Network error loading incidents.</div>';
+    }
+}
+
+// Load Users Tab
+async function loadAppUsers(appId) {
+    const container = document.getElementById('pop-users-content');
+    if (!container) return;
+    container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">Loading user interactions...</div>';
+
+    try {
+        const res = await fetch(`/api/apps/${appId}/users`);
+        if (res.ok) {
+            const users = await res.json();
+            if (!users || users.length === 0) {
+                container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3)">No user activity recorded yet.</div>';
+                return;
+            }
+
+            container.innerHTML = `
+            <table style="width:100%; border-collapse:collapse; text-align:left; font-size:11.5px">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border); color:var(--text3); font-size:10.5px; background:var(--bg)">
+                        <th style="padding:8px 12px">IDENTIFIER / IP</th>
+                        <th style="padding:8px 12px">USER NAME</th>
+                        <th style="padding:8px 12px">TOTAL REQUESTS</th>
+                        <th style="padding:8px 12px">SECURITY ATTACKS</th>
+                        <th style="padding:8px 12px">PEAK SEVERITY</th>
+                        <th style="padding:8px 12px">FIRST SEEN</th>
+                        <th style="padding:8px 12px">LAST SEEN</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${users.map(u => `
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:8px 12px; font-family:var(--font-mono), monospace; font-weight:700; color:var(--cyan)">${escapeHtml(u.identifier)}</td>
+                        <td style="padding:8px 12px; color:var(--text)">${escapeHtml(u.user_name || 'Anonymous')}</td>
+                        <td style="padding:8px 12px">${u.total_requests || 0}</td>
+                        <td style="padding:8px 12px">
+                            <span style="font-weight:700; color:${u.attack_events > 0 ? 'var(--red)' : 'var(--green)'}">
+                                ${u.attack_events || 0}
+                            </span>
+                        </td>
+                        <td style="padding:8px 12px">
+                            <span class="badge" style="font-size:9.5px">${u.peak_severity || 'info'}</span>
+                        </td>
+                        <td style="padding:8px 12px; color:var(--text3)">${u.first_seen ? new Date(u.first_seen).toLocaleTimeString() : '-'}</td>
+                        <td style="padding:8px 12px; color:var(--text3)">${u.last_seen ? new Date(u.last_seen).toLocaleTimeString() : '-'}</td>
+                    </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+            `;
+        } else {
+            container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Failed to load users.</div>';
+        }
+    } catch(e) {
+        container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Network error loading users.</div>';
+    }
+}
+
+// Load Rules Tab
+async function loadAppRules(appId) {
+    const container = document.getElementById('pop-rules-content');
+    if (!container) return;
+    container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">Loading detection rules...</div>';
+
+    try {
+        const res = await fetch(`/api/apps/${appId}/rules`);
+        if (res.ok) {
+            const rules = await res.json();
+            container.innerHTML = `
+            <table style="width:100%; border-collapse:collapse; text-align:left; font-size:11.5px">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border); color:var(--text3); font-size:10.5px; background:var(--bg)">
+                        <th style="padding:8px 12px">RULE NAME</th>
+                        <th style="padding:8px 12px">TYPE</th>
+                        <th style="padding:8px 12px">SEVERITY</th>
+                        <th style="padding:8px 12px">MITRE ATT&CK</th>
+                        <th style="padding:8px 12px">THRESHOLD</th>
+                        <th style="padding:8px 12px">STATUS</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rules.map(r => `
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:8px 12px">
+                            <div style="font-weight:700; color:var(--text)">${escapeHtml(r.name)}</div>
+                            <div style="font-size:10.5px; color:var(--text3); margin-top:2px">${escapeHtml(r.description || '')}</div>
+                        </td>
+                        <td style="padding:8px 12px; color:var(--cyan)">${escapeHtml(r.rule_type)}</td>
+                        <td style="padding:8px 12px">
+                            <span class="badge" style="font-size:9.5px; ${r.severity === 'critical' ? 'background:rgba(239,68,68,0.2); color:var(--red)' : (r.severity === 'high' ? 'background:rgba(245,158,11,0.2); color:var(--amber)' : 'background:rgba(56,189,248,0.2); color:var(--cyan)')}">
+                                ${r.severity}
+                            </span>
+                        </td>
+                        <td style="padding:8px 12px; font-family:var(--font-mono), monospace; font-size:10.5px; color:var(--text2)">
+                            ${r.mitre_technique_id ? `${r.mitre_technique_id} (${escapeHtml(r.mitre_tactic || '')})` : '-'}
+                        </td>
+                        <td style="padding:8px 12px; color:var(--text3)">${r.threshold} ev / ${r.window_seconds}s</td>
+                        <td style="padding:8px 12px">
+                            <span style="color:var(--green); font-weight:700">● Active</span>
+                        </td>
+                    </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+            `;
+        } else {
+            container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Failed to load rules.</div>';
+        }
+    } catch(e) {
+        container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Network error loading rules.</div>';
+    }
+}
+
+// Load Components Tab
+async function loadAppComponentsTab(appId) {
+    const container = document.getElementById('pop-components-tab-content');
+    if (!container) return;
+    container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">Loading components...</div>';
+
+    try {
+        const res = await fetch(`/api/apps/${appId}/components`);
+        if (res.ok) {
+            const comps = await res.json();
+            if (!comps || comps.length === 0) {
+                container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">No components attached.</div>';
+                return;
+            }
+
+            const baseUrl = window.location.origin;
+            container.innerHTML = comps.map(c => {
+                let setupUrl = `${baseUrl}/api/app/setup?token=${c.enrollment_token}&app=${appId}&role=${c.role}&node=${encodeURIComponent(c.node_name)}`;
+                if (c.target_port) setupUrl += `&port=${encodeURIComponent(c.target_port)}`;
+                if (c.target_db_name) setupUrl += `&db_name=${encodeURIComponent(c.target_db_name)}`;
+                const curlCmd = `curl -s "${setupUrl}" | sudo bash`;
+
+                const isReceiving = c.status === 'RECEIVING';
+                const isApproved = c.status === 'APPROVED';
+
+                return `
+                <div style="background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:16px">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
+                        <div>
+                            <div style="display:flex; align-items:center; gap:8px">
+                                <span class="badge" style="font-size:10px; font-weight:800; background:rgba(56,189,248,0.15); color:var(--cyan); border:1px solid var(--cyan)">
+                                    ${c.role.toUpperCase()}
+                                </span>
+                                <h4 style="margin:0; font-size:14px; font-weight:700; color:var(--text)">${escapeHtml(c.node_name)}</h4>
+                                <span style="font-family:var(--font-mono), monospace; font-size:11px; color:var(--text3)">(${escapeHtml(c.node_ip)})</span>
+                            </div>
+                            <div style="font-size:11.5px; color:var(--text3); margin-top:4px">
+                                ${c.role === 'web' ? `Target Port: <b style="color:var(--text)">${c.target_port || '8000/auto'}</b>` : `Database: <b style="color:var(--text)">${c.target_db_name || 'all'}</b> (Port: ${c.target_port || '5432'})`}
+                                • Enrollment Token: <code style="color:var(--cyan); font-size:10.5px">${c.enrollment_token ? c.enrollment_token.substring(0, 16) + '...' : '-'}</code>
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center">
+                            <span class="badge" style="font-size:10px; font-weight:700; ${isReceiving ? 'background:rgba(16,185,129,0.15); color:var(--green); border:1px solid var(--green)' : 'background:rgba(245,158,11,0.15); color:var(--amber); border:1px solid var(--amber)'}">
+                                ${c.status}
+                            </span>
+                            ${!isReceiving && !isApproved ? `
+                            <button class="btn btn-primary" onclick="approveComponentFromModal(${appId}, ${c.id})" style="padding:4px 10px; font-size:10.5px">
+                                ✓ Approve Component
+                            </button>
+                            ` : ''}
+                        </div>
+                    </div>
+
+                    <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px 12px; margin-top:10px; display:flex; justify-content:space-between; align-items:center">
+                        <code style="font-size:11px; color:var(--text2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:700px">${escapeHtml(curlCmd)}</code>
+                        <button class="btn btn-glass" onclick="navigator.clipboard.writeText('${curlCmd}'); showToast('Setup command copied!', 'success');" style="padding:4px 10px; font-size:10.5px; margin-left:10px; white-space:nowrap">
+                            📋 Copy Command
+                        </button>
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+    } catch(e) {
+        container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Network error loading components.</div>';
+    }
+}
+
+async function approveComponentFromModal(appId, compId) {
+    try {
+        const res = await fetch(`/api/apps/${appId}/components/${compId}/approve`, { method: 'POST' });
+        if (res.ok) {
+            showToast('Component approved successfully!', 'success');
+            loadAppComponentsTab(appId);
+            loadApplications();
+        } else {
+            showToast('Failed to approve component', 'error');
+        }
+    } catch(e) {
+        showToast('Network error approving component', 'error');
+    }
+}
+
+async function toggleAppMaintenance(id) {
+    try {
+        const res = await fetch(`/api/apps/${id}/maintenance`, { method: 'POST' });
+        if (res.ok) {
+            const data = await res.json();
+            showToast(`Maintenance mode is now ${data.maintenance_mode ? 'ENABLED' : 'DISABLED'}`, 'info');
+            loadApplications();
+        }
+    } catch(e) {
+        showToast('Error toggling maintenance mode', 'error');
+    }
+}
+
+function toggleAppMaintenanceFromModal() {
+    if (activeModalAppId) {
+        toggleAppMaintenance(activeModalAppId);
+        closeAppDetailsModal();
+    }
+}
+
+async function deleteAppFromModal() {
+    if (!activeModalAppId || !currentAppDetails) return;
+    const name = currentAppDetails.name;
+    const id = activeModalAppId;
+    if (!confirm(`Permanently delete "${name}" and all attached components and threat telemetry?`)) return;
+
+    try {
+        const res = await fetch(`/api/apps/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+            showToast(`Application "${name}" deleted.`, 'success');
+            closeAppDetailsModal();
+            loadApplications();
+        } else {
+            showToast('Failed to delete application', 'error');
+        }
+    } catch(e) {
+        showToast('Network error deleting application', 'error');
+    }
 }
 
 document.addEventListener('DOMContentLoaded', loadApplications);
