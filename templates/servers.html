@@ -506,6 +506,17 @@ function formatLocal(dateStr) {
         return tb.toFixed(2) + ' TB';
     }
 
+    function renderAssetChassisIcon(color = '#0284c7') {
+        return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle; flex-shrink: 0; display: inline-block;">
+            <rect x="2" y="3.5" width="20" height="7.5" rx="3.5" fill="${color}" />
+            <circle cx="15.5" cy="7.25" r="1.1" fill="#080e1a" />
+            <circle cx="18.5" cy="7.25" r="1.1" fill="#080e1a" />
+            <rect x="2" y="13" width="20" height="7.5" rx="3.5" fill="${color}" />
+            <circle cx="15.5" cy="16.75" r="1.1" fill="#080e1a" />
+            <circle cx="18.5" cy="16.75" r="1.1" fill="#080e1a" />
+        </svg>`;
+    }
+
     async function loadServers() {
         const grid = document.getElementById('servers-grid');
         grid.innerHTML = '<div style="grid-column:1/-1; display:flex; flex-direction:column; align-items:center; padding:100px; color:var(--cyan); font-family:var(--mono); letter-spacing:1px;" class="fade-in"><div class="loader-spinner" style="margin-bottom:20px;"></div><div>ESTABLISHING SECURE CONNECTION...</div></div>';
@@ -585,8 +596,11 @@ function formatLocal(dateStr) {
                     <div>
                         <div class="service-header">
                             <div>
-                                <h4 class="service-title">${hostname}</h4>
-                                <div style="font-family:monospace; font-size:11px; color:var(--cyan)">${ip}</div>
+                                <div style="display:flex; align-items:center; gap:6px;">
+                                    ${renderAssetChassisIcon('#0284c7')}
+                                    <h4 class="service-title" style="margin:0;">${hostname}</h4>
+                                </div>
+                                <div style="font-family:monospace; font-size:11px; color:var(--cyan); margin-top:2px;">${ip}</div>
                             </div>
                             ${typeBadge}
                         </div>

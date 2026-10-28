@@ -285,72 +285,73 @@
 
 /* ============================================================
    APP NODE CARD DIFFERENTIATED STYLING (Dark & Light Themes)
+   AWS Orange (#FF9900) Branding for Application Nodes
    ============================================================ */
 
-/* DARK THEME (Black theme) */
+/* DARK THEME (Black theme) - AWS Orange Theme */
 .service-card.appnode-card {
-    background: linear-gradient(145deg, #181433 0%, #101932 100%) !important;
-    border: 1px solid rgba(168, 85, 247, 0.45) !important;
-    box-shadow: 0 4px 20px rgba(147, 51, 234, 0.12) !important;
+    background: linear-gradient(145deg, #1f160e 0%, #121420 100%) !important;
+    border: 1px solid rgba(255, 153, 0, 0.45) !important;
+    box-shadow: 0 4px 20px rgba(255, 153, 0, 0.12) !important;
 }
 .service-card.appnode-card:hover {
-    border-color: #c084fc !important;
-    box-shadow: 0 10px 30px rgba(168, 85, 247, 0.3) !important;
+    border-color: #FF9900 !important;
+    box-shadow: 0 10px 30px rgba(255, 153, 0, 0.28) !important;
     transform: translateY(-2px);
 }
 .service-card-list.appnode-card {
-    background: linear-gradient(90deg, #181433 0%, #101932 100%) !important;
-    border: 1px solid rgba(168, 85, 247, 0.4) !important;
+    background: linear-gradient(90deg, #1f160e 0%, #121420 100%) !important;
+    border: 1px solid rgba(255, 153, 0, 0.4) !important;
 }
 .appnode-card .appnode-title {
-    color: #f3e8ff !important;
+    color: #fff2e0 !important;
 }
 .appnode-card .appnode-url {
-    color: #c084fc !important;
+    color: #FF9900 !important;
 }
 .appnode-card .st-appnode {
-    background: rgba(168, 85, 247, 0.25) !important;
-    color: #c084fc !important;
-    border: 1px solid rgba(192, 132, 252, 0.45) !important;
+    background: rgba(255, 153, 0, 0.2) !important;
+    color: #FFB84D !important;
+    border: 1px solid rgba(255, 153, 0, 0.5) !important;
     font-weight: 700;
 }
 .appnode-card .appnode-sec-bar {
-    background: rgba(147, 51, 234, 0.08) !important;
-    border-top: 1px solid rgba(168, 85, 247, 0.2) !important;
-    border-bottom: 1px solid rgba(168, 85, 247, 0.2) !important;
+    background: rgba(255, 153, 0, 0.08) !important;
+    border-top: 1px solid rgba(255, 153, 0, 0.25) !important;
+    border-bottom: 1px solid rgba(255, 153, 0, 0.25) !important;
 }
 
-/* LIGHT THEME (White / Light theme) */
+/* LIGHT THEME (White / Light theme) - AWS Orange Theme */
 [data-theme="light"] .service-card.appnode-card {
-    background: linear-gradient(145deg, #f5f3ff 0%, #ede9fe 100%) !important;
-    border: 1px solid rgba(139, 92, 246, 0.4) !important;
-    box-shadow: 0 4px 16px rgba(124, 58, 237, 0.08) !important;
+    background: linear-gradient(145deg, #fffbeb 0%, #fef3c7 100%) !important;
+    border: 1px solid rgba(245, 158, 11, 0.5) !important;
+    box-shadow: 0 4px 16px rgba(217, 119, 6, 0.10) !important;
 }
 [data-theme="light"] .service-card.appnode-card:hover {
-    border-color: #7c3aed !important;
-    box-shadow: 0 8px 26px rgba(124, 58, 237, 0.2) !important;
+    border-color: #d97706 !important;
+    box-shadow: 0 8px 24px rgba(245, 158, 11, 0.28) !important;
     transform: translateY(-2px);
 }
 [data-theme="light"] .service-card-list.appnode-card {
-    background: linear-gradient(90deg, #f5f3ff 0%, #ede9fe 100%) !important;
-    border: 1px solid rgba(139, 92, 246, 0.4) !important;
+    background: linear-gradient(90deg, #fffbeb 0%, #fef3c7 100%) !important;
+    border: 1px solid rgba(245, 158, 11, 0.45) !important;
 }
 [data-theme="light"] .appnode-card .appnode-title {
-    color: #3b0764 !important;
+    color: #78350f !important;
 }
 [data-theme="light"] .appnode-card .appnode-url {
-    color: #6d28d9 !important;
+    color: #b45309 !important;
 }
 [data-theme="light"] .appnode-card .st-appnode {
-    background: #e0e7ff !important;
-    color: #4338ca !important;
-    border: 1px solid #a5b4fc !important;
+    background: #fef3c7 !important;
+    color: #b45309 !important;
+    border: 1px solid #fcd34d !important;
     font-weight: 700;
 }
 [data-theme="light"] .appnode-card .appnode-sec-bar {
-    background: rgba(139, 92, 246, 0.08) !important;
-    border-top: 1px solid rgba(139, 92, 246, 0.2) !important;
-    border-bottom: 1px solid rgba(139, 92, 246, 0.2) !important;
+    background: rgba(245, 158, 11, 0.08) !important;
+    border-top: 1px solid rgba(245, 158, 11, 0.25) !important;
+    border-bottom: 1px solid rgba(245, 158, 11, 0.25) !important;
 }
 [data-theme="light"] .appnode-card .service-alert-box.sab-normal {
     background: rgba(16, 185, 129, 0.12) !important;
@@ -939,6 +940,27 @@ async function loadDashboardData() {
     }
 }
 
+// ── ASSET & APP NODE ICON HELPERS (Image 2 Blue Server Chassis & AWS Orange App Node) ──
+function renderAssetChassisIcon(color = '#0284c7') {
+    return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle; flex-shrink: 0; display: inline-block;">
+        <rect x="2" y="3.5" width="20" height="7.5" rx="3.5" fill="${color}" />
+        <circle cx="15.5" cy="7.25" r="1.1" fill="#080e1a" />
+        <circle cx="18.5" cy="7.25" r="1.1" fill="#080e1a" />
+        <rect x="2" y="13" width="20" height="7.5" rx="3.5" fill="${color}" />
+        <circle cx="15.5" cy="16.75" r="1.1" fill="#080e1a" />
+        <circle cx="18.5" cy="16.75" r="1.1" fill="#080e1a" />
+    </svg>`;
+}
+
+function renderAppNodeAwsIcon(color = '#FF9900') {
+    return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle; flex-shrink: 0; display: inline-block;">
+        <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="${color}" fill-opacity="0.85" stroke="${color}" stroke-width="1.2" stroke-linejoin="round"/>
+        <path d="M2 12L12 17L22 12" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M2 17L12 22L22 17" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="12" cy="7" r="1.3" fill="#121420"/>
+    </svg>`;
+}
+
 // ── DONUT GAUGE HELPER (Exact style of 1st image: 98% Green, 7% Red, 23% Amber) ──
 function renderDonutGauge(pct, label, colorOverride) {
     const val = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
@@ -1131,12 +1153,12 @@ function renderServicesGrid() {
             const borderColor = item.isDown ? 'var(--red)' : (item.isMaint ? 'var(--cyan)' : (item.isCrit ? 'var(--red)' : (item.isTrouble ? 'var(--amber)' : '')));
 
             if (currentDashboardView === 'list') {
-                const listBorderColor = borderColor || '#c084fc';
+                const listBorderColor = borderColor || '#FF9900';
                 return `
                 <div class="service-card-list appnode-card fade-in delay-${(index % 5) + 1}" onclick="openAppDetailsFromDash(${aid})" style="border-left: 4px solid ${listBorderColor} !important;">
                     <div style="flex: 1.5; min-width: 140px;">
                         <div style="display:flex; align-items:center; gap:6px;">
-                            <span style="color:#c084fc; font-size:12px">⬡</span>
+                            ${renderAppNodeAwsIcon('#FF9900')}
                             <div class="list-srv-name appnode-title" style="font-weight: 700; font-size: 13px;">${escapeHtml(name)}</div>
                         </div>
                         <div class="list-srv-ip appnode-url" style="font-size: 11px; font-family: monospace;">${escapeHtml(url)}</div>
@@ -1148,7 +1170,7 @@ function renderServicesGrid() {
                         </div>
                     </div>
                     <div style="flex: 2; display: flex; gap: 16px; font-size: 11px; align-items: center;">
-                        <div><span class="list-metric-label" style="color:var(--muted)">Comps</span> <span class="list-metric-val" style="color:#c084fc; font-weight:600">${escapeHtml(compRatio)}</span></div>
+                        <div><span class="list-metric-label" style="color:var(--muted)">Comps</span> <span class="list-metric-val" style="color:#FF9900; font-weight:600">${escapeHtml(compRatio)}</span></div>
                         <div><span class="list-metric-label" style="color:var(--muted)">Rate</span> <span class="list-metric-val" style="color:#38bdf8; font-weight:600">${evMin}/m</span></div>
                         <div><span class="list-metric-label" style="color:var(--muted)">Incidents</span> <span class="list-metric-val" style="color:${openInc>0?'var(--red)':'var(--green)'}; font-weight:600">${openInc}</span></div>
                     </div>
@@ -1167,8 +1189,8 @@ function renderServicesGrid() {
                         <div class="service-header">
                             <div style="min-width:0; flex:1;">
                                 <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
-                                    <div class="appnode-icon" style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:5px; background:rgba(168,85,247,0.2); color:#c084fc; flex-shrink:0;">
-                                        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                                    <div class="appnode-icon" style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:5px; background:rgba(255,153,0,0.18); flex-shrink:0;">
+                                        ${renderAppNodeAwsIcon('#FF9900')}
                                     </div>
                                     <h4 class="service-title appnode-title" title="${escapeHtml(name)}">${escapeHtml(name)}</h4>
                                     ${openInc > 0 ? `<span class="badge-alert-pill" style="background:rgba(239,68,68,0.2); color:var(--red); border:1px solid rgba(239,68,68,0.4);" title="${openInc} active incident(s)">🚨 ${openInc}</span>` : ''}
@@ -1189,7 +1211,7 @@ function renderServicesGrid() {
                     </div>
 
                     <div class="card-security-bar appnode-sec-bar">
-                        <span class="card-sec-label" style="color:var(--purple, #c084fc); font-weight:700;">APP DEFENSE</span>
+                        <span class="card-sec-label" style="color:#FF9900; font-weight:700;">APP DEFENSE</span>
                         <div class="sec-badge-wrap">${secBadge}</div>
                     </div>
 
@@ -1276,7 +1298,10 @@ function renderServicesGrid() {
             return `
             <div class="service-card-list fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="border-left: 4px solid ${listBorderColor} !important;">
                 <div style="flex: 1.5; min-width: 140px;">
-                    <div class="list-srv-name" style="font-weight: 700; color: var(--navy); font-size: 13px; margin-bottom: 2px;">${name}</div>
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom: 2px;">
+                        ${renderAssetChassisIcon('#0284c7')}
+                        <div class="list-srv-name" style="font-weight: 700; color: var(--navy); font-size: 13px;">${name}</div>
+                    </div>
                     <div class="list-srv-ip" style="font-size: 11px; color: var(--muted); font-family: monospace;">${ip}</div>
                 </div>
                 <div style="flex: 1.5; font-size: 11px; transform: scale(0.9); transform-origin: left;">
@@ -1301,7 +1326,8 @@ function renderServicesGrid() {
                 <div>
                     <div class="service-header">
                         <div style="min-width:0; flex:1;">
-                            <div style="display:flex; align-items:center; gap:5px; overflow:hidden;">
+                            <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
+                                ${renderAssetChassisIcon('#0284c7')}
                                 <h4 class="service-title" title="${name}">${name}</h4>
                                 ${alertCount > 0 ? `<span class="badge-alert-pill" title="${alertCount} active alert(s)">🚨 ${alertCount}</span>` : ''}
                             </div>

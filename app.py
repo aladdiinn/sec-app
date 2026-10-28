@@ -1406,6 +1406,7 @@ async def api_add_server(request: Request):
 
     sid = db.add_server(name, ip, region, region_code, ssh_user=ssh_user)
     if sid:
+        _inventory_scan_queue.add(sid)
         uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
         db.log_audit(uname, 'ADD_SERVER', 'server', sid, f"Added server {name} ({ip})")
         return {
@@ -2813,7 +2814,14 @@ async def api_agent_push(request: Request):
                         up_status = "up_to_date" if (target and agent_version == target) else srow.get("update_status", "up_to_date")
                         cur.execute("UPDATE servers SET agent_version = %s, update_status = %s WHERE id = %s;", (agent_version, up_status, server_id))
                     
-                    if target and target != agent_version:
+                    target = srow.get("target_agent_version") or "1.6.1"
+                    try:
+                        v_cur = float(agent_version)
+                        v_target = float(target)
+                    except Exception:
+                        v_cur, v_target = 0.0, 0.0
+
+                    if v_cur < v_target and v_target > 0:
                         update_req = True
                         update_cmd_url = f"{str(request.base_url).rstrip('/')}/setup_node.sh"
         except Exception as e:
@@ -2825,9 +2833,26 @@ async def api_agent_push(request: Request):
     if update_req:
         res["update_requested"] = True
         res["update_cmd_url"] = update_cmd_url
-    if server_id and server_id in _inventory_scan_queue:
+
+    # Auto-request inventory scan if server is in queue OR if zero packages exist in DB
+    needs_inventory = False
+    if server_id:
+        if server_id in _inventory_scan_queue:
+            needs_inventory = True
+            _inventory_scan_queue.discard(server_id)
+        else:
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT COUNT(*) as cnt FROM server_packages WHERE server_id = %s;", (server_id,))
+                        r = cur.fetchone()
+                        if r and (r.get("cnt") or 0) == 0:
+                            needs_inventory = True
+                except Exception: pass
+                finally: conn.close()
+    if needs_inventory:
         res["inventory_scan_requested"] = True
-        _inventory_scan_queue.discard(server_id)
     return res
 
 @app.post("/api/agent/status-update")
@@ -3899,7 +3924,7 @@ import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threadi
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "1.6"
+AGENT_VERSION = "1.6.1"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
@@ -4002,11 +4027,12 @@ def get_installed_packages(os_id, os_version):
     # 1. Debian/Ubuntu family (dpkg-query)
     if os.path.exists("/usr/bin/dpkg-query") or os.path.exists("/bin/dpkg-query"):
         try:
-            cmd = ["dpkg-query", "-W", "-f=${{binary:Package}}\\t${{Version}}\\t${{Architecture}}\\t${{source:Package}}\\t${{source:Version}}\\t${{db:Status-Abbrev}}\\n"]
+            dpkg_fmt = chr(36) + "{binary:Package}" + chr(9) + chr(36) + "{Version}" + chr(9) + chr(36) + "{Architecture}" + chr(9) + chr(36) + "{source:Package}" + chr(9) + chr(36) + "{source:Version}" + chr(9) + chr(36) + "{db:Status-Abbrev}" + chr(10)
+            cmd = ["dpkg-query", "-W", "-f=" + dpkg_fmt]
             out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=60).decode("utf-8", errors="ignore")
             ecosystem = f"Ubuntu:{{os_version}}" if os_id == "ubuntu" else ("Debian" if os_id == "debian" else "Debian")
             for line in out.splitlines():
-                parts = line.split("\t") if "\t" in line else line.split("\\t")
+                parts = line.split(chr(9)) if chr(9) in line else line.split("\t")
                 if len(parts) >= 6:
                     bin_pkg, ver, arch, src_pkg, src_ver, status = parts[:6]
                     if status.strip().startswith("ii"):
@@ -4027,11 +4053,12 @@ def get_installed_packages(os_id, os_version):
     # 2. RHEL/CentOS/Rocky/Alma/Amazon Linux family (rpm)
     if os.path.exists("/usr/bin/rpm") or os.path.exists("/bin/rpm"):
         try:
-            cmd = ["rpm", "-qa", "--qf", "%{{NAME}}\\t%{{EPOCH}}\\t%{{VERSION}}\\t%{{RELEASE}}\\t%{{ARCH}}\\t%{{SOURCERPM}}\\n"]
+            rpm_fmt = "%{{NAME}}" + chr(9) + "%{{EPOCH}}" + chr(9) + "%{{VERSION}}" + chr(9) + "%{{RELEASE}}" + chr(9) + "%{{ARCH}}" + chr(9) + "%{{SOURCERPM}}" + chr(10)
+            cmd = ["rpm", "-qa", "--qf", rpm_fmt]
             out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=60).decode("utf-8", errors="ignore")
             ecosystem = os_id.upper() if os_id else "RHEL"
             for line in out.splitlines():
-                parts = line.split("\t") if "\t" in line else line.split("\\t")
+                parts = line.split(chr(9)) if chr(9) in line else line.split("\t")
                 if len(parts) >= 6:
                     name, epoch, ver, rel, arch, src_rpm = parts[:6]
                     epoch_clean = "" if epoch in ("(none)", "None", "") else epoch.strip()
@@ -4067,7 +4094,12 @@ def get_standalone_software():
         "/opt/tomcat*",
         "/opt/apache-tomcat*",
         "/usr/local/tomcat*",
-        "/var/lib/tomcat*"
+        "/usr/share/tomcat*",
+        "/var/lib/tomcat*",
+        "/home/*tomcat*",
+        "/home/*/*tomcat*",
+        "/data/*tomcat*",
+        "/root/*tomcat*"
     ]
     try:
         for p in glob.glob("/proc/[0-9]*/cmdline"):
@@ -4203,7 +4235,10 @@ def collect_and_send_inventory(force_full=False):
             h.update(f"{{p.get('name')}}:{{p.get('version')}}:{{p.get('arch')}}:{{p.get('source_name')}}".encode('utf-8'))
         pkg_hash = h.hexdigest()
 
-        send_hash_only = (not force_full) and (last_package_hash != "") and (pkg_hash == last_package_hash)
+        if len(packages) == 0:
+            send_hash_only = False
+        else:
+            send_hash_only = (not force_full) and (last_package_hash != "") and (pkg_hash == last_package_hash)
 
         payload = {{
             "server_id": sid,
@@ -4842,7 +4877,7 @@ def main():
     check_fim()
 
     # Initial background inventory collection on agent startup (Agent v1.6)
-    threading.Thread(target=collect_and_send_inventory, kwargs={{"force_full": False}}, daemon=True).start()
+    threading.Thread(target=collect_and_send_inventory, kwargs={{"force_full": True}}, daemon=True).start()
 
     push_count = 0
     while True:
