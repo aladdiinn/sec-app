@@ -2725,8 +2725,12 @@ async def api_agent_push(request: Request):
                         if srow:
                             server_id = srow["id"] if isinstance(srow, dict) else srow[0]
                         else:
-                            new_sid = db.add_server(hname, a_ip)
-                            if new_sid: server_id = new_sid
+                            db.approve_request(appr_dict["id"])
+                            cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR ip = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (hname, a_ip, a_ip))
+                            srow2 = cur.fetchone()
+                            if srow2:
+                                server_id = srow2["id"] if isinstance(srow2, dict) else srow2[0]
+                                _inventory_scan_queue.add(server_id)
             except Exception: pass
             finally: conn.close()
 
@@ -2970,6 +2974,31 @@ async def api_agent_inventory(request: Request):
                     r = cur.fetchone()
                     if r:
                         server_id = r["id"] if isinstance(r, dict) else r[0]
+            except Exception: pass
+            finally: conn.close()
+
+    # Step 4: Match by approvals table if approved but server record pending re-creation
+    if not server_id:
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT * FROM approvals 
+                        WHERE status = 'approved' AND (
+                            (LOWER(hostname) IN (LOWER(%s), LOWER(%s)) AND hostname != '') OR 
+                            (ip_address = %s AND ip_address != '') OR
+                            (ip_address = %s AND ip_address != '')
+                        ) ORDER BY id DESC LIMIT 1;
+                    """, (hostname, clean_host, server_ip, client_ip or ''))
+                    appr = cur.fetchone()
+                    if appr:
+                        appr_dict = dict(appr)
+                        db.approve_request(appr_dict["id"])
+                        cur.execute("SELECT id FROM servers WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s)) OR ip = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (hostname, clean_host, server_ip, server_ip))
+                        srow = cur.fetchone()
+                        if srow:
+                            server_id = srow["id"] if isinstance(srow, dict) else srow[0]
             except Exception: pass
             finally: conn.close()
 
@@ -3829,7 +3858,7 @@ MAX_WAIT=300
 WAITED=0
 ASSIGNED_ID=""
 
-while [ "$STATUS" = "pending" ] && [ $WAITED -lt $MAX_WAIT ]; do
+while ([ "$STATUS" = "pending" ] || ([ "$STATUS" = "approved" ] && [ -z "$ASSIGNED_ID" ])) && [ $WAITED -lt $MAX_WAIT ]; do
     sleep 3
     WAITED=$((WAITED+3))
     CHECK_RES=$(curl -s -G "{base_url}/api/agent/status" --data-urlencode "token=$TOKEN" --data-urlencode "hostname=$NODE_NAME" --data-urlencode "ip=$NODE_IP" || echo '{{"status":"pending"}}')
@@ -5750,6 +5779,37 @@ async def api_agent_status(request: Request):
                         server_id = r["id"] if isinstance(r, dict) else r[0]
             except Exception: pass
             finally: conn.close()
+
+        # Auto-heal: If approval was marked approved by admin but server row is missing from servers table
+        if status == "approved" and not server_id:
+            try:
+                if appr.get("id"):
+                    db.approve_request(appr["id"])
+                    c_conn = db.get_db_connection()
+                    if c_conn:
+                        try:
+                            with c_conn.cursor() as cur:
+                                cur.execute("""
+                                    SELECT id FROM servers 
+                                    WHERE (ip = %s OR ip_address = %s) 
+                                       OR (LOWER(hostname) IN (LOWER(%s), LOWER(%s), LOWER(%s)) 
+                                           OR LOWER(name) IN (LOWER(%s), LOWER(%s), LOWER(%s)))
+                                    ORDER BY id DESC LIMIT 1;
+                                """, (
+                                    ip or appr.get('ip_address'), ip or appr.get('ip_address'),
+                                    hostname or '', clean_appr_h, appr_h,
+                                    hostname or '', clean_appr_h, appr_h
+                                ))
+                                r = cur.fetchone()
+                                if r:
+                                    server_id = r["id"] if isinstance(r, dict) else r[0]
+                        except Exception: pass
+                        finally: c_conn.close()
+            except Exception as ex_heal:
+                logger.error(f"Error auto-healing server in api_agent_status: {ex_heal}")
+            # If server_id still could not be created, force status back to pending
+            if not server_id:
+                status = "pending" 
 
     # Also check directly in servers if already exists and online
     if not server_id and (ip or hostname or client_ip):

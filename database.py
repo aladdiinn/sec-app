@@ -1586,9 +1586,12 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = "", ssh_
                 cur.execute("SELECT id FROM servers WHERE hostname = %s OR name = %s ORDER BY id DESC LIMIT 1;", (name, name))
                 row = cur.fetchone()
                 if row:
-                    return row["id"] if isinstance(row, dict) else row[0]
+                    sid = row["id"] if isinstance(row, dict) else row[0]
+                    conn.commit()
+                    return sid
             except Exception:
                 pass
+            conn.commit()
             return 1
     except Exception as e:
         logger.error(f"Error in add_server: {e}")
@@ -1652,7 +1655,13 @@ def delete_server(server_id: int):
             if hname or ip_addr:
                 try:
                     cur.execute("SAVEPOINT del_approvals")
-                    cur.execute("DELETE FROM approvals WHERE LOWER(hostname) = LOWER(%s) OR ip_address = %s OR ip_address = %s;", (hname or '', ip_addr or '', ip_addr or ''))
+                    clean_h = re.sub(r'^\[.*?\]\s*', '', hname or '').strip()
+                    cur.execute("""
+                        DELETE FROM approvals 
+                        WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s)) 
+                           OR ip_address = %s 
+                           OR ip_address = %s;
+                    """, (hname or '', clean_h, ip_addr or '', ip_addr or ''))
                     cur.execute("RELEASE SAVEPOINT del_approvals")
                 except Exception:
                     cur.execute("ROLLBACK TO SAVEPOINT del_approvals")
@@ -1678,16 +1687,21 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None):
     try:
         if not token:
             token = f"sp-token-{int(time.time())}-{random.randint(1000, 9999)}"
+        clean_hostname = re.sub(r'^\[.*?\]\s*', '', hostname or '').strip()
         with conn.cursor() as cur:
-            # Delete any unapproved server record from servers table so it does not appear in Assets until approved
+            # Check if server already exists in servers table
+            srv_row = None
             try:
                 cur.execute("""
-                    DELETE FROM servers 
-                    WHERE (LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) OR ip = %s OR ip_address = %s);
-                """, (hostname, hostname, ip_address, ip_address))
+                    SELECT id, name, hostname, ip, status FROM servers 
+                    WHERE (LOWER(hostname) IN (LOWER(%s), LOWER(%s)) OR LOWER(name) IN (LOWER(%s), LOWER(%s)) OR ip = %s OR ip_address = %s)
+                    ORDER BY id DESC LIMIT 1;
+                """, (hostname, clean_hostname, hostname, clean_hostname, ip_address, ip_address))
+                srv_row = cur.fetchone()
             except Exception:
                 pass
 
+            # Check if an approval already exists
             cur.execute("""
                 SELECT id, agent_token, status FROM approvals 
                 WHERE (agent_token = %s AND %s IS NOT NULL) 
@@ -1698,8 +1712,34 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None):
             row = cur.fetchone()
             if row:
                 row_dict = dict(row)
-                if row_dict.get("status") in ("pending", "approved"):
-                    return {"id": row_dict["id"], "token": row_dict.get("agent_token") or token, "status": row_dict.get("status")}
+                appr_id = row_dict["id"]
+                current_status = row_dict.get("status")
+
+                # If approval is 'approved' but no server row exists in servers table (it vanished or was deleted):
+                # Reset to 'pending' so it surfaces on SOC dashboard for administrator approval!
+                if current_status == "approved" and not srv_row:
+                    cur.execute("""
+                        UPDATE approvals 
+                        SET status = 'pending', agent_token = %s, requested_at = NOW() 
+                        WHERE id = %s;
+                    """, (token, appr_id))
+                    conn.commit()
+                    return {"id": appr_id, "token": token, "status": "pending"}
+
+                # If approval is currently pending, update token and timestamp
+                if current_status == "pending":
+                    cur.execute("""
+                        UPDATE approvals 
+                        SET agent_token = %s, requested_at = NOW() 
+                        WHERE id = %s;
+                    """, (token, appr_id))
+                    conn.commit()
+                    return {"id": appr_id, "token": token, "status": "pending"}
+
+                # If approval is approved AND server actually exists in servers table:
+                if current_status == "approved" and srv_row:
+                    sid = srv_row["id"] if isinstance(srv_row, dict) else srv_row[0]
+                    return {"id": appr_id, "token": row_dict.get("agent_token") or token, "status": "approved", "server_id": sid}
 
             cur.execute("""
                 INSERT INTO approvals (hostname, ip_address, agent_token, status, requested_at)
