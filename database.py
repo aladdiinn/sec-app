@@ -889,6 +889,13 @@ def init_db():
                 except Exception:
                     pass
 
+        # Initialize Application SIEM Schema & Rules (Additive & Idempotent)
+        try:
+            import app_siem_db
+            app_siem_db.init_app_siem_schema(conn)
+        except Exception as e_app:
+            logger.error(f"Error initializing Application SIEM schema: {e_app}")
+
         conn.close()
         logger.info("Database schema initialized successfully.")
     except Exception as e:

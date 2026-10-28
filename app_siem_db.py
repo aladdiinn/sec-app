@@ -1,0 +1,352 @@
+import logging
+from datetime import datetime, timezone, timedelta
+import psycopg2
+import psycopg2.extras
+
+logger = logging.getLogger("security_monitor.app_siem_db")
+
+def init_app_siem_schema(conn):
+    """
+    Additive & Idempotent initialization of Application SIEM tables,
+    partitioned app_events table, composite indexes, and helper functions.
+    Safe to run repeatedly.
+    """
+    if not conn:
+        logger.warning("No database connection provided to init_app_siem_schema.")
+        return False
+
+    with conn.cursor() as cur:
+        # 1. applications table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS applications (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL UNIQUE,
+                primary_url VARCHAR(512) NOT NULL,
+                environment VARCHAR(50) DEFAULT 'Production',
+                description TEXT,
+                status VARCHAR(50) DEFAULT 'WAITING',
+                project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+                settings JSONB DEFAULT '{}'::jsonb,
+                created_by VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+
+        # Idempotent column check for applications
+        for col, col_type in [
+            ("environment", "VARCHAR(50) DEFAULT 'Production'"),
+            ("description", "TEXT"),
+            ("status", "VARCHAR(50) DEFAULT 'WAITING'"),
+            ("project_id", "INTEGER REFERENCES projects(id) ON DELETE SET NULL"),
+            ("settings", "JSONB DEFAULT '{}'::jsonb"),
+            ("created_by", "VARCHAR(100)"),
+            ("created_at", "TIMESTAMPTZ DEFAULT NOW()"),
+            ("updated_at", "TIMESTAMPTZ DEFAULT NOW()")
+        ]:
+            try:
+                cur.execute(f"ALTER TABLE applications ADD COLUMN IF NOT EXISTS {col} {col_type};")
+            except Exception:
+                pass
+
+        # 2. application_components table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS application_components (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                role VARCHAR(50) NOT NULL,
+                node_name VARCHAR(255) NOT NULL,
+                node_ip VARCHAR(100) NOT NULL,
+                machine_id VARCHAR(128),
+                linked_server_id INTEGER REFERENCES servers(id) ON DELETE SET NULL,
+                token_hash VARCHAR(128) NOT NULL UNIQUE,
+                enrollment_token VARCHAR(128),
+                enrollment_expires_at TIMESTAMPTZ,
+                collector_version VARCHAR(50),
+                status VARCHAR(50) DEFAULT 'WAITING',
+                last_seen TIMESTAMPTZ,
+                last_event_at TIMESTAMPTZ,
+                config_readiness JSONB DEFAULT '{}'::jsonb,
+                drops_counter BIGINT DEFAULT 0,
+                events_counter BIGINT DEFAULT 0,
+                clock_offset_ms INTEGER DEFAULT 0,
+                enabled BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+
+        for col, col_type in [
+            ("machine_id", "VARCHAR(128)"),
+            ("linked_server_id", "INTEGER REFERENCES servers(id) ON DELETE SET NULL"),
+            ("enrollment_token", "VARCHAR(128)"),
+            ("enrollment_expires_at", "TIMESTAMPTZ"),
+            ("collector_version", "VARCHAR(50)"),
+            ("status", "VARCHAR(50) DEFAULT 'WAITING'"),
+            ("last_seen", "TIMESTAMPTZ"),
+            ("last_event_at", "TIMESTAMPTZ"),
+            ("config_readiness", "JSONB DEFAULT '{}'::jsonb"),
+            ("drops_counter", "BIGINT DEFAULT 0"),
+            ("events_counter", "BIGINT DEFAULT 0"),
+            ("clock_offset_ms", "INTEGER DEFAULT 0"),
+            ("enabled", "BOOLEAN DEFAULT TRUE")
+        ]:
+            try:
+                cur.execute(f"ALTER TABLE application_components ADD COLUMN IF NOT EXISTS {col} {col_type};")
+            except Exception:
+                pass
+
+        # 3. app_events table (Partitioned by Day)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_events (
+                id BIGSERIAL,
+                event_time TIMESTAMPTZ NOT NULL,
+                received_time TIMESTAMPTZ DEFAULT NOW(),
+                application_id INTEGER NOT NULL,
+                component_id INTEGER NOT NULL,
+                node VARCHAR(255),
+                source_type VARCHAR(50),
+                event_type VARCHAR(50) NOT NULL,
+                client_ip VARCHAR(100),
+                is_trusted_proxy BOOLEAN DEFAULT FALSE,
+                raw_client_ip VARCHAR(100),
+                user_name VARCHAR(255),
+                user_role VARCHAR(100),
+                session_hash VARCHAR(64),
+                method VARCHAR(16),
+                url_path TEXT,
+                query_masked TEXT,
+                status_code INTEGER,
+                bytes_sent BIGINT,
+                duration_ms INTEGER,
+                user_agent TEXT,
+                db_user VARCHAR(100),
+                db_name VARCHAR(100),
+                db_object TEXT,
+                statement_excerpt TEXT,
+                severity VARCHAR(30) DEFAULT 'info',
+                parse_status VARCHAR(30) DEFAULT 'parsed',
+                dedup_key VARCHAR(128),
+                raw JSONB,
+                PRIMARY KEY (id, event_time)
+            ) PARTITION BY RANGE (event_time);
+        """)
+
+        # Create default partition for events falling outside specific day ranges
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_events_default
+            PARTITION OF app_events DEFAULT;
+        """)
+
+        # Create rolling daily partitions for 7 days in the past and 30 days ahead
+        now_dt = datetime.now(timezone.utc)
+        for offset in range(-7, 31):
+            day_start = (now_dt + timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+            part_name = f"app_events_y{day_start.strftime('%Y_m%m_d%d')}"
+            try:
+                cur.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {part_name}
+                    PARTITION OF app_events
+                    FOR VALUES FROM ('{day_start.isoformat()}') TO ('{day_end.isoformat()}');
+                """)
+            except Exception as e:
+                logger.debug(f"Partition {part_name} creation note: {e}")
+
+        # Indexes on partitioned table
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_app_events_app_time ON app_events (application_id, event_time DESC);
+            CREATE INDEX IF NOT EXISTS idx_app_events_ip ON app_events (application_id, client_ip, event_time DESC);
+            CREATE INDEX IF NOT EXISTS idx_app_events_user ON app_events (application_id, user_name, event_time DESC);
+            CREATE INDEX IF NOT EXISTS idx_app_events_session ON app_events (application_id, session_hash, event_time DESC);
+            CREATE INDEX IF NOT EXISTS idx_app_events_type ON app_events (application_id, event_type, event_time DESC);
+            CREATE INDEX IF NOT EXISTS idx_app_events_sev ON app_events (application_id, severity, event_time DESC);
+            CREATE INDEX IF NOT EXISTS idx_app_events_dedup ON app_events (dedup_key);
+        """)
+
+        # 4. app_rules table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_rules (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL UNIQUE,
+                description TEXT,
+                rule_type VARCHAR(50) NOT NULL,
+                severity VARCHAR(30) NOT NULL,
+                mitre_technique_id VARCHAR(50),
+                mitre_tactic VARCHAR(100),
+                enabled BOOLEAN DEFAULT TRUE,
+                application_id INTEGER REFERENCES applications(id) ON DELETE CASCADE,
+                threshold INTEGER DEFAULT 1,
+                window_seconds INTEGER DEFAULT 60,
+                conditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+                required_data VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+
+        # 5. app_incidents & app_incident_events
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_incidents (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                title VARCHAR(255) NOT NULL,
+                attacker_key VARCHAR(255) NOT NULL,
+                attacker_type VARCHAR(50) DEFAULT 'ip',
+                client_ip VARCHAR(100),
+                user_name VARCHAR(255),
+                session_hash VARCHAR(64),
+                severity VARCHAR(30) NOT NULL,
+                status VARCHAR(50) DEFAULT 'Open',
+                first_event_at TIMESTAMPTZ NOT NULL,
+                last_event_at TIMESTAMPTZ NOT NULL,
+                events_count INTEGER DEFAULT 1,
+                stages_count INTEGER DEFAULT 1,
+                mitre_tactics JSONB DEFAULT '[]'::jsonb,
+                owner VARCHAR(100),
+                notes TEXT,
+                audit_id INTEGER,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_app_incidents_app ON app_incidents (application_id, last_event_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_app_incidents_status ON app_incidents (application_id, status);
+            CREATE INDEX IF NOT EXISTS idx_app_incidents_attacker ON app_incidents (application_id, attacker_key, status);
+
+            CREATE TABLE IF NOT EXISTS app_incident_events (
+                id SERIAL PRIMARY KEY,
+                incident_id INTEGER NOT NULL REFERENCES app_incidents(id) ON DELETE CASCADE,
+                event_time TIMESTAMPTZ NOT NULL,
+                node_name VARCHAR(255) NOT NULL,
+                role VARCHAR(50) NOT NULL,
+                rule_name VARCHAR(255) NOT NULL,
+                mitre_technique VARCHAR(50),
+                step_summary TEXT NOT NULL,
+                raw_event_id BIGINT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_app_inc_events_inc ON app_incident_events (incident_id, event_time ASC);
+        """)
+
+        # 6. app_suppressions
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_suppressions (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER REFERENCES applications(id) ON DELETE CASCADE,
+                rule_id INTEGER REFERENCES app_rules(id) ON DELETE CASCADE,
+                rule_name VARCHAR(255),
+                target_pattern TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                expires_at TIMESTAMPTZ,
+                created_by VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+
+        # 7. app_baselines
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_baselines (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                baseline_type VARCHAR(50) NOT NULL,
+                metric_name VARCHAR(100) NOT NULL,
+                stats JSONB NOT NULL DEFAULT '{}'::jsonb,
+                learning_complete BOOLEAN DEFAULT FALSE,
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (application_id, baseline_type, metric_name)
+            );
+        """)
+
+        # 8. project_apps link table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS project_apps (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                assigned_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (project_id, application_id)
+            );
+        """)
+
+        # 9. app_users_synced table (Identity & Privilege state)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_users_synced (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                username VARCHAR(255) NOT NULL,
+                role VARCHAR(100),
+                is_enabled BOOLEAN DEFAULT TRUE,
+                created_at_db TIMESTAMPTZ,
+                last_login_db TIMESTAMPTZ,
+                first_seen_in_soc TIMESTAMPTZ DEFAULT NOW(),
+                last_seen_in_soc TIMESTAMPTZ,
+                observed_tier VARCHAR(50) DEFAULT 'PUBLIC',
+                flags JSONB DEFAULT '[]'::jsonb,
+                UNIQUE (application_id, username)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_app_users_app_user ON app_users_synced (application_id, username);
+        """)
+
+        # 10. Starter Application Rules
+        starter_rules = [
+            ("Brute Force on Login URL", "Detects high volume of failed login attempts targeting the login URL.", "threshold", "critical", "T1110", "Credential Access", 10, 60, {"event_type": "auth_failure"}, "needs login_url"),
+            ("Password Spraying", "Multiple distinct usernames targeted from a single IP address.", "threshold", "critical", "T1110.003", "Credential Access", 5, 120, {"event_type": "auth_failure", "group_by": "client_ip", "distinct": "user_name"}, None),
+            ("Credential Stuffing", "High rate of login attempts using various IPs targeting specific accounts.", "threshold", "critical", "T1110.004", "Credential Access", 10, 300, {"event_type": "auth_failure", "group_by": "user_name", "distinct": "client_ip"}, None),
+            ("Login Success After Failures", "Successful login immediately following multiple failed authentication attempts from the same source.", "sequence", "high", "T1078", "Defense Evasion", 1, 180, {"seq": ["auth_failure", "auth_success"]}, None),
+            ("Unknown User Authentication", "Successful authentication for a username not present in the synced users catalog.", "identity", "critical", "T1078.001", "Persistence", 1, 60, {"flag": "UNKNOWN_USER"}, "needs users table"),
+            ("Disabled or Deleted Account Activity", "Authentication or session activity from an account flagged as inactive, deleted, or disabled.", "identity", "critical", "T1078.003", "Persistence", 1, 60, {"flag": "DISABLED_ACCOUNT"}, "needs users table"),
+            ("Privilege Tier Violation", "User accessing a RESTRICTED area without having the required role or observed authorization.", "identity", "high", "T1068", "Privilege Escalation", 1, 60, {"tier": "RESTRICTED"}, "needs privilege tiers"),
+            ("Single Session Multi-IP Concurrency", "A single session token hash used concurrently from two distinct geographic IP addresses.", "pattern", "high", "T1539", "Credential Access", 2, 300, {"group_by": "session_hash", "distinct": "client_ip"}, None),
+            ("SQL Injection Attack Pattern", "Detected common SQL injection syntax and signatures in URL path, query parameter, or headers.", "pattern", "critical", "T1190", "Initial Access", 1, 60, {"pattern": "sqli"}, None),
+            ("Cross-Site Scripting (XSS)", "Detected script injection markers (<script>, javascript:, onerror=) in web request parameters.", "pattern", "high", "T1190", "Initial Access", 1, 60, {"pattern": "xss"}, None),
+            ("Path Traversal Attempt", "Detected directory traversal sequence (../, %2e%2e) attempting unauthorized file system access.", "pattern", "critical", "T1083", "Discovery", 1, 60, {"pattern": "traversal"}, None),
+            ("Log4Shell / JNDI Injection", "Detected JNDI lookup strings (${jndi:ldap, ${jndi:rmi) in request payload or headers.", "pattern", "critical", "T1190", "Initial Access", 1, 60, {"pattern": "jndi"}, None),
+            ("Web Shell Upload & Execution", "File upload endpoint access immediately followed by a request to a newly created script (.jsp, .war).", "sequence", "critical", "T1505.003", "Persistence", 1, 120, {"seq": ["file_upload", "jsp_exec"]}, None),
+            ("Database Role / Privilege Change", "ALTER ROLE, GRANT, or CREATE ROLE executed directly in the database.", "pattern", "critical", "T1098", "Persistence", 1, 60, {"event_type": "db_role_change"}, "needs pgaudit"),
+            ("Unauthorized DDL Execution", "DROP TABLE, TRUNCATE, or ALTER TABLE executed outside designated maintenance windows.", "pattern", "critical", "T1485", "Impact", 1, 60, {"event_type": "db_ddl"}, "needs pgaudit"),
+            ("Direct Users Table Tampering", "Modification (INSERT/UPDATE/DELETE) on the users or credentials table by an unapproved database user.", "pattern", "critical", "T1565.001", "Impact", 1, 60, {"event_type": "db_write", "target": "users_table"}, "needs pgaudit"),
+            ("Mass Data Exfiltration / COPY TO", "Database COPY TO statement or exceptionally high row count export detected.", "threshold", "critical", "T1005", "Exfiltration", 1, 60, {"event_type": "db_read", "operation": "COPY_TO"}, "needs pgaudit"),
+            ("Component Silent / Deadman Alert", "Collector has ceased sending heartbeats or telemetry for over 10 minutes.", "absence", "high", "T1562.001", "Defense Evasion", 1, 600, {"absence_seconds": 600}, None)
+        ]
+
+        for r_name, r_desc, r_type, r_sev, r_mitre_id, r_mitre_tac, r_thresh, r_win, r_cond, r_req in starter_rules:
+            try:
+                cur.execute("""
+                    INSERT INTO app_rules (name, description, rule_type, severity, mitre_technique_id, mitre_tactic, threshold, window_seconds, conditions, required_data, enabled)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)
+                    ON CONFLICT (name) DO NOTHING;
+                """, (r_name, r_desc, r_type, r_sev, r_mitre_id, r_mitre_tac, r_thresh, r_win, psycopg2.extras.Json(r_cond), r_req))
+            except Exception:
+                pass
+
+    logger.info("Application SIEM database schema initialized successfully.")
+    return True
+
+
+def delete_old_app_events(conn, retention_days=30, batch_size=5000):
+    """
+    Deletes events older than retention_days in batches of batch_size.
+    Designed for non-blocking background cleanup.
+    Returns total deleted count.
+    """
+    if not conn:
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    total_deleted = 0
+    with conn.cursor() as cur:
+        while True:
+            cur.execute("""
+                DELETE FROM app_events
+                WHERE (id, event_time) IN (
+                    SELECT id, event_time
+                    FROM app_events
+                    WHERE event_time < %s
+                    LIMIT %s
+                );
+            """, (cutoff, batch_size))
+            deleted = cur.rowcount
+            total_deleted += deleted
+            if deleted < batch_size:
+                break
+    return total_deleted
