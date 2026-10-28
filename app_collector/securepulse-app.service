@@ -1,0 +1,25 @@
+[Unit]
+Description=SecurePulse Application-Level SIEM Collector
+Documentation=https://github.com/aladdiinn/sec-app
+After=network.target tomcat.service postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/securepulse-app
+EnvironmentFile=/etc/securepulse-app/collector.env
+ExecStart=/usr/bin/python3 /opt/securepulse-app/app_collector.py
+Restart=always
+RestartSec=5s
+
+# Hard Resource Limits (Guaranteed zero impact on business apps)
+CPUQuota=10%
+MemoryMax=200M
+TasksMax=50
+
+# Security Hardening
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

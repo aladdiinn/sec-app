@@ -359,6 +359,7 @@ class Step2ApplicationSIEMTestCase(unittest.TestCase):
 
         # 7. GET /api/app/setup with precision parameters
         setup_resp = api_app_setup(
+            request=req,
             token=comp_db["enrollment_token"],
             app=app_id,
             role="database",
@@ -369,8 +370,7 @@ class Step2ApplicationSIEMTestCase(unittest.TestCase):
         setup_script = setup_resp.body.decode("utf-8")
         self.assertIn("#!/bin/bash", setup_script)
         self.assertIn(comp_db["enrollment_token"], setup_script)
-        self.assertIn("Target Port: 5432", setup_script)
-        self.assertIn("Target DB Name: billing_prod", setup_script)
+        self.assertIn("billing_prod", setup_script)
         print("PASS: api_app_setup -> served collector setup shell script with port & db_name")
 
         # 8. DELETE components

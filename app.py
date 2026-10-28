@@ -7352,6 +7352,7 @@ def api_delete_app_component(request: Request, app_id: int, comp_id: int):
 
 @app.get("/api/app/setup")
 def api_app_setup(
+    request: Request,
     token: str = Query(...),
     app: int = Query(...),
     role: str = Query("web"),
@@ -7359,16 +7360,290 @@ def api_app_setup(
     port: Optional[str] = Query(None),
     db_name: Optional[str] = Query(None)
 ):
-    """Serves the securepulse-app collector installer script (Step 3)."""
-    script = f"""#!/bin/bash
-# BSmart SOC Application Collector Setup (Step 3 preview)
-echo "=== BSmart SOC Application Collector Setup ==="
-echo "Application ID: {app}"
-echo "Node Name: {node}"
-echo "Role: {role}"
-echo "Enrollment Token: {token}"
-echo "Target Port: {port or 'auto-detect'}"
-echo "Target DB Name: {db_name or 'N/A'}"
-echo "Collector installer will be fully configured in Step 3."
-"""
+    """Serves the dynamic securepulse-app collector installer script."""
+    base_url = str(request.base_url).rstrip('/')
+    installer_path = os.path.join(os.path.dirname(__file__), "app_collector", "install_app_collector.sh")
+    
+    if os.path.exists(installer_path):
+        with open(installer_path, "r", encoding="utf-8") as f:
+            script = f.read()
+    else:
+        script = "#!/bin/bash\necho 'Collector installer not found'\nexit 1"
+
+    script = script.replace("__SOC_URL__", base_url)
+    script = script.replace("__TOKEN__", token)
+    script = script.replace("__APP_ID__", str(app))
+    script = script.replace("__ROLE__", role)
+    script = script.replace("__NODE_NAME__", node)
+    script = script.replace("__TARGET_PORT__", port or "")
+    script = script.replace("__TARGET_DB__", db_name or "")
+
     return PlainTextResponse(script, media_type="text/x-shellscript")
+
+@app.get("/api/app/collector.py")
+def api_get_collector_code(token: str = Query("")):
+    """Serves the standalone collector Python agent to target nodes."""
+    collector_file = os.path.join(os.path.dirname(__file__), "app_collector", "app_collector.py")
+    if not os.path.exists(collector_file):
+        raise HTTPException(status_code=404, detail="Collector code not found")
+    with open(collector_file, "r", encoding="utf-8") as f:
+        code = f.read()
+    return PlainTextResponse(code, media_type="text/x-python")
+
+@app.post("/api/app/heartbeat")
+def api_app_heartbeat(request: Request, payload: dict = Body(...)):
+    """Receives 30-second heartbeat from securepulse-app collectors."""
+    token = request.headers.get("X-Enrollment-Token", "")
+    app_id = payload.get("app_id")
+    node_name = payload.get("node_name", "")
+    version = payload.get("version", "1.6.0")
+    files = payload.get("monitored_files", [])
+
+    conn = db.get_db_connection()
+    if not conn:
+        return {"status": "error", "reason": "database connection unavailable"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, application_id, status FROM application_components
+                WHERE (enrollment_token = %s OR (application_id = %s AND node_name = %s))
+                LIMIT 1;
+            """, (token, app_id, node_name))
+            comp = cur.fetchone()
+            if not comp:
+                return {"status": "error", "reason": "unrecognized component"}
+
+            readiness = psycopg2.extras.Json({"monitored_files": files, "collector_version": version})
+            cur.execute("""
+                UPDATE application_components
+                SET status = 'RECEIVING', last_seen = NOW(), collector_version = %s, config_readiness = %s
+                WHERE id = %s;
+            """, (version, readiness, comp["id"]))
+
+            # Auto-promote application from WAITING to NORMAL if currently WAITING
+            cur.execute("""
+                UPDATE applications
+                SET status = 'NORMAL', updated_at = NOW()
+                WHERE id = %s AND status = 'WAITING';
+            """, (comp["application_id"],))
+
+            conn.commit()
+            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"]}
+    except Exception as e:
+        logger.error(f"Error in api_app_heartbeat: {e}")
+        return {"status": "error", "reason": str(e)}
+    finally:
+        conn.close()
+
+TOMCAT_ACCESS_RE = re.compile(
+    r'^(?P<ip>[^ ]+)\s+(?P<ident>[^ ]+)\s+(?P<user>[^ ]+)\s+\[(?P<time>[^\]]+)\]\s+"(?P<method>[A-Z]+)\s+(?P<path>[^ ]+)\s+HTTP/[0-9\.]+"\s+(?P<status>\d+)\s+(?P<bytes>[^ ]+)'
+)
+
+def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str):
+    """Real-time heuristics detecting web attacks from parsed access logs."""
+    p_lower = path.lower()
+    
+    # 1. SQL Injection
+    sqli_regex = r"(\%27|')\s*(or|and)\s*.*(=|<|>)|union\s+(all\s+)?select|sleep\(|--|information_schema|waitfor\s+delay"
+    if re.search(sqli_regex, p_lower):
+        return "SQL_INJECTION", "critical", "SQL Injection Exploit Attempt", "T1190 - Exploit Public-Facing Application"
+
+    # 2. Log4j / JNDI Exploit
+    if "${jndi:" in p_lower:
+        return "JNDI_EXPLOIT", "critical", "Log4Shell (JNDI) Remote Code Execution Attempt", "T1190 - Exploit Public-Facing Application"
+
+    # 3. Path Traversal / LFI
+    if "../" in p_lower or "..%2f" in p_lower or "/etc/passwd" in p_lower or "win.ini" in p_lower:
+        return "PATH_TRAVERSAL", "high", "Directory / Path Traversal Attack", "T1083 - File and Directory Discovery"
+
+    # 4. Cross-Site Scripting (XSS)
+    if "<script" in p_lower or "javascript:" in p_lower or "onerror=" in p_lower or "onload=" in p_lower:
+        return "XSS_ATTACK", "medium", "Cross-Site Scripting (XSS) Injection", "T1059.007 - Cross-Site Scripting"
+
+    # 5. Admin Path Abuse / Privilege Violation
+    if "/admin" in p_lower:
+        if status == 403 or (user and user != "-" and user.lower() != "admin"):
+            return "ADMIN_ACCESS_ABUSE", "high", "Restricted Admin Function Access Abuse", "T1078 - Valid Accounts"
+
+    # 6. Authentication Failure / Brute Force
+    if any(k in p_lower for k in ("login", "auth", "signin")) and status == 401:
+        return "LOGIN_FAILURE", "medium", "Failed User Authentication (HTTP 401)", "T1110 - Brute Force"
+
+    return "HTTP_ACCESS", "info", None, None
+
+@app.post("/api/app/events")
+def api_app_events(request: Request, payload: dict = Body(...)):
+    """Ingests, parses, normalizes and correlates telemetry events from collectors."""
+    token = request.headers.get("X-Enrollment-Token", "")
+    app_id = payload.get("app_id")
+    node_name = payload.get("node_name", "")
+    role = payload.get("role", "web")
+    events = payload.get("events", [])
+
+    if not events:
+        return {"status": "success", "ingested": 0}
+
+    conn = db.get_db_connection()
+    if not conn:
+        return {"status": "error", "reason": "database unavailable"}
+
+    ingested_count = 0
+    highest_severity = "info"
+
+    try:
+        with conn.cursor() as cur:
+            # Lookup component
+            cur.execute("""
+                SELECT id, application_id FROM application_components
+                WHERE (enrollment_token = %s OR (application_id = %s AND node_name = %s))
+                LIMIT 1;
+            """, (token, app_id, node_name))
+            comp = cur.fetchone()
+            if not comp:
+                return {"status": "error", "reason": "unrecognized component"}
+            
+            comp_id = comp["id"]
+            actual_app_id = comp["application_id"]
+
+            for ev in events:
+                raw_line = ev.get("line", "").strip()
+                if not raw_line:
+                    continue
+
+                source_type = ev.get("source", role)
+                m = TOMCAT_ACCESS_RE.match(raw_line)
+
+                if m:
+                    client_ip = m.group("ip").split(",")[0].strip()
+                    user = m.group("user")
+                    method = m.group("method")
+                    raw_path = m.group("path")
+                    status_code = int(m.group("status"))
+                    bytes_sent = int(m.group("bytes")) if m.group("bytes").isdigit() else 0
+
+                    event_type, severity, rule_title, mitre_tag = evaluate_web_security_event(
+                        method, raw_path, status_code, user, client_ip
+                    )
+
+                    # Insert partitioned event
+                    cur.execute("""
+                        INSERT INTO app_events (
+                            event_time, application_id, component_id, node, source_type, event_type,
+                            client_ip, user_name, method, url_path, status_code, bytes_sent, severity, raw
+                        )
+                        VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                    """, (
+                        actual_app_id, comp_id, node_name, source_type, event_type,
+                        client_ip, user if user != "-" else None, method, raw_path,
+                        status_code, bytes_sent, severity, psycopg2.extras.Json(ev)
+                    ))
+                    ingested_count += 1
+
+                    # If attack detected, record or update incident timeline
+                    if severity in ("medium", "high", "critical"):
+                        attacker_key = f"ip:{client_ip}"
+                        cur.execute("""
+                            INSERT INTO app_incidents (
+                                application_id, attacker_key, title, severity, status, attack_types,
+                                event_count, client_ip, first_seen, last_seen
+                            )
+                            VALUES (%s, %s, %s, %s, 'Open', ARRAY[%s], 1, %s, NOW(), NOW())
+                            ON CONFLICT (application_id, attacker_key) DO UPDATE
+                            SET event_count = app_incidents.event_count + 1,
+                                last_seen = NOW(),
+                                severity = CASE 
+                                    WHEN EXCLUDED.severity = 'critical' OR app_incidents.severity = 'critical' THEN 'critical'
+                                    WHEN EXCLUDED.severity = 'high' OR app_incidents.severity = 'high' THEN 'high'
+                                    ELSE 'medium'
+                                END,
+                                attack_types = array_cat(app_incidents.attack_types, ARRAY[%s]::varchar[])
+                            RETURNING id;
+                        """, (actual_app_id, attacker_key, f"{rule_title} from {client_ip}", severity, event_type, client_ip, event_type))
+                        
+                        inc_row = cur.fetchone()
+                        if inc_row:
+                            cur.execute("""
+                                INSERT INTO app_incident_events (incident_id, step_order, event_type, detail, timestamp)
+                                VALUES (%s, (SELECT COALESCE(MAX(step_order), 0) + 1 FROM app_incident_events WHERE incident_id = %s), %s, %s, NOW());
+                            """, (inc_row["id"], inc_row["id"], event_type, f"{method} {raw_path} -> HTTP {status_code}"))
+
+                        if severity == "critical":
+                            highest_severity = "critical"
+                        elif severity == "high" and highest_severity != "critical":
+                            highest_severity = "high"
+
+                else:
+                    # Non-access log (catalina.out or general error)
+                    cur.execute("""
+                        INSERT INTO app_events (
+                            event_time, application_id, component_id, node, source_type, event_type,
+                            severity, raw
+                        )
+                        VALUES (NOW(), %s, %s, %s, %s, 'APP_LOG', 'info', %s);
+                    """, (actual_app_id, comp_id, node_name, source_type, psycopg2.extras.Json(ev)))
+                    ingested_count += 1
+
+            # Update component last event and counter
+            cur.execute("""
+                UPDATE application_components
+                SET last_event_at = NOW(), events_counter = events_counter + %s
+                WHERE id = %s;
+            """, (ingested_count, comp_id))
+
+            # Update application dynamic status if attacks detected
+            if highest_severity == "critical":
+                cur.execute("UPDATE applications SET status = 'CRITICAL', updated_at = NOW() WHERE id = %s AND status != 'MAINT';", (actual_app_id,))
+            elif highest_severity == "high":
+                cur.execute("UPDATE applications SET status = 'TROUBLE', updated_at = NOW() WHERE id = %s AND status NOT IN ('CRITICAL', 'MAINT');", (actual_app_id,))
+
+            conn.commit()
+            return {"status": "success", "ingested": ingested_count, "highest_severity": highest_severity}
+    except Exception as e:
+        logger.error(f"Error in api_app_events: {e}")
+        return {"status": "error", "reason": str(e)}
+    finally:
+        conn.close()
+
+@app.get("/api/apps/{app_id}/events")
+def api_get_app_events(request: Request, app_id: int, limit: int = 50):
+    """Retrieves live stream of parsed application SIEM events."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    conn = db.get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, event_time, node, source_type, event_type, client_ip, user_name, method, url_path, status_code, severity
+                FROM app_events
+                WHERE application_id = %s
+                ORDER BY event_time DESC
+                LIMIT %s;
+            """, (app_id, limit))
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+@app.get("/api/apps/{app_id}/incidents")
+def api_get_app_incidents(request: Request, app_id: int):
+    """Retrieves correlated attack incidents for an application."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    conn = db.get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT i.*, 
+                    (SELECT json_agg(e ORDER BY e.step_order ASC) FROM app_incident_events e WHERE e.incident_id = i.id) as timeline
+                FROM app_incidents i
+                WHERE i.application_id = %s
+                ORDER BY i.last_seen DESC;
+            """, (app_id,))
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
