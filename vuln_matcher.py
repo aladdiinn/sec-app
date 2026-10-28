@@ -165,28 +165,42 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
 
             findings = []
             findings_seen = set()
-            pkgs_by_name = {}
+            exact_pkgs = {}
+            source_pkgs = {}
             for p in packages:
-                pkgs_by_name[p["name"]] = p
-                if p.get("source_name") and p["source_name"] != p["name"]:
-                    pkgs_by_name[p["source_name"]] = p
+                pname = p["name"].lower()
+                clean_name = re.sub(r':.*$', '', pname)  # strip arch e.g. :amd64
+                exact_pkgs[pname] = p
+                exact_pkgs[clean_name] = p
+                sname = (p.get("source_name") or "").lower()
+                if sname and sname not in source_pkgs:
+                    source_pkgs[sname] = p
 
             # 1. Match Packages
             for adv in advisories:
                 adv_pkg = (adv["package_name"] or "").lower()
                 matched_pkg = None
-                for pname, p in pkgs_by_name.items():
-                    pname_l = pname.lower()
-                    if pname_l == adv_pkg:
-                        matched_pkg = p
-                        break
-                    # Support alias matching for openssl / libssl
-                    if adv_pkg == "openssl" and pname_l in ("openssl", "libssl3", "libssl1.1", "libssl1.0.0"):
-                        matched_pkg = p
-                        break
-                    elif adv_pkg == "libssl" and "libssl" in pname_l:
-                        matched_pkg = p
-                        break
+
+                # 1. First priority: Exact match by package name
+                if adv_pkg in exact_pkgs:
+                    matched_pkg = exact_pkgs[adv_pkg]
+
+                # 2. Second priority: Standard aliases
+                if not matched_pkg:
+                    if adv_pkg == "openssl":
+                        for alias in ("openssl", "libssl3", "libssl3t64", "libssl1.1", "libssl1.0.0"):
+                            if alias in exact_pkgs:
+                                matched_pkg = exact_pkgs[alias]
+                                break
+                    elif adv_pkg == "libssl":
+                        for k, p in exact_pkgs.items():
+                            if "libssl" in k:
+                                matched_pkg = p
+                                break
+
+                # 3. Third priority: Source package match fallback
+                if not matched_pkg and adv_pkg in source_pkgs:
+                    matched_pkg = source_pkgs[adv_pkg]
 
                 if matched_pkg:
                     cve_key = (adv["cve_id"], matched_pkg["name"])
