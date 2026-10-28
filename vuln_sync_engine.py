@@ -540,6 +540,36 @@ CURATED_ADVISORIES = [
         "details": "Vulnerability in Java SE components allowing signature verification bypass where ECDSA signature r and s values are both zero.",
         "source": "NVD"
     },
+    {
+        "cve_id": "CVE-2024-21009",
+        "ecosystem": "Standalone",
+        "package_name": "Java",
+        "fixed_version": "8u510",
+        "severity": "HIGH",
+        "cvss_score": 7.5,
+        "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+        "epss_score": 0.092,
+        "is_cisa_kev": False,
+        "advisory_id": "CVE-2024-21009",
+        "summary": "Java SE Networking Component Denial of Service",
+        "details": "Vulnerability in Oracle Java SE, OpenJDK Networking component allowing unauthenticated network attackers to cause denial of service.",
+        "source": "NVD"
+    },
+    {
+        "cve_id": "CVE-2024-21085",
+        "ecosystem": "Standalone",
+        "package_name": "Java",
+        "fixed_version": "8u510",
+        "severity": "HIGH",
+        "cvss_score": 7.5,
+        "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+        "epss_score": 0.088,
+        "is_cisa_kev": False,
+        "advisory_id": "CVE-2024-21085",
+        "summary": "Java SE Hotspot Memory Corruption Flaw",
+        "details": "Vulnerability in Oracle Java SE, OpenJDK Hotspot component allowing unauthorized read of memory bytes.",
+        "source": "NVD"
+    },
 
     # ── STANDALONE: POSTGRESQL ──
     {

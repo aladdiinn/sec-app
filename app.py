@@ -570,7 +570,7 @@ async def lifespan(app: FastAPI):
 
 # Initialize FastAPI App
 APP_VERSION = "1.5"
-AGENT_VERSION = "1.6"
+AGENT_VERSION = "1.6.2"
 _inventory_scan_queue = set()  # server_ids queued for on-demand inventory scan
 app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifespan)
 
@@ -3989,7 +3989,7 @@ import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threadi
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "1.6.1"
+AGENT_VERSION = "1.6.2"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
@@ -4229,31 +4229,52 @@ def get_standalone_software():
                 "detection_evidence": evidence or f"Path: {{real_tc}}"
             }})
 
-    # 2. Java / JVM (Read-only release file inspection)
+    # 2. Java / JVM (Read-only release file inspection + JRE subdirectory + java binary fallback)
     jvm_candidates = glob.glob("/usr/lib/jvm/*") + glob.glob("/opt/java*") + glob.glob("/opt/jdk*") + glob.glob("/usr/java/*")
     for jvm_dir in sorted(set(jvm_candidates)):
         real_jvm = os.path.realpath(jvm_dir)
         if real_jvm in seen_paths or not os.path.isdir(real_jvm): continue
-        rel_file = os.path.join(real_jvm, "release")
-        if os.path.isfile(rel_file):
-            try:
-                j_ver = None
-                with open(rel_file, "r", encoding="utf-8", errors="ignore") as f:
-                    for line in f:
-                        if line.startswith("JAVA_VERSION="):
-                            j_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
+        candidate_release_files = [
+            os.path.join(real_jvm, "release"),
+            os.path.join(real_jvm, "jre", "release")
+        ]
+        j_ver = None
+        evidence = None
+        for rel_file in candidate_release_files:
+            if os.path.isfile(rel_file):
+                try:
+                    with open(rel_file, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            if line.startswith("JAVA_VERSION="):
+                                j_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
+                                evidence = f"{{rel_file}}: JAVA_VERSION={{j_ver}}"
+                                break
+                            elif line.startswith("JAVA_RUNTIME_VERSION=") and not j_ver:
+                                j_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
+                                evidence = f"{{rel_file}}: JAVA_RUNTIME_VERSION={{j_ver}}"
+                    if j_ver: break
+                except Exception: pass
+
+        if not j_ver:
+            for j_bin in [os.path.join(real_jvm, "bin", "java"), os.path.join(real_jvm, "jre", "bin", "java")]:
+                if os.path.isfile(j_bin) and os.access(j_bin, os.X_OK):
+                    try:
+                        out = subprocess.check_output([j_bin, "-version"], stderr=subprocess.STDOUT, timeout=2).decode("utf-8", errors="ignore")
+                        m = re.search(r'version\\s+"([^"]+)"', out)
+                        if m:
+                            j_ver = m.group(1).strip()
+                            evidence = f"{{j_bin}} -version: {{j_ver}}"
                             break
-                        elif line.startswith("JAVA_RUNTIME_VERSION=") and not j_ver:
-                            j_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
-                if j_ver:
-                    seen_paths.add(real_jvm)
-                    results.append({{
-                        "product": "Java",
-                        "version": j_ver,
-                        "path": real_jvm,
-                        "detection_evidence": f"{{rel_file}}: JAVA_VERSION={{j_ver}}"
-                    }})
-            except Exception: pass
+                    except Exception: pass
+
+        if j_ver:
+            seen_paths.add(real_jvm)
+            results.append({{
+                "product": "Java",
+                "version": j_ver,
+                "path": real_jvm,
+                "detection_evidence": evidence or f"Path: {{real_jvm}}"
+            }})
 
     # 3. PostgreSQL (Read-only PG_VERSION file inspection)
     pg_candidates = glob.glob("/var/lib/postgresql/*/*") + glob.glob("/var/lib/pgsql/data") + glob.glob("/var/lib/pgsql/*/*") + glob.glob("/data/pg*") + glob.glob("/opt/postgresql/data")

@@ -237,12 +237,26 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
             for sw in software:
                 prod = sw["product"]
                 ver = sw["version"]
+                sw_path = sw.get("path") or ""
                 for adv in advisories:
                     if adv["ecosystem"] == "Standalone" and adv["package_name"].lower() == prod.lower():
-                        cve_key = (adv["cve_id"], prod)
+                        cve_key = (adv["cve_id"], prod, sw_path)
                         if cve_key in findings_seen:
                             continue
                         fix_v = adv.get("fixed_version")
+                        if not fix_v:
+                            continue
+
+                        # Train matching: If matching Java, ensure advisory matches the same major release train
+                        # e.g., Java 8 (1.8) shouldn't match a Java 21 advisory, and vice versa
+                        if prod.lower() == "java":
+                            ver_norm = ver[2:] if ver.startswith("1.") else ver
+                            fix_norm = fix_v[2:] if fix_v.startswith("1.") else fix_v
+                            ver_major = re.split(r'[\.u_]', ver_norm)[0]
+                            fix_major = re.split(r'[\.u_]', fix_norm)[0]
+                            if ver_major != fix_major:
+                                continue
+
                         if vuln_version.compare_semver(ver, fix_v) < 0:
                             findings_seen.add(cve_key)
                             findings.append({
@@ -257,7 +271,7 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
                                 "reboot_required": False,
                                 "running_kernel_affected": False,
                                 "advisory_id": adv.get("advisory_id") or adv["cve_id"],
-                                "summary": f"{adv.get('summary', '')} (Found at {sw.get('path', '')})"
+                                "summary": f"{adv.get('summary', '')} (Found at {sw_path})"
                             })
 
             # 3. Atomically update server_vulnerabilities table
