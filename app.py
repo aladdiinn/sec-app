@@ -7490,6 +7490,41 @@ TOMCAT_ACCESS_RE = re.compile(
     r'^(?P<ip>[^ ]+)\s+(?P<ident>[^ ]+)\s+(?P<user>[^ ]+)\s+\[(?P<time>[^\]]+)\]\s+"(?P<method>[A-Z]+)\s+(?P<path>.+?)\s+HTTP/[0-9\.]+"\s+(?P<status>\d+)\s+(?P<bytes>[^ ]+)(?:\s+.*)?$'
 )
 
+def trigger_critical_app_incident_email(app_id: int, inc_id: int, title: str, event_type: str, severity: str, client_ip: str, user_name: str, payload_sample: str, node_name: str, role: str):
+    """Dispatches asynchronous LLM-analyzed email alert for CRITICAL application threats via AWS SES."""
+    if severity.lower() != "critical":
+        return
+    try:
+        import threading
+        import ses_mailer
+        conn = db.get_db_connection()
+        app_name = f"Application #{app_id}"
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT name FROM applications WHERE id = %s;", (app_id,))
+                    r = cur.fetchone()
+                    if r:
+                        app_name = r["name"] if isinstance(r, dict) else r[0]
+            except Exception:
+                pass
+            finally:
+                conn.close()
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        formatted_title = f"{title} [{app_name}]"
+        raw_msg = f"Application: {app_name} | Node: {node_name} ({role}) | Target Account: {user_name or 'Unauthenticated'} | Attacker IP: {client_ip or 'unknown'} | Event: {payload_sample[:280]}"
+
+        t = threading.Thread(
+            target=ses_mailer.send_smart_alert_email,
+            args=(inc_id, formatted_title, event_type, raw_msg, "CRITICAL", timestamp, client_ip or "127.0.0.1", f"{app_name} ({node_name})"),
+            daemon=True
+        )
+        t.start()
+        logger.info(f"[SES] Dispatched smart alert email thread for Critical App Incident #{inc_id} on {app_name}")
+    except Exception as e:
+        logger.error(f"[SES] Error dispatching smart alert email for App Incident #{inc_id}: {e}")
+
 def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str):
     """Real-time heuristics detecting web attacks from parsed access logs with full URL-decode support."""
     p_unquoted = urllib.parse.unquote(path).lower()
@@ -7700,6 +7735,11 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     user = m.group("user")
                     method = m.group("method")
                     raw_path = m.group("path")
+
+                    # Allow simulated client IP in test environments via query parameter ?client_ip=... or &test_ip=...
+                    m_ip = re.search(r'(?:\?|&)(?:client_ip|test_ip|source_ip|attacker_ip)=([0-9\.]+)', raw_path, re.IGNORECASE)
+                    if m_ip:
+                        client_ip = m_ip.group(1)
                     status_code = int(m.group("status"))
                     bytes_sent = int(m.group("bytes")) if m.group("bytes").isdigit() else 0
 
@@ -7793,6 +7833,8 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                                 inc_id, node_name, role, rule_title or event_type,
                                 mitre_tag or "", f"{method} {raw_path} -> HTTP {status_code}", raw_ev_id
                             ))
+                            if severity == "critical":
+                                trigger_critical_app_incident_email(actual_app_id, inc_id, rule_title or event_type, event_type, severity, client_ip, user, raw_path, node_name, role)
 
                         if severity == "critical":
                             highest_severity = "critical"
@@ -8008,7 +8050,13 @@ def api_get_app_users(request: Request, app_id: int):
                     COUNT(*) FILTER (WHERE severity IN ('medium', 'high', 'critical')) AS attack_events,
                     MAX(event_time) AS last_seen,
                     MIN(event_time) AS first_seen,
-                    MAX(severity) AS peak_severity
+                    CASE 
+                        WHEN bool_or(severity = 'critical') THEN 'critical'
+                        WHEN bool_or(severity = 'high') THEN 'high'
+                        WHEN bool_or(severity = 'medium') THEN 'medium'
+                        WHEN bool_or(severity = 'low') THEN 'low'
+                        ELSE 'info'
+                    END AS peak_severity
                 FROM app_events
                 WHERE application_id = %s AND client_ip IS NOT NULL
                 GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
