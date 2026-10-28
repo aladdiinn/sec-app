@@ -117,8 +117,28 @@ def find_tomcat_log_files(target_port: str = "") -> list:
         except Exception:
             pass
 
+    # Process inspection: check all running java processes for -Dcatalina.base / home
+    if sys.platform.startswith("linux"):
+        try:
+            for pid_dir in glob.glob("/proc/[0-9]*"):
+                cmd_path = os.path.join(pid_dir, "cmdline")
+                if os.path.exists(cmd_path):
+                    with open(cmd_path, "r", encoding="utf-8", errors="ignore") as f:
+                        cmd = f.read().replace("\x00", " ")
+                        if "catalina" in cmd.lower() or "tomcat" in cmd.lower():
+                            m = re.search(r'-Dcatalina\.base=([^\s]+)', cmd) or re.search(r'-Dcatalina\.home=([^\s]+)', cmd)
+                            if m:
+                                ldir = os.path.join(m.group(1), "logs")
+                                if os.path.isdir(ldir) and ldir not in candidates:
+                                    candidates.append(ldir)
+        except Exception:
+            pass
+
     # Common Tomcat installation paths across Linux distributions
     standard_roots = [
+        "/home/apache-tomcat*/logs",
+        "/home/*/apache-tomcat*/logs",
+        "/opt/apache-tomcat*/logs",
         "/opt/tomcat/logs",
         "/opt/tomcat10/logs",
         "/opt/tomcat9/logs",
@@ -126,6 +146,7 @@ def find_tomcat_log_files(target_port: str = "") -> list:
         "/var/lib/tomcat9/logs",
         "/var/log/tomcat10",
         "/var/log/tomcat9",
+        "/usr/local/apache-tomcat*/logs",
         "/usr/local/tomcat/logs",
         "/usr/share/tomcat/logs",
         "/home/*/tomcat*/logs"

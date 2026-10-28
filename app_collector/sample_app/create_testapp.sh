@@ -14,31 +14,62 @@ set -e
 echo "=== Deploying BSmart SOC Test Application (testapp) for Tomcat 10 ==="
 
 # 1. Locate Tomcat webapps directory
-WEBAPPS_DIR=""
-CANDIDATES=(
-    "/opt/tomcat/webapps"
-    "/opt/tomcat10/webapps"
-    "/opt/tomcat9/webapps"
-    "/var/lib/tomcat10/webapps"
-    "/var/lib/tomcat9/webapps"
-    "/usr/local/tomcat/webapps"
-    "/usr/share/tomcat/webapps"
-)
+WEBAPPS_DIR="$1"
 
-for dir in "${CANDIDATES[@]}"; do
-    if [ -d "$dir" ]; then
-        WEBAPPS_DIR="$dir"
-        break
-    fi
-done
-
+# Check current directory context (e.g. running from /home/apache-tomcat-x.x/bin)
 if [ -z "$WEBAPPS_DIR" ]; then
-    echo "[?] Could not auto-detect Tomcat webapps directory."
-    read -p "Please enter your Tomcat webapps path (e.g. /opt/tomcat/webapps): " WEBAPPS_DIR
+    if [ -d "$PWD/../webapps" ]; then
+        WEBAPPS_DIR="$(cd "$PWD/../webapps" && pwd)"
+    elif [ -d "$PWD/webapps" ]; then
+        WEBAPPS_DIR="$(cd "$PWD/webapps" && pwd)"
+    fi
 fi
 
-if [ ! -d "$WEBAPPS_DIR" ]; then
-    echo "[ERROR] Directory $WEBAPPS_DIR does not exist. Aborting."
+# Check running Tomcat/Catalina processes
+if [ -z "$WEBAPPS_DIR" ] && command -v ps >/dev/null 2>&1; then
+    CAT_BASE=$(ps aux 2>/dev/null | grep -i "[c]atalina" | grep -o "\-Dcatalina\.base=[^ ]*" | head -n 1 | cut -d'=' -f2)
+    if [ -n "$CAT_BASE" ] && [ -d "$CAT_BASE/webapps" ]; then
+        WEBAPPS_DIR="$CAT_BASE/webapps"
+    fi
+    if [ -z "$WEBAPPS_DIR" ]; then
+        CAT_HOME=$(ps aux 2>/dev/null | grep -i "[c]atalina" | grep -o "\-Dcatalina\.home=[^ ]*" | head -n 1 | cut -d'=' -f2)
+        if [ -n "$CAT_HOME" ] && [ -d "$CAT_HOME/webapps" ]; then
+            WEBAPPS_DIR="$CAT_HOME/webapps"
+        fi
+    fi
+fi
+
+# Common search paths
+if [ -z "$WEBAPPS_DIR" ]; then
+    for dir in \
+        /home/apache-tomcat*/webapps \
+        /home/*/apache-tomcat*/webapps \
+        /opt/apache-tomcat*/webapps \
+        /opt/tomcat*/webapps \
+        /var/lib/tomcat*/webapps \
+        /usr/local/apache-tomcat*/webapps \
+        /usr/local/tomcat*/webapps \
+        "$CATALINA_HOME/webapps" \
+        "$CATALINA_BASE/webapps"; do
+        if [ -d "$dir" ]; then
+            WEBAPPS_DIR="$dir"
+            break
+        fi
+    done
+fi
+
+# Last resort find
+if [ -z "$WEBAPPS_DIR" ]; then
+    FOUND=$(find /home /opt /var/lib -maxdepth 3 -type d -name "webapps" 2>/dev/null | head -n 1)
+    if [ -n "$FOUND" ] && [ -d "$FOUND" ]; then
+        WEBAPPS_DIR="$FOUND"
+    fi
+fi
+
+if [ -z "$WEBAPPS_DIR" ] || [ ! -d "$WEBAPPS_DIR" ]; then
+    echo "[ERROR] Could not automatically locate Tomcat webapps directory."
+    echo "Usage: curl -sSL ... | sudo bash -s /path/to/tomcat/webapps"
+    echo "Example: curl -sSL ... | sudo bash -s /home/apache-tomcat-10.1.61/webapps"
     exit 1
 fi
 
