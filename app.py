@@ -7315,13 +7315,19 @@ def api_add_app_component(request: Request, app_id: int, payload: dict = Body(..
     node_name = (payload.get("node_name") or "").strip()
     node_ip = (payload.get("node_ip") or "").strip()
     machine_id = (payload.get("machine_id") or "").strip() or None
+    port = (payload.get("port") or "").strip() or None
+    db_name = (payload.get("db_name") or "").strip() or None
+
     if not node_name or not node_ip:
         raise HTTPException(status_code=400, detail="Node name and Node IP are required")
-    comp = db.add_application_component(app_id, role, node_name, node_ip, machine_id=machine_id)
+    comp = db.add_application_component(app_id, role, node_name, node_ip, machine_id=machine_id, port=port, db_name=db_name)
     if not comp:
         raise HTTPException(status_code=500, detail="Failed to add component")
     username = user.get("username", "system")
-    db.log_audit(username, "ADD_APP_COMPONENT", "application_component", comp["id"], f"Added {role} component '{node_name}' ({node_ip}) to application '{app_record['name']}'")
+    details_str = f"Added {role} component '{node_name}' ({node_ip})"
+    if port: details_str += f" on port {port}"
+    if db_name: details_str += f" (target db: {db_name})"
+    db.log_audit(username, "ADD_APP_COMPONENT", "application_component", comp["id"], f"{details_str} to application '{app_record['name']}'")
     return comp
 
 @app.get("/api/apps/{app_id}/components")
@@ -7345,7 +7351,14 @@ def api_delete_app_component(request: Request, app_id: int, comp_id: int):
     return {"status": "success", "message": f"Component {comp_id} removed"}
 
 @app.get("/api/app/setup")
-def api_app_setup(token: str = Query(...), app: int = Query(...), role: str = Query("web"), node: str = Query("")):
+def api_app_setup(
+    token: str = Query(...),
+    app: int = Query(...),
+    role: str = Query("web"),
+    node: str = Query(""),
+    port: Optional[str] = Query(None),
+    db_name: Optional[str] = Query(None)
+):
     """Serves the securepulse-app collector installer script (Step 3)."""
     script = f"""#!/bin/bash
 # BSmart SOC Application Collector Setup (Step 3 preview)
@@ -7354,6 +7367,8 @@ echo "Application ID: {app}"
 echo "Node Name: {node}"
 echo "Role: {role}"
 echo "Enrollment Token: {token}"
+echo "Target Port: {port or 'auto-detect'}"
+echo "Target DB Name: {db_name or 'N/A'}"
 echo "Collector installer will be fully configured in Step 3."
 """
     return PlainTextResponse(script, media_type="text/x-shellscript")

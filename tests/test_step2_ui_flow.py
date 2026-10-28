@@ -99,10 +99,10 @@ class Step2ApplicationSIEMTestCase(unittest.TestCase):
         app_id = app_data["id"]
         self.created_app_ids.append(app_id)
 
-        # Add 2 Web Nodes and 1 Database Node
-        c1 = db.add_application_component(app_id, "web", "web-cluster-01", "10.0.1.11")
-        c2 = db.add_application_component(app_id, "web", "web-cluster-02", "10.0.1.12")
-        c3 = db.add_application_component(app_id, "database", "db-cluster-pg01", "10.0.2.20")
+        # Add 2 Web Nodes and 1 Database Node with precision port & db_name targeting
+        c1 = db.add_application_component(app_id, "web", "web-cluster-01", "10.0.1.11", port="8080")
+        c2 = db.add_application_component(app_id, "web", "web-cluster-02", "10.0.1.12", port="8443")
+        c3 = db.add_application_component(app_id, "database", "db-cluster-pg01", "10.0.2.20", port="5432", db_name="banking_prod")
 
         self.assertIsNotNone(c1)
         self.assertIsNotNone(c2)
@@ -111,8 +111,11 @@ class Step2ApplicationSIEMTestCase(unittest.TestCase):
         # Verify enrollment tokens (32 hex characters)
         self.assertEqual(len(c1["enrollment_token"]), 32)
         self.assertEqual(c1["role"], "web")
+        self.assertEqual(c1.get("target_port"), "8080")
         self.assertEqual(c3["role"], "database")
-        print(f"Generated enrollment tokens: c1={c1['enrollment_token'][:8]}..., c3={c3['enrollment_token'][:8]}...")
+        self.assertEqual(c3.get("target_db_name"), "banking_prod")
+        self.assertEqual(c3.get("target_port"), "5432")
+        print(f"Generated enrollment tokens: c1={c1['enrollment_token'][:8]}... (port: {c1.get('target_port')}), c3={c3['enrollment_token'][:8]}... (db: {c3.get('target_db_name')})")
 
         # Fetch components for app
         comps = db.get_application_components(app_id)
@@ -250,7 +253,11 @@ class Step2ApplicationSIEMTestCase(unittest.TestCase):
         self.assertIn("Add Asset", body_services)
         self.assertIn("Add Application", body_services)
         self.assertIn("add-app-wizard-modal", body_services) # Modal included
-        print("PASS: add_services.html rendered successfully with Add Asset, Add Application, and Wizard Modal")
+        self.assertIn("wiz-asset-autocomplete-dropdown", body_services) # Asset Autocomplete Dropdown
+        self.assertIn("wiz-role-web-fields", body_services) # Tomcat port field
+        self.assertIn("wiz-role-db-fields", body_services) # DB Name & port field
+        self.assertIn("displayAndCopyComponentScript", body_services) # Click-to-copy handler
+        print("PASS: add_services.html rendered successfully with Autocomplete, Dynamic Role Inputs, and Click-to-Copy")
 
         # 2. Render Total Apps Page
         resp_apps = render_template(dummy_req, "apps.html", {
@@ -312,21 +319,36 @@ class Step2ApplicationSIEMTestCase(unittest.TestCase):
         self.assertEqual(single_app["environment"], "Staging")
         print(f"PASS: api_get_app -> retrieved details for {single_app['name']}")
 
-        # 4. POST /api/apps/{id}/components (Web Node)
+        # 4. POST /api/apps/{id}/components (Web Node with port)
         comp_web = api_add_app_component(req, app_id, {
             "role": "web",
             "node_name": "billing-web-01",
-            "node_ip": "172.16.10.10"
+            "node_ip": "172.16.10.10",
+            "port": "8080"
         })
         self.assertIsNotNone(comp_web)
         self.assertIn("enrollment_token", comp_web)
+        self.assertEqual(comp_web.get("target_port"), "8080")
         comp_id = comp_web["id"]
-        print(f"PASS: api_add_app_component (web) -> component ID {comp_id}, token={comp_web['enrollment_token'][:8]}...")
+        print(f"PASS: api_add_app_component (web) -> component ID {comp_id}, port={comp_web.get('target_port')}")
+
+        # 4b. POST /api/apps/{id}/components (Database Node with port and db_name)
+        comp_db = api_add_app_component(req, app_id, {
+            "role": "database",
+            "node_name": "billing-db-01",
+            "node_ip": "172.16.10.20",
+            "port": "5432",
+            "db_name": "billing_prod"
+        })
+        self.assertIsNotNone(comp_db)
+        self.assertEqual(comp_db.get("target_port"), "5432")
+        self.assertEqual(comp_db.get("target_db_name"), "billing_prod")
+        comp_db_id = comp_db["id"]
+        print(f"PASS: api_add_app_component (database) -> ID {comp_db_id}, db={comp_db.get('target_db_name')}")
 
         # 5. GET /api/apps/{id}/components
         comps = api_get_app_components(req, app_id)
-        self.assertEqual(len(comps), 1)
-        self.assertEqual(comps[0]["id"], comp_id)
+        self.assertEqual(len(comps), 2)
         print(f"PASS: api_get_app_components -> {len(comps)} component(s)")
 
         # 6. POST /api/apps/{id}/maintenance
@@ -335,16 +357,28 @@ class Step2ApplicationSIEMTestCase(unittest.TestCase):
         self.assertEqual(maint_res["app_status"], "MAINT")
         print("PASS: api_toggle_app_maintenance -> enabled maintenance")
 
-        # 7. GET /api/app/setup
-        setup_resp = api_app_setup(token=comp_web["enrollment_token"], app=app_id, role="web", node="billing-web-01")
+        # 7. GET /api/app/setup with precision parameters
+        setup_resp = api_app_setup(
+            token=comp_db["enrollment_token"],
+            app=app_id,
+            role="database",
+            node="billing-db-01",
+            port="5432",
+            db_name="billing_prod"
+        )
         setup_script = setup_resp.body.decode("utf-8")
         self.assertIn("#!/bin/bash", setup_script)
-        self.assertIn(comp_web["enrollment_token"], setup_script)
-        print("PASS: api_app_setup -> served collector setup shell script")
+        self.assertIn(comp_db["enrollment_token"], setup_script)
+        self.assertIn("Target Port: 5432", setup_script)
+        self.assertIn("Target DB Name: billing_prod", setup_script)
+        print("PASS: api_app_setup -> served collector setup shell script with port & db_name")
 
-        # 8. DELETE /api/apps/{id}/components/{comp_id}
-        del_c = api_delete_app_component(req, app_id, comp_id)
-        self.assertEqual(del_c["status"], "success")
+        # 8. DELETE components
+        del_c1 = api_delete_app_component(req, app_id, comp_id)
+        del_c2 = api_delete_app_component(req, app_id, comp_db_id)
+        self.assertEqual(del_c1["status"], "success")
+        self.assertEqual(del_c2["status"], "success")
+        print("PASS: api_delete_app_component -> removed components")
         print("PASS: api_delete_app_component -> removed component")
 
         # 9. DELETE /api/apps/{id}

@@ -88,7 +88,9 @@ def init_app_siem_schema(conn):
             ("drops_counter", "BIGINT DEFAULT 0"),
             ("events_counter", "BIGINT DEFAULT 0"),
             ("clock_offset_ms", "INTEGER DEFAULT 0"),
-            ("enabled", "BOOLEAN DEFAULT TRUE")
+            ("enabled", "BOOLEAN DEFAULT TRUE"),
+            ("target_port", "VARCHAR(20)"),
+            ("target_db_name", "VARCHAR(100)")
         ]:
             try:
                 cur.execute(f"ALTER TABLE application_components ADD COLUMN IF NOT EXISTS {col} {col_type};")
@@ -583,10 +585,11 @@ def delete_application(conn, app_id: int):
         res = cur.fetchone()
         return bool(res)
 
-def add_application_component(conn, app_id: int, role: str, node_name: str, node_ip: str, machine_id: str = None):
+def add_application_component(conn, app_id: int, role: str, node_name: str, node_ip: str, machine_id: str = None, port: str = None, db_name: str = None):
     """
     Registers a component and generates a 1-time enrollment token expiring in 1 hour.
     Automatically links to existing server asset if machine_id or IP matches.
+    Stores target port and database name for precision multi-instance targeting.
     """
     if not conn:
         return None
@@ -594,6 +597,7 @@ def add_application_component(conn, app_id: int, role: str, node_name: str, node
     enrollment_token = secrets.token_hex(16)
     token_hash = hashlib.sha256(enrollment_token.encode()).hexdigest()
     expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    config_readiness = psycopg2.extras.Json({"port": port, "db_name": db_name})
 
     with conn.cursor() as cur:
         # Check if matching server exists to link
@@ -609,14 +613,22 @@ def add_application_component(conn, app_id: int, role: str, node_name: str, node
             if srv:
                 linked_srv_id = srv['id']
 
+        # Ensure columns exist
+        try:
+            cur.execute("ALTER TABLE application_components ADD COLUMN IF NOT EXISTS target_port VARCHAR(20);")
+            cur.execute("ALTER TABLE application_components ADD COLUMN IF NOT EXISTS target_db_name VARCHAR(100);")
+        except Exception:
+            pass
+
         cur.execute("""
             INSERT INTO application_components (
                 application_id, role, node_name, node_ip, machine_id, linked_server_id,
-                token_hash, enrollment_token, enrollment_expires_at, status, created_at
+                token_hash, enrollment_token, enrollment_expires_at, target_port, target_db_name,
+                config_readiness, status, created_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'WAITING', NOW())
-            RETURNING id, application_id, role, node_name, node_ip, linked_server_id, enrollment_token, status;
-        """, (app_id, role, node_name, node_ip, machine_id, linked_srv_id, token_hash, enrollment_token, expires_at))
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'WAITING', NOW())
+            RETURNING id, application_id, role, node_name, node_ip, linked_server_id, enrollment_token, status, target_port, target_db_name;
+        """, (app_id, role, node_name, node_ip, machine_id, linked_srv_id, token_hash, enrollment_token, expires_at, str(port) if port else None, db_name, config_readiness))
         comp = dict(cur.fetchone())
         return comp
 

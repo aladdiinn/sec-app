@@ -112,28 +112,77 @@
                 <span id="wiz-components-poll-badge" style="font-size:10px; color:var(--cyan); font-family:var(--font-mono), monospace">● Live Polling Active (5s)</span>
             </div>
 
-            <!-- List of Added Components -->
-            <div id="wiz-components-list" style="max-height:160px; overflow-y:auto; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin-bottom:16px">
+            <!-- List of Added Components (Clickable to re-display & copy script) -->
+            <div id="wiz-components-list" style="max-height:160px; overflow-y:auto; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:4px 8px; margin-bottom:16px">
                 <div style="text-align:center; padding:16px; color:var(--text3); font-size:11.5px">No components registered yet. Add at least one Web Node (Tomcat) or Database (PostgreSQL) below.</div>
             </div>
 
             <!-- Add Component Controls -->
-            <div style="background:var(--bg2); border:1px dashed var(--border); border-radius:8px; padding:14px">
-                <div style="font-size:11.5px; font-weight:700; color:var(--text); margin-bottom:10px">➕ Enroll Target Node</div>
-                <div style="display:grid; grid-template-columns: 120px 1fr 1fr auto; gap:10px; align-items:center">
-                    <select id="wiz-comp-role" class="glass" style="padding:7px; font-size:11.5px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
-                        <option value="web">Web (Tomcat)</option>
-                        <option value="database">Database (PG)</option>
-                    </select>
-                    <input type="text" id="wiz-comp-name" placeholder="Node Name (e.g. web-1, db-1)" class="glass" style="padding:7px 10px; font-size:11.5px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
-                    <input type="text" id="wiz-comp-ip" placeholder="Node IP Address" class="glass" style="padding:7px 10px; font-size:11.5px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
-                    <button class="btn btn-primary" onclick="submitWizardComponent()" style="padding:7px 14px; font-size:11px; font-weight:700; white-space:nowrap">
-                        Generate Script
-                    </button>
+            <div style="background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:16px; position:relative">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+                    <span style="font-size:12px; font-weight:700; color:var(--text)">➕ Enroll Target Node</span>
+                    <span style="font-size:10px; color:var(--text3)">Targeting precision ensures isolation on multi-app servers</span>
                 </div>
 
-                <div id="wiz-command-box" style="display:none; margin-top:12px; padding:12px; background:var(--bg); border:1px solid var(--cyan); border-radius:6px; position:relative">
-                    <div style="font-size:9.5px; font-weight:700; color:var(--cyan); letter-spacing:0.5px; margin-bottom:4px">RUN THIS 1-LINE INSTALL SCRIPT ON TARGET NODE (ROOT / SUDO):</div>
+                <!-- Row 1: Role, Node IP (with Asset Autocomplete), Node Hostname -->
+                <div style="display:grid; grid-template-columns: 150px 1fr 1fr; gap:10px; margin-bottom:10px">
+                    <div>
+                        <label style="display:block; font-size:10px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase">Role</label>
+                        <select id="wiz-comp-role" class="glass" onchange="onWizardRoleChanged()" style="width:100%; padding:8px; font-size:12px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                            <option value="web">Web (Tomcat)</option>
+                            <option value="database">Database (PostgreSQL)</option>
+                        </select>
+                    </div>
+
+                    <div style="position:relative">
+                        <label style="display:block; font-size:10px; font-weight:700; color:var(--cyan); margin-bottom:4px; text-transform:uppercase">Node IP Address</label>
+                        <input type="text" id="wiz-comp-ip" placeholder="e.g. 10.0.0.1 (type to suggest)" class="glass mono" oninput="onNodeInputChanged('ip')" autocomplete="off" style="width:100%; padding:8px 10px; font-size:12px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                        <!-- Autocomplete Suggestions Dropdown -->
+                        <div id="wiz-asset-autocomplete-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--card); border:1px solid var(--cyan); border-radius:6px; z-index:1001; box-shadow:0 10px 25px rgba(0,0,0,0.5); max-height:180px; overflow-y:auto; margin-top:2px"></div>
+                    </div>
+
+                    <div>
+                        <label style="display:block; font-size:10px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase">Node Hostname</label>
+                        <input type="text" id="wiz-comp-name" placeholder="Auto-filled from asset" class="glass" oninput="onNodeInputChanged('name')" style="width:100%; padding:8px 10px; font-size:12px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                    </div>
+                </div>
+
+                <!-- Row 2 (Tomcat): Port Selection -->
+                <div id="wiz-role-web-fields" style="display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:flex-end">
+                    <div>
+                        <label style="display:block; font-size:10px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase">Tomcat Port (Optional)</label>
+                        <input type="text" id="wiz-tomcat-port" placeholder="8080 (defaults to auto-detect if blank)" class="glass mono" style="width:100%; padding:8px 10px; font-size:12px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                    </div>
+                    <div>
+                        <button class="btn btn-primary" onclick="submitWizardComponent()" style="padding:8px 20px; font-size:12px; font-weight:700; height:36px; white-space:nowrap">
+                            Generate Script
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Row 2 (Database): Port & Database Name -->
+                <div id="wiz-role-db-fields" style="display:none; grid-template-columns: 120px 1fr auto; gap:10px; align-items:flex-end">
+                    <div>
+                        <label style="display:block; font-size:10px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase">DB Port</label>
+                        <input type="text" id="wiz-db-port" value="5432" placeholder="5432" class="glass mono" style="width:100%; padding:8px 10px; font-size:12px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:10px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase">Database Name (Filters multi-tenant DB logs)</label>
+                        <input type="text" id="wiz-db-name" placeholder="e.g. apdcl_prod" class="glass mono" style="width:100%; padding:8px 10px; font-size:12px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                    </div>
+                    <div>
+                        <button class="btn btn-primary" onclick="submitWizardComponent()" style="padding:8px 20px; font-size:12px; font-weight:700; height:36px; white-space:nowrap">
+                            Generate Script
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Command Box -->
+                <div id="wiz-command-box" style="display:none; margin-top:14px; padding:12px 14px; background:var(--bg); border:1px solid var(--cyan); border-radius:6px; position:relative">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
+                        <span id="wiz-cmd-title" style="font-size:9.5px; font-weight:700; color:var(--cyan); letter-spacing:0.5px">RUN THIS 1-LINE INSTALL SCRIPT ON TARGET NODE (ROOT / SUDO):</span>
+                        <span id="wiz-cmd-target-badge" class="badge" style="background:rgba(0,191,255,0.1); color:var(--cyan); font-size:9.5px"></span>
+                    </div>
                     <code id="wiz-generated-cmd" style="font-family:var(--font-mono), monospace; font-size:11px; color:var(--text); word-break:break-all; display:block; padding-right:60px"></code>
                     <button class="btn btn-glass" onclick="copyText('wiz-generated-cmd')" style="position:absolute; right:8px; top:12px; padding:4px 8px; font-size:10px">📋 Copy</button>
                 </div>
@@ -196,19 +245,114 @@
 let currentWizStep = 1;
 let createdAppId = null;
 let wizPollTimer = null;
+let allServerAssets = [];
+let wizardComponentsById = {};
+let selectedAssetServerId = null;
+
+async function loadServerAssetsForWizard() {
+    try {
+        const res = await fetch('/api/servers');
+        if (res.ok) {
+            const data = await res.json();
+            allServerAssets = data.servers || (Array.isArray(data) ? data : []);
+        }
+    } catch(e) {
+        console.error("Error loading server assets", e);
+    }
+}
+
+function onWizardRoleChanged() {
+    const role = document.getElementById('wiz-comp-role')?.value || 'web';
+    const webFields = document.getElementById('wiz-role-web-fields');
+    const dbFields = document.getElementById('wiz-role-db-fields');
+    if (role === 'web') {
+        if (webFields) webFields.style.display = 'grid';
+        if (dbFields) dbFields.style.display = 'none';
+    } else {
+        if (webFields) webFields.style.display = 'none';
+        if (dbFields) dbFields.style.display = 'grid';
+    }
+}
+
+function onNodeInputChanged(source) {
+    const ipInput = document.getElementById('wiz-comp-ip');
+    const nameInput = document.getElementById('wiz-comp-name');
+    const q = (source === 'ip' ? (ipInput?.value || '') : (nameInput?.value || '')).toLowerCase().trim();
+    const dropdown = document.getElementById('wiz-asset-autocomplete-dropdown');
+    
+    if (!dropdown) return;
+    if (!q || q.length < 1) {
+        dropdown.style.display = 'none';
+        return;
+    }
+
+    const matches = (allServerAssets || []).filter(s => {
+        const ip = (s.ip || '').toLowerCase();
+        const host = (s.hostname || '').toLowerCase();
+        return ip.includes(q) || host.includes(q);
+    }).slice(0, 5);
+
+    if (matches.length === 0) {
+        dropdown.style.display = 'none';
+        return;
+    }
+
+    dropdown.innerHTML = matches.map(s => `
+        <div class="asset-sugg-item" onclick="selectAssetSuggestion('${escapeHtml(s.ip || '')}', '${escapeHtml(s.hostname || '')}', ${s.id || 'null'})" 
+             style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;"
+             onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='transparent'">
+            <div>
+                <strong style="color:var(--cyan); font-size:12px; font-family:var(--font-mono), monospace">${escapeHtml(s.ip || '')}</strong>
+                <span style="color:var(--text); font-size:11.5px; margin-left:8px; font-weight:600">${escapeHtml(s.hostname || '')}</span>
+            </div>
+            <span class="badge" style="font-size:9.5px; background:rgba(0,191,255,0.1); color:var(--cyan); border:1px solid rgba(0,191,255,0.25)">Asset #${s.id}</span>
+        </div>
+    `).join('');
+    dropdown.style.display = 'block';
+}
+
+function selectAssetSuggestion(ip, hostname, srvId) {
+    const ipInput = document.getElementById('wiz-comp-ip');
+    const nameInput = document.getElementById('wiz-comp-name');
+    if (ipInput) ipInput.value = ip;
+    if (nameInput) nameInput.value = hostname;
+    selectedAssetServerId = srvId;
+    const dropdown = document.getElementById('wiz-asset-autocomplete-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    if (typeof showToast === 'function') {
+        showToast(`Linked with Asset #${srvId}: ${hostname} (${ip})`, 'info');
+    }
+}
+
+document.addEventListener('click', (e) => {
+    const dropdown = document.getElementById('wiz-asset-autocomplete-dropdown');
+    const ipInput = document.getElementById('wiz-comp-ip');
+    const nameInput = document.getElementById('wiz-comp-name');
+    if (dropdown && dropdown.style.display === 'block') {
+        if (!dropdown.contains(e.target) && e.target !== ipInput && e.target !== nameInput) {
+            dropdown.style.display = 'none';
+        }
+    }
+});
 
 function openAddAppWizard() {
     currentWizStep = 1;
     createdAppId = null;
+    wizardComponentsById = {};
+    selectedAssetServerId = null;
     document.getElementById('add-app-wizard-overlay').style.display = 'block';
     document.getElementById('add-app-wizard-modal').style.display = 'block';
     showWizardStep(1);
     loadProjectsForWizard();
+    loadServerAssetsForWizard();
+    onWizardRoleChanged();
 }
 
 function closeAddAppWizard() {
     document.getElementById('add-app-wizard-overlay').style.display = 'none';
     document.getElementById('add-app-wizard-modal').style.display = 'none';
+    const dd = document.getElementById('wiz-asset-autocomplete-dropdown');
+    if (dd) dd.style.display = 'none';
     if (wizPollTimer) {
         clearInterval(wizPollTimer);
         wizPollTimer = null;
@@ -378,6 +522,15 @@ async function submitWizardComponent() {
         return;
     }
 
+    let port = null;
+    let dbName = null;
+    if (role === 'web') {
+        port = (document.getElementById('wiz-tomcat-port')?.value || '').trim() || null;
+    } else {
+        port = (document.getElementById('wiz-db-port')?.value || '5432').trim() || null;
+        dbName = (document.getElementById('wiz-db-name')?.value || '').trim() || null;
+    }
+
     try {
         const res = await fetch(`/api/apps/${createdAppId}/components`, {
             method: 'POST',
@@ -385,20 +538,27 @@ async function submitWizardComponent() {
             body: JSON.stringify({
                 role: role,
                 node_name: nodeName,
-                node_ip: nodeIp
+                node_ip: nodeIp,
+                port: port,
+                db_name: dbName,
+                machine_id: selectedAssetServerId ? String(selectedAssetServerId) : null
             })
         });
         if (res.ok) {
             const comp = await res.json();
-            const baseUrl = window.location.origin;
-            const cmd = `curl -s "${baseUrl}/api/app/setup?token=${comp.enrollment_token}&app=${createdAppId}&role=${comp.role}&node=${encodeURIComponent(comp.node_name)}" | sudo bash`;
-            
-            document.getElementById('wiz-generated-cmd').innerText = cmd;
-            document.getElementById('wiz-command-box').style.display = 'block';
+            wizardComponentsById[comp.id] = comp;
+
+            displayAndCopyComponentScript(comp.id);
+
+            // Reset inputs
             document.getElementById('wiz-comp-name').value = '';
             document.getElementById('wiz-comp-ip').value = '';
+            if (document.getElementById('wiz-tomcat-port')) document.getElementById('wiz-tomcat-port').value = '';
+            if (document.getElementById('wiz-db-name')) document.getElementById('wiz-db-name').value = '';
+            selectedAssetServerId = null;
+
             pollWizardComponents();
-            showToast(`Generated install command for ${comp.node_name}`, 'success');
+            showToast(`Generated install script for ${comp.node_name}`, 'success');
         } else {
             const err = await res.json();
             showToast(err.detail || 'Failed adding component', 'error');
@@ -406,6 +566,37 @@ async function submitWizardComponent() {
     } catch(e) {
         showToast('Error registering component', 'error');
     }
+}
+
+function displayAndCopyComponentScript(compId) {
+    const comp = wizardComponentsById[compId];
+    if (!comp) return;
+
+    const baseUrl = window.location.origin;
+    let url = `${baseUrl}/api/app/setup?token=${comp.enrollment_token}&app=${createdAppId}&role=${comp.role}&node=${encodeURIComponent(comp.node_name)}`;
+    const port = comp.target_port || comp.port;
+    const dbName = comp.target_db_name || comp.db_name;
+    if (port) url += `&port=${encodeURIComponent(port)}`;
+    if (dbName) url += `&db_name=${encodeURIComponent(dbName)}`;
+    const cmd = `curl -s "${url}" | sudo bash`;
+
+    const cmdEl = document.getElementById('wiz-generated-cmd');
+    if (cmdEl) cmdEl.innerText = cmd;
+    const titleEl = document.getElementById('wiz-cmd-title');
+    if (titleEl) {
+        titleEl.innerText = `RUN THIS 1-LINE INSTALL SCRIPT ON ${comp.node_name.toUpperCase()} (ROOT / SUDO):`;
+    }
+    const badgeEl = document.getElementById('wiz-cmd-target-badge');
+    if (badgeEl) {
+        badgeEl.innerText = comp.role === 'web' 
+            ? `Tomcat${port ? ' :' + port : ' (auto-detect)'}` 
+            : `PG${dbName ? ' (' + dbName + ')' : ''}${port ? ' :' + port : ''}`;
+    }
+    document.getElementById('wiz-command-box').style.display = 'block';
+
+    navigator.clipboard.writeText(cmd).then(() => {
+        showToast(`Copied script for ${comp.node_name} to clipboard!`, 'success');
+    }).catch(() => {});
 }
 
 async function pollWizardComponents() {
@@ -416,24 +607,42 @@ async function pollWizardComponents() {
             const comps = await res.json();
             const listEl = document.getElementById('wiz-components-list');
             if (!comps || comps.length === 0) {
-                listEl.innerHTML = '<div style="text-align:center; padding:16px; color:var(--text3); font-size:11.5px">No components registered yet. Add at least one Web Node or Database above.</div>';
+                listEl.innerHTML = '<div style="text-align:center; padding:16px; color:var(--text3); font-size:11.5px">No components registered yet. Add at least one Web Node (Tomcat) or Database (PostgreSQL) below.</div>';
                 return;
             }
             document.getElementById('review-app-comps').innerText = `${comps.length} registered`;
             listEl.innerHTML = comps.map(c => {
+                wizardComponentsById[c.id] = c;
                 const isReceiving = c.status === 'RECEIVING' || c.status === 'online';
                 const statusBadge = isReceiving 
                     ? '<span class="badge" style="background:rgba(16,185,129,0.15); color:var(--green); border:1px solid rgba(16,185,129,0.3); font-size:10px">● RECEIVING</span>'
                     : '<span class="badge" style="background:rgba(245,158,11,0.15); color:var(--amber); border:1px solid rgba(245,158,11,0.3); font-size:10px">⏳ WAITING FOR FIRST EVENT</span>';
                 const roleIcon = c.role === 'web' ? '🌐 Tomcat' : '🗄️ PostgreSQL';
+                const port = c.target_port || c.port;
+                const dbName = c.target_db_name || c.db_name;
+                const precisionInfo = c.role === 'web' 
+                    ? (port ? `Port: ${escapeHtml(port)}` : 'Auto-detect Port')
+                    : `DB: ${escapeHtml(dbName || 'All DBs')} (Port: ${escapeHtml(port || '5432')})`;
 
                 return `
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 6px; border-bottom:1px solid var(--border)">
+                <div onclick="displayAndCopyComponentScript(${c.id})" 
+                     style="display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border-bottom:1px solid var(--border); border-radius:6px; cursor:pointer; transition:background 0.15s"
+                     onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='transparent'">
                     <div>
-                        <strong style="color:var(--text); font-size:12px">${escapeHtml(c.node_name)}</strong>
-                        <span style="font-size:11px; color:var(--text3); margin-left:8px">${escapeHtml(c.node_ip)} (${roleIcon})</span>
+                        <div style="display:flex; align-items:center; gap:8px">
+                            <strong style="color:var(--text); font-size:12.5px">${escapeHtml(c.node_name)}</strong>
+                            <span style="font-size:11px; color:var(--cyan); font-family:var(--font-mono), monospace">${escapeHtml(c.node_ip)}</span>
+                            <span class="badge" style="font-size:10px; padding:1px 6px">${roleIcon}</span>
+                        </div>
+                        <div style="font-size:10.5px; color:var(--text3); margin-top:2px">${precisionInfo}</div>
                     </div>
-                    <div>${statusBadge}</div>
+                    <div style="display:flex; align-items:center; gap:10px">
+                        <div>${statusBadge}</div>
+                        <button class="btn btn-glass" onclick="event.stopPropagation(); displayAndCopyComponentScript(${c.id})" 
+                                style="padding:4px 10px; font-size:11px; color:var(--cyan); border-color:rgba(0,191,255,0.3); font-weight:700">
+                            📋 Copy Script
+                        </button>
+                    </div>
                 </div>
                 `;
             }).join('');

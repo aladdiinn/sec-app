@@ -4718,12 +4718,12 @@ def delete_application(app_id, deleted_by="system"):
     finally:
         conn.close()
 
-def add_application_component(app_id, role, node_name, node_ip, machine_id=None):
+def add_application_component(app_id, role, node_name, node_ip, machine_id=None, port=None, db_name=None):
     conn = get_db_connection()
     if not conn: return None
     try:
         import app_siem_db
-        return app_siem_db.add_application_component(conn, app_id, role, node_name, node_ip, machine_id=machine_id)
+        return app_siem_db.add_application_component(conn, app_id, role, node_name, node_ip, machine_id=machine_id, port=port, db_name=db_name)
     finally:
         conn.close()
 
