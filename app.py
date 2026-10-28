@@ -7523,6 +7523,50 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
 
     return "HTTP_ACCESS", "info", None, None
 
+POSTGRES_LOG_RE = re.compile(
+    r'^(?P<time>[0-9\-]+ [0-9:\.]+ (?:UTC|[A-Z]+))\s+\[(?P<pid>\d+)\]\s+(?:(?P<user>[^@\s]+)@(?P<db>[^\s]+)\s+)?(?P<level>[A-Z]+):\s+(?P<msg>.+)$'
+)
+
+def evaluate_postgres_security_event(raw_line: str):
+    """Real-time heuristics detecting database threats from PostgreSQL logs."""
+    m = POSTGRES_LOG_RE.match(raw_line)
+    db_user = None
+    db_name = None
+    level = "INFO"
+    msg = raw_line
+
+    if m:
+        db_user = m.group("user")
+        db_name = m.group("db")
+        level = m.group("level")
+        msg = m.group("msg")
+
+    msg_lower = msg.lower()
+
+    # 1. Password authentication failure
+    if "password authentication failed" in msg_lower:
+        m_u = re.search(r'for user ["\']?([^"\'\s]+)["\']?', msg, re.IGNORECASE)
+        u = m_u.group(1) if m_u else (db_user or "unknown")
+        return "DB_AUTH_FAILURE", "high", f"Database Authentication Failed (User: {u})", "T1110 - Brute Force", u, db_name, level
+
+    # 2. Destructive DDL / Dropping tables or databases
+    if re.search(r'statement:\s*(DROP\s+TABLE|DROP\s+DATABASE|DROP\s+SCHEMA|TRUNCATE)', msg, re.IGNORECASE):
+        return "DB_DESTRUCTIVE_DDL", "critical", "Destructive Database DDL Command (DROP/TRUNCATE)", "T1485 - Data Destruction", db_user, db_name, level
+
+    # 3. Privilege Escalation / Superuser Grants
+    if re.search(r'statement:\s*(GRANT\s+ALL|ALTER\s+USER.*SUPERUSER|CREATE\s+USER.*SUPERUSER)', msg, re.IGNORECASE):
+        return "DB_PRIVILEGE_ESCALATION", "critical", "Database Superuser Privilege Escalation", "T1078 - Valid Accounts", db_user, db_name, level
+
+    # 4. Connection pool starvation / DoS
+    if "remaining connection slots are reserved" in msg_lower or "too many connections" in msg_lower:
+        return "DB_CONNECTION_EXHAUSTION", "high", "Database Connection Pool Starvation", "T1499 - Endpoint Denial of Service", db_user, db_name, level
+
+    # 5. SQL Syntax error / probe from injection attempts
+    if "syntax error at or near" in msg_lower or "union query must have the same number of columns" in msg_lower:
+        return "DB_SQL_ERROR", "medium", "Database Query Syntax Error / SQLi Probe", "T1190 - Exploit Public-Facing Application", db_user, db_name, level
+
+    return "DB_LOG", "info", None, None, db_user, db_name, level
+
 @app.post("/api/app/events")
 def api_app_events(request: Request, payload: dict = Body(...)):
     """Ingests, parses, normalizes and correlates telemetry events from collectors."""
@@ -7564,6 +7608,91 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     continue
 
                 source_type = ev.get("source", role)
+
+                # Route to PostgreSQL log evaluation if source or role is database
+                if source_type in ("postgres", "database") or role == "database":
+                    ev_type, sev, rule_title, mitre_tag, db_user, db_name, db_lvl = evaluate_postgres_security_event(raw_line)
+                    
+                    # Skip routine internal Postgres logs if info
+                    if sev == "info" and any(k in raw_line.lower() for k in ["checkpoint starting", "checkpoint complete", "connection authorized"]):
+                        continue
+
+                    cur.execute("""
+                        INSERT INTO app_events (
+                            event_time, application_id, component_id, node, source_type, event_type,
+                            user_name, db_user, db_name, statement_excerpt, severity, raw
+                        )
+                        VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (
+                        actual_app_id, comp_id, node_name, source_type, ev_type,
+                        db_user, db_user, db_name, raw_line[:500], sev, psycopg2.extras.Json(ev)
+                    ))
+                    ev_row = cur.fetchone()
+                    raw_ev_id = ev_row["id"] if ev_row else None
+                    ingested_count += 1
+
+                    if sev in ("medium", "high", "critical"):
+                        attacker_key = f"db_user:{db_user or 'unknown'}"
+                        cur.execute("""
+                            SELECT id, events_count, severity, mitre_tactics
+                            FROM app_incidents
+                            WHERE application_id = %s AND attacker_key = %s AND status = 'Open'
+                            ORDER BY id DESC LIMIT 1;
+                        """, (actual_app_id, attacker_key))
+                        existing_inc = cur.fetchone()
+
+                        if existing_inc:
+                            inc_id = existing_inc["id"]
+                            new_count = (existing_inc.get("events_count") or 0) + 1
+                            curr_sev = existing_inc.get("severity") or "medium"
+                            calc_sev = "critical" if sev == "critical" or curr_sev == "critical" else ("high" if sev == "high" or curr_sev == "high" else "medium")
+                            tactics = existing_inc.get("mitre_tactics") or []
+                            if isinstance(tactics, str):
+                                try: tactics = json.loads(tactics)
+                                except Exception: tactics = []
+                            if mitre_tag and mitre_tag not in tactics:
+                                tactics.append(mitre_tag)
+
+                            cur.execute("""
+                                UPDATE app_incidents
+                                SET events_count = %s, last_event_at = NOW(), severity = %s,
+                                    mitre_tactics = %s, updated_at = NOW()
+                                WHERE id = %s;
+                            """, (new_count, calc_sev, psycopg2.extras.Json(tactics), inc_id))
+                        else:
+                            tactics = [mitre_tag] if mitre_tag else []
+                            cur.execute("""
+                                INSERT INTO app_incidents (
+                                    application_id, title, attacker_key, attacker_type, user_name,
+                                    severity, status, first_event_at, last_event_at, events_count, stages_count, mitre_tactics
+                                )
+                                VALUES (%s, %s, %s, 'user', %s, %s, 'Open', NOW(), NOW(), 1, 1, %s)
+                                RETURNING id;
+                            """, (
+                                actual_app_id, f"{rule_title or ev_type} on {db_name or 'postgres'}", attacker_key,
+                                db_user, sev, psycopg2.extras.Json(tactics)
+                            ))
+                            inc_row = cur.fetchone()
+                            inc_id = inc_row["id"] if inc_row else None
+
+                        if inc_id:
+                            cur.execute("""
+                                INSERT INTO app_incident_events (
+                                    incident_id, event_time, node_name, role, rule_name, mitre_technique, step_summary, raw_event_id
+                                )
+                                VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s);
+                            """, (
+                                inc_id, node_name, role, rule_title or ev_type,
+                                mitre_tag or "", raw_line[:200], raw_ev_id
+                            ))
+
+                        if sev == "critical":
+                            highest_severity = "critical"
+                        elif sev == "high" and highest_severity != "critical":
+                            highest_severity = "high"
+                    continue
+
                 m = TOMCAT_ACCESS_RE.match(raw_line)
 
                 if m:
