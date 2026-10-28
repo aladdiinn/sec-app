@@ -2238,6 +2238,12 @@ def _check_unified_fim(server_id, data):
         # Specific noise suppression: Ignore sudo perm_mod on pseudo-terminals (/dev/pts/)
         if key == "perm_mod" and "sudo" in exe_str_val.lower() and f_lower.startswith("/dev/pts/"):
             return
+
+        # Specific noise suppression: Ignore read-only tools (who, id, w, groups) accessing /etc/passwd or unkeyed (null) events
+        if c_m and c_m.group(1).lower() in ("who", "id", "groups", "w"):
+            return
+        if key in ("(null)", "", "null") and "who" in exe_str_val.lower():
+            return
             
         comm_str = f" using '{c_m.group(1)}'" if c_m else ""
         exe_str = f" ({exe_str_val})" if e_m else ""
@@ -2815,13 +2821,14 @@ async def api_agent_push(request: Request):
                         cur.execute("UPDATE servers SET agent_version = %s, update_status = %s WHERE id = %s;", (agent_version, up_status, server_id))
                     
                     target = srow.get("target_agent_version") or "1.6.1"
-                    try:
-                        v_cur = float(agent_version)
-                        v_target = float(target)
-                    except Exception:
-                        v_cur, v_target = 0.0, 0.0
+                    def _parse_semver(v):
+                        try: return [int(x) for x in re.findall(r'\d+', str(v))]
+                        except Exception: return [0]
 
-                    if v_cur < v_target and v_target > 0:
+                    v_cur = _parse_semver(agent_version)
+                    v_target = _parse_semver(target)
+
+                    if v_cur < v_target:
                         update_req = True
                         update_cmd_url = f"{str(request.base_url).rstrip('/')}/setup_node.sh"
         except Exception as e:
@@ -2881,13 +2888,27 @@ async def api_agent_inventory(request: Request):
     """
     raw_body = await request.body()
     encoding = request.headers.get("content-encoding", "").lower()
-    if "gzip" in encoding or raw_body.startswith(b"\x1f\x8b"):
+    
+    # Robust decompression: check gzip magic bytes (\x1f\x8b) first
+    if raw_body.startswith(b"\x1f\x8b"):
         try:
             import gzip
             raw_body = gzip.decompress(raw_body)
         except Exception as e:
-            logger.error(f"Error decompressing inventory gzip: {e}")
+            logger.error(f"Error decompressing inventory gzip magic bytes: {e}")
             return JSONResponse(status_code=400, content={"error": "Failed to decompress gzip body"})
+    elif "gzip" in encoding:
+        # Header present, but might already have been decompressed by reverse proxy
+        try:
+            # Check if already valid JSON
+            json.loads(raw_body.decode("utf-8", errors="ignore"))
+        except Exception:
+            try:
+                import gzip
+                raw_body = gzip.decompress(raw_body)
+            except Exception as e:
+                logger.error(f"Error decompressing inventory gzip: {e}")
+                return JSONResponse(status_code=400, content={"error": "Failed to decompress gzip body"})
     try:
         data = json.loads(raw_body.decode("utf-8", errors="ignore"))
     except Exception as e:
@@ -4272,18 +4293,24 @@ def collect_and_send_inventory(force_full=False):
             payload["packages"] = packages
 
         raw_bytes = json.dumps(payload).encode("utf-8")
-        comp_bytes = gzip.compress(raw_bytes)
-        if len(comp_bytes) > 2 * 1024 * 1024:
-            raise Exception("Inventory compressed payload exceeds 2MB limit")
+        if len(raw_bytes) > 2 * 1024 * 1024:
+            comp_bytes = gzip.compress(raw_bytes)
+            data_to_send = comp_bytes
+            headers = {{
+                "Content-Type": "application/json",
+                "X-Machine-ID": get_machine_id()
+            }}
+        else:
+            data_to_send = raw_bytes
+            headers = {{
+                "Content-Type": "application/json",
+                "X-Machine-ID": get_machine_id()
+            }}
 
         req = urllib.request.Request(
             f"{{SOC_URL}}/api/agent/inventory",
-            data=comp_bytes,
-            headers={{
-                "Content-Type": "application/json",
-                "Content-Encoding": "gzip",
-                "X-Machine-ID": get_machine_id()
-            }}
+            data=data_to_send,
+            headers=headers
         )
         with urllib.request.urlopen(req, timeout=60) as resp:
             resp_data = json.loads(resp.read().decode())

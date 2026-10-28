@@ -1477,17 +1477,23 @@ async function openImage3Modal(serverId) {
         } else {
             incList.innerHTML = alerts.map(a => {
                 const isCrit = (a.severity || '').toLowerCase() === 'critical';
-                const sevClass = isCrit ? 'sev-critical' : 'sev-warning';
+                const sevBg = isCrit ? 'rgba(239,68,68,0.18)' : 'rgba(245,158,11,0.18)';
+                const sevBorder = isCrit ? '#ef4444' : '#f59e0b';
+                const sevColor = isCrit ? '#f87171' : '#fbbf24';
+                const sevLabel = (a.severity || 'WARNING').toUpperCase();
                 return `
-                <div class="i3-alert-item ${sevClass}" id="alert-card-${a.id}">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
-                        <strong style="color:var(--text); font-size:13px; font-weight:700">${a.title || a.alert_type || 'Security Alert'}</strong>
+                <div class="i3-alert-item" id="alert-card-${a.id}" style="border-left: 4px solid ${sevBorder} !important; background: var(--bg2, #181926) !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 8px !important; padding: 14px 18px !important; margin-bottom: 10px !important;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                        <div style="display:flex; align-items:center; gap:8px">
+                            <span style="background:${sevBg}; color:${sevColor}; border:1px solid ${sevBorder}; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:800; letter-spacing:0.5px">${sevLabel}</span>
+                            <strong style="color:var(--text, #f8fafc); font-size:13px; font-weight:700">${escapeHtml(a.title || a.alert_type || 'Security Alert')}</strong>
+                        </div>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <span style="font-size:10px; color:var(--text3); font-family:monospace">${new Date(a.created_at).toLocaleString()}</span>
+                            <span style="font-size:10px; color:var(--text3, #94a3b8); font-family:monospace">${new Date(a.created_at).toLocaleString()}</span>
                             <input type="checkbox" title="Mark Closed" style="cursor:pointer;" onchange="resolveSingleAlert(${a.id}, this)">
                         </div>
                     </div>
-                    <div style="font-size:11px; color:var(--text2); font-family:system-ui,sans-serif; line-height:1.5; word-break:break-word">${a.message || ''}</div>
+                    <div style="font-size:12px; color:var(--text2, #cbd5e1); font-family:system-ui,sans-serif; line-height:1.5; word-break:break-word">${escapeHtml(a.message || '')}</div>
                 </div>
                 `;
             }).join('');
