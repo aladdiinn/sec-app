@@ -269,12 +269,9 @@ class LogFileTailer:
             stat = os.stat(self.filepath)
             self.inode = stat.st_ino
             self.file_obj = open(self.filepath, "r", encoding="utf-8", errors="replace")
-            # Tailer seek: if file < 100KB read from start so recent test curls aren't skipped
-            file_size = stat.st_size
-            if file_size < 100 * 1024:
-                self.file_obj.seek(0, os.SEEK_SET)
-            else:
-                self.file_obj.seek(max(0, file_size - 50 * 1024), os.SEEK_SET)
+            # Production Log Tailer: seek to end of file on startup so past historical logs are NEVER replayed
+            # Only live events generated while actively testing or running the app will be captured!
+            self.file_obj.seek(0, os.SEEK_END)
             self.last_pos = self.file_obj.tell()
         except Exception as e:
             print(f"[WARN] Error opening {self.filepath}: {e}")
@@ -287,11 +284,19 @@ class LogFileTailer:
         try:
             # Check rotation: if inode changed or file size shrunk
             stat = os.stat(self.filepath)
-            if stat.st_ino != self.inode or stat.st_size < self.last_pos:
-                print(f"[INFO] Log rotation detected on {self.filepath}. Reopening...")
+            if stat.st_ino != self.inode:
+                print(f"[INFO] Log rotation detected on {self.filepath} (new inode). Reopening from start...")
                 if self.file_obj:
                     self.file_obj.close()
-                self._open()
+                self.inode = stat.st_ino
+                self.file_obj = open(self.filepath, "r", encoding="utf-8", errors="replace")
+                self.file_obj.seek(0, os.SEEK_SET)
+                self.last_pos = 0
+                return []
+            elif stat.st_size < self.last_pos:
+                print(f"[INFO] Log truncation detected on {self.filepath}. Resetting offset to 0...")
+                self.file_obj.seek(0, os.SEEK_SET)
+                self.last_pos = 0
                 return []
 
             lines = []
@@ -385,15 +390,24 @@ def run_collector():
                         if f"@{CONFIG['TARGET_DB_NAME']}" not in line and "FATAL" not in line:
                             continue
 
-                    # Suppress routine noisy INFO/startup lines from catalina.out (only send security/errors)
+                    # Suppress routine noisy INFO/startup/framework lines from catalina.out (only send security events)
                     if tailer.source_type == "tomcat_catalina":
                         line_l = line.lower()
-                        is_security_or_error = any(k in line_l for k in [
-                            "auth_failure", "privilege_violation", "security", "denied", 
-                            "forbidden", "unauthorized", "login", "attack", "exploit",
-                            "error", "fatal", "severe", "exception", "warn", "warning", "sqli", "xss"
+                        # Ignore routine framework lines
+                        if any(k in line_l for k in [
+                            "info [main]", "info [catalina", "server startup in", 
+                            "deploying web application", "deployment of web application",
+                            "at org.apache.catalina", "at org.apache.coyote", "at org.apache.tomcat",
+                            "at java.", "at javax.", "at jakarta.", "at sun.",
+                            "jar was scanned for tlds", "sessionlistener", "cookie processor"
+                        ]):
+                            continue
+
+                        is_security = any(k in line_l for k in [
+                            "auth_failure", "privilege_violation", "unauthorized", "forbidden", 
+                            "denied", "failed login", "attack", "exploit", "sqli", "xss", "jndi"
                         ])
-                        if not is_security_or_error:
+                        if not is_security:
                             continue
 
                     buffered_events.append({

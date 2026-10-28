@@ -7902,12 +7902,14 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     # Application stdout / catalina.out / stderr log
                     cat_lower = raw_line.lower()
                     
-                    # Skip routine noisy INFO/startup lines from catalina.out
+                    # Skip routine noisy framework/startup/stack trace lines from catalina.out
                     if any(k in cat_lower for k in [
                         "info [main]", "info [catalina", "server startup in", 
                         "deploying web application", "deployment of web application",
-                        "at org.apache.catalina", "at org.apache.coyote", "at org.apache.tomcat"
-                    ]) and not any(k in cat_lower for k in ["exception", "error", "auth", "fail", "attack"]):
+                        "at org.apache.catalina", "at org.apache.coyote", "at org.apache.tomcat",
+                        "at java.", "at javax.", "at jakarta.", "at sun.",
+                        "jar was scanned for tlds", "sessionlistener", "cookie processor"
+                    ]):
                         continue
 
                     ev_type = "APP_LOG"
@@ -7920,18 +7922,23 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     status_code = None
 
                     # Check for [AUTH_FAILURE] or failed login pattern in application logs
-                    m_auth = re.search(r'(?:\[AUTH_FAILURE\]|failed login attempt for user:?\s*[\'"]?([^\s\'"]+)[\'"]?.*?from ip:?\s*([^\s]+))', raw_line, re.IGNORECASE)
-                    if m_auth:
-                        cat_user = m_auth.group(1) if m_auth.lastindex and m_auth.lastindex >= 1 else None
-                        cat_ip = m_auth.group(2) if m_auth.lastindex and m_auth.lastindex >= 2 else None
+                    if "[auth_failure]" in cat_lower or "failed login" in cat_lower:
                         ev_type = "LOGIN_FAILURE"
                         sev = "medium"
-                        rule_title = f"Failed User Authentication ({cat_user or 'unknown'})"
+                        rule_title = "Failed User Authentication"
                         mitre_tag = "T1110 - Brute Force"
                         url_path = "/login.jsp"
                         status_code = 401
+                        m_u = re.search(r"user:?\s*['\"]?([^\s'\",]+)['\"]?", raw_line, re.IGNORECASE)
+                        if m_u:
+                            cat_user = m_u.group(1).strip()
+                            rule_title = f"Failed User Authentication ({cat_user})"
+                        m_ip = re.search(r'(?:from\s+ip:?|ip:?)\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', raw_line, re.IGNORECASE)
+                        if m_ip:
+                            cat_ip = m_ip.group(1).strip()
+
                     elif "privilege_violation" in cat_lower or "restricted admin access" in cat_lower:
-                        m_priv = re.search(r'user\s*[\'"]([^\'"]+)[\'"].*?to\s*([^\s]+).*?from ip:?\s*([^\s]+)', raw_line, re.IGNORECASE)
+                        m_priv = re.search(r"user\s*['\"]([^\'\"]+)['\"].*?to\s*([^\s]+).*?from ip:?\s*([^\s]+)", raw_line, re.IGNORECASE)
                         if m_priv:
                             cat_user = m_priv.group(1)
                             url_path = m_priv.group(2)
@@ -7941,13 +7948,31 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                         rule_title = f"Restricted Admin Privilege Violation ({cat_user or 'unknown'})"
                         mitre_tag = "T1078 - Valid Accounts"
                         status_code = 403
-                    elif any(k in cat_lower for k in ("exception", "severe", "fatal")):
+
+                    elif any(k in cat_lower for k in ("severe", "fatal")):
                         ev_type = "APP_EXCEPTION"
-                        sev = "medium"
+                        sev = "info"
+                        rule_title = "Application Runtime Exception"
+                    elif "exception" in cat_lower:
+                        if any(fw in cat_lower for fw in ("org.apache.", "java.lang.", "java.util.", "classnotfound")):
+                            continue
+                        ev_type = "APP_EXCEPTION"
+                        sev = "info"
                         rule_title = "Application Runtime Exception"
                     elif "warn" in cat_lower:
                         ev_type = "APP_WARN"
                         sev = "info"
+
+                    # Deduplication check: prevent duplicate log line floods within 60 seconds
+                    cur.execute("""
+                        SELECT id FROM app_events
+                        WHERE application_id = %s AND event_type = %s 
+                          AND (raw->>'line') = %s 
+                          AND event_time > NOW() - INTERVAL '60 seconds'
+                        LIMIT 1;
+                    """, (actual_app_id, ev_type, raw_line))
+                    if cur.fetchone():
+                        continue
 
                     # Insert partitioned event
                     cur.execute("""
