@@ -1,0 +1,459 @@
+<!-- 4-Step Application SIEM Onboarding Wizard Modal -->
+<div id="add-app-wizard-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9998; backdrop-filter:blur(6px)" onclick="closeAddAppWizard()"></div>
+
+<div id="add-app-wizard-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; border-radius:16px; z-index:9999; width:820px; max-width:94vw; box-shadow:0 30px 90px rgba(0,0,0,0.9); border:1px solid var(--border); background:var(--card)">
+    
+    <!-- Wizard Header -->
+    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:14px; margin-bottom:18px">
+        <div>
+            <h3 style="margin:0; font-size:18px; font-weight:800; color:var(--text); font-family:var(--font-sans); display:flex; align-items:center; gap:8px">
+                <span style="color:var(--cyan)">🛡️</span> Onboard New Business Application
+            </h3>
+            <p style="margin:4px 0 0 0; font-size:11.5px; color:var(--text2)">Configure application telemetry collection (Tomcat web nodes + PostgreSQL database)</p>
+        </div>
+        <button class="btn btn-ghost" onclick="closeAddAppWizard()" style="padding:4px 10px; font-size:16px; color:var(--text2)">✕</button>
+    </div>
+
+    <!-- Step Indicator Progress Bar -->
+    <div style="display:flex; gap:8px; margin-bottom:24px" id="wizard-steps-indicator">
+        <div class="wiz-step-pill active" id="pill-step-1" style="flex:1; text-align:center; padding:8px; border-radius:8px; font-size:11px; font-weight:700; background:var(--bg2); color:var(--text); border:1px solid var(--border)">
+            1. Basics
+        </div>
+        <div class="wiz-step-pill" id="pill-step-2" style="flex:1; text-align:center; padding:8px; border-radius:8px; font-size:11px; font-weight:700; background:var(--bg2); color:var(--text3); border:1px solid var(--border)">
+            2. Project
+        </div>
+        <div class="wiz-step-pill" id="pill-step-3" style="flex:1; text-align:center; padding:8px; border-radius:8px; font-size:11px; font-weight:700; background:var(--bg2); color:var(--text3); border:1px solid var(--border)">
+            3. Components
+        </div>
+        <div class="wiz-step-pill" id="pill-step-4" style="flex:1; text-align:center; padding:8px; border-radius:8px; font-size:11px; font-weight:700; background:var(--bg2); color:var(--text3); border:1px solid var(--border)">
+            4. Review
+        </div>
+    </div>
+
+    <!-- Wizard Steps Content -->
+    <div id="wizard-step-content" style="min-height:280px">
+        
+        <!-- STEP 1: BASICS -->
+        <div id="wiz-step-1" class="wiz-step-view">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:14px">
+                <div>
+                    <label style="display:block; font-size:11px; font-weight:700; color:var(--text); margin-bottom:6px">APPLICATION NAME *</label>
+                    <input type="text" id="wiz-app-name" placeholder="e.g. xxx.com or Customer Portal" class="glass" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                </div>
+                <div>
+                    <label style="display:block; font-size:11px; font-weight:700; color:var(--text); margin-bottom:6px">PRIMARY URL / DOMAIN *</label>
+                    <input type="text" id="wiz-app-url" placeholder="e.g. https://xxx.com" class="glass" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:14px">
+                <div>
+                    <label style="display:block; font-size:11px; font-weight:700; color:var(--text); margin-bottom:6px">ENVIRONMENT</label>
+                    <select id="wiz-app-env" class="glass" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                        <option value="Production">Production</option>
+                        <option value="Staging">Staging</option>
+                        <option value="Test">Test / UAT</option>
+                        <option value="Development">Development</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block; font-size:11px; font-weight:700; color:var(--text); margin-bottom:6px">DESCRIPTION (OPTIONAL)</label>
+                    <input type="text" id="wiz-app-desc" placeholder="e.g. Core Meter Data Management App" class="glass" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                </div>
+            </div>
+
+            <div style="background:var(--bg2); border-left:3px solid var(--cyan); border-radius:6px; padding:10px 14px; font-size:11.5px; color:var(--text2); margin-top:20px">
+                ℹ️ Application settings (Login URL, Trusted Proxies, Sticky Sessions, Timezones, Privilege Tiers) will be <strong>automatically discovered</strong> by the SOC background engine without manual guesswork.
+            </div>
+        </div>
+
+        <!-- STEP 2: PROJECT -->
+        <div id="wiz-step-2" class="wiz-step-view" style="display:none">
+            <p style="font-size:12px; color:var(--text2); margin-bottom:16px">Choose how this application is organized within BSmart SOC projects:</p>
+
+            <div style="display:flex; flex-direction:column; gap:12px">
+                <label style="display:flex; align-items:flex-start; gap:10px; background:var(--bg2); border:1px solid var(--border); padding:12px 16px; border-radius:8px; cursor:pointer">
+                    <input type="radio" name="wiz-project-choice" value="existing" checked onchange="toggleProjectInputs()" style="margin-top:3px">
+                    <div style="flex:1">
+                        <div style="font-size:12.5px; font-weight:700; color:var(--text)">Add to an existing project</div>
+                        <div style="font-size:11px; color:var(--text3); margin-top:2px">Share project access control and unified views with existing servers</div>
+                        <select id="wiz-existing-project-select" class="glass" style="width:100%; max-width:360px; margin-top:8px; padding:7px 10px; font-size:11.5px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                            <option value="">Loading projects...</option>
+                        </select>
+                    </div>
+                </label>
+
+                <label style="display:flex; align-items:flex-start; gap:10px; background:var(--bg2); border:1px solid var(--border); padding:12px 16px; border-radius:8px; cursor:pointer">
+                    <input type="radio" name="wiz-project-choice" value="new" onchange="toggleProjectInputs()" style="margin-top:3px">
+                    <div style="flex:1">
+                        <div style="font-size:12.5px; font-weight:700; color:var(--text)">Create a new project</div>
+                        <div style="font-size:11px; color:var(--text3); margin-top:2px">Create a dedicated security workspace for this application</div>
+                        <div id="wiz-new-project-inputs" style="display:none; margin-top:8px; gap:8px">
+                            <input type="text" id="wiz-new-proj-name" placeholder="Project Name (e.g. Billing App Cluster)" class="glass" style="width:100%; max-width:360px; padding:7px 10px; font-size:11.5px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card); margin-bottom:6px">
+                            <input type="text" id="wiz-new-proj-desc" placeholder="Project Description" class="glass" style="width:100%; max-width:360px; padding:7px 10px; font-size:11.5px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                        </div>
+                    </div>
+                </label>
+
+                <label style="display:flex; align-items:flex-start; gap:10px; background:var(--bg2); border:1px solid var(--border); padding:12px 16px; border-radius:8px; cursor:pointer">
+                    <input type="radio" name="wiz-project-choice" value="none" onchange="toggleProjectInputs()" style="margin-top:3px">
+                    <div>
+                        <div style="font-size:12.5px; font-weight:700; color:var(--text)">No project for now</div>
+                        <div style="font-size:11px; color:var(--text3); margin-top:2px">Application will be monitored globally and can be assigned to a project later</div>
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <!-- STEP 3: COMPONENTS -->
+        <div id="wiz-step-3" class="wiz-step-view" style="display:none">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+                <span style="font-size:12px; font-weight:700; color:var(--text)">REGISTERED APPLICATION COMPONENTS</span>
+                <span id="wiz-components-poll-badge" style="font-size:10px; color:var(--cyan); font-family:var(--font-mono), monospace">● Live Polling Active (5s)</span>
+            </div>
+
+            <!-- List of Added Components -->
+            <div id="wiz-components-list" style="max-height:160px; overflow-y:auto; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin-bottom:16px">
+                <div style="text-align:center; padding:16px; color:var(--text3); font-size:11.5px">No components registered yet. Add at least one Web Node (Tomcat) or Database (PostgreSQL) below.</div>
+            </div>
+
+            <!-- Add Component Controls -->
+            <div style="background:var(--bg2); border:1px dashed var(--border); border-radius:8px; padding:14px">
+                <div style="font-size:11.5px; font-weight:700; color:var(--text); margin-bottom:10px">➕ Enroll Target Node</div>
+                <div style="display:grid; grid-template-columns: 120px 1fr 1fr auto; gap:10px; align-items:center">
+                    <select id="wiz-comp-role" class="glass" style="padding:7px; font-size:11.5px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                        <option value="web">Web (Tomcat)</option>
+                        <option value="database">Database (PG)</option>
+                    </select>
+                    <input type="text" id="wiz-comp-name" placeholder="Node Name (e.g. web-1, db-1)" class="glass" style="padding:7px 10px; font-size:11.5px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                    <input type="text" id="wiz-comp-ip" placeholder="Node IP Address" class="glass" style="padding:7px 10px; font-size:11.5px; border-radius:4px; border:1px solid var(--border); color:var(--text); background:var(--card)">
+                    <button class="btn btn-primary" onclick="submitWizardComponent()" style="padding:7px 14px; font-size:11px; font-weight:700; white-space:nowrap">
+                        Generate Script
+                    </button>
+                </div>
+
+                <div id="wiz-command-box" style="display:none; margin-top:12px; padding:12px; background:var(--bg); border:1px solid var(--cyan); border-radius:6px; position:relative">
+                    <div style="font-size:9.5px; font-weight:700; color:var(--cyan); letter-spacing:0.5px; margin-bottom:4px">RUN THIS 1-LINE INSTALL SCRIPT ON TARGET NODE (ROOT / SUDO):</div>
+                    <code id="wiz-generated-cmd" style="font-family:var(--font-mono), monospace; font-size:11px; color:var(--text); word-break:break-all; display:block; padding-right:60px"></code>
+                    <button class="btn btn-glass" onclick="copyText('wiz-generated-cmd')" style="position:absolute; right:8px; top:12px; padding:4px 8px; font-size:10px">📋 Copy</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- STEP 4: REVIEW -->
+        <div id="wiz-step-4" class="wiz-step-view" style="display:none">
+            <div style="text-align:center; padding:14px 20px 20px">
+                <div style="font-size:36px; margin-bottom:8px">🎉</div>
+                <h4 style="margin:0 0 8px 0; font-size:18px; font-weight:800; color:var(--text)">Application Registered Successfully!</h4>
+                <p style="margin:0 auto 16px; max-width:540px; font-size:12px; color:var(--text2); line-height:1.6">
+                    Telemetry collection is configured. The SOC Auto-Discovery Engine will monitor incoming telemetry over the next 7 days, mapping endpoints into privilege tiers (PUBLIC, COMMON, RESTRICTED) and auto-detecting proxy CIDRs and login paths.
+                </p>
+
+                <div style="background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:14px 20px; max-width:480px; margin:0 auto; text-align:left">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:12px">
+                        <span style="color:var(--text3)">App Name:</span>
+                        <strong style="color:var(--text)" id="review-app-name">-</strong>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:12px">
+                        <span style="color:var(--text3)">Primary URL:</span>
+                        <span style="color:var(--cyan); font-family:var(--font-mono), monospace" id="review-app-url">-</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:12px">
+                        <span style="color:var(--text3)">Project:</span>
+                        <span style="color:var(--text)" id="review-app-project">-</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:12px">
+                        <span style="color:var(--text3)">Components:</span>
+                        <span style="color:var(--green); font-weight:700" id="review-app-comps">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Wizard Footer Navigation Buttons -->
+    <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding-top:16px; margin-top:20px">
+        <button class="btn btn-glass" id="wiz-btn-back" onclick="wizardBackStep()" style="display:none; padding:8px 16px; font-size:12px">
+            ← Back
+        </button>
+        <div style="margin-left:auto; display:flex; gap:10px">
+            <button class="btn btn-glass" onclick="closeAddAppWizard()" style="padding:8px 16px; font-size:12px">
+                Cancel
+            </button>
+            <button class="btn btn-primary" id="wiz-btn-next" onclick="wizardNextStep()" style="padding:8px 20px; font-size:12px; font-weight:700">
+                Continue →
+            </button>
+            <button class="btn btn-primary" id="wiz-btn-finish" onclick="wizardFinish()" style="display:none; padding:8px 24px; font-size:12px; font-weight:700; background:var(--green); border-color:var(--green)">
+                ✓ Finish & View Apps
+            </button>
+        </div>
+    </div>
+
+</div>
+
+<script>
+let currentWizStep = 1;
+let createdAppId = null;
+let wizPollTimer = null;
+
+function openAddAppWizard() {
+    currentWizStep = 1;
+    createdAppId = null;
+    document.getElementById('add-app-wizard-overlay').style.display = 'block';
+    document.getElementById('add-app-wizard-modal').style.display = 'block';
+    showWizardStep(1);
+    loadProjectsForWizard();
+}
+
+function closeAddAppWizard() {
+    document.getElementById('add-app-wizard-overlay').style.display = 'none';
+    document.getElementById('add-app-wizard-modal').style.display = 'none';
+    if (wizPollTimer) {
+        clearInterval(wizPollTimer);
+        wizPollTimer = null;
+    }
+}
+
+function showWizardStep(step) {
+    currentWizStep = step;
+    for (let i = 1; i <= 4; i++) {
+        const view = document.getElementById(`wiz-step-${i}`);
+        const pill = document.getElementById(`pill-step-${i}`);
+        if (view) view.style.display = (i === step) ? 'block' : 'none';
+        if (pill) {
+            if (i === step) {
+                pill.style.background = 'var(--cyan)';
+                pill.style.color = '#000';
+                pill.style.borderColor = 'var(--cyan)';
+            } else if (i < step) {
+                pill.style.background = 'rgba(56,189,248,0.15)';
+                pill.style.color = 'var(--cyan)';
+                pill.style.borderColor = 'rgba(56,189,248,0.3)';
+            } else {
+                pill.style.background = 'var(--bg2)';
+                pill.style.color = 'var(--text3)';
+                pill.style.borderColor = 'var(--border)';
+            }
+        }
+    }
+
+    const backBtn = document.getElementById('wiz-btn-back');
+    const nextBtn = document.getElementById('wiz-btn-next');
+    const finishBtn = document.getElementById('wiz-btn-finish');
+
+    if (backBtn) backBtn.style.display = (step > 1 && step < 4) ? 'block' : 'none';
+    if (nextBtn) nextBtn.style.display = (step < 4) ? 'block' : 'none';
+    if (finishBtn) finishBtn.style.display = (step === 4) ? 'block' : 'none';
+
+    if (step === 3 && createdAppId) {
+        pollWizardComponents();
+        if (!wizPollTimer) {
+            wizPollTimer = setInterval(pollWizardComponents, 5000);
+        }
+    } else {
+        if (wizPollTimer) {
+            clearInterval(wizPollTimer);
+            wizPollTimer = null;
+        }
+    }
+}
+
+async function loadProjectsForWizard() {
+    try {
+        const res = await fetch('/api/projects');
+        if (res.ok) {
+            const projects = await res.json();
+            const sel = document.getElementById('wiz-existing-project-select');
+            if (sel) {
+                sel.innerHTML = '<option value="">-- Select Project --</option>' + 
+                    projects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+            }
+        }
+    } catch (e) {
+        console.error("Failed to load projects", e);
+    }
+}
+
+function toggleProjectInputs() {
+    const choice = document.querySelector('input[name="wiz-project-choice"]:checked')?.value;
+    const newInputs = document.getElementById('wiz-new-project-inputs');
+    const existingSel = document.getElementById('wiz-existing-project-select');
+    if (newInputs) newInputs.style.display = (choice === 'new') ? 'block' : 'none';
+    if (existingSel) existingSel.disabled = (choice !== 'existing');
+}
+
+async function wizardNextStep() {
+    if (currentWizStep === 1) {
+        const name = document.getElementById('wiz-app-name').value.trim();
+        const url = document.getElementById('wiz-app-url').value.trim();
+        if (!name || !url) {
+            if (typeof showToast === 'function') showToast('Please enter Application Name and Primary URL', 'warning');
+            else alert('Please enter Application Name and Primary URL');
+            return;
+        }
+        showWizardStep(2);
+    } else if (currentWizStep === 2) {
+        // Create draft application in backend
+        const name = document.getElementById('wiz-app-name').value.trim();
+        const url = document.getElementById('wiz-app-url').value.trim();
+        const env = document.getElementById('wiz-app-env').value;
+        const desc = document.getElementById('wiz-app-desc').value.trim();
+        
+        let projId = null;
+        const choice = document.querySelector('input[name="wiz-project-choice"]:checked')?.value;
+        if (choice === 'existing') {
+            const pVal = document.getElementById('wiz-existing-project-select').value;
+            if (pVal) projId = parseInt(pVal);
+        } else if (choice === 'new') {
+            const newName = document.getElementById('wiz-new-proj-name').value.trim();
+            const newDesc = document.getElementById('wiz-new-proj-desc').value.trim();
+            if (newName) {
+                try {
+                    const pRes = await fetch('/api/projects', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ name: newName, description: newDesc })
+                    });
+                    if (pRes.ok) {
+                        const pData = await pRes.json();
+                        projId = pData.id || pData.project_id;
+                    }
+                } catch(e) {
+                    console.error("Failed creating new project", e);
+                }
+            }
+        }
+
+        try {
+            const res = await fetch('/api/apps', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name: name,
+                    primary_url: url,
+                    environment: env,
+                    description: desc,
+                    project_id: projId
+                })
+            });
+            if (res.ok) {
+                const appData = await res.json();
+                createdAppId = appData.id;
+                showWizardStep(3);
+            } else {
+                const err = await res.json();
+                showToast(err.detail || 'Failed to create application', 'error');
+            }
+        } catch(e) {
+            showToast('Network error creating application', 'error');
+        }
+    } else if (currentWizStep === 3) {
+        // Move to Review Step
+        document.getElementById('review-app-name').innerText = document.getElementById('wiz-app-name').value;
+        document.getElementById('review-app-url').innerText = document.getElementById('wiz-app-url').value;
+        const projChoice = document.querySelector('input[name="wiz-project-choice"]:checked')?.value;
+        document.getElementById('review-app-project').innerText = (projChoice === 'none') ? 'None' : (document.getElementById('wiz-existing-project-select').selectedOptions[0]?.text || 'Assigned');
+        showWizardStep(4);
+    }
+}
+
+function wizardBackStep() {
+    if (currentWizStep > 1) {
+        showWizardStep(currentWizStep - 1);
+    }
+}
+
+async function submitWizardComponent() {
+    if (!createdAppId) {
+        showToast('Application must be created first', 'warning');
+        return;
+    }
+    const role = document.getElementById('wiz-comp-role').value;
+    const nodeName = document.getElementById('wiz-comp-name').value.trim();
+    const nodeIp = document.getElementById('wiz-comp-ip').value.trim();
+
+    if (!nodeName || !nodeIp) {
+        showToast('Please provide both Node Name and IP Address', 'warning');
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/apps/${createdAppId}/components`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                role: role,
+                node_name: nodeName,
+                node_ip: nodeIp
+            })
+        });
+        if (res.ok) {
+            const comp = await res.json();
+            const baseUrl = window.location.origin;
+            const cmd = `curl -s "${baseUrl}/api/app/setup?token=${comp.enrollment_token}&app=${createdAppId}&role=${comp.role}&node=${encodeURIComponent(comp.node_name)}" | sudo bash`;
+            
+            document.getElementById('wiz-generated-cmd').innerText = cmd;
+            document.getElementById('wiz-command-box').style.display = 'block';
+            document.getElementById('wiz-comp-name').value = '';
+            document.getElementById('wiz-comp-ip').value = '';
+            pollWizardComponents();
+            showToast(`Generated install command for ${comp.node_name}`, 'success');
+        } else {
+            const err = await res.json();
+            showToast(err.detail || 'Failed adding component', 'error');
+        }
+    } catch(e) {
+        showToast('Error registering component', 'error');
+    }
+}
+
+async function pollWizardComponents() {
+    if (!createdAppId) return;
+    try {
+        const res = await fetch(`/api/apps/${createdAppId}/components`);
+        if (res.ok) {
+            const comps = await res.json();
+            const listEl = document.getElementById('wiz-components-list');
+            if (!comps || comps.length === 0) {
+                listEl.innerHTML = '<div style="text-align:center; padding:16px; color:var(--text3); font-size:11.5px">No components registered yet. Add at least one Web Node or Database above.</div>';
+                return;
+            }
+            document.getElementById('review-app-comps').innerText = `${comps.length} registered`;
+            listEl.innerHTML = comps.map(c => {
+                const isReceiving = c.status === 'RECEIVING' || c.status === 'online';
+                const statusBadge = isReceiving 
+                    ? '<span class="badge" style="background:rgba(16,185,129,0.15); color:var(--green); border:1px solid rgba(16,185,129,0.3); font-size:10px">● RECEIVING</span>'
+                    : '<span class="badge" style="background:rgba(245,158,11,0.15); color:var(--amber); border:1px solid rgba(245,158,11,0.3); font-size:10px">⏳ WAITING FOR FIRST EVENT</span>';
+                const roleIcon = c.role === 'web' ? '🌐 Tomcat' : '🗄️ PostgreSQL';
+
+                return `
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 6px; border-bottom:1px solid var(--border)">
+                    <div>
+                        <strong style="color:var(--text); font-size:12px">${escapeHtml(c.node_name)}</strong>
+                        <span style="font-size:11px; color:var(--text3); margin-left:8px">${escapeHtml(c.node_ip)} (${roleIcon})</span>
+                    </div>
+                    <div>${statusBadge}</div>
+                </div>
+                `;
+            }).join('');
+        }
+    } catch(e) {
+        console.error("Error polling wizard components", e);
+    }
+}
+
+function wizardFinish() {
+    closeAddAppWizard();
+    if (window.location.pathname.includes('/apps')) {
+        loadApplications();
+    } else {
+        window.location.href = '/apps';
+    }
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+</script>

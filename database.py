@@ -4670,3 +4670,77 @@ def get_fleet_vulnerabilities_summary():
 
 
 
+
+
+# ── Application SIEM Forwarding Helpers ──
+def get_applications(project_id=None, status_filter=None):
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        import app_siem_db
+        return app_siem_db.get_applications(conn, project_id=project_id, status_filter=status_filter)
+    finally:
+        conn.close()
+
+def create_application(name, primary_url, environment="Production", description="", project_id=None, settings=None, created_by="system"):
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        import app_siem_db
+        return app_siem_db.create_application(conn, name, primary_url, environment=environment, description=description, project_id=project_id, settings=settings, created_by=created_by)
+    finally:
+        conn.close()
+
+def get_application_by_id(app_id):
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        import app_siem_db
+        return app_siem_db.get_application_by_id(conn, app_id)
+    finally:
+        conn.close()
+
+def update_application(app_id, **kwargs):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        import app_siem_db
+        return app_siem_db.update_application(conn, app_id, **kwargs)
+    finally:
+        conn.close()
+
+def delete_application(app_id, deleted_by="system"):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        import app_siem_db
+        return app_siem_db.delete_application(conn, app_id)
+    finally:
+        conn.close()
+
+def add_application_component(app_id, role, node_name, node_ip, machine_id=None):
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        import app_siem_db
+        return app_siem_db.add_application_component(conn, app_id, role, node_name, node_ip, machine_id=machine_id)
+    finally:
+        conn.close()
+
+def get_application_components(app_id):
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        import app_siem_db
+        return app_siem_db.get_application_components(conn, app_id)
+    finally:
+        conn.close()
+
+def delete_application_component(app_id, comp_id):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        import app_siem_db
+        return app_siem_db.delete_application_component(conn, app_id, comp_id)
+    finally:
+        conn.close()

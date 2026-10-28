@@ -453,7 +453,7 @@ from typing import Optional, List, Dict, Any
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, Depends, Form, HTTPException, status, Query, Body
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -966,6 +966,23 @@ async def servers_page(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
     return render_template(request, "servers.html", {"servers": servers})
+
+@app.get("/apps", response_class=HTMLResponse)
+@app.get("/applications", response_class=HTMLResponse)
+def apps_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    base_url = str(request.base_url).rstrip('/')
+    return render_template(request, "apps.html", {"active": "apps", "base_url": base_url})
+
+@app.get("/services/add", response_class=HTMLResponse)
+def add_services_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    base_url = str(request.base_url).rstrip('/')
+    return render_template(request, "add_services.html", {"active": "add-services", "base_url": base_url})
 
 @app.get("/server/{server_id}", response_class=HTMLResponse)
 @app.get("/servers/{server_id}", response_class=HTMLResponse)
@@ -7172,3 +7189,171 @@ async def api_detections_summary(request: Request):
         }
     finally:
         conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# APPLICATION SIEM API ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/apps")
+def api_get_apps(request: Request, status: Optional[str] = None):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    pid = get_effective_project_id(request)
+    apps = db.get_applications(project_id=pid, status_filter=status)
+    return apps
+
+@app.post("/api/apps")
+def api_create_app(request: Request, payload: dict = Body(...)):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    name = (payload.get("name") or "").strip()
+    primary_url = (payload.get("primary_url") or "").strip()
+    if not name or not primary_url:
+        raise HTTPException(status_code=400, detail="Application Name and Primary URL are required.")
+    env = payload.get("environment") or "Production"
+    desc = payload.get("description") or ""
+    project_id = payload.get("project_id")
+    if project_id:
+        try:
+            project_id = int(project_id)
+        except (ValueError, TypeError):
+            project_id = None
+    settings = payload.get("settings") or {}
+    username = user.get("username", "system")
+    app_record = db.create_application(
+        name=name,
+        primary_url=primary_url,
+        environment=env,
+        description=desc,
+        project_id=project_id,
+        settings=settings,
+        created_by=username
+    )
+    if not app_record:
+        raise HTTPException(status_code=500, detail="Failed to create application.")
+    db.log_audit(username, "CREATE_APP", "application", app_record["id"], f"Created application '{app_record['name']}' ({app_record['primary_url']})")
+    
+    res = dict(app_record)
+    res["application"] = app_record
+    res["status"] = "success"
+    return res
+
+@app.get("/api/apps/{app_id}")
+def api_get_app(request: Request, app_id: int):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    app_record = db.get_application_by_id(app_id)
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    pid = get_effective_project_id(request)
+    if pid is not None:
+        if isinstance(pid, list) and app_record.get("project_id") not in pid:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        elif not isinstance(pid, list) and app_record.get("project_id") != pid:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    return app_record
+
+@app.delete("/api/apps/{app_id}")
+def api_delete_app(request: Request, app_id: int):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    app_record = db.get_application_by_id(app_id)
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    username = user.get("username", "system")
+    success = db.delete_application(app_id, deleted_by=username)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete application")
+    db.log_audit(username, "DELETE_APP", "application", app_id, f"Deleted application '{app_record['name']}' (ID: {app_id})")
+    return {"status": "success", "message": f"Application {app_id} deleted"}
+
+@app.post("/api/apps/{app_id}/maintenance")
+def api_toggle_app_maintenance(request: Request, app_id: int, payload: dict = Body(default={})):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    app_record = db.get_application_by_id(app_id)
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    settings = app_record.get("settings") or {}
+    if not isinstance(settings, dict):
+        settings = {}
+    current_maint = settings.get("maintenance_mode", False) or (app_record.get("status") == "MAINT")
+    if payload and "enabled" in payload:
+        new_maint = bool(payload["enabled"])
+    else:
+        new_maint = not current_maint
+    settings["maintenance_mode"] = new_maint
+    new_status = "MAINT" if new_maint else "WAITING"
+    db.update_application(app_id, settings=settings, status=new_status)
+    username = user.get("username", "system")
+    db.log_audit(
+        username,
+        "TOGGLE_APP_MAINTENANCE",
+        "application",
+        app_id,
+        f"{'Enabled' if new_maint else 'Disabled'} maintenance mode for application '{app_record.get('name')}'"
+    )
+    return {"status": "success", "maintenance_mode": new_maint, "app_status": new_status}
+
+@app.post("/api/apps/{app_id}/components")
+def api_add_app_component(request: Request, app_id: int, payload: dict = Body(...)):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    app_record = db.get_application_by_id(app_id)
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    role = (payload.get("role") or "web").strip().lower()
+    if role not in ("web", "database"):
+        raise HTTPException(status_code=400, detail="Invalid role. Must be 'web' or 'database'")
+    node_name = (payload.get("node_name") or "").strip()
+    node_ip = (payload.get("node_ip") or "").strip()
+    machine_id = (payload.get("machine_id") or "").strip() or None
+    if not node_name or not node_ip:
+        raise HTTPException(status_code=400, detail="Node name and Node IP are required")
+    comp = db.add_application_component(app_id, role, node_name, node_ip, machine_id=machine_id)
+    if not comp:
+        raise HTTPException(status_code=500, detail="Failed to add component")
+    username = user.get("username", "system")
+    db.log_audit(username, "ADD_APP_COMPONENT", "application_component", comp["id"], f"Added {role} component '{node_name}' ({node_ip}) to application '{app_record['name']}'")
+    return comp
+
+@app.get("/api/apps/{app_id}/components")
+def api_get_app_components(request: Request, app_id: int):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    comps = db.get_application_components(app_id)
+    return comps
+
+@app.delete("/api/apps/{app_id}/components/{comp_id}")
+def api_delete_app_component(request: Request, app_id: int, comp_id: int):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    success = db.delete_application_component(app_id, comp_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Component not found or could not be deleted")
+    username = user.get("username", "system")
+    db.log_audit(username, "REMOVE_APP_COMPONENT", "application_component", comp_id, f"Removed component {comp_id} from application {app_id}")
+    return {"status": "success", "message": f"Component {comp_id} removed"}
+
+@app.get("/api/app/setup")
+def api_app_setup(token: str = Query(...), app: int = Query(...), role: str = Query("web"), node: str = Query("")):
+    """Serves the securepulse-app collector installer script (Step 3)."""
+    script = f"""#!/bin/bash
+# BSmart SOC Application Collector Setup (Step 3 preview)
+echo "=== BSmart SOC Application Collector Setup ==="
+echo "Application ID: {app}"
+echo "Node Name: {node}"
+echo "Role: {role}"
+echo "Enrollment Token: {token}"
+echo "Collector installer will be fully configured in Step 3."
+"""
+    return PlainTextResponse(script, media_type="text/x-shellscript")

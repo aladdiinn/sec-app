@@ -350,3 +350,295 @@ def delete_old_app_events(conn, retention_days=30, batch_size=5000):
             if deleted < batch_size:
                 break
     return total_deleted
+
+import secrets
+import hashlib
+
+def create_application(conn, name: str, primary_url: str, environment: str = "Production", description: str = "", project_id: int = None, settings: dict = None, created_by: str = "system"):
+    """Creates a new application record and optional project mapping."""
+    if not conn:
+        return None
+    settings_json = psycopg2.extras.Json(settings or {})
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO applications (name, primary_url, environment, description, status, project_id, settings, created_by, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, 'WAITING', %s, %s, %s, NOW(), NOW())
+            RETURNING id, name, primary_url, environment, description, status, project_id, settings, created_at;
+        """, (name, primary_url, environment, description, project_id, settings_json, created_by))
+        app = dict(cur.fetchone())
+
+        if project_id:
+            try:
+                cur.execute("""
+                    INSERT INTO project_apps (project_id, application_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT (project_id, application_id) DO NOTHING;
+                """, (project_id, app['id']))
+            except Exception as e:
+                logger.error(f"Error associating app {app['id']} with project {project_id}: {e}")
+
+        return app
+
+def format_time_ago(dt):
+    if not dt:
+        return "never"
+    now = datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    diff = (now - dt).total_seconds()
+    if diff < 10:
+        return "Just Now"
+    if diff < 60:
+        return f"{int(diff)} s ago"
+    if diff < 3600:
+        return f"{int(diff // 60)} min ago"
+    if diff < 86400:
+        return f"{int(diff // 3600)} h ago"
+    return f"{int(diff // 86400)} d ago"
+
+def get_applications(conn, project_id=None, status_filter=None):
+    """
+    Returns list of applications enriched with:
+    - Component reporting counts (e.g. '3/3' or '0/2')
+    - Events per minute (over last 5 min)
+    - Open incidents count
+    - Last event time ago
+    - Dynamic status (NORMAL, TROUBLE, CRITICAL, DOWN, MAINT, WAITING)
+    - Project name
+    """
+    if not conn:
+        return []
+    
+    with conn.cursor() as cur:
+        params = []
+        where_clauses = ["1=1"]
+
+        # Project scoping filter
+        if project_id is not None:
+            if isinstance(project_id, list):
+                if project_id:
+                    where_clauses.append("a.project_id = ANY(%s)")
+                    params.append(project_id)
+                else:
+                    where_clauses.append("1=0")
+            else:
+                where_clauses.append("a.project_id = %s")
+                params.append(int(project_id))
+
+        sql = f"""
+            SELECT 
+                a.id, a.name, a.primary_url, a.environment, a.description, a.status,
+                a.project_id, a.settings, a.created_by, a.created_at, a.updated_at,
+                p.name as project_name,
+                COUNT(c.id) as total_components,
+                COUNT(c.id) FILTER (WHERE c.last_seen >= NOW() - INTERVAL '10 minutes') as reporting_components,
+                MAX(c.last_seen) as last_seen_component,
+                MAX(c.last_event_at) as last_event_at,
+                (
+                    SELECT COUNT(*) 
+                    FROM app_incidents inc 
+                    WHERE inc.application_id = a.id AND inc.status IN ('Open', 'Investigating')
+                ) as open_incidents,
+                (
+                    SELECT COUNT(*) FILTER (WHERE inc2.severity = 'critical')
+                    FROM app_incidents inc2 
+                    WHERE inc2.application_id = a.id AND inc2.status IN ('Open', 'Investigating')
+                ) as critical_incidents,
+                (
+                    SELECT COUNT(*) FILTER (WHERE inc3.severity = 'high')
+                    FROM app_incidents inc3 
+                    WHERE inc3.application_id = a.id AND inc3.status IN ('Open', 'Investigating')
+                ) as high_incidents,
+                (
+                    SELECT COALESCE(ROUND(COUNT(*)::numeric / 5.0, 0), 0)
+                    FROM app_events ev
+                    WHERE ev.application_id = a.id AND ev.event_time >= NOW() - INTERVAL '5 minutes'
+                ) as events_per_min
+            FROM applications a
+            LEFT JOIN projects p ON a.project_id = p.id
+            LEFT JOIN application_components c ON a.id = c.application_id AND c.enabled = TRUE
+            WHERE {" AND ".join(where_clauses)}
+            GROUP BY a.id, p.name
+            ORDER BY a.name ASC;
+        """
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+
+        result = []
+        for r in rows:
+            item = dict(r)
+            total_comp = item.get("total_components", 0)
+            rep_comp = item.get("reporting_components", 0)
+            crit_inc = item.get("critical_incidents", 0)
+            high_inc = item.get("high_incidents", 0)
+            last_dt = item.get("last_event_at") or item.get("last_seen_component")
+            item["components_ratio"] = f"{rep_comp}/{total_comp}"
+            item["last_event_formatted"] = format_time_ago(last_dt)
+            item["events_per_min"] = int(item.get("events_per_min", 0))
+            item["open_incidents"] = int(item.get("open_incidents", 0))
+
+            # Evaluate Dynamic Status
+            settings = item.get("settings") or {}
+            is_maint = settings.get("maintenance_mode", False) or item.get("status") == "MAINT"
+            
+            if is_maint:
+                dyn_status = "MAINT"
+                status_color = "b" # blue
+                status_desc = "Maintenance mode active"
+            elif crit_inc > 0:
+                dyn_status = "CRITICAL"
+                status_color = "r" # red
+                status_desc = f"{crit_inc} Open critical incident{'s' if crit_inc>1 else ''}"
+            elif high_inc > 0:
+                dyn_status = "TROUBLE"
+                status_color = "a" # amber
+                status_desc = f"{high_inc} Open high incident{'s' if high_inc>1 else ''}"
+            elif total_comp == 0 or not last_dt:
+                dyn_status = "WAITING"
+                status_color = "m" # muted/gray
+                status_desc = "Waiting for first event"
+            elif rep_comp < total_comp:
+                dyn_status = "TROUBLE"
+                status_color = "a" # amber
+                status_desc = f"{total_comp - rep_comp} component(s) silent"
+            elif rep_comp == 0 and total_comp > 0:
+                dyn_status = "DOWN"
+                status_color = "r" # red
+                status_desc = "All components offline"
+            else:
+                dyn_status = "NORMAL"
+                status_color = "ok" # green
+                status_desc = "All components reporting"
+
+            item["computed_status"] = dyn_status
+            item["status_color"] = status_color
+            item["status_desc"] = status_desc
+
+            # Apply status filter if specified
+            if status_filter and status_filter.lower() != 'all':
+                if dyn_status.lower() != status_filter.lower():
+                    continue
+
+            result.append(item)
+
+        return result
+
+def get_application_by_id(conn, app_id: int):
+    """Retrieves full application details with components."""
+    if not conn:
+        return None
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT a.*, p.name as project_name
+            FROM applications a
+            LEFT JOIN projects p ON a.project_id = p.id
+            WHERE a.id = %s;
+        """, (app_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        app = dict(row)
+
+        cur.execute("""
+            SELECT c.*, s.hostname as linked_server_hostname, s.ip as linked_server_ip
+            FROM application_components c
+            LEFT JOIN servers s ON c.linked_server_id = s.id
+            WHERE c.application_id = %s
+            ORDER BY c.role DESC, c.node_name ASC;
+        """, (app_id,))
+        app["components"] = [dict(c) for c in cur.fetchall()]
+        return app
+
+def update_application(conn, app_id: int, **kwargs):
+    """Updates application settings or attributes."""
+    if not conn or not kwargs:
+        return False
+    set_clauses = []
+    params = []
+    for k, v in kwargs.items():
+        if k == 'settings' and isinstance(v, dict):
+            set_clauses.append("settings = %s")
+            params.append(psycopg2.extras.Json(v))
+        else:
+            set_clauses.append(f"{k} = %s")
+            params.append(v)
+    set_clauses.append("updated_at = NOW()")
+    params.append(app_id)
+
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE applications SET {', '.join(set_clauses)} WHERE id = %s RETURNING id;", tuple(params))
+        res = cur.fetchone()
+        return bool(res)
+
+def delete_application(conn, app_id: int):
+    """Deletes application record and cleans up associated events and link tables."""
+    if not conn:
+        return False
+    with conn.cursor() as cur:
+        try:
+            cur.execute("DELETE FROM app_events WHERE application_id = %s;", (app_id,))
+        except Exception as e:
+            logger.warning(f"Note deleting events for app {app_id}: {e}")
+        cur.execute("DELETE FROM applications WHERE id = %s RETURNING id;", (app_id,))
+        res = cur.fetchone()
+        return bool(res)
+
+def add_application_component(conn, app_id: int, role: str, node_name: str, node_ip: str, machine_id: str = None):
+    """
+    Registers a component and generates a 1-time enrollment token expiring in 1 hour.
+    Automatically links to existing server asset if machine_id or IP matches.
+    """
+    if not conn:
+        return None
+    
+    enrollment_token = secrets.token_hex(16)
+    token_hash = hashlib.sha256(enrollment_token.encode()).hexdigest()
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    with conn.cursor() as cur:
+        # Check if matching server exists to link
+        linked_srv_id = None
+        if machine_id:
+            cur.execute("SELECT id FROM servers WHERE (hostname = %s OR ip = %s) LIMIT 1;", (machine_id, node_ip))
+            srv = cur.fetchone()
+            if srv:
+                linked_srv_id = srv['id']
+        if not linked_srv_id and node_ip:
+            cur.execute("SELECT id FROM servers WHERE ip = %s LIMIT 1;", (node_ip,))
+            srv = cur.fetchone()
+            if srv:
+                linked_srv_id = srv['id']
+
+        cur.execute("""
+            INSERT INTO application_components (
+                application_id, role, node_name, node_ip, machine_id, linked_server_id,
+                token_hash, enrollment_token, enrollment_expires_at, status, created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'WAITING', NOW())
+            RETURNING id, application_id, role, node_name, node_ip, linked_server_id, enrollment_token, status;
+        """, (app_id, role, node_name, node_ip, machine_id, linked_srv_id, token_hash, enrollment_token, expires_at))
+        comp = dict(cur.fetchone())
+        return comp
+
+def get_application_components(conn, app_id: int):
+    """Returns all components for an application."""
+    if not conn:
+        return []
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT c.*, s.hostname as server_hostname
+            FROM application_components c
+            LEFT JOIN servers s ON c.linked_server_id = s.id
+            WHERE c.application_id = %s
+            ORDER BY c.role DESC, c.node_name ASC;
+        """, (app_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+def delete_application_component(conn, app_id: int, comp_id: int):
+    """Deletes an application component."""
+    if not conn:
+        return False
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM application_components WHERE id = %s AND application_id = %s RETURNING id;", (comp_id, app_id))
+        res = cur.fetchone()
+        return bool(res)

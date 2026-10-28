@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% set active = 'apps' %}
+{% block title %}Application Inventory — SOC Command Center{% endblock %}
+{% block page_title %}Application Inventory{% endblock %}
+{% block page_sub %}Business applications monitored at application level{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <!-- Action Controls Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; flex-wrap:wrap; gap:16px">
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+            <!-- Search -->
+            <input type="text" id="app-search-input" placeholder="🔍 Search application, URL or domain..." class="glass mono" 
+                   style="padding:8px 14px; border-radius:6px; font-size:12px; border:1px solid var(--border); color:var(--text); background:var(--bg2); width:280px" 
+                   oninput="renderApplicationsGrid()">
+
+            <!-- Status Filter -->
+            <select id="app-status-filter" class="glass mono" 
+                    style="padding:8px 14px; border-radius:6px; font-size:12px; border:1px solid var(--border); color:var(--text); background:var(--bg2)" 
+                    onchange="loadApplications()">
+                <option value="all">All Statuses</option>
+                <option value="normal">Normal Only</option>
+                <option value="trouble">Trouble / Warning Only</option>
+                <option value="critical">Critical Issues Only</option>
+                <option value="down">Offline / Down Only</option>
+                <option value="maint">Maintenance Mode</option>
+                <option value="waiting">Waiting for First Event</option>
+            </select>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:10px">
+            <button class="btn btn-primary" onclick="openAddAppWizard()" style="padding:8px 18px; font-size:12px; font-weight:700">
+                + ADD NEW APP
+            </button>
+            <button class="btn btn-glass" onclick="loadApplications()" style="padding:8px 14px; font-size:12px" title="Refresh Applications">
+                🔄 Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Application Grid -->
+    <div id="apps-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:20px">
+        <!-- Injected via JavaScript -->
+    </div>
+</div>
+
+<!-- Include Shared Add Application Wizard -->
+{% include "add_app_wizard_modal.html" %}
+
+<!-- Application Details Popup Shell (Step 6 placeholder preview) -->
+<div id="app-details-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9998; backdrop-filter:blur(6px)" onclick="closeAppDetailsModal()"></div>
+<div id="app-details-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; border-radius:16px; z-index:9999; width:920px; max-width:94vw; max-height:90vh; overflow-y:auto; box-shadow:0 30px 90px rgba(0,0,0,0.9); border:1px solid var(--cyan); background:var(--card)">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; border-bottom:1px solid var(--border); padding-bottom:12px">
+        <div>
+            <div style="display:flex; align-items:center; gap:10px">
+                <h3 id="pop-app-name" style="margin:0; font-size:20px; font-weight:800; color:var(--text)">Application</h3>
+                <span id="pop-app-badge" class="badge" style="background:rgba(56,189,248,0.15); color:var(--cyan); border:1px solid var(--cyan)">APP</span>
+                <span id="pop-app-status-badge"></span>
+            </div>
+            <div style="font-size:12px; color:var(--text3); font-family:var(--font-mono), monospace; margin-top:4px" id="pop-app-url"></div>
+        </div>
+        <div style="display:flex; gap:8px">
+            <button class="btn btn-glass" id="pop-btn-maint" onclick="toggleAppMaintenanceFromModal()" style="font-size:11px; padding:6px 12px">Toggle Maintenance</button>
+            <button class="btn btn-ghost" onclick="closeAppDetailsModal()" style="padding:4px 10px; font-size:16px">✕</button>
+        </div>
+    </div>
+
+    <!-- Tabs Header -->
+    <div class="tabs" style="display:flex; gap:18px; border-bottom:1px solid var(--border); margin-bottom:18px">
+        <span class="tab-item active" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--cyan); border-bottom:2px solid var(--cyan); cursor:pointer">Overview</span>
+        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Events</span>
+        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Incidents</span>
+        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Users</span>
+        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Rules</span>
+        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Components</span>
+        <span class="tab-item" style="padding:8px 4px; font-size:12.5px; font-weight:700; color:var(--text3); cursor:pointer">Settings</span>
+    </div>
+
+    <!-- Popup Body Preview -->
+    <div id="pop-app-body">
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:20px">
+            <div style="background:var(--bg2); padding:12px; border-radius:8px; border:1px solid var(--border); text-align:center">
+                <div style="font-size:9.5px; color:var(--text3); text-transform:uppercase; font-weight:700">COMPONENTS</div>
+                <div style="font-size:18px; font-weight:800; color:var(--text); margin-top:4px" id="pop-metric-comps">-</div>
+            </div>
+            <div style="background:var(--bg2); padding:12px; border-radius:8px; border:1px solid var(--border); text-align:center">
+                <div style="font-size:9.5px; color:var(--text3); text-transform:uppercase; font-weight:700">EVENTS / MIN</div>
+                <div style="font-size:18px; font-weight:800; color:var(--text); margin-top:4px" id="pop-metric-epm">-</div>
+            </div>
+            <div style="background:var(--bg2); padding:12px; border-radius:8px; border:1px solid var(--border); text-align:center">
+                <div style="font-size:9.5px; color:var(--text3); text-transform:uppercase; font-weight:700">OPEN INCIDENTS</div>
+                <div style="font-size:18px; font-weight:800; color:var(--red); margin-top:4px" id="pop-metric-inc">-</div>
+            </div>
+            <div style="background:var(--bg2); padding:12px; border-radius:8px; border:1px solid var(--border); text-align:center">
+                <div style="font-size:9.5px; color:var(--text3); text-transform:uppercase; font-weight:700">LAST EVENT</div>
+                <div style="font-size:15px; font-weight:700; color:var(--text2); margin-top:6px" id="pop-metric-last">-</div>
+            </div>
+        </div>
+
+        <div style="background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:16px">
+            <h4 style="margin:0 0 10px 0; font-size:13px; font-weight:700; color:var(--text)">Connected Components</h4>
+            <div id="pop-components-table" style="font-size:12px">Loading components...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentApplications = [];
+let activeModalAppId = null;
+
+async function loadApplications() {
+    const grid = document.getElementById('apps-grid');
+    if (!grid) return;
+    const filter = document.getElementById('app-status-filter')?.value || 'all';
+
+    try {
+        const res = await fetch(`/api/apps?status=${encodeURIComponent(filter)}`);
+        if (res.ok) {
+            const data = await res.json();
+            currentApplications = Array.isArray(data) ? data : (data.applications || []);
+            renderApplicationsGrid();
+        } else {
+            grid.innerHTML = '<div class="card glass" style="grid-column:1/-1; text-align:center; padding:50px; color:var(--red)">Failed to load applications.</div>';
+        }
+    } catch (e) {
+        grid.innerHTML = '<div class="card glass" style="grid-column:1/-1; text-align:center; padding:50px; color:var(--red)">Network error loading applications.</div>';
+    }
+}
+
+function renderApplicationsGrid() {
+    const grid = document.getElementById('apps-grid');
+    if (!grid) return;
+
+    const q = (document.getElementById('app-search-input')?.value || '').toLowerCase().trim();
+    const filtered = currentApplications.filter(a => {
+        if (!q) return true;
+        return (a.name || '').toLowerCase().includes(q) || 
+               (a.primary_url || '').toLowerCase().includes(q) || 
+               (a.project_name || '').toLowerCase().includes(q);
+    });
+
+    if (filtered.length === 0) {
+        grid.innerHTML = `
+        <div class="card glass" style="grid-column:1/-1; text-align:center; padding:60px; border:1px dashed var(--border)">
+            <div style="font-size:36px; margin-bottom:12px">🛡️</div>
+            <h4 style="margin:0 0 6px 0; font-size:16px; font-weight:700; color:var(--text)">No applications yet</h4>
+            <p style="margin:0 0 18px 0; font-size:12px; color:var(--text3)">Onboard your business web applications to start collecting Tomcat and PostgreSQL security telemetry.</p>
+            <button class="btn btn-primary" onclick="openAddAppWizard()" style="padding:8px 20px; font-size:12px; font-weight:700">
+                + Add Application
+            </button>
+        </div>
+        `;
+        return;
+    }
+
+    grid.innerHTML = filtered.map(a => {
+        const id = a.id;
+        const name = escapeHtml(a.name || 'Unnamed App');
+        const url = escapeHtml(a.primary_url || '');
+        const compRatio = a.components_ratio || '0/0';
+        const epm = a.events_per_min || 0;
+        const inc = a.open_incidents || 0;
+        const lastEv = a.last_event_formatted || 'never';
+        const proj = escapeHtml(a.project_name || 'No project');
+        const status = a.computed_status || 'WAITING';
+        const statusColor = a.status_color || 'm';
+        const statusDesc = escapeHtml(a.status_desc || '');
+
+        // Color mapper for status strip
+        let badgeBg = 'rgba(148,163,184,0.15)', badgeFg = 'var(--text3)', badgeBorder = 'var(--border)';
+        if (statusColor === 'ok') {
+            badgeBg = 'rgba(16,185,129,0.15)'; badgeFg = 'var(--green)'; badgeBorder = 'rgba(16,185,129,0.3)';
+        } else if (statusColor === 'a') {
+            badgeBg = 'rgba(245,158,11,0.15)'; badgeFg = 'var(--amber)'; badgeBorder = 'rgba(245,158,11,0.3)';
+        } else if (statusColor === 'r') {
+            badgeBg = 'rgba(239,68,68,0.15)'; badgeFg = 'var(--red)'; badgeBorder = 'rgba(239,68,68,0.3)';
+        } else if (statusColor === 'b') {
+            badgeBg = 'rgba(56,189,248,0.15)'; badgeFg = 'var(--cyan)'; badgeBorder = 'rgba(56,189,248,0.3)';
+        }
+
+        return `
+        <div class="card glass glass-hover fade-in" onclick="openAppDetailsModal(${id})" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:20px; border-radius:12px; cursor:pointer; border:1px solid var(--border)">
+            <div>
+                <!-- Top Tags (MAINT & DEL) -->
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+                    <span class="badge" style="background:rgba(56,189,248,0.12); color:var(--cyan); border:1px solid rgba(56,189,248,0.3); font-weight:800; font-size:9.5px; letter-spacing:0.5px">APP</span>
+                    <div style="display:flex; gap:6px" onclick="event.stopPropagation()">
+                        <button onclick="toggleAppMaintenance(${id}, event)" title="Toggle Maintenance Mode" 
+                                style="background:${status==='MAINT'?'rgba(56,189,248,0.2)':'var(--bg2)'}; border:1px solid var(--border); color:${status==='MAINT'?'var(--cyan)':'var(--text2)'}; border-radius:4px; padding:3px 8px; cursor:pointer; font-size:9.5px; font-weight:700">
+                            MAINT
+                        </button>
+                        <button onclick="deleteAppConfirm(${id}, '${name}', event)" title="Delete Application" 
+                                style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:var(--red); border-radius:4px; padding:3px 8px; cursor:pointer; font-size:9.5px; font-weight:700">
+                            DEL
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Title & URL -->
+                <div style="margin-bottom:12px">
+                    <h3 style="margin:0 0 4px 0; font-size:16px; font-weight:800; color:var(--text); font-family:var(--font-sans)">${name}</h3>
+                    <div style="font-size:11.5px; color:var(--text3); font-family:var(--font-mono), monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${url}</div>
+                </div>
+
+                <!-- KV Box -->
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:10px; color:var(--text3)">
+                    <div>
+                        <span>COMPONENTS</span>
+                        <b style="display:block; font-size:14px; color:var(--text); font-family:var(--font-sans); margin-top:2px">${compRatio}</b>
+                    </div>
+                    <div>
+                        <span>EVENTS / MIN</span>
+                        <b style="display:block; font-size:14px; color:var(--text); font-family:var(--font-sans); margin-top:2px">${epm}</b>
+                    </div>
+                    <div>
+                        <span>OPEN INCIDENTS</span>
+                        <b style="display:block; font-size:14px; color:${inc>0?'var(--red)':'var(--text)'}; font-family:var(--font-sans); margin-top:2px">${inc}</b>
+                    </div>
+                    <div>
+                        <span>LAST EVENT</span>
+                        <b style="display:block; font-size:13px; color:var(--text2); font-family:var(--font-sans); margin-top:2px">${lastEv}</b>
+                    </div>
+                </div>
+
+                <!-- Status Strip -->
+                <div style="background:${badgeBg}; border:1px solid ${badgeBorder}; color:${badgeFg}; border-radius:6px; padding:6px 10px; font-size:11px; font-weight:700; display:flex; align-items:center; gap:6px">
+                    <span>${status}</span>
+                    <span style="font-weight:400; opacity:0.85">· ${statusDesc}</span>
+                </div>
+            </div>
+
+            <!-- Footer Project Tag -->
+            <div style="margin-top:12px; padding-top:8px; border-top:1px solid var(--border); font-size:11px; color:var(--text3); display:flex; justify-content:space-between; align-items:center">
+                <span>Project: <strong style="color:var(--text2)">${proj}</strong></span>
+                <span style="font-size:11px; color:var(--cyan)">View Details →</span>
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+async function toggleAppMaintenance(id, event) {
+    if (event) event.stopPropagation();
+    try {
+        const res = await fetch(`/api/apps/${id}/maintenance`, { method: 'POST' });
+        if (res.ok) {
+            showToast('Toggled maintenance mode', 'success');
+            loadApplications();
+        } else {
+            showToast('Failed toggling maintenance', 'error');
+        }
+    } catch(e) {
+        showToast('Network error', 'error');
+    }
+}
+
+function toggleAppMaintenanceFromModal() {
+    if (activeModalAppId) {
+        toggleAppMaintenance(activeModalAppId);
+        closeAppDetailsModal();
+    }
+}
+
+async function deleteAppConfirm(id, name, event) {
+    if (event) event.stopPropagation();
+    if (!confirm(`Are you sure you want to delete application "${name}"?\nThis will remove collector configurations and audit-log the deletion.`)) {
+        return;
+    }
+    try {
+        const res = await fetch(`/api/apps/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+            showToast(`Deleted application ${name}`, 'success');
+            loadApplications();
+        } else {
+            showToast('Failed to delete application', 'error');
+        }
+    } catch(e) {
+        showToast('Network error deleting application', 'error');
+    }
+}
+
+async function openAppDetailsModal(id) {
+    activeModalAppId = id;
+    document.getElementById('app-details-overlay').style.display = 'block';
+    document.getElementById('app-details-modal').style.display = 'block';
+
+    try {
+        const res = await fetch(`/api/apps/${id}`);
+        if (res.ok) {
+            const app = await res.json();
+            document.getElementById('pop-app-name').innerText = app.name;
+            document.getElementById('pop-app-url').innerText = app.primary_url;
+            document.getElementById('pop-metric-comps').innerText = (app.components || []).length;
+            document.getElementById('pop-metric-epm').innerText = app.events_per_min || 0;
+            document.getElementById('pop-metric-inc').innerText = app.open_incidents || 0;
+            document.getElementById('pop-metric-last').innerText = app.last_event_formatted || 'never';
+
+            const compTable = document.getElementById('pop-components-table');
+            if (!app.components || app.components.length === 0) {
+                compTable.innerHTML = '<div style="color:var(--text3)">No components attached to this application.</div>';
+            } else {
+                compTable.innerHTML = `
+                <table style="width:100%; border-collapse:collapse; text-align:left">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--border); color:var(--text3); font-size:11px">
+                            <th style="padding:6px">ROLE</th>
+                            <th style="padding:6px">NODE NAME</th>
+                            <th style="padding:6px">NODE IP</th>
+                            <th style="padding:6px">LINKED SERVER</th>
+                            <th style="padding:6px">STATUS</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${app.components.map(c => `
+                        <tr style="border-bottom:1px solid var(--border)">
+                            <td style="padding:6px; font-weight:700">${c.role.toUpperCase()}</td>
+                            <td style="padding:6px">${escapeHtml(c.node_name)}</td>
+                            <td style="padding:6px; font-family:var(--font-mono), monospace">${escapeHtml(c.node_ip)}</td>
+                            <td style="padding:6px; color:var(--cyan)">${c.linked_server_hostname ? escapeHtml(c.linked_server_hostname) : '<span style="color:var(--text3)">Unlinked</span>'}</td>
+                            <td style="padding:6px"><span class="badge" style="font-size:9.5px">${c.status}</span></td>
+                        </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                `;
+            }
+        }
+    } catch(e) {
+        console.error("Error fetching app details", e);
+    }
+}
+
+function closeAppDetailsModal() {
+    activeModalAppId = null;
+    document.getElementById('app-details-overlay').style.display = 'none';
+    document.getElementById('app-details-modal').style.display = 'none';
+}
+
+document.addEventListener('DOMContentLoaded', loadApplications);
+</script>
+{% endblock %}
