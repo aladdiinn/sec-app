@@ -5570,6 +5570,28 @@ async def api_agent_status(request: Request):
     client_ip = request.client.host if request.client else None
 
     appr = db.get_approval_by_token(token, hostname=hostname, ip=ip)
+    # If not in approvals yet, auto-register pending request if token matches an app component
+    if not appr and token:
+        c_conn = db.get_db_connection()
+        if c_conn:
+            try:
+                with c_conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT c.id, c.role, c.node_name, c.node_ip, a.name AS app_name
+                        FROM application_components c
+                        JOIN applications a ON c.application_id = a.id
+                        WHERE c.enrollment_token = %s
+                        LIMIT 1;
+                    """, (token,))
+                    crow = cur.fetchone()
+                    if crow:
+                        disp_host = f"[{crow['app_name']} | {crow['role'].upper()}] {crow['node_name']}"
+                        appr = db.add_approval_request(disp_host, crow['node_ip'] or client_ip or "127.0.0.1", token=token)
+            except Exception as e:
+                logger.error(f"Error auto-registering app approval in api_agent_status: {e}")
+            finally:
+                c_conn.close()
+
     status = "pending"
     server_id = None
 
@@ -7252,7 +7274,8 @@ def api_create_app(request: Request, payload: dict = Body(...)):
         description=desc,
         project_id=project_id,
         settings=settings,
-        created_by=username
+        created_by=username,
+        status="PENDING_APPROVAL"
     )
     if not app_record:
         raise HTTPException(status_code=500, detail="Failed to create application.")

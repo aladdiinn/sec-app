@@ -1676,10 +1676,11 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None):
 
             cur.execute("""
                 INSERT INTO approvals (hostname, ip_address, agent_token, status, requested_at)
-                VALUES (%s, %s, %s, 'pending', NOW());
+                VALUES (%s, %s, %s, 'pending', NOW())
+                RETURNING id, agent_token, status;
             """, (hostname, ip_address, token))
-            cur.execute("SELECT id, agent_token, status FROM approvals WHERE agent_token = %s ORDER BY id DESC LIMIT 1;", (token,))
             res = cur.fetchone()
+            conn.commit()
             if res:
                 return dict(res)
             return {"id": 1, "token": token, "status": "pending"}
@@ -1757,7 +1758,7 @@ def approve_request(app_id: int):
                         UPDATE applications
                         SET status = 'NORMAL'
                         WHERE id = (SELECT application_id FROM application_components WHERE enrollment_token = %s LIMIT 1)
-                          AND status = 'WAITING';
+                          AND status IN ('WAITING', 'PENDING_APPROVAL');
                     """, (token,))
                 except Exception:
                     pass
@@ -1791,6 +1792,7 @@ def approve_request(app_id: int):
             else:
                 sid = existing_srv["id"] if isinstance(existing_srv, dict) else existing_srv[0]
                 cur.execute("UPDATE servers SET status = 'online', last_seen = NOW() WHERE id = %s;", (sid,))
+            conn.commit()
             return True
     except Exception as e:
         logger.error(f"Error in approve_request: {e}")
@@ -1805,6 +1807,7 @@ def reject_request(app_id: int):
     try:
         with conn.cursor() as cur:
             cur.execute("UPDATE approvals SET status = 'rejected' WHERE id = %s;", (app_id,))
+            conn.commit()
             return True
     except Exception as e:
         logger.error(f"Error in reject_request: {e}")
@@ -4701,12 +4704,12 @@ def get_applications(project_id=None, status_filter=None):
     finally:
         conn.close()
 
-def create_application(name, primary_url, environment="Production", description="", project_id=None, settings=None, created_by="system"):
+def create_application(name, primary_url, environment="Production", description="", project_id=None, settings=None, created_by="system", status="WAITING"):
     conn = get_db_connection()
     if not conn: return None
     try:
         import app_siem_db
-        return app_siem_db.create_application(conn, name, primary_url, environment=environment, description=description, project_id=project_id, settings=settings, created_by=created_by)
+        return app_siem_db.create_application(conn, name, primary_url, environment=environment, description=description, project_id=project_id, settings=settings, created_by=created_by, status=status)
     finally:
         conn.close()
 

@@ -356,7 +356,7 @@ def delete_old_app_events(conn, retention_days=30, batch_size=5000):
 import secrets
 import hashlib
 
-def create_application(conn, name: str, primary_url: str, environment: str = "Production", description: str = "", project_id: int = None, settings: dict = None, created_by: str = "system"):
+def create_application(conn, name: str, primary_url: str, environment: str = "Production", description: str = "", project_id: int = None, settings: dict = None, created_by: str = "system", status: str = "WAITING"):
     """Creates a new application record and optional project mapping."""
     if not conn:
         return None
@@ -364,9 +364,9 @@ def create_application(conn, name: str, primary_url: str, environment: str = "Pr
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO applications (name, primary_url, environment, description, status, project_id, settings, created_by, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, 'WAITING', %s, %s, %s, NOW(), NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
             RETURNING id, name, primary_url, environment, description, status, project_id, settings, created_at;
-        """, (name, primary_url, environment, description, project_id, settings_json, created_by))
+        """, (name, primary_url, environment, description, status, project_id, settings_json, created_by))
         app = dict(cur.fetchone())
 
         if project_id:
@@ -414,6 +414,9 @@ def get_applications(conn, project_id=None, status_filter=None):
     with conn.cursor() as cur:
         params = []
         where_clauses = ["1=1"]
+        # Without approval an app does not appear in Total Apps (like server assets)
+        if not status_filter or status_filter.lower() not in ('all_including_pending', 'pending_approval', 'pending'):
+            where_clauses.append("a.status != 'PENDING_APPROVAL'")
 
         # Project scoping filter
         if project_id is not None:
@@ -517,7 +520,7 @@ def get_applications(conn, project_id=None, status_filter=None):
             item["status_desc"] = status_desc
 
             # Apply status filter if specified
-            if status_filter and status_filter.lower() != 'all':
+            if status_filter and status_filter.lower() not in ('all', 'all_including_pending'):
                 if dyn_status.lower() != status_filter.lower():
                     continue
 
@@ -626,7 +629,7 @@ def add_application_component(conn, app_id: int, role: str, node_name: str, node
                 token_hash, enrollment_token, enrollment_expires_at, target_port, target_db_name,
                 config_readiness, status, created_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'WAITING', NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING_APPROVAL', NOW())
             RETURNING id, application_id, role, node_name, node_ip, linked_server_id, enrollment_token, status, target_port, target_db_name;
         """, (app_id, role, node_name, node_ip, machine_id, linked_srv_id, token_hash, enrollment_token, expires_at, str(port) if port else None, db_name, config_readiness))
         comp = dict(cur.fetchone())

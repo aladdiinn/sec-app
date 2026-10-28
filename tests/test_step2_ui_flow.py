@@ -309,7 +309,7 @@ class Step2ApplicationSIEMTestCase(unittest.TestCase):
         print(f"PASS: api_create_app -> ID {app_id}")
 
         # 2. GET /api/apps
-        all_apps = api_get_apps(req)
+        all_apps = api_get_apps(req, status="all_including_pending")
         self.assertTrue(any(a["id"] == app_id for a in all_apps))
         print(f"PASS: api_get_apps -> returned {len(all_apps)} applications")
 
