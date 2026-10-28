@@ -3015,7 +3015,11 @@ def api_get_fleet_cves(severity: Optional[str] = None):
                 SELECT v.*, a.details, a.cvss_vector, a.source, s.name as server_name, s.hostname, s.ip as server_ip
                 FROM server_vulnerabilities v
                 JOIN servers s ON v.server_id = s.id
-                LEFT JOIN advisory_cves a ON v.cve_id = a.cve_id
+                LEFT JOIN (
+                    SELECT DISTINCT ON (cve_id) cve_id, details, cvss_vector, source
+                    FROM advisory_cves
+                    ORDER BY cve_id, id DESC
+                ) a ON v.cve_id = a.cve_id
                 WHERE v.status = 'active'
             """
             params = []

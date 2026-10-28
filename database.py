@@ -4664,27 +4664,31 @@ def get_server_vulnerabilities(server_id: int, severity: str = None, status: str
             query = """
                 SELECT v.*, a.details, a.cvss_vector, a.source
                 FROM server_vulnerabilities v
-                LEFT JOIN advisory_cves a ON v.cve_id = a.cve_id
+                LEFT JOIN (
+                    SELECT DISTINCT ON (cve_id) cve_id, details, cvss_vector, source
+                    FROM advisory_cves
+                    ORDER BY cve_id, id DESC
+                ) a ON v.cve_id = a.cve_id
                 WHERE v.server_id = %s
             """
             params = [server_id]
             if status:
-                query += " AND status = %s"
+                query += " AND v.status = %s"
                 params.append(status)
             if severity and severity.upper() != "ALL":
-                query += " AND UPPER(severity) = %s"
+                query += " AND UPPER(v.severity) = %s"
                 params.append(severity.upper())
             query += """
                 ORDER BY
-                    CASE UPPER(severity)
+                    CASE UPPER(v.severity)
                         WHEN 'CRITICAL' THEN 1
                         WHEN 'HIGH' THEN 2
                         WHEN 'MEDIUM' THEN 3
                         WHEN 'LOW' THEN 4
                         ELSE 5
                     END,
-                    cvss_score DESC,
-                    cve_id ASC;
+                    v.cvss_score DESC,
+                    v.cve_id ASC;
             """
             cur.execute(query, tuple(params))
             return cur.fetchall() or []
