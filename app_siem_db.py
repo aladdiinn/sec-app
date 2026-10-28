@@ -90,7 +90,9 @@ def init_app_siem_schema(conn):
             ("clock_offset_ms", "INTEGER DEFAULT 0"),
             ("enabled", "BOOLEAN DEFAULT TRUE"),
             ("target_port", "VARCHAR(20)"),
-            ("target_db_name", "VARCHAR(100)")
+            ("target_db_name", "VARCHAR(100)"),
+            ("last_heartbeat", "TIMESTAMPTZ"),
+            ("monitored_files", "JSONB DEFAULT '[]'::jsonb")
         ]:
             try:
                 cur.execute(f"ALTER TABLE application_components ADD COLUMN IF NOT EXISTS {col} {col_type};")

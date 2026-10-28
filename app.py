@@ -7438,7 +7438,7 @@ def api_get_collector_code(token: str = Query("")):
 @app.post("/api/app/heartbeat")
 def api_app_heartbeat(request: Request, payload: dict = Body(...)):
     """Receives 30-second heartbeat from securepulse-app collectors."""
-    token = request.headers.get("X-Enrollment-Token", "")
+    token = (request.headers.get("X-Enrollment-Token") or payload.get("token") or "").strip()
     app_id = payload.get("app_id")
     node_name = payload.get("node_name", "")
     version = payload.get("version", "1.6.0")
@@ -7451,9 +7451,10 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT id, application_id, status FROM application_components
-                WHERE (enrollment_token = %s OR (application_id = %s AND node_name = %s))
+                WHERE (enrollment_token = %s AND %s != '')
+                   OR (application_id = %s AND node_name = %s)
                 LIMIT 1;
-            """, (token, app_id, node_name))
+            """, (token, token, app_id, node_name))
             comp = cur.fetchone()
             if not comp:
                 return {"status": "error", "reason": "unrecognized component"}
@@ -7461,15 +7462,20 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
             readiness = psycopg2.extras.Json({"monitored_files": files, "collector_version": version})
             cur.execute("""
                 UPDATE application_components
-                SET status = 'RECEIVING', last_seen = NOW(), collector_version = %s, config_readiness = %s
+                SET status = 'RECEIVING', 
+                    last_seen = NOW(), 
+                    last_heartbeat = NOW(),
+                    collector_version = %s, 
+                    monitored_files = %s,
+                    config_readiness = %s
                 WHERE id = %s;
-            """, (version, readiness, comp["id"]))
+            """, (version, psycopg2.extras.Json(files), readiness, comp["id"]))
 
-            # Auto-promote application from WAITING to NORMAL if currently WAITING
+            # Auto-promote application from unconfigured statuses to NORMAL
             cur.execute("""
                 UPDATE applications
                 SET status = 'NORMAL', updated_at = NOW()
-                WHERE id = %s AND status = 'WAITING';
+                WHERE id = %s AND status IN ('WAITING', 'WAITING_DATA', 'INITIALIZING', 'PENDING_APPROVAL');
             """, (comp["application_id"],))
 
             conn.commit()
@@ -7520,7 +7526,7 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
 @app.post("/api/app/events")
 def api_app_events(request: Request, payload: dict = Body(...)):
     """Ingests, parses, normalizes and correlates telemetry events from collectors."""
-    token = request.headers.get("X-Enrollment-Token", "")
+    token = (request.headers.get("X-Enrollment-Token") or payload.get("token") or "").strip()
     app_id = payload.get("app_id")
     node_name = payload.get("node_name", "")
     role = payload.get("role", "web")
@@ -7541,9 +7547,10 @@ def api_app_events(request: Request, payload: dict = Body(...)):
             # Lookup component
             cur.execute("""
                 SELECT id, application_id FROM application_components
-                WHERE (enrollment_token = %s OR (application_id = %s AND node_name = %s))
+                WHERE (enrollment_token = %s AND %s != '')
+                   OR (application_id = %s AND node_name = %s)
                 LIMIT 1;
-            """, (token, app_id, node_name))
+            """, (token, token, app_id, node_name))
             comp = cur.fetchone()
             if not comp:
                 return {"status": "error", "reason": "unrecognized component"}
@@ -7669,10 +7676,10 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     """, (actual_app_id, comp_id, node_name, source_type, psycopg2.extras.Json(ev)))
                     ingested_count += 1
 
-            # Update component last event and counter
+            # Update component last event, last seen, status and counter
             cur.execute("""
                 UPDATE application_components
-                SET last_event_at = NOW(), events_counter = events_counter + %s
+                SET status = 'RECEIVING', last_seen = NOW(), last_event_at = NOW(), events_counter = events_counter + %s
                 WHERE id = %s;
             """, (ingested_count, comp_id))
 

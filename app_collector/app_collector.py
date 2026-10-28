@@ -37,14 +37,14 @@ CONFIG = {
     "TARGET_DB_NAME": os.environ.get("TARGET_DB_NAME", ""),
     "TOMCAT_LOG_DIR": os.environ.get("TOMCAT_LOG_DIR", ""),
     "PG_LOG_DIR": os.environ.get("PG_LOG_DIR", ""),
-    "POLL_INTERVAL_SEC": 0.5,
-    "BATCH_MAX_LINES": 50,
-    "BATCH_MAX_WAIT_SEC": 2.0,
-    "HEARTBEAT_INTERVAL_SEC": 30.0
+    "POLL_INTERVAL_SEC": float(os.environ.get("POLL_INTERVAL_SEC", "0.5")),
+    "BATCH_MAX_LINES": int(os.environ.get("BATCH_MAX_LINES", "50")),
+    "BATCH_MAX_WAIT_SEC": float(os.environ.get("BATCH_MAX_WAIT_SEC", "2.0")),
+    "HEARTBEAT_INTERVAL_SEC": float(os.environ.get("HEARTBEAT_INTERVAL_SEC", "30.0"))
 }
 
 def load_env_file(filepath="/etc/securepulse-app/collector.env"):
-    """Loads configuration from environment file if present."""
+    """Loads configuration from environment file if present with strict type coercion."""
     if not os.path.exists(filepath):
         return
     try:
@@ -61,12 +61,18 @@ def load_env_file(filepath="/etc/securepulse-app/collector.env"):
                         if k == "APP_ID":
                             try: CONFIG[k] = int(v)
                             except ValueError: pass
+                        elif k in ("POLL_INTERVAL_SEC", "BATCH_MAX_WAIT_SEC", "HEARTBEAT_INTERVAL_SEC"):
+                            try: CONFIG[k] = float(v)
+                            except ValueError: pass
+                        elif k == "BATCH_MAX_LINES":
+                            try: CONFIG[k] = int(v)
+                            except ValueError: pass
                         else:
                             CONFIG[k] = v
     except Exception as e:
         print(f"[WARN] Error reading {filepath}: {e}")
 
-def post_json(endpoint: str, payload: dict, timeout: float = 5.0) -> dict:
+def post_json(endpoint: str, payload: dict, timeout: float = 6.0) -> dict:
     """Posts JSON payload to SOC server using standard library urllib."""
     soc_url = CONFIG["SOC_URL"].rstrip("/")
     url = f"{soc_url}{endpoint}"
@@ -89,89 +95,136 @@ def post_json(endpoint: str, payload: dict, timeout: float = 5.0) -> dict:
 # ── LOG DISCOVERY ENGINE ──────────────────────────────────────────────────────
 
 def find_tomcat_log_files(target_port: str = "") -> list:
-    """Locates active Tomcat access and catalina log files."""
+    """Locates active Tomcat access and catalina log files across running processes and filesystem."""
     candidates = []
 
-    # If explicit directory configured
+    # 1. Explicitly configured directory
     if CONFIG["TOMCAT_LOG_DIR"] and os.path.isdir(CONFIG["TOMCAT_LOG_DIR"]):
-        candidates.append(CONFIG["TOMCAT_LOG_DIR"])
+        candidates.append(os.path.realpath(CONFIG["TOMCAT_LOG_DIR"]))
 
-    # Port-based process inspection (Linux /proc)
+    # 2. Port-based process inspection (Linux /proc)
     if target_port and sys.platform.startswith("linux"):
         try:
-            # Check listening sockets
             import subprocess
             res = subprocess.run(["ss", "-tulpn"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True)
             for line in res.stdout.splitlines():
-                if f":{target_port} " in line:
+                if f":{target_port} " in line or f":{target_port}\t" in line:
                     match = re.search(r'pid=(\d+)', line)
                     if match:
                         pid = match.group(1)
+                        # Check cmdline
                         cmdline_path = f"/proc/{pid}/cmdline"
                         if os.path.exists(cmdline_path):
                             with open(cmdline_path, "r", encoding="utf-8", errors="ignore") as f:
                                 cmd = f.read().replace("\x00", " ")
                                 m = re.search(r'-Dcatalina\.base=([^\s]+)', cmd) or re.search(r'-Dcatalina\.home=([^\s]+)', cmd)
                                 if m:
-                                    candidates.append(os.path.join(m.group(1), "logs"))
+                                    cdir = os.path.join(m.group(1), "logs")
+                                    if os.path.isdir(cdir) and cdir not in candidates:
+                                        candidates.append(os.path.realpath(cdir))
+                        # Check process cwd
+                        cwd_link = f"/proc/{pid}/cwd"
+                        if os.path.exists(cwd_link):
+                            try:
+                                real_cwd = os.path.realpath(cwd_link)
+                                for p in [real_cwd, os.path.dirname(real_cwd)]:
+                                    ldir = os.path.join(p, "logs")
+                                    if os.path.isdir(ldir) and ldir not in candidates:
+                                        candidates.append(os.path.realpath(ldir))
+                            except Exception:
+                                pass
         except Exception:
             pass
 
-    # Process inspection: check all running java processes for -Dcatalina.base / home
+    # 3. Process inspection: inspect all running java/tomcat processes
     if sys.platform.startswith("linux"):
         try:
             for pid_dir in glob.glob("/proc/[0-9]*"):
                 cmd_path = os.path.join(pid_dir, "cmdline")
                 if os.path.exists(cmd_path):
-                    with open(cmd_path, "r", encoding="utf-8", errors="ignore") as f:
-                        cmd = f.read().replace("\x00", " ")
-                        if "catalina" in cmd.lower() or "tomcat" in cmd.lower():
-                            m = re.search(r'-Dcatalina\.base=([^\s]+)', cmd) or re.search(r'-Dcatalina\.home=([^\s]+)', cmd)
-                            if m:
-                                ldir = os.path.join(m.group(1), "logs")
-                                if os.path.isdir(ldir) and ldir not in candidates:
-                                    candidates.append(ldir)
+                    try:
+                        with open(cmd_path, "r", encoding="utf-8", errors="ignore") as f:
+                            cmd = f.read().replace("\x00", " ")
+                            if "catalina" in cmd.lower() or "tomcat" in cmd.lower() or "bootstrap" in cmd.lower():
+                                m = re.search(r'-Dcatalina\.base=([^\s]+)', cmd) or re.search(r'-Dcatalina\.home=([^\s]+)', cmd)
+                                if m:
+                                    ldir = os.path.join(m.group(1), "logs")
+                                    if os.path.isdir(ldir) and ldir not in candidates:
+                                        candidates.append(os.path.realpath(ldir))
+                                
+                                # Process cwd inspection
+                                cwd_link = os.path.join(pid_dir, "cwd")
+                                if os.path.exists(cwd_link):
+                                    rcwd = os.path.realpath(cwd_link)
+                                    for p in [rcwd, os.path.dirname(rcwd)]:
+                                        ldir = os.path.join(p, "logs")
+                                        if os.path.isdir(ldir) and ldir not in candidates:
+                                            candidates.append(os.path.realpath(ldir))
+                    except Exception:
+                        pass
         except Exception:
             pass
 
-    # Common Tomcat installation paths across Linux distributions
+    # 4. Standard filesystem roots across Linux distributions
     standard_roots = [
         "/home/apache-tomcat*/logs",
         "/home/*/apache-tomcat*/logs",
         "/opt/apache-tomcat*/logs",
-        "/opt/tomcat/logs",
-        "/opt/tomcat10/logs",
-        "/opt/tomcat9/logs",
-        "/var/lib/tomcat10/logs",
-        "/var/lib/tomcat9/logs",
-        "/var/log/tomcat10",
-        "/var/log/tomcat9",
+        "/opt/tomcat*/logs",
+        "/var/log/tomcat*",
+        "/var/lib/tomcat*/logs",
         "/usr/local/apache-tomcat*/logs",
-        "/usr/local/tomcat/logs",
-        "/usr/share/tomcat/logs",
-        "/home/*/tomcat*/logs"
+        "/usr/local/tomcat*/logs",
+        "/usr/share/tomcat*/logs",
+        "/home/*/tomcat*/logs",
+        "/home/tomcat*/logs"
     ]
     for pattern in standard_roots:
         for p in glob.glob(pattern):
-            if os.path.isdir(p) and p not in candidates:
-                candidates.append(p)
+            if os.path.isdir(p):
+                rp = os.path.realpath(p)
+                if rp not in candidates:
+                    candidates.append(rp)
 
     active_files = []
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     for cdir in candidates:
-        # Access logs: localhost_access_log.YYYY-MM-DD.txt or access_log
-        for f in glob.glob(os.path.join(cdir, f"*access_log*{today_str}*")):
-            if os.path.isfile(f) and f not in active_files:
-                active_files.append({"path": f, "source": "tomcat_access"})
-        for f in glob.glob(os.path.join(cdir, "localhost_access_log*.txt")):
-            if os.path.isfile(f) and not any(af["path"] == f for af in active_files):
+        if not os.path.isdir(cdir):
+            continue
+
+        # Access logs: look for any access log file
+        access_patterns = [
+            os.path.join(cdir, "*access_log*"),
+            os.path.join(cdir, "*access*.txt"),
+            os.path.join(cdir, "*access*.log")
+        ]
+        found_access = []
+        for pat in access_patterns:
+            for f in glob.glob(pat):
+                if os.path.isfile(f) and f not in found_access:
+                    found_access.append(f)
+
+        # Sort access logs by modification time (newest first)
+        found_access.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+        # Take up to the 2 most recent access logs (e.g. today's active file)
+        for f in found_access[:2]:
+            if not any(af["path"] == f for af in active_files):
                 active_files.append({"path": f, "source": "tomcat_access"})
 
         # Catalina / App logs: catalina.out or catalina.YYYY-MM-DD.log
-        cat_out = os.path.join(cdir, "catalina.out")
-        if os.path.isfile(cat_out) and not any(af["path"] == cat_out for af in active_files):
-            active_files.append({"path": cat_out, "source": "tomcat_catalina"})
+        cat_patterns = [
+            os.path.join(cdir, "catalina.out"),
+            os.path.join(cdir, "catalina*.log")
+        ]
+        found_cat = []
+        for pat in cat_patterns:
+            for f in glob.glob(pat):
+                if os.path.isfile(f) and f not in found_cat:
+                    found_cat.append(f)
+        found_cat.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+        for f in found_cat[:2]:
+            if not any(af["path"] == f for af in active_files):
+                active_files.append({"path": f, "source": "tomcat_catalina"})
 
     return active_files
 
@@ -179,7 +232,7 @@ def find_postgres_log_files(target_port: str = "") -> list:
     """Locates active PostgreSQL log files."""
     candidates = []
     if CONFIG["PG_LOG_DIR"] and os.path.isdir(CONFIG["PG_LOG_DIR"]):
-        candidates.append(CONFIG["PG_LOG_DIR"])
+        candidates.append(os.path.realpath(CONFIG["PG_LOG_DIR"]))
 
     standard_patterns = [
         "/var/log/postgresql/postgresql-*.log",
@@ -189,8 +242,10 @@ def find_postgres_log_files(target_port: str = "") -> list:
     ]
     for pattern in standard_patterns:
         for f in glob.glob(pattern):
-            if os.path.isfile(f) and f not in candidates:
-                candidates.append(f)
+            if os.path.isfile(f):
+                rf = os.path.realpath(f)
+                if rf not in candidates:
+                    candidates.append(rf)
 
     return [{"path": f, "source": "postgres"} for f in candidates]
 
@@ -247,7 +302,6 @@ class LogFileTailer:
                 line = line.strip("\r\n")
                 if line:
                     lines.append(line)
-
             self.last_pos = self.file_obj.tell()
             return lines
         except Exception as e:
@@ -263,16 +317,20 @@ class LogFileTailer:
 
 def run_collector():
     load_env_file()
-    print(f"=== SecurePulse Application Collector v{COLLECTOR_VERSION} ===")
+    print("=" * 65)
+    print(f"  SecurePulse Application Telemetry Collector v{COLLECTOR_VERSION}")
+    print("=" * 65)
     print(f"Node Name:   {CONFIG['NODE_NAME']}")
     print(f"App ID:      {CONFIG['APP_ID']}")
     print(f"Role:        {CONFIG['COMPONENT_ROLE']}")
     print(f"Target Port: {CONFIG['TARGET_PORT'] or 'auto-detect'}")
     print(f"Target DB:   {CONFIG['TARGET_DB_NAME'] or 'all'}")
     print(f"SOC Target:  {CONFIG['SOC_URL']}")
+    print(f"Token:       {CONFIG['ENROLLMENT_TOKEN'][:8]}***" if CONFIG['ENROLLMENT_TOKEN'] else "Token:       (none)")
+    print("=" * 65)
 
     tailers = {}
-    last_heartbeat = 0
+    last_heartbeat = 0.0
     last_flush = time.time()
     buffered_events = []
 
@@ -281,8 +339,9 @@ def run_collector():
             now = time.time()
 
             # 1. Periodic Heartbeat (every 30s)
-            if now - last_heartbeat >= CONFIG["HEARTBEAT_INTERVAL_SEC"]:
+            if now - last_heartbeat >= float(CONFIG["HEARTBEAT_INTERVAL_SEC"]):
                 hb_payload = {
+                    "token": CONFIG["ENROLLMENT_TOKEN"],
                     "app_id": CONFIG["APP_ID"],
                     "node_name": CONFIG["NODE_NAME"],
                     "role": CONFIG["COMPONENT_ROLE"],
@@ -294,13 +353,12 @@ def run_collector():
                 }
                 res = post_json("/api/app/heartbeat", hb_payload)
                 if res.get("status") == "ok":
-                    # print(f"[OK] Heartbeat acknowledged by SOC at {datetime.now().strftime('%H:%M:%S')}")
-                    pass
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [HB] Heartbeat acknowledged by SOC. Monitored files: {len(tailers)}")
                 else:
-                    print(f"[WARN] Heartbeat warning: {res.get('reason')}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Heartbeat warning: {res.get('reason')}")
                 last_heartbeat = now
 
-            # 2. Rediscover log files if none attached or daily rotate
+            # 2. Rediscover log files if none attached or every 60s
             if not tailers or int(now) % 60 == 0:
                 discovered = []
                 if CONFIG["COMPONENT_ROLE"] == "web":
@@ -311,12 +369,16 @@ def run_collector():
                 for item in discovered:
                     fpath = item["path"]
                     if fpath not in tailers:
-                        print(f"[INFO] Monitoring log file: {fpath} ({item['source']})")
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] [DISCOVER] Monitoring log file: {fpath} ({item['source']})")
                         tailers[fpath] = LogFileTailer(fpath, item["source"])
 
             # 3. Read new lines from all tailers
+            new_lines_total = 0
             for fpath, tailer in list(tailers.items()):
                 new_lines = tailer.read_new_lines()
+                if new_lines:
+                    new_lines_total += len(new_lines)
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [READ] Captured {len(new_lines)} lines from {os.path.basename(fpath)}")
                 for line in new_lines:
                     # Filter for target db if in database role
                     if CONFIG["COMPONENT_ROLE"] == "database" and CONFIG["TARGET_DB_NAME"]:
@@ -332,27 +394,30 @@ def run_collector():
 
             # 4. Flush batch to SOC if threshold reached or wait timeout elapsed
             should_flush = (
-                len(buffered_events) >= CONFIG["BATCH_MAX_LINES"] or
-                (buffered_events and now - last_flush >= CONFIG["BATCH_MAX_WAIT_SEC"])
+                len(buffered_events) >= int(CONFIG["BATCH_MAX_LINES"]) or
+                (buffered_events and (now - last_flush) >= float(CONFIG["BATCH_MAX_WAIT_SEC"]))
             )
 
             if should_flush:
-                batch_to_send = buffered_events[:CONFIG["BATCH_MAX_LINES"]]
+                batch_size = int(CONFIG["BATCH_MAX_LINES"])
+                batch_to_send = buffered_events[:batch_size]
                 payload = {
+                    "token": CONFIG["ENROLLMENT_TOKEN"],
                     "app_id": CONFIG["APP_ID"],
                     "node_name": CONFIG["NODE_NAME"],
                     "role": CONFIG["COMPONENT_ROLE"],
                     "events": batch_to_send
                 }
                 res = post_json("/api/app/events", payload)
-                if res.get("status") == "success" or res.get("status") == "ok":
+                if res.get("status") in ("success", "ok"):
                     buffered_events = buffered_events[len(batch_to_send):]
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [INGEST] Forwarded {len(batch_to_send)} events to SOC. Ingested: {res.get('ingested')}, Severity: {res.get('highest_severity')}")
                     last_flush = now
                 else:
-                    print(f"[WARN] Event ingestion response: {res}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Event ingestion failed: {res}")
                     last_flush = now
 
-            time.sleep(CONFIG["POLL_INTERVAL_SEC"])
+            time.sleep(float(CONFIG["POLL_INTERVAL_SEC"]))
 
         except KeyboardInterrupt:
             print("\nShutting down collector...")

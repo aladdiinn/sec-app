@@ -1667,12 +1667,18 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None):
             except Exception:
                 pass
 
-            cur.execute("SELECT id, agent_token, status FROM approvals WHERE hostname = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (hostname, ip_address))
+            cur.execute("""
+                SELECT id, agent_token, status FROM approvals 
+                WHERE (agent_token = %s AND %s IS NOT NULL) 
+                   OR (hostname = %s AND %s != '') 
+                   OR (ip_address = %s AND %s != '')
+                ORDER BY id DESC LIMIT 1;
+            """, (token, token, hostname, hostname, ip_address, ip_address))
             row = cur.fetchone()
             if row:
                 row_dict = dict(row)
-                if row_dict.get("status") == "pending":
-                    return {"id": row_dict["id"], "token": row_dict["agent_token"], "status": "pending"}
+                if row_dict.get("status") in ("pending", "approved"):
+                    return {"id": row_dict["id"], "token": row_dict.get("agent_token") or token, "status": row_dict.get("status")}
 
             cur.execute("""
                 INSERT INTO approvals (hostname, ip_address, agent_token, status, requested_at)

@@ -44,29 +44,37 @@ REQ_RES=$(curl -s -X POST "${SOC_URL}/api/approvals/request" \
     -H "Content-Type: application/json" \
     -d "{\"hostname\":\"${NODE_NAME}\",\"ip\":\"${HOST_IP}\",\"token\":\"${TOKEN}\",\"app_id\":${APP_ID},\"role\":\"${ROLE}\"}" || echo '{"ok":false}')
 
-echo "[PENDING] Collector onboarding request submitted to SOC Command Center!"
-echo "[PENDING] Waiting for SOC Administrator approval in Dashboard... (Token: $TOKEN)"
 STATUS="pending"
-MAX_WAIT=300
-WAITED=0
-while [ "$STATUS" = "pending" ] && [ $WAITED -lt $MAX_WAIT ]; do
-    sleep 5
-    WAITED=$((WAITED+5))
-    CHECK_RES=$(curl -s -G "${SOC_URL}/api/agent/status" --data-urlencode "token=${TOKEN}" --data-urlencode "hostname=${NODE_NAME}" || echo '{"status":"pending"}')
-    STATUS=$(echo "$CHECK_RES" | grep -o '"status":"[^"]*' | cut -d'"' -f4 || echo "pending")
-    if [ "$STATUS" = "pending" ]; then
-        echo -n "."
-    fi
-done
+# Check if already approved (e.g. re-run or pre-approved)
+CHECK_RES=$(curl -s -G "${SOC_URL}/api/agent/status" --data-urlencode "token=${TOKEN}" --data-urlencode "hostname=${NODE_NAME}" || echo '{"status":"pending"}')
+STATUS=$(echo "$CHECK_RES" | grep -o '"status":"[^"]*' | cut -d'"' -f4 || echo "pending")
 
-if [ "$STATUS" != "approved" ]; then
+if [ "$STATUS" = "approved" ]; then
+    echo "✅ [SUCCESS] Component already approved by SOC Administrator!"
+else
+    echo "[PENDING] Collector onboarding request submitted to SOC Command Center!"
+    echo "[PENDING] Waiting for SOC Administrator approval in Dashboard... (Token: $TOKEN)"
+    MAX_WAIT=300
+    WAITED=0
+    while [ "$STATUS" = "pending" ] && [ $WAITED -lt $MAX_WAIT ]; do
+        sleep 5
+        WAITED=$((WAITED+5))
+        CHECK_RES=$(curl -s -G "${SOC_URL}/api/agent/status" --data-urlencode "token=${TOKEN}" --data-urlencode "hostname=${NODE_NAME}" || echo '{"status":"pending"}')
+        STATUS=$(echo "$CHECK_RES" | grep -o '"status":"[^"]*' | cut -d'"' -f4 || echo "pending")
+        if [ "$STATUS" = "pending" ]; then
+            echo -n "."
+        fi
+    done
+
+    if [ "$STATUS" != "approved" ]; then
+        echo ""
+        echo "❌ [TIMED OUT] Approval not received within $MAX_WAIT seconds."
+        echo "   Please approve under 'SERVER APPROVALS' in SOC Dashboard and re-run."
+        exit 1
+    fi
     echo ""
-    echo "❌ [TIMED OUT] Approval not received within $MAX_WAIT seconds."
-    echo "   Please approve under 'SERVER APPROVALS' in SOC Dashboard and re-run."
-    exit 1
+    echo "✅ [SUCCESS] Approval Granted by SOC Administrator!"
 fi
-echo ""
-echo "✅ [SUCCESS] Approval Granted by SOC Administrator!"
 
 # 2. Check Python 3
 if ! command -v python3 >/dev/null 2>&1; then
@@ -81,10 +89,12 @@ if ! command -v python3 >/dev/null 2>&1; then
     fi
 fi
 
-# 2. Create directories
+PYTHON_BIN=$(command -v python3 || echo "/usr/bin/python3")
+
+# 3. Create directories
 mkdir -p /opt/securepulse-app /etc/securepulse-app
 
-# 3. Write configuration file
+# 4. Write configuration file
 cat << EOF > /etc/securepulse-app/collector.env
 SOC_URL="$SOC_URL"
 ENROLLMENT_TOKEN="$TOKEN"
@@ -100,13 +110,13 @@ HEARTBEAT_INTERVAL_SEC=30.0
 EOF
 chmod 600 /etc/securepulse-app/collector.env
 
-# 4. Fetch collector script from SOC server
+# 5. Fetch collector script from SOC server
 echo "[+] Downloading SecurePulse Application Collector..."
 curl -sSL "${SOC_URL}/api/app/collector.py?token=${TOKEN}" -o /opt/securepulse-app/app_collector.py
 chmod 755 /opt/securepulse-app/app_collector.py
 
-# 5. Install systemd service
-cat << 'EOF' > /etc/systemd/system/securepulse-app.service
+# 6. Install systemd service
+cat << EOF > /etc/systemd/system/securepulse-app.service
 [Unit]
 Description=SecurePulse Application-Level SIEM Collector
 Documentation=https://github.com/aladdiinn/sec-app
@@ -117,7 +127,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/securepulse-app
 EnvironmentFile=/etc/securepulse-app/collector.env
-ExecStart=/usr/bin/python3 /opt/securepulse-app/app_collector.py
+ExecStart=${PYTHON_BIN} /opt/securepulse-app/app_collector.py
 Restart=always
 RestartSec=5s
 
@@ -134,19 +144,22 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
-# 6. Enable and restart service
+# 7. Enable and restart service
 echo "[+] Starting securepulse-app service..."
 systemctl daemon-reload
 systemctl enable securepulse-app.service
 systemctl restart securepulse-app.service
 
-# 7. Verification check
+# 8. Verification check
 sleep 2
 if systemctl is-active --quiet securepulse-app.service; then
     echo "======================================================================"
-    echo "[SUCCESS] SecurePulse Application Collector is ACTIVE and RUNNING!"
-    echo "Logs: journalctl -u securepulse-app -f"
-    echo "Check your BSmart SOC dashboard; the status badge will turn to 'RECEIVING'."
+    echo "✅ [SUCCESS] SecurePulse Application Collector is ACTIVE and RUNNING!"
+    echo "======================================================================"
+    echo "Recent collector telemetry:"
+    journalctl -u securepulse-app -n 6 --no-pager || true
+    echo "======================================================================"
+    echo "Check your BSmart SOC dashboard; the status badge will turn to 'RECEIVING' / 'NORMAL'."
     echo "======================================================================"
 else
     echo "[WARN] Service started but status is not active. Check logs:"
