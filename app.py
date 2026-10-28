@@ -3717,14 +3717,29 @@ async def socket_io_fallback(path: str):
 
 # Setup Script Endpoint for Target Server Node Onboarding (Push Agent Model - Zero SSH Credentials Needed)
 @app.get("/setup", response_class=Response)
+@app.post("/setup", response_class=Response)
 @app.get("/setup.sh", response_class=Response)
+@app.post("/setup.sh", response_class=Response)
 @app.get("/setup_node.sh", response_class=Response)
+@app.post("/setup_node.sh", response_class=Response)
 async def setup_script(request: Request, node_name: Optional[str] = None, ip: Optional[str] = None, log_path: Optional[str] = None, server_id: Optional[int] = None, site: Optional[str] = "Cloud"):
     """Returns a self-installing push agent script for target EC2 servers to stream logs/metrics back to SOC without SSH credentials."""
+    if request.method == "POST":
+        try:
+            form = await request.form()
+            node_name = node_name or form.get("node_name") or form.get("name")
+            ip = ip or form.get("ip") or form.get("server_ip")
+            if not server_id and form.get("server_id"):
+                try: server_id = int(form.get("server_id"))
+                except: pass
+        except Exception: pass
     base_url = str(request.base_url).rstrip("/")
-    target_node_name = node_name or "Target-Node"
-    target_ip = ip or "127.0.0.1"
-    target_log_path = log_path or "/var/log/syslog"
+    target_node_name = node_name or request.query_params.get("node_name") or request.query_params.get("name") or "Target-Node"
+    target_ip = ip or request.query_params.get("ip") or request.query_params.get("server_ip") or "127.0.0.1"
+    target_log_path = log_path or request.query_params.get("log_path") or "/var/log/syslog"
+    if not server_id and request.query_params.get("server_id"):
+        try: server_id = int(request.query_params.get("server_id"))
+        except: pass
 
     escaped_hostname = json.dumps(target_node_name)
     escaped_ip = json.dumps(target_ip)
@@ -4027,12 +4042,12 @@ def get_installed_packages(os_id, os_version):
     # 1. Debian/Ubuntu family (dpkg-query)
     if os.path.exists("/usr/bin/dpkg-query") or os.path.exists("/bin/dpkg-query"):
         try:
-            dpkg_fmt = chr(36) + "{binary:Package}" + chr(9) + chr(36) + "{Version}" + chr(9) + chr(36) + "{Architecture}" + chr(9) + chr(36) + "{source:Package}" + chr(9) + chr(36) + "{source:Version}" + chr(9) + chr(36) + "{db:Status-Abbrev}" + chr(10)
+            dpkg_fmt = chr(36) + "{{binary:Package}}|||" + chr(36) + "{{Version}}|||" + chr(36) + "{{Architecture}}|||" + chr(36) + "{{source:Package}}|||" + chr(36) + "{{source:Version}}|||" + chr(36) + "{{db:Status-Abbrev}}" + chr(10)
             cmd = ["dpkg-query", "-W", "-f=" + dpkg_fmt]
             out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=60).decode("utf-8", errors="ignore")
             ecosystem = f"Ubuntu:{{os_version}}" if os_id == "ubuntu" else ("Debian" if os_id == "debian" else "Debian")
             for line in out.splitlines():
-                parts = line.split(chr(9)) if chr(9) in line else line.split("\t")
+                parts = line.split("|||")
                 if len(parts) >= 6:
                     bin_pkg, ver, arch, src_pkg, src_ver, status = parts[:6]
                     if status.strip().startswith("ii"):
@@ -4053,12 +4068,12 @@ def get_installed_packages(os_id, os_version):
     # 2. RHEL/CentOS/Rocky/Alma/Amazon Linux family (rpm)
     if os.path.exists("/usr/bin/rpm") or os.path.exists("/bin/rpm"):
         try:
-            rpm_fmt = "%{{NAME}}" + chr(9) + "%{{EPOCH}}" + chr(9) + "%{{VERSION}}" + chr(9) + "%{{RELEASE}}" + chr(9) + "%{{ARCH}}" + chr(9) + "%{{SOURCERPM}}" + chr(10)
+            rpm_fmt = "%{{NAME}}|||%{{EPOCH}}|||%{{VERSION}}|||%{{RELEASE}}|||%{{ARCH}}|||%{{SOURCERPM}}" + chr(10)
             cmd = ["rpm", "-qa", "--qf", rpm_fmt]
             out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=60).decode("utf-8", errors="ignore")
             ecosystem = os_id.upper() if os_id else "RHEL"
             for line in out.splitlines():
-                parts = line.split(chr(9)) if chr(9) in line else line.split("\t")
+                parts = line.split("|||")
                 if len(parts) >= 6:
                     name, epoch, ver, rel, arch, src_rpm = parts[:6]
                     epoch_clean = "" if epoch in ("(none)", "None", "") else epoch.strip()
@@ -7060,6 +7075,7 @@ async def api_watchdog_push(request: Request):
 # REAL-TIME LOG STREAMS & DISCOVERED LOG FILES API
 # ══════════════════════════════════════════════════════════════════════════════
 
+@app.get("/api/log-monitor/streams")
 @app.post("/api/log-monitor/streams")
 async def api_log_streams(request: Request):
     """Fetch live streamed logs with type filtering (os, tomcat, postgres) and file path selection."""
