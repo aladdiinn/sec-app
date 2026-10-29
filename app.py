@@ -8289,7 +8289,7 @@ def api_get_app_incidents(request: Request, app_id: int):
 
 @app.get("/api/apps/{app_id}/users")
 def api_get_app_users(request: Request, app_id: int):
-    """Retrieves observed users and attacker client IPs for an application."""
+    """Retrieves observed users and attacker client IPs for an application with intelligent automated identity attribution."""
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -8298,6 +8298,10 @@ def api_get_app_users(request: Request, app_id: int):
         return []
     try:
         with conn.cursor() as cur:
+            # Query linked server / node IPs for this application
+            cur.execute("SELECT node_ip FROM app_components WHERE application_id = %s", (app_id,))
+            node_ips = {r["node_ip"] for r in cur.fetchall() if r.get("node_ip")}
+
             cur.execute("""
                 SELECT 
                     COALESCE(user_name, client_ip) AS identifier,
@@ -8313,7 +8317,13 @@ def api_get_app_users(request: Request, app_id: int):
                         WHEN bool_or(severity = 'medium') THEN 'medium'
                         WHEN bool_or(severity = 'low') THEN 'low'
                         ELSE 'info'
-                    END AS peak_severity
+                    END AS peak_severity,
+                    (ARRAY_AGG(url_path ORDER BY id DESC))[1] AS recent_path,
+                    CASE
+                        WHEN bool_or(url_path ILIKE '%/api/%' OR url_path ILIKE '%/bsmartApi/%' OR url_path ILIKE '%/ws/%' OR url_path ILIKE '%.do%') THEN 'api'
+                        WHEN bool_or(url_path ILIKE '%/login%' OR url_path ILIKE '%.html' OR url_path ILIKE '%.jsp') THEN 'web'
+                        ELSE 'service'
+                    END AS traffic_type
                 FROM app_events
                 WHERE application_id = %s AND client_ip IS NOT NULL
                 GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
@@ -8321,7 +8331,27 @@ def api_get_app_users(request: Request, app_id: int):
                 LIMIT 50;
             """, (app_id,))
             rows = cur.fetchall()
-            return [dict(r) for r in rows]
+
+            res = []
+            for r in rows:
+                item = dict(r)
+                cip = item.get("client_ip") or ""
+                uname = item.get("user_name")
+                
+                if uname and uname not in ("-", "Anonymous", "null"):
+                    item["client_category"] = "user"
+                    item["display_role"] = f"👤 {uname}"
+                elif cip in node_ips or cip.startswith("127.") or cip in ("10.0.0.27", "localhost"):
+                    item["client_category"] = "internal"
+                    item["display_role"] = "⚙️ Internal Daemon / Node Service"
+                elif item.get("traffic_type") == "api":
+                    item["client_category"] = "api"
+                    item["display_role"] = "🤖 Automated API Client (IoT / DCU)"
+                else:
+                    item["client_category"] = "guest"
+                    item["display_role"] = "🌐 Web Visitor (Unauthenticated)"
+                res.append(item)
+            return res
     except Exception as e:
         logger.error(f"Error in api_get_app_users: {e}")
         return []
