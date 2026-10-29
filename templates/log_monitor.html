@@ -1367,6 +1367,14 @@ function filterByTimeBucket(tStr) {
 
 // ── LLM ANALYZER ──
 function openLlmModal() {
+    if (typeof selectedServerId !== 'undefined' && selectedServerId) {
+        const sel = document.getElementById('llm-server-selector');
+        if (sel) sel.value = String(selectedServerId);
+    }
+    const lbl = document.getElementById('llm-target-label');
+    if (lbl) {
+        lbl.innerText = 'Filter: ' + ((typeof activeCategory !== 'undefined' && activeCategory) ? activeCategory : 'ALL').toUpperCase();
+    }
     document.getElementById('llm-modal-overlay').style.display = 'block';
     document.getElementById('llm-analyzer-modal').style.display = 'block';
 }
@@ -1388,14 +1396,25 @@ async function analyzeWithLlm() {
     try {
         const srvId = document.getElementById('llm-server-selector').value;
         const period = document.getElementById('llm-time-period').value;
+        const currentCat = (typeof activeCategory !== 'undefined' && activeCategory && activeCategory !== 'all') ? activeCategory : '';
         const res = await apiFetch('/api/logs/llm-analyze', {
             method: 'POST',
-            body: JSON.stringify({ server_id: srvId === '0' ? null : parseInt(srvId), period: period })
+            body: JSON.stringify({ 
+                server_id: srvId === '0' ? null : parseInt(srvId), 
+                period: period,
+                log_type: currentCat
+            })
         });
         btn.disabled = false;
         btn.innerText = 'ANALYZE NOW';
-        if (res && res.analysis) {
-            resBox.innerHTML = `<div style="white-space:pre-wrap; color:var(--text); font-family:var(--font-mono); font-size:12px; line-height:1.6">${escapeHtml(res.analysis)}</div>`;
+        if (res && res.error) {
+            resBox.innerHTML = `<div style="color:var(--red); padding:16px; background:rgba(255,100,100,0.08); border-radius:6px; border:1px solid rgba(255,100,100,0.25)">⚠️ ${escapeHtml(res.error)}</div>`;
+        } else if (res && res.analysis) {
+            if (res.analysis.includes('<') && res.analysis.includes('>')) {
+                resBox.innerHTML = res.analysis;
+            } else {
+                resBox.innerHTML = `<div style="white-space:pre-wrap; color:var(--text); font-family:var(--font-mono); font-size:12px; line-height:1.6">${escapeHtml(res.analysis)}</div>`;
+            }
         } else {
             resBox.innerHTML = `<div style="color:var(--amber)">Analysis completed but no insights were returned.</div>`;
         }

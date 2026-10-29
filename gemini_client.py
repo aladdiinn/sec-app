@@ -17,7 +17,11 @@ def get_gemini_client():
     sdk_type will be 'new' if using google-genai, 'old' if using google.generativeai.
     """
     global _client
-    if not GEMINI_API_KEY:
+    key = os.environ.get("GEMINI_API_KEY") or GEMINI_API_KEY
+    if not key:
+        load_dotenv(override=True)
+        key = os.environ.get("GEMINI_API_KEY")
+    if not key:
         return None, None
         
     if _client:
@@ -25,7 +29,7 @@ def get_gemini_client():
 
     try:
         from google import genai
-        client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1"})
+        client = genai.Client(api_key=key, http_options={"api_version": "v1"})
         _client = (client, "new")
         return _client
     except ImportError:

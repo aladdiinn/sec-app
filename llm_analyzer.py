@@ -47,22 +47,39 @@ def fetch_logs_from_db(server_id: int, log_type: str, start_time: datetime, end_
         return []
     try:
         with conn.cursor() as cur:
-            if log_type:
-                cur.execute("""
-                    SELECT message, log_level, created_at FROM pushed_logs
-                    WHERE server_id = %s AND log_type = %s
-                      AND created_at >= %s AND created_at <= %s
-                    ORDER BY created_at ASC
-                    LIMIT 2000
-                """, (server_id, log_type, start_time, end_time))
+            if server_id and int(server_id) > 0:
+                if log_type:
+                    cur.execute("""
+                        SELECT message, log_level, created_at FROM pushed_logs
+                        WHERE server_id = %s AND log_type = %s
+                          AND created_at >= %s AND created_at <= %s
+                        ORDER BY created_at ASC
+                        LIMIT 2000
+                    """, (server_id, log_type, start_time, end_time))
+                else:
+                    cur.execute("""
+                        SELECT message, log_level, created_at FROM pushed_logs
+                        WHERE server_id = %s
+                          AND created_at >= %s AND created_at <= %s
+                        ORDER BY created_at ASC
+                        LIMIT 2000
+                    """, (server_id, start_time, end_time))
             else:
-                cur.execute("""
-                    SELECT message, log_level, created_at FROM pushed_logs
-                    WHERE server_id = %s
-                      AND created_at >= %s AND created_at <= %s
-                    ORDER BY created_at ASC
-                    LIMIT 2000
-                """, (server_id, start_time, end_time))
+                if log_type:
+                    cur.execute("""
+                        SELECT message, log_level, created_at FROM pushed_logs
+                        WHERE log_type = %s
+                          AND created_at >= %s AND created_at <= %s
+                        ORDER BY created_at ASC
+                        LIMIT 2000
+                    """, (log_type, start_time, end_time))
+                else:
+                    cur.execute("""
+                        SELECT message, log_level, created_at FROM pushed_logs
+                        WHERE created_at >= %s AND created_at <= %s
+                        ORDER BY created_at ASC
+                        LIMIT 2000
+                    """, (start_time, end_time))
             rows = cur.fetchall()
             logs = []
             for row in rows:
@@ -82,6 +99,8 @@ def fetch_logs_from_db(server_id: int, log_type: str, start_time: datetime, end_
 def fetch_logs_from_s3(server_id: int, server_ip: str, log_type: str,
                        start_time: datetime, end_time: datetime):
     """Fetch compressed logs from S3 for the given time range."""
+    if not server_ip:
+        return []
     s3 = get_s3_client()
     logs = []
     safe_type = (log_type or "system").replace("/", "_").replace("\\", "_")
@@ -180,9 +199,13 @@ Level breakdown:
 def analyze_logs(server_id: int, server_ip: str, log_type: str, time_period_str: str):
     """Gather logs (DB + S3), build smart digest, send to Gemini, return HTML analysis."""
 
-    # Check API key first — fail fast with a clear message
-    if not GEMINI_API_KEY:
-        return {"error": "GEMINI_API_KEY is missing from your .env file. Add it and restart the app."}
+    # Check API key dynamically — reload .env if needed
+    key = os.environ.get("GEMINI_API_KEY") or GEMINI_API_KEY
+    if not key:
+        load_dotenv(override=True)
+        key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        return {"error": "GEMINI_API_KEY is missing from your .env file. Please add GEMINI_API_KEY to your .env file on the server and restart the application."}
 
     now = datetime.utcnow()
     period_map = {

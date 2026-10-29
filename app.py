@@ -1565,14 +1565,20 @@ async def api_get_tracking_endpoint(server_id: int):
     logs = db.get_tracking_data(server_id)
     return {"server_id": server_id, "logs": logs}
 
+@app.post("/api/logs/llm-analyze")
 @app.post("/api/llm/analyze_logs")
 async def api_llm_analyze_logs(request: Request):
     try:
         body = await request.json()
-        server_id = int(body.get("server_id", 0))
-        server_ip = body.get("server_ip", "")
+        raw_sid = body.get("server_id")
+        server_id = int(raw_sid) if raw_sid not in (None, "", "0", 0) else 0
+        server_ip = (body.get("server_ip") or "").strip()
+        if server_id and not server_ip:
+            srv = db.get_server_by_id(server_id)
+            if srv:
+                server_ip = (srv.get("ip") or srv.get("ip_address") or "").strip()
         log_type = body.get("log_type", "")
-        time_period = body.get("time_period", "1hr")
+        time_period = body.get("time_period") or body.get("period") or "1hr"
         
         import llm_analyzer
         from fastapi.concurrency import run_in_threadpool
