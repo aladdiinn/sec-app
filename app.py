@@ -2706,45 +2706,13 @@ async def api_agent_push(request: Request):
             except Exception: pass
             finally: conn.close()
 
-    # Step 4: Check approvals table for approved record
+    # Step 4: Reject unknown or unapproved agents with HTTP 401 (Never auto-create/auto-heal)
     if not server_id:
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT * FROM approvals 
-                        WHERE status = 'approved' AND (
-                            (LOWER(hostname) = LOWER(%s) AND hostname != '') OR 
-                            (ip_address = %s AND ip_address != '') OR
-                            (ip_address = %s AND ip_address != '')
-                        ) ORDER BY id DESC LIMIT 1;
-                    """, (hostname, server_ip, client_ip or ''))
-                    appr = cur.fetchone()
-                    if appr:
-                        appr_dict = dict(appr)
-                        raw_h = appr_dict.get("hostname") or hostname or "Remote-Node"
-                        hname = re.sub(r'^\[.*?\]\s*', '', raw_h).strip() or "Remote-Node"
-                        a_ip = appr_dict.get("ip_address") or server_ip or client_ip or "127.0.0.1"
-                        cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR ip = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (hname, a_ip, a_ip))
-                        srow = cur.fetchone()
-                        if srow:
-                            server_id = srow["id"] if isinstance(srow, dict) else srow[0]
-                        else:
-                            db.approve_request(appr_dict["id"])
-                            cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR ip = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (hname, a_ip, a_ip))
-                            srow2 = cur.fetchone()
-                            if srow2:
-                                server_id = srow2["id"] if isinstance(srow2, dict) else srow2[0]
-                                _inventory_scan_queue.add(server_id)
-            except Exception: pass
-            finally: conn.close()
-
-    # Step 5: Reject if still not found (e.g. deleted from dashboard)
-    if not server_id:
+        client_or_srv_ip = client_ip or server_ip or "127.0.0.1"
+        db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "server", None, f"Telemetry push rejected for unknown server (IP: {client_or_srv_ip}, Machine ID: {machine_id})", ip_address=client_or_srv_ip, machine_id=machine_id)
         return JSONResponse(
-            status_code=403, 
-            content={"status": "error", "ok": False, "message": "Server not registered or was deleted. Re-onboarding required."}
+            status_code=401, 
+            content={"status": "error", "ok": False, "message": f"Unknown or unapproved agent from {client_or_srv_ip}. Re-onboarding required."}
         )
 
     # Inject resolved server_id back into data
@@ -2983,33 +2951,11 @@ async def api_agent_inventory(request: Request):
             except Exception: pass
             finally: conn.close()
 
-    # Step 4: Match by approvals table if approved but server record pending re-creation
+    # Step 4: Reject unknown or unapproved agents with HTTP 401
     if not server_id:
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT * FROM approvals 
-                        WHERE status = 'approved' AND (
-                            (LOWER(hostname) IN (LOWER(%s), LOWER(%s)) AND hostname != '') OR 
-                            (ip_address = %s AND ip_address != '') OR
-                            (ip_address = %s AND ip_address != '')
-                        ) ORDER BY id DESC LIMIT 1;
-                    """, (hostname, clean_host, server_ip, client_ip or ''))
-                    appr = cur.fetchone()
-                    if appr:
-                        appr_dict = dict(appr)
-                        db.approve_request(appr_dict["id"])
-                        cur.execute("SELECT id FROM servers WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s)) OR ip = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (hostname, clean_host, server_ip, server_ip))
-                        srow = cur.fetchone()
-                        if srow:
-                            server_id = srow["id"] if isinstance(srow, dict) else srow[0]
-            except Exception: pass
-            finally: conn.close()
-
-    if not server_id:
-        return JSONResponse(status_code=401, content={"error": "Unauthorized", "detail": "Server not recognized or registered"})
+        client_or_srv_ip = client_ip or server_ip or "127.0.0.1"
+        db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "server", None, f"Inventory rejected for unknown server (IP: {client_or_srv_ip}, Machine ID: {machine_id})", ip_address=client_or_srv_ip, machine_id=machine_id)
+        return JSONResponse(status_code=401, content={"error": "Unauthorized", "detail": f"Server not recognized or unapproved from {client_or_srv_ip}"})
 
     # Ensure server has machine_id saved if present
     if machine_id:
@@ -5727,7 +5673,9 @@ async def api_approval_request(request: Request):
     token = body.get("token") or body.get("agent_token")
     app_id = body.get("app_id")
     role = body.get("role")
+    machine_id = body.get("machine_id")
 
+    node_type = "app" if (app_id or role) else "server"
     display_hostname = hostname
     if app_id and role:
         app_name = f"App #{app_id}"
@@ -5745,123 +5693,70 @@ async def api_approval_request(request: Request):
                 conn.close()
         display_hostname = f"[{app_name} | {role.upper()}] {hostname}"
 
-    res = db.add_approval_request(display_hostname, ip, token=token)
-    return {"ok": True, "id": res.get("id"), "token": res.get("token"), "status": res.get("status")}
+    res = db.add_approval_request(display_hostname, ip, token=token, node_type=node_type, app_id=app_id, role=role, machine_id=machine_id)
+    return {"ok": True, "id": res.get("id"), "token": res.get("token"), "status": res.get("status"), "node_type": res.get("node_type", node_type)}
+
+@app.post("/agents/register")
+@app.post("/api/agents/register")
+async def api_agents_register(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    hostname = body.get("hostname") or f"node-{client_ip}"
+    ip = body.get("ip_address") or client_ip
+    token = f"sp-token-{uuid.uuid4().hex[:16]}"
+    res = db.add_approval_request(hostname, ip, token=token, node_type="server")
+    return JSONResponse(status_code=201, content={
+        "agent_token": token,
+        "server_id": res.get("id"),
+        "status": "pending",
+        "message": "Server registered and pending administrator approval"
+    })
 
 @app.get("/api/agent/status")
 async def api_agent_status(request: Request):
     token = request.query_params.get("token")
-    hostname = (request.query_params.get("hostname") or "").strip()
-    ip = (request.query_params.get("ip") or "").strip()
-    client_ip = request.client.host if request.client else None
+    client_ip = request.client.host if request.client else "127.0.0.1"
 
-    appr = db.get_approval_by_token(token, hostname=hostname, ip=ip)
-    # If not in approvals yet, auto-register pending request if token matches an app component
-    if not appr and token:
-        c_conn = db.get_db_connection()
-        if c_conn:
-            try:
-                with c_conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT c.id, c.role, c.node_name, c.node_ip, a.name AS app_name
-                        FROM application_components c
-                        JOIN applications a ON c.application_id = a.id
-                        WHERE c.enrollment_token = %s
-                        LIMIT 1;
-                    """, (token,))
-                    crow = cur.fetchone()
-                    if crow:
-                        disp_host = f"[{crow['app_name']} | {crow['role'].upper()}] {crow['node_name']}"
-                        appr = db.add_approval_request(disp_host, crow['node_ip'] or client_ip or "127.0.0.1", token=token)
-            except Exception as e:
-                logger.error(f"Error auto-registering app approval in api_agent_status: {e}")
-            finally:
-                c_conn.close()
+    if not token:
+        return {"status": "pending", "server_id": None, "message": "Missing agent token"}
 
-    status = "pending"
+    appr = db.get_approval_by_token(token)
+    if not appr:
+        return {"status": "pending", "server_id": None, "message": "No registration record found"}
+
+    status = appr.get("status", "pending")
+    node_type = appr.get("node_type", "server")
     server_id = None
 
-    if appr:
-        status = appr.get("status", "pending")
-        appr_h = appr.get('hostname') or ''
-        clean_appr_h = re.sub(r'^\[.*?\]\s*', '', appr_h).strip()
-        # Lookup assigned server_id
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT id FROM servers 
-                        WHERE (ip = %s OR ip_address = %s) 
-                           OR (LOWER(hostname) IN (LOWER(%s), LOWER(%s), LOWER(%s)) 
-                               OR LOWER(name) IN (LOWER(%s), LOWER(%s), LOWER(%s)))
-                        ORDER BY id DESC LIMIT 1;
-                    """, (
-                        ip or appr.get('ip_address'), ip or appr.get('ip_address'),
-                        hostname or '', clean_appr_h, appr_h,
-                        hostname or '', clean_appr_h, appr_h
-                    ))
-                    r = cur.fetchone()
-                    if r:
-                        server_id = r["id"] if isinstance(r, dict) else r[0]
-            except Exception: pass
-            finally: conn.close()
-
-        # Auto-heal: If approval was marked approved by admin but server row is missing from servers table
-        if status == "approved" and not server_id:
-            try:
-                if appr.get("id"):
-                    db.approve_request(appr["id"])
-                    c_conn = db.get_db_connection()
-                    if c_conn:
-                        try:
-                            with c_conn.cursor() as cur:
-                                cur.execute("""
-                                    SELECT id FROM servers 
-                                    WHERE (ip = %s OR ip_address = %s) 
-                                       OR (LOWER(hostname) IN (LOWER(%s), LOWER(%s), LOWER(%s)) 
-                                           OR LOWER(name) IN (LOWER(%s), LOWER(%s), LOWER(%s)))
-                                    ORDER BY id DESC LIMIT 1;
-                                """, (
-                                    ip or appr.get('ip_address'), ip or appr.get('ip_address'),
-                                    hostname or '', clean_appr_h, appr_h,
-                                    hostname or '', clean_appr_h, appr_h
-                                ))
-                                r = cur.fetchone()
-                                if r:
-                                    server_id = r["id"] if isinstance(r, dict) else r[0]
-                        except Exception: pass
-                        finally: c_conn.close()
-            except Exception as ex_heal:
-                logger.error(f"Error auto-healing server in api_agent_status: {ex_heal}")
-            # If server_id still could not be created, force status back to pending
+    if status == "approved":
+        if node_type == "app":
+            # Application component node is approved! Server ID is strictly None.
+            return {"status": "approved", "node_type": "app", "server_id": None, "server_ip": appr.get("ip_address") or client_ip}
+        else:
+            # Server asset node: lookup in servers table by token
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT id FROM servers WHERE agent_token = %s OR api_token = %s LIMIT 1;", (token, token))
+                        r = cur.fetchone()
+                        if r:
+                            server_id = r["id"] if isinstance(r, dict) else r[0]
+                except Exception:
+                    pass
+                finally:
+                    conn.close()
+            
             if not server_id:
-                status = "pending" 
+                # Server was deleted by admin
+                return {"status": "rejected", "node_type": "server", "server_id": None, "message": "Server registration was revoked"}
 
-    # Also check directly in servers if already exists and online
-    if not server_id and (ip or hostname or client_ip):
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    test_ips = [x for x in [ip, client_ip] if x and x not in ("127.0.0.1", "localhost")]
-                    for tip in test_ips:
-                        cur.execute("SELECT id, status FROM servers WHERE ip = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (tip, tip))
-                        r = cur.fetchone()
-                        if r:
-                            server_id = r["id"] if isinstance(r, dict) else r[0]
-                            status = "approved"
-                            break
-                    if not server_id and hostname and hostname.lower() not in ("localhost", "target-node"):
-                        cur.execute("SELECT id, status FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) ORDER BY id DESC LIMIT 1;", (hostname, hostname))
-                        r = cur.fetchone()
-                        if r:
-                            server_id = r["id"] if isinstance(r, dict) else r[0]
-                            status = "approved"
-            except Exception: pass
-            finally: conn.close()
+            return {"status": "approved", "node_type": "server", "server_id": server_id, "server_ip": appr.get("ip_address") or client_ip}
 
-    return {"status": status, "server_id": server_id, "server_ip": ip or client_ip}
+    return {"status": status, "node_type": node_type, "server_id": None, "server_ip": appr.get("ip_address") or client_ip}
 
 @app.get("/api/approvals")
 async def api_get_approvals(request: Request):
@@ -5877,9 +5772,8 @@ async def api_get_approvals_count():
 async def api_approve_request(app_id: int, request: Request):
     if not is_admin_user(request):
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    if db.approve_request(app_id):
-        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
-        db.log_audit(uname, 'APPROVE_ASSET', 'approval', app_id, f"Approved node asset request #{app_id}")
+    uname = request.session.get('username', 'admin') if hasattr(request, 'session') else 'admin'
+    if db.approve_request(app_id, approved_by=uname):
         return {"ok": True, "message": "Asset approved successfully"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Approval failed"})
 
@@ -5887,9 +5781,8 @@ async def api_approve_request(app_id: int, request: Request):
 async def api_reject_request(app_id: int, request: Request):
     if not is_admin_user(request):
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    if db.reject_request(app_id):
-        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
-        db.log_audit(uname, 'REJECT_ASSET', 'approval', app_id, f"Rejected node asset request #{app_id}")
+    uname = request.session.get('username', 'admin') if hasattr(request, 'session') else 'admin'
+    if db.reject_request(app_id, rejected_by=uname):
         return {"ok": True, "message": "Asset request rejected"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Rejection failed"})
 
@@ -6650,6 +6543,11 @@ async def api_push_agent_logs(request: Request):
     single_line = body.get("line") or body.get("message")
     if single_line:
         raw_lines.append(single_line)
+
+    if not server_id:
+        client_or_srv_ip = client_ip or server_ip or "127.0.0.1"
+        db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "server", None, f"Log push rejected for unknown server (IP: {client_or_srv_ip})", ip_address=client_or_srv_ip)
+        return JSONResponse(status_code=401, content={"ok": False, "status": "error", "message": f"Unknown or unapproved agent from {client_or_srv_ip}"})
 
     if not raw_lines:
         return {"ok": True, "count": 0}
@@ -7665,25 +7563,32 @@ def api_get_collector_code(token: str = Query("")):
 def api_app_heartbeat(request: Request, payload: dict = Body(...)):
     """Receives 30-second heartbeat from securepulse-app collectors."""
     token = (request.headers.get("X-Enrollment-Token") or payload.get("token") or "").strip()
-    app_id = payload.get("app_id")
-    node_name = payload.get("node_name", "")
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    
+    if not token:
+        db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "app_component", None, f"Heartbeat rejected: missing token from {client_ip}", ip_address=client_ip)
+        return JSONResponse(status_code=401, content={"status": "error", "reason": "Authentication token required"})
+
     version = payload.get("version", "1.6.0")
     files = payload.get("monitored_files", [])
 
     conn = db.get_db_connection()
     if not conn:
-        return {"status": "error", "reason": "database connection unavailable"}
+        return JSONResponse(status_code=503, content={"status": "error", "reason": "database connection unavailable"})
     try:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT id, application_id, status FROM application_components
-                WHERE (enrollment_token = %s AND %s != '')
-                   OR (application_id = %s AND node_name = %s)
+                WHERE enrollment_token = %s
                 LIMIT 1;
-            """, (token, token, app_id, node_name))
+            """, (token,))
             comp = cur.fetchone()
             if not comp:
-                return {"status": "error", "reason": "unrecognized component"}
+                db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "app_component", None, f"Heartbeat rejected: unknown token from {client_ip}", ip_address=client_ip)
+                return JSONResponse(status_code=401, content={"status": "error", "reason": f"Unknown or revoked agent token from {client_ip}"})
+
+            if comp["status"] not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
+                return JSONResponse(status_code=401, content={"status": "error", "reason": "Component pending administrator approval"})
 
             readiness = psycopg2.extras.Json({"monitored_files": files, "collector_version": version})
             cur.execute("""
@@ -7714,7 +7619,7 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
             return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"]}
     except Exception as e:
         logger.error(f"Error in api_app_heartbeat: {e}")
-        return {"status": "error", "reason": str(e)}
+        return JSONResponse(status_code=500, content={"status": "error", "reason": str(e)})
     finally:
         conn.close()
 
@@ -7854,17 +7759,25 @@ def api_app_events(request: Request, payload: dict = Body(...)):
     highest_severity = "info"
 
     try:
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        if not token:
+            db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "app_component", None, f"Events rejected: missing token from {client_ip}", ip_address=client_ip)
+            return JSONResponse(status_code=401, content={"status": "error", "reason": "Authentication token required"})
+
         with conn.cursor() as cur:
-            # Lookup component
+            # Lookup component strictly by enrollment token
             cur.execute("""
-                SELECT id, application_id FROM application_components
-                WHERE (enrollment_token = %s AND %s != '')
-                   OR (application_id = %s AND node_name = %s)
+                SELECT id, application_id, status FROM application_components
+                WHERE enrollment_token = %s
                 LIMIT 1;
-            """, (token, token, app_id, node_name))
+            """, (token,))
             comp = cur.fetchone()
             if not comp:
-                return {"status": "error", "reason": "unrecognized component"}
+                db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "app_component", None, f"Events rejected: unknown token from {client_ip}", ip_address=client_ip)
+                return JSONResponse(status_code=401, content={"status": "error", "reason": f"Unknown or revoked agent token from {client_ip}"})
+
+            if comp["status"] not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
+                return JSONResponse(status_code=401, content={"status": "error", "reason": "Component pending administrator approval"})
             
             comp_id = comp["id"]
             actual_app_id = comp["application_id"]

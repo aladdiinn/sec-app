@@ -594,6 +594,9 @@
                 if (res && res.count > 0) {
                     badge.innerText = res.count;
                     badge.style.display = 'inline-block';
+                    badge.style.background = '#f59e0b';
+                    badge.style.color = '#000';
+                    badge.style.fontWeight = '800';
                 } else {
                     badge.style.display = 'none';
                 }
@@ -602,8 +605,8 @@
         document.addEventListener('DOMContentLoaded', () => {
             updatePendingApprovalsBadge();
             updateAlertsBadge();
-            setInterval(updateAlertsBadge, 15000);
-            setInterval(updatePendingApprovalsBadge, 15000);
+            setInterval(updateAlertsBadge, 4000);
+            setInterval(updatePendingApprovalsBadge, 4000);
             
             // Fetch version
             apiFetch('/api/version').then(res => {

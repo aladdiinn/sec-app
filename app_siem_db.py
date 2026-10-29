@@ -668,14 +668,19 @@ def update_application(conn, app_id: int, **kwargs):
         return bool(res)
 
 def delete_application(conn, app_id: int):
-    """Deletes application record and cleans up associated events and link tables."""
+    """Deletes application record and cleans up associated events, components, and approvals."""
     if not conn:
         return False
     with conn.cursor() as cur:
         try:
+            cur.execute("SELECT enrollment_token FROM application_components WHERE application_id = %s AND enrollment_token IS NOT NULL AND enrollment_token != '';", (app_id,))
+            tokens = [r["enrollment_token"] for r in cur.fetchall() if r.get("enrollment_token")]
+            for tok in tokens:
+                cur.execute("DELETE FROM approvals WHERE agent_token = %s;", (tok,))
+            cur.execute("DELETE FROM application_components WHERE application_id = %s;", (app_id,))
             cur.execute("DELETE FROM app_events WHERE application_id = %s;", (app_id,))
         except Exception as e:
-            logger.warning(f"Note deleting events for app {app_id}: {e}")
+            logger.warning(f"Note deleting events/approvals for app {app_id}: {e}")
         cur.execute("DELETE FROM applications WHERE id = %s RETURNING id;", (app_id,))
         res = cur.fetchone()
         return bool(res)
@@ -742,10 +747,17 @@ def get_application_components(conn, app_id: int):
         return [dict(r) for r in cur.fetchall()]
 
 def delete_application_component(conn, app_id: int, comp_id: int):
-    """Deletes an application component."""
+    """Deletes an application component and revokes associated approvals."""
     if not conn:
         return False
     with conn.cursor() as cur:
+        try:
+            cur.execute("SELECT enrollment_token FROM application_components WHERE id = %s AND application_id = %s;", (comp_id, app_id))
+            comp = cur.fetchone()
+            if comp and comp.get("enrollment_token"):
+                cur.execute("DELETE FROM approvals WHERE agent_token = %s;", (comp["enrollment_token"],))
+        except Exception as e:
+            logger.warning(f"Note revoking approval for component {comp_id}: {e}")
         cur.execute("DELETE FROM application_components WHERE id = %s AND application_id = %s RETURNING id;", (comp_id, app_id))
         res = cur.fetchone()
         return bool(res)

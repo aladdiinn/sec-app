@@ -182,6 +182,7 @@ function renderApplicationsGrid() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadApplications();
+    setInterval(loadApplications, 5000);
     const urlParams = new URLSearchParams(window.location.search);
     const openAppId = urlParams.get('app_id') || urlParams.get('open');
     if (openAppId) {

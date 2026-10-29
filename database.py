@@ -827,6 +827,59 @@ def init_db():
             try: cur.execute("ALTER TABLE servers ALTER COLUMN vuln_scan_status TYPE VARCHAR(255);")
             except: pass
 
+            # Approvals Table Alterations
+            for col, col_type in [
+                ('node_type', "VARCHAR(32) DEFAULT 'server'"),
+                ('application_id', 'INT'),
+                ('role', 'VARCHAR(64)'),
+                ('machine_id', 'VARCHAR(255)'),
+                ('created_at', 'TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP'),
+                ('registered_at', 'TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP'),
+                ('approved_at', 'TIMESTAMP WITH TIME ZONE'),
+                ('approved_by', 'VARCHAR(128)'),
+                ('last_seen', 'TIMESTAMP WITH TIME ZONE')
+            ]:
+                try: cur.execute(f"ALTER TABLE approvals ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+
+            # Servers Table Alterations
+            for col, col_type in [
+                ('approved_at', 'TIMESTAMP WITH TIME ZONE'),
+                ('approved_by', 'VARCHAR(128)'),
+                ('created_at', 'TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP')
+            ]:
+                try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+
+            # Audit Logs Table Alterations
+            for col, col_type in [
+                ('ip_address', 'VARCHAR(64)'),
+                ('machine_id', 'VARCHAR(255)')
+            ]:
+                try: cur.execute(f"ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+
+            # Application Components Table Alterations
+            for col, col_type in [
+                ('approved_at', 'TIMESTAMP WITH TIME ZONE'),
+                ('approved_by', 'VARCHAR(128)'),
+                ('registered_at', 'TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP')
+            ]:
+                try: cur.execute(f"ALTER TABLE application_components ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                except: pass
+
+            # Clean up rogue servers erroneously created for application components
+            try:
+                cur.execute("""
+                    DELETE FROM servers 
+                    WHERE agent_token IN (SELECT enrollment_token FROM application_components WHERE enrollment_token IS NOT NULL AND enrollment_token != '')
+                       OR api_token IN (SELECT enrollment_token FROM application_components WHERE enrollment_token IS NOT NULL AND enrollment_token != '')
+                       OR name LIKE '[% | %]%';
+                """)
+                if hasattr(conn, 'commit'): conn.commit()
+            except Exception:
+                pass
+
             # Seed a default EC2 server if empty
             cur.execute("SELECT id FROM servers LIMIT 1;")
             if not cur.fetchone():
@@ -1401,11 +1454,14 @@ def get_servers(project_id=None):
             """
             cur.execute(query, params)
             results = cur.fetchall()
-            # Override the static severity column with the dynamic computed_severity
             ret = []
             for r in results:
                 d = dict(r)
                 d['severity'] = d.get('computed_severity', 'info')
+                # Strict security: A record with no approved_by must never display as UP/approved
+                if not d.get('approved_by'):
+                    if d.get('status') == 'online':
+                        d['status'] = 'pending'
                 ret.append(d)
             return ret
     except Exception as e:
@@ -1569,8 +1625,8 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = "", ssh_
             # Insert into approvals as APPROVED directly
             try:
                 cur.execute("""
-                    INSERT INTO approvals (hostname, ip_address, agent_token, status, requested_at)
-                    VALUES (%s, %s, %s, 'approved', NOW());
+                    INSERT INTO approvals (hostname, ip_address, agent_token, status, node_type, requested_at, created_at, registered_at, approved_at, approved_by)
+                    VALUES (%s, %s, %s, 'approved', 'server', NOW(), NOW(), NOW(), NOW(), 'admin');
                 """, (name, ip, token))
             except Exception as e:
                 logger.warning(f"Approvals insert error: {e}")
@@ -1578,8 +1634,8 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = "", ssh_
             # Insert into servers with full fields populated
             try:
                 cur.execute("""
-                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, ssh_user, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW());
+                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, ssh_user, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, approved_at, approved_by, last_seen)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), 'admin', NOW());
                 """, (name, name, ip, ip, "Linux (Ubuntu)", ssh_user or 'bescom', token, token))
             except Exception as e:
                 logger.error(f"Error inserting server: {e}")
@@ -1601,161 +1657,149 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = "", ssh_
     finally:
         conn.close()
 
-def delete_server(server_id: int):
+def delete_server(server_id: int, deleted_by: str = "admin"):
     conn = get_db_connection()
     if not conn:
         return False
     try:
-        if hasattr(conn, 'autocommit'):
-            conn.autocommit = False
         with conn.cursor() as cur:
-            # Fetch hostname and ip before deleting to clean up approvals
-            hname = None
-            ip_addr = None
-            try:
-                cur.execute("SELECT hostname, name, ip, ip_address FROM servers WHERE id = %s;", (server_id,))
-                srv = cur.fetchone()
-                if srv:
-                    # Robustly extract hname and ip_addr whether srv is dict or tuple
-                    if hasattr(srv, 'keys'):
-                        hname = srv.get("hostname") or srv.get("name")
-                        ip_addr = srv.get("ip_address") or srv.get("ip")
-                    else:
-                        hname = srv[0] if srv[0] else (srv[1] if len(srv) > 1 else None)
-                        ip_addr = srv[3] if len(srv) > 3 and srv[3] else (srv[2] if len(srv) > 2 else None)
-            except Exception:
-                pass
+            cur.execute("SELECT name, hostname, ip, ip_address, agent_token, api_token FROM servers WHERE id = %s;", (server_id,))
+            srv = cur.fetchone()
+            srv_dict = dict(srv) if srv else {}
+            srv_name = srv_dict.get("name") or srv_dict.get("hostname") or f"Server #{server_id}"
+            srv_ip = srv_dict.get("ip") or srv_dict.get("ip_address") or ""
+            tok1 = srv_dict.get("agent_token")
+            tok2 = srv_dict.get("api_token")
+            hname = srv_dict.get("hostname") or srv_dict.get("name") or ""
+            clean_h = re.sub(r'^\[.*?\]\s*', '', hname).strip()
 
-            # Dynamically discover all tables with a server_id column to cascade delete
-            try:
-                cur.execute("""
-                    SELECT table_name 
-                    FROM information_schema.columns 
-                    WHERE column_name = 'server_id' 
-                      AND table_schema = 'public'
-                """)
-                rows = cur.fetchall()
-                tables = [r["table_name"] if isinstance(r, dict) else r[0] for r in rows]
-            except Exception:
-                # Fallback list if discovery fails
-                tables = [
-                    "events", "alerts", "project_endpoints", "commands", "login_history",
-                    "tracking_logs", "incidents", "managed_services", "fim_baselines",
-                    "fim_logs", "open_ports", "processes", "installed_packages",
-                    "system_users", "user_sessions", "network_connections",
-                    "pushed_logs", "server_log_configs", "reports"
-                ]
+            # Revoke & delete approvals for this server strictly
+            cur.execute("""
+                DELETE FROM approvals 
+                WHERE (agent_token = %s AND %s IS NOT NULL)
+                   OR (agent_token = %s AND %s IS NOT NULL)
+                   OR (LOWER(hostname) IN (LOWER(%s), LOWER(%s)) AND %s != '')
+                   OR (ip_address = %s AND %s != '');
+            """, (tok1, tok1, tok2, tok2, hname, clean_h, hname, srv_ip, srv_ip))
 
-            for table in tables:
+            # Cascade delete from child tables
+            child_tables = [
+                "events", "alerts", "project_endpoints", "commands", "login_history",
+                "tracking_logs", "incidents", "managed_services", "fim_baselines",
+                "fim_logs", "open_ports", "processes", "installed_packages",
+                "system_users", "user_sessions", "network_connections",
+                "pushed_logs", "server_log_configs", "reports"
+            ]
+            for table in child_tables:
                 try:
-                    cur.execute(f"SAVEPOINT del_{table}")
                     cur.execute(f"DELETE FROM {table} WHERE server_id = %s;", (server_id,))
-                    cur.execute(f"RELEASE SAVEPOINT del_{table}")
                 except Exception:
-                    cur.execute(f"ROLLBACK TO SAVEPOINT del_{table}")
+                    pass
 
-            if hname or ip_addr:
-                try:
-                    cur.execute("SAVEPOINT del_approvals")
-                    clean_h = re.sub(r'^\[.*?\]\s*', '', hname or '').strip()
-                    cur.execute("""
-                        DELETE FROM approvals 
-                        WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s)) 
-                           OR ip_address = %s 
-                           OR ip_address = %s;
-                    """, (hname or '', clean_h, ip_addr or '', ip_addr or ''))
-                    cur.execute("RELEASE SAVEPOINT del_approvals")
-                except Exception:
-                    cur.execute("ROLLBACK TO SAVEPOINT del_approvals")
-
-            try:
-                cur.execute("SAVEPOINT del_servers")
-                cur.execute("DELETE FROM servers WHERE id = %s;", (server_id,))
-                cur.execute("RELEASE SAVEPOINT del_servers")
-            except Exception:
-                cur.execute("ROLLBACK TO SAVEPOINT del_servers")
-        conn.commit()
-        return True
+            cur.execute("DELETE FROM servers WHERE id = %s;", (server_id,))
+            conn.commit()
+            log_audit(deleted_by, "AGENT_DELETION", "server", server_id, f"Deleted server '{srv_name}' ({srv_ip}) and revoked all approval tokens", ip_address=srv_ip)
+            return True
     except Exception as e:
         logger.error(f"Error in delete_server: {e}")
         return False
     finally:
         conn.close()
 
-def add_approval_request(hostname: str, ip_address: str, token: str = None):
+def add_approval_request(hostname: str, ip_address: str, token: str = None, node_type: str = "server", app_id: int = None, role: str = None, machine_id: str = None):
     conn = get_db_connection()
     if not conn:
-        return {"id": 1, "token": token or f"sp-token-{int(time.time())}", "status": "pending"}
+        return {"id": 1, "token": token or f"sp-token-{int(time.time())}", "status": "pending", "node_type": node_type}
     try:
         if not token:
-            token = f"sp-token-{int(time.time())}-{random.randint(1000, 9999)}"
+            token = f"sp-token-{uuid.uuid4().hex[:12]}"
         clean_hostname = re.sub(r'^\[.*?\]\s*', '', hostname or '').strip()
-        with conn.cursor() as cur:
-            # Check if server already exists in servers table
-            srv_row = None
-            try:
-                cur.execute("""
-                    SELECT id, name, hostname, ip, status FROM servers 
-                    WHERE (LOWER(hostname) IN (LOWER(%s), LOWER(%s)) OR LOWER(name) IN (LOWER(%s), LOWER(%s)) OR ip = %s OR ip_address = %s)
-                    ORDER BY id DESC LIMIT 1;
-                """, (hostname, clean_hostname, hostname, clean_hostname, ip_address, ip_address))
-                srv_row = cur.fetchone()
-            except Exception:
-                pass
 
-            # Check if an approval already exists
+        with conn.cursor() as cur:
+            # Check if this token belongs to an application component
+            if not app_id and token:
+                try:
+                    cur.execute("SELECT application_id, role, node_name FROM application_components WHERE enrollment_token = %s LIMIT 1;", (token,))
+                    crow = cur.fetchone()
+                    if crow:
+                        node_type = "app"
+                        app_id = crow["application_id"]
+                        if not role: role = crow.get("role")
+                except Exception:
+                    pass
+            elif app_id:
+                node_type = "app"
+
+            # Check if an approval record exists FOR THIS EXACT TOKEN
             cur.execute("""
-                SELECT id, agent_token, status FROM approvals 
-                WHERE (agent_token = %s AND %s IS NOT NULL) 
-                   OR (hostname = %s AND %s != '') 
-                   OR (ip_address = %s AND %s != '')
+                SELECT id, agent_token, status, node_type, approved_by, approved_at 
+                FROM approvals 
+                WHERE agent_token = %s 
                 ORDER BY id DESC LIMIT 1;
-            """, (token, token, hostname, hostname, ip_address, ip_address))
+            """, (token,))
             row = cur.fetchone()
             if row:
                 row_dict = dict(row)
                 appr_id = row_dict["id"]
                 current_status = row_dict.get("status")
 
-                # If approval is 'approved' but no server row exists in servers table (it vanished or was deleted):
-                # Reset to 'pending' so it surfaces on SOC dashboard for administrator approval!
-                if current_status == "approved" and not srv_row:
-                    cur.execute("""
-                        UPDATE approvals 
-                        SET status = 'pending', agent_token = %s, requested_at = NOW() 
-                        WHERE id = %s;
-                    """, (token, appr_id))
-                    conn.commit()
-                    return {"id": appr_id, "token": token, "status": "pending"}
+                if current_status == "approved":
+                    if node_type == "server":
+                        cur.execute("SELECT id, status, approved_by FROM servers WHERE agent_token = %s OR api_token = %s LIMIT 1;", (token, token))
+                        srv_row = cur.fetchone()
+                        if not srv_row or not srv_row.get("approved_by"):
+                            # Target server was deleted or unapproved; reset back to pending!
+                            cur.execute("""
+                                UPDATE approvals 
+                                SET status = 'pending', approved_by = NULL, approved_at = NULL, requested_at = NOW(), ip_address = %s, hostname = %s
+                                WHERE id = %s;
+                            """, (ip_address, hostname, appr_id))
+                            conn.commit()
+                            log_audit("agent", "REGISTRATION_REQUEST", "server", appr_id, f"Server re-registration reset to pending for token {token}", ip_address=ip_address, machine_id=machine_id)
+                            return {"id": appr_id, "token": token, "status": "pending", "node_type": "server"}
+                        else:
+                            return {"id": appr_id, "token": token, "status": "approved", "server_id": srv_row["id"], "node_type": "server"}
+                    else:
+                        cur.execute("SELECT id, status FROM application_components WHERE enrollment_token = %s LIMIT 1;", (token,))
+                        ac_row = cur.fetchone()
+                        if not ac_row or ac_row.get("status") not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
+                            cur.execute("""
+                                UPDATE approvals 
+                                SET status = 'pending', approved_by = NULL, approved_at = NULL, requested_at = NOW(), ip_address = %s, hostname = %s
+                                WHERE id = %s;
+                            """, (ip_address, hostname, appr_id))
+                            conn.commit()
+                            log_audit("agent", "REGISTRATION_REQUEST", "app", appr_id, f"App collector re-registration reset to pending for token {token}", ip_address=ip_address, machine_id=machine_id)
+                            return {"id": appr_id, "token": token, "status": "pending", "node_type": "app"}
+                        else:
+                            return {"id": appr_id, "token": token, "status": "approved", "node_type": "app"}
 
-                # If approval is currently pending, update token and timestamp
                 if current_status == "pending":
                     cur.execute("""
                         UPDATE approvals 
-                        SET agent_token = %s, requested_at = NOW() 
+                        SET requested_at = NOW(), ip_address = %s, hostname = %s, node_type = %s, application_id = %s, role = %s, machine_id = %s
                         WHERE id = %s;
-                    """, (token, appr_id))
+                    """, (ip_address, hostname, node_type, app_id, role, machine_id, appr_id))
                     conn.commit()
-                    return {"id": appr_id, "token": token, "status": "pending"}
+                    log_audit("agent", "REGISTRATION_REQUEST", node_type, appr_id, f"Pending registration refreshed for host {hostname} ({ip_address})", ip_address=ip_address, machine_id=machine_id)
+                    return {"id": appr_id, "token": token, "status": "pending", "node_type": node_type}
 
-                # If approval is approved AND server actually exists in servers table:
-                if current_status == "approved" and srv_row:
-                    sid = srv_row["id"] if isinstance(srv_row, dict) else srv_row[0]
-                    return {"id": appr_id, "token": row_dict.get("agent_token") or token, "status": "approved", "server_id": sid}
-
+            # Insert brand-new pending approval
             cur.execute("""
-                INSERT INTO approvals (hostname, ip_address, agent_token, status, requested_at)
-                VALUES (%s, %s, %s, 'pending', NOW())
-                RETURNING id, agent_token, status;
-            """, (hostname, ip_address, token))
+                INSERT INTO approvals (hostname, ip_address, agent_token, status, node_type, application_id, role, machine_id, requested_at, created_at, registered_at)
+                VALUES (%s, %s, %s, 'pending', %s, %s, %s, %s, NOW(), NOW(), NOW())
+                RETURNING id, agent_token, status, node_type;
+            """, (hostname, ip_address, token, node_type, app_id, role, machine_id))
             res = cur.fetchone()
             conn.commit()
+            new_id = res["id"] if res else 1
+            log_audit("agent", "REGISTRATION_REQUEST", node_type, new_id, f"New onboarding registration request for host {hostname} ({ip_address})", ip_address=ip_address, machine_id=machine_id)
             if res:
                 return dict(res)
-            return {"id": 1, "token": token, "status": "pending"}
+            return {"id": 1, "token": token, "status": "pending", "node_type": node_type}
     except Exception as e:
         logger.error(f"Error in add_approval_request: {e}")
-        return {"id": 1, "token": f"sp-token-{int(time.time())}", "status": "pending"}
+        return {"id": 1, "token": token or f"sp-token-{int(time.time())}", "status": "pending", "node_type": node_type}
     finally:
         conn.close()
 
@@ -1776,28 +1820,29 @@ def get_approvals(status=None):
     finally:
         conn.close()
 
-def get_approval_by_token(token: str = None, hostname: str = None, ip: str = None):
+def get_approval_by_token(token: str = None):
+    """Strictly matches approval by agent_token only. Never falls back to hostname or IP."""
+    if not token:
+        return None
     conn = get_db_connection()
     if not conn:
         return None
     try:
         with conn.cursor() as cur:
-            if token:
-                cur.execute("SELECT * FROM approvals WHERE agent_token = %s ORDER BY id DESC LIMIT 1;", (token,))
-                row = cur.fetchone()
-                if row: return dict(row)
-            if hostname or ip:
-                cur.execute("SELECT * FROM approvals WHERE hostname = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (hostname, ip))
-                row = cur.fetchone()
-                if row: return dict(row)
-            return None
+            cur.execute("""
+                SELECT * FROM approvals 
+                WHERE agent_token = %s 
+                ORDER BY id DESC LIMIT 1;
+            """, (token,))
+            row = cur.fetchone()
+            return dict(row) if row else None
     except Exception as e:
         logger.error(f"Error in get_approval_by_token: {e}")
         return None
     finally:
         conn.close()
 
-def approve_request(app_id: int):
+def approve_request(app_id: int, approved_by: str = "admin"):
     conn = get_db_connection()
     if not conn:
         return False
@@ -1808,78 +1853,98 @@ def approve_request(app_id: int):
             if not row:
                 return False
             app_data = dict(row)
+            token = app_data.get("agent_token")
             hostname = (app_data.get("hostname") or "").strip()
             ip = (app_data.get("ip_address") or "").strip()
-            
-            # Approve ALL approval requests for this hostname/IP so no pending duplicates remain
-            cur.execute("UPDATE approvals SET status = 'approved' WHERE id = %s OR (LOWER(hostname) = LOWER(%s) AND hostname != '') OR (ip_address = %s AND ip_address != '');", (app_id, hostname, ip))
-
-            token = app_data.get("agent_token")
             clean_hostname = re.sub(r'^\[.*?\]\s*', '', hostname).strip()
-            
-            # If this approval is for an application component, promote it without modifying server assets
-            is_app_component = False
+            node_type = (app_data.get("node_type") or "server").lower()
+            machine_id = app_data.get("machine_id")
+
+            # Mark approval row approved
+            cur.execute("""
+                UPDATE approvals 
+                SET status = 'approved', approved_at = NOW(), approved_by = %s 
+                WHERE id = %s;
+            """, (approved_by, app_id))
+
+            # Check if this token belongs to an application component
+            is_app = (node_type == "app")
+            comp_row = None
             if token:
                 try:
                     cur.execute("SELECT id, application_id, linked_server_id FROM application_components WHERE enrollment_token = %s LIMIT 1;", (token,))
                     comp_row = cur.fetchone()
                     if comp_row:
-                        is_app_component = True
-                        cur.execute("""
-                            UPDATE application_components
-                            SET status = 'APPROVED'
-                            WHERE enrollment_token = %s;
-                        """, (token,))
-                        cur.execute("""
-                            UPDATE applications
-                            SET status = 'NORMAL'
-                            WHERE id = %s AND status IN ('WAITING', 'PENDING_APPROVAL');
-                        """, (comp_row["application_id"],))
-                        # If component has no linked server yet, link it to existing server by IP or clean hostname
-                        if not comp_row.get("linked_server_id"):
-                            cur.execute("SELECT id FROM servers WHERE ip = %s OR ip_address = %s OR LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) ORDER BY id DESC LIMIT 1;", (ip, ip, clean_hostname, clean_hostname))
-                            matched_srv = cur.fetchone()
-                            if matched_srv:
-                                mid = matched_srv["id"] if isinstance(matched_srv, dict) else matched_srv[0]
-                                cur.execute("UPDATE application_components SET linked_server_id = %s WHERE id = %s;", (mid, comp_row["id"]))
-                except Exception as ex_comp:
-                    logger.warning(f"Error promoting app component in approve_request: {ex_comp}")
+                        is_app = True
+                except Exception:
+                    pass
 
-            # If this approval was for an application component, do NOT insert or alter server assets!
-            if is_app_component:
+            if is_app:
+                # Strictly handle application component; DO NOT TOUCH servers table!
+                if token:
+                    cur.execute("""
+                        UPDATE application_components
+                        SET status = 'APPROVED', approved_at = NOW(), approved_by = %s
+                        WHERE enrollment_token = %s;
+                    """, (approved_by, token))
+                if comp_row:
+                    cur.execute("""
+                        UPDATE applications
+                        SET status = 'NORMAL'
+                        WHERE id = %s AND status IN ('WAITING', 'PENDING_APPROVAL', 'INITIALIZING');
+                    """, (comp_row["application_id"],))
+                    if not comp_row.get("linked_server_id"):
+                        cur.execute("SELECT id FROM servers WHERE ip = %s OR ip_address = %s OR LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) ORDER BY id DESC LIMIT 1;", (ip, ip, clean_hostname, clean_hostname))
+                        matched_srv = cur.fetchone()
+                        if matched_srv:
+                            mid = matched_srv["id"] if isinstance(matched_srv, dict) else matched_srv[0]
+                            cur.execute("UPDATE application_components SET linked_server_id = %s WHERE id = %s;", (mid, comp_row["id"]))
                 conn.commit()
+                log_audit(approved_by, "AGENT_APPROVAL", "app_component", app_id, f"Approved application component '{hostname}' ({ip})", ip_address=ip, machine_id=machine_id)
                 return True
-            
-            # Check if server already exists - do NOT match on empty string or host IP if hostname differs!
+
+            # If node_type is server:
             existing_srv = None
-            if ip and ip not in ("127.0.0.1", "172.31.2.38"):
+            if token:
+                cur.execute("SELECT id FROM servers WHERE agent_token = %s OR api_token = %s LIMIT 1;", (token, token))
+                existing_srv = cur.fetchone()
+            if not existing_srv and ip and ip not in ("127.0.0.1", "0.0.0.0"):
                 cur.execute("SELECT id FROM servers WHERE ip = %s OR ip_address = %s LIMIT 1;", (ip, ip))
                 existing_srv = cur.fetchone()
-            if not existing_srv and clean_hostname:
+            if not existing_srv and clean_hostname and clean_hostname.lower() not in ("localhost", "target-node"):
                 cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (clean_hostname, clean_hostname))
                 existing_srv = cur.fetchone()
 
+            pid = 1
+            try:
+                cur.execute("SELECT id FROM projects ORDER BY id ASC LIMIT 1;")
+                prow = cur.fetchone()
+                if prow:
+                    pid = prow.get("id") if isinstance(prow, dict) else prow[0]
+            except Exception:
+                pass
+
+            srv_ip = ip or "127.0.0.1"
+            srv_host = clean_hostname or f"node-{srv_ip}"
+
             if not existing_srv:
-                token = app_data.get("agent_token") or f"sp-token-{int(time.time())}"
-                # Fetch default project ID if available
-                pid = 1
-                try:
-                    cur.execute("SELECT id FROM projects ORDER BY id ASC LIMIT 1;")
-                    prow = cur.fetchone()
-                    if prow:
-                        pid = prow.get("id") if isinstance(prow, dict) else prow[0]
-                except Exception:
-                    pass
-                srv_ip = ip or "127.0.0.1"
-                srv_host = clean_hostname or f"node-{srv_ip}"
                 cur.execute("""
-                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, last_seen, project_id, agent_version)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s, '1.6');
-                """, (srv_host, srv_host, srv_ip, srv_ip, "Linux (Ubuntu)", token, token, pid))
+                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, approved_at, approved_by, last_seen, project_id, agent_version, machine_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s, NOW(), %s, '1.6', %s)
+                    RETURNING id;
+                """, (srv_host, srv_host, srv_ip, srv_ip, "Linux (Ubuntu)", token, token, approved_by, pid, machine_id))
+                new_srv = cur.fetchone()
+                sid = new_srv["id"] if new_srv else None
             else:
                 sid = existing_srv["id"] if isinstance(existing_srv, dict) else existing_srv[0]
-                cur.execute("UPDATE servers SET status = 'online', last_seen = NOW() WHERE id = %s;", (sid,))
+                cur.execute("""
+                    UPDATE servers 
+                    SET status = 'online', agent_token = %s, api_token = %s, approved_at = NOW(), approved_by = %s, last_seen = NOW() 
+                    WHERE id = %s;
+                """, (token, token, approved_by, sid))
+
             conn.commit()
+            log_audit(approved_by, "AGENT_APPROVAL", "server", sid or app_id, f"Approved server asset '{srv_host}' ({srv_ip})", ip_address=srv_ip, machine_id=machine_id)
             return True
     except Exception as e:
         logger.error(f"Error in approve_request: {e}")
@@ -1887,14 +1952,30 @@ def approve_request(app_id: int):
     finally:
         conn.close()
 
-def reject_request(app_id: int):
+def reject_request(app_id: int, rejected_by: str = "admin"):
     conn = get_db_connection()
     if not conn:
         return False
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE approvals SET status = 'rejected' WHERE id = %s;", (app_id,))
+            cur.execute("SELECT * FROM approvals WHERE id = %s;", (app_id,))
+            row = cur.fetchone()
+            if not row:
+                return False
+            app_data = dict(row)
+            token = app_data.get("agent_token")
+            hostname = (app_data.get("hostname") or "").strip()
+            ip = (app_data.get("ip_address") or "").strip()
+            node_type = (app_data.get("node_type") or "server").lower()
+
+            cur.execute("UPDATE approvals SET status = 'rejected', approved_at = NOW(), approved_by = %s WHERE id = %s;", (rejected_by, app_id))
+            
+            if token:
+                cur.execute("UPDATE application_components SET status = 'REJECTED' WHERE enrollment_token = %s;", (token,))
+                cur.execute("UPDATE servers SET status = 'rejected' WHERE agent_token = %s OR api_token = %s;", (token, token))
+
             conn.commit()
+            log_audit(rejected_by, "AGENT_REJECTION", node_type, app_id, f"Rejected onboarding request for '{hostname}' ({ip})", ip_address=ip)
             return True
     except Exception as e:
         logger.error(f"Error in reject_request: {e}")
@@ -2606,7 +2687,7 @@ def create_report(title, date_from, date_to):
     finally:
         conn.close()
 
-def log_audit(username, action, target_type, target_id, detail):
+def log_audit(username, action, target_type, target_id, detail, ip_address=None, machine_id=None):
     conn = get_db_connection()
     if not conn: return
     try:
@@ -2622,17 +2703,24 @@ def log_audit(username, action, target_type, target_id, detail):
             
             try:
                 cur.execute("""
-                    INSERT INTO audit_logs (user_id, username, action, target_type, target_id, detail, timestamp)
-                    VALUES (%s, %s, %s, %s, %s, %s, NOW());
-                """, (user_id, username, action, target_type, target_id, detail))
+                    INSERT INTO audit_logs (user_id, username, action, target_type, target_id, detail, ip_address, machine_id, timestamp)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW());
+                """, (user_id, username, action, target_type, target_id, detail, ip_address, machine_id))
             except Exception:
                 try:
                     cur.execute("""
-                        INSERT INTO audit_logs (username, action, target_type, target_id, detail, timestamp)
-                        VALUES (%s, %s, %s, %s, %s, NOW());
-                    """, (username, action, target_type, target_id, detail))
+                        INSERT INTO audit_logs (username, action, target_type, target_id, detail, ip_address, machine_id, timestamp)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW());
+                    """, (username, action, target_type, target_id, detail, ip_address, machine_id))
                 except Exception:
-                    pass
+                    try:
+                        cur.execute("""
+                            INSERT INTO audit_logs (user_id, username, action, target_type, target_id, detail, timestamp)
+                            VALUES (%s, %s, %s, %s, %s, %s, NOW());
+                        """, (user_id, username, action, target_type, target_id, detail))
+                    except Exception:
+                        pass
+            conn.commit()
     except Exception as e:
         logger.error(f"Error in log_audit: {e}")
     finally:

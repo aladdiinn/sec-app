@@ -1770,6 +1770,9 @@ function formatLocal(dateStr) {
         }
     }
 
-    window.addEventListener('load', loadServers);
+    window.addEventListener('load', () => {
+        loadServers();
+        setInterval(loadServers, 5000);
+    });
 </script>
 {% endblock %}
