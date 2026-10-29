@@ -363,25 +363,38 @@ def create_application(conn, name: str, primary_url: str, environment: str = "Pr
     if not conn:
         return None
     settings_json = psycopg2.extras.Json(settings or {})
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO applications (name, primary_url, environment, description, status, project_id, settings, created_by, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-            RETURNING id, name, primary_url, environment, description, status, project_id, settings, created_at;
-        """, (name, primary_url, environment, description, status, project_id, settings_json, created_by))
-        app = dict(cur.fetchone())
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO applications (name, primary_url, environment, description, status, project_id, settings, created_by, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                ON CONFLICT (name) DO UPDATE 
+                SET primary_url = EXCLUDED.primary_url,
+                    environment = EXCLUDED.environment,
+                    description = EXCLUDED.description,
+                    project_id = COALESCE(EXCLUDED.project_id, applications.project_id),
+                    updated_at = NOW()
+                RETURNING id, name, primary_url, environment, description, status, project_id, settings, created_at;
+            """, (name, primary_url, environment, description, status, project_id, settings_json, created_by))
+            app = dict(cur.fetchone())
 
-        if project_id:
-            try:
-                cur.execute("""
-                    INSERT INTO project_apps (project_id, application_id)
-                    VALUES (%s, %s)
-                    ON CONFLICT (project_id, application_id) DO NOTHING;
-                """, (project_id, app['id']))
-            except Exception as e:
-                logger.error(f"Error associating app {app['id']} with project {project_id}: {e}")
+            if project_id:
+                try:
+                    cur.execute("""
+                        INSERT INTO project_apps (project_id, application_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT (project_id, application_id) DO NOTHING;
+                    """, (project_id, app['id']))
+                except Exception as e:
+                    logger.error(f"Error associating app {app['id']} with project {project_id}: {e}")
 
-        return app
+            conn.commit()
+            return app
+    except Exception as e:
+        logger.error(f"Error in create_application: {e}")
+        try: conn.rollback()
+        except: pass
+        return None
 
 def format_time_ago(dt):
     if not dt:

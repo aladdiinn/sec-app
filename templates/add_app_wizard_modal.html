@@ -469,6 +469,21 @@ async function wizardNextStep() {
             }
         }
 
+        if (createdAppId) {
+            // Application already created; update project if assigned and proceed
+            try {
+                if (projId) {
+                    await fetch(`/api/apps/${createdAppId}`, {
+                        method: 'PATCH',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ project_id: projId })
+                    });
+                }
+            } catch(e) {}
+            showWizardStep(3);
+            return;
+        }
+
         try {
             const res = await fetch('/api/apps', {
                 method: 'POST',
@@ -481,16 +496,15 @@ async function wizardNextStep() {
                     project_id: projId
                 })
             });
+            const data = await res.json().catch(() => ({}));
             if (res.ok) {
-                const appData = await res.json();
-                createdAppId = appData.id;
+                createdAppId = data.id;
                 showWizardStep(3);
             } else {
-                const err = await res.json();
-                showToast(err.detail || 'Failed to create application', 'error');
+                showToast(data.detail || data.message || 'Failed to create application (check if name already exists)', 'error');
             }
         } catch(e) {
-            showToast('Network error creating application', 'error');
+            showToast('Network error: ' + (e.message || 'Failed to create application'), 'error');
         }
     } else if (currentWizStep === 3) {
         // Move to Review Step
