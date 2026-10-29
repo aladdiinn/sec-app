@@ -8308,49 +8308,65 @@ def api_get_app_users(request: Request, app_id: int):
             except Exception as e_comp:
                 logger.warning(f"Could not fetch node_ips: {e_comp}")
 
-            cur.execute("""
-                SELECT 
-                    COALESCE(user_name, client_ip) AS identifier,
-                    client_ip,
-                    user_name,
-                    COUNT(*) AS total_requests,
-                    COUNT(*) FILTER (WHERE severity IN ('medium', 'high', 'critical')) AS attack_events,
-                    MAX(event_time) AS last_seen,
-                    MIN(event_time) AS first_seen,
-                    CASE 
-                        WHEN bool_or(severity = 'critical') THEN 'critical'
-                        WHEN bool_or(severity = 'high') THEN 'high'
-                        WHEN bool_or(severity = 'medium') THEN 'medium'
-                        WHEN bool_or(severity = 'low') THEN 'low'
-                        ELSE 'info'
-                    END AS peak_severity,
-                    MAX(url_path) AS recent_path,
-                    CASE
-                        WHEN bool_or(url_path ILIKE '%/api/%' OR url_path ILIKE '%/bsmartApi/%' OR url_path ILIKE '%/ws/%' OR url_path ILIKE '%.do%') THEN 'api'
-                        WHEN bool_or(url_path ILIKE '%/login%' OR url_path ILIKE '%.html' OR url_path ILIKE '%.jsp') THEN 'web'
-                        ELSE 'service'
-                    END AS traffic_type
-                FROM app_events
-                WHERE application_id = %s AND client_ip IS NOT NULL
-                GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
-                ORDER BY attack_events DESC, total_requests DESC
-                LIMIT 50;
-            """, (app_id,))
-            rows = cur.fetchall()
+            # Ultra-reliable query without complex boolean expressions in SQL
+            try:
+                cur.execute("""
+                    SELECT 
+                        COALESCE(user_name, client_ip) AS identifier,
+                        client_ip,
+                        user_name,
+                        COUNT(*) AS total_requests,
+                        COUNT(*) FILTER (WHERE severity IN ('medium', 'high', 'critical')) AS attack_events,
+                        MAX(event_time) AS last_seen,
+                        MIN(event_time) AS first_seen,
+                        CASE 
+                            WHEN bool_or(severity = 'critical') THEN 'critical'
+                            WHEN bool_or(severity = 'high') THEN 'high'
+                            WHEN bool_or(severity = 'medium') THEN 'medium'
+                            WHEN bool_or(severity = 'low') THEN 'low'
+                            ELSE 'info'
+                        END AS peak_severity,
+                        MAX(url_path) AS recent_path
+                    FROM app_events
+                    WHERE application_id = %s AND client_ip IS NOT NULL
+                    GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
+                    ORDER BY attack_events DESC, total_requests DESC
+                    LIMIT 50;
+                """, (app_id,))
+                rows = cur.fetchall()
+            except Exception as e_q:
+                logger.error(f"Error in users main query, trying basic fallback: {e_q}")
+                cur.execute("""
+                    SELECT 
+                        COALESCE(user_name, client_ip) AS identifier,
+                        client_ip,
+                        user_name,
+                        COUNT(*) AS total_requests,
+                        COUNT(*) FILTER (WHERE severity IN ('medium', 'high', 'critical')) AS attack_events,
+                        MAX(event_time) AS last_seen,
+                        MIN(event_time) AS first_seen
+                    FROM app_events
+                    WHERE application_id = %s AND client_ip IS NOT NULL
+                    GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
+                    ORDER BY attack_events DESC, total_requests DESC
+                    LIMIT 50;
+                """, (app_id,))
+                rows = cur.fetchall()
 
             res = []
             for r in rows:
                 item = dict(r)
-                cip = item.get("client_ip") or ""
+                cip = str(item.get("client_ip") or "").strip()
                 uname = item.get("user_name")
+                raw_path = str(item.get("recent_path") or "").lower()
                 
-                if uname and uname not in ("-", "Anonymous", "null"):
+                if uname and uname not in ("-", "Anonymous", "null", "None"):
                     item["client_category"] = "user"
                     item["display_role"] = f"👤 {uname}"
-                elif cip in node_ips or cip.startswith("127.") or cip in ("10.0.0.27", "localhost"):
+                elif cip in node_ips or cip.startswith("127.") or cip in ("10.0.0.27", "localhost") or cip.startswith("10."):
                     item["client_category"] = "internal"
                     item["display_role"] = "⚙️ Internal Daemon / Node Service"
-                elif item.get("traffic_type") == "api":
+                elif any(k in raw_path for k in ["/api", "/bsmartapi", "/ws", ".do"]) or item.get("total_requests", 0) > 50:
                     item["client_category"] = "api"
                     item["display_role"] = "🤖 Automated API Client (IoT / DCU)"
                 else:
