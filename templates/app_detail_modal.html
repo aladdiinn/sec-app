@@ -403,7 +403,10 @@ function renderFilteredEvents() {
                         </span>
                     </td>
                     <td style="padding:8px 12px; color:var(--text2)">${escapeHtml(ev.source_type || '')} (${escapeHtml(ev.node || '')})</td>
-                    <td style="padding:8px 12px; font-family:var(--font-mono), monospace; color:var(--cyan)">${escapeHtml(ev.client_ip || '-')}</td>
+                    <td style="padding:8px 12px; font-family:var(--font-mono), monospace; color:var(--cyan)">
+                        <div>${escapeHtml(ev.client_ip || '-')}</div>
+                        ${ev.user_name && ev.user_name !== '-' && ev.user_name !== 'Anonymous' ? `<div style="font-size:10.5px; color:#F59E0B; font-weight:700; margin-top:2px">👤 ${escapeHtml(ev.user_name)}</div>` : ''}
+                    </td>
                     <td style="padding:8px 12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(ev.url_path || '')}">
                         <b style="color:var(--text3)">${escapeHtml(ev.method || '')}</b> 
                         <span style="font-family:var(--font-mono), monospace">${escapeHtml(ev.url_path || '-')}</span>

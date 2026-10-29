@@ -8255,8 +8255,12 @@ def api_get_app_users(request: Request, app_id: int):
                     FROM app_events
                     WHERE application_id = %s AND client_ip IS NOT NULL
                     GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
-                    ORDER BY attack_events DESC, total_requests DESC
-                    LIMIT 50;
+                    ORDER BY 
+                        (CASE WHEN user_name IS NOT NULL AND user_name != '-' AND user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
+                        last_seen DESC,
+                        attack_events DESC,
+                        total_requests DESC
+                    LIMIT 100;
                 """, (app_id,))
                 rows = cur.fetchall()
             except Exception as e_q:
@@ -8273,8 +8277,12 @@ def api_get_app_users(request: Request, app_id: int):
                     FROM app_events
                     WHERE application_id = %s AND client_ip IS NOT NULL
                     GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
-                    ORDER BY attack_events DESC, total_requests DESC
-                    LIMIT 50;
+                    ORDER BY 
+                        (CASE WHEN user_name IS NOT NULL AND user_name != '-' AND user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
+                        last_seen DESC,
+                        attack_events DESC,
+                        total_requests DESC
+                    LIMIT 100;
                 """, (app_id,))
                 rows = cur.fetchall()
 
