@@ -65,8 +65,8 @@
                 <select id="events-filter-severity" class="glass" 
                         style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
                         onchange="renderFilteredEvents()">
-                    <option value="security" selected>Security Events (Attacks & Warnings)</option>
-                    <option value="all">All Telemetry (Including Info Logs)</option>
+                    <option value="all" selected>All Telemetry (Including Info Logs)</option>
+                    <option value="security">Security Events (Attacks & Warnings)</option>
                     <option value="critical">Critical Only</option>
                     <option value="high">High & Critical</option>
                     <option value="medium">Medium, High, Critical</option>
@@ -339,7 +339,7 @@ function renderFilteredEvents() {
     if (!container) return;
 
     const q = (document.getElementById('events-filter-query')?.value || '').toLowerCase().trim();
-    const sev = document.getElementById('events-filter-severity')?.value || 'security';
+    const sev = document.getElementById('events-filter-severity')?.value || 'all';
 
     const filtered = cachedEvents.filter(ev => {
         if (sev === 'security' && !['medium', 'high', 'critical'].includes(ev.severity)) return false;
@@ -354,7 +354,21 @@ function renderFilteredEvents() {
     });
 
     if (filtered.length === 0) {
-        container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3)">No security events match the active filters.</div>';
+        if (cachedEvents.length > 0 && sev === 'security') {
+            container.innerHTML = `
+            <div style="padding:40px; text-align:center; color:var(--text3)">
+                <div style="font-size:24px; margin-bottom:8px">🛡️</div>
+                <div style="font-weight:700; color:var(--text); font-size:13px; margin-bottom:4px">No Security Attacks or Threat Anomalies</div>
+                <div style="font-size:12px; color:var(--text3)">All incoming requests are normal legitimate traffic (<b>${cachedEvents.length}</b> events received).</div>
+                <div style="margin-top:12px">
+                    <button class="btn btn-glass" onclick="document.getElementById('events-filter-severity').value='all'; renderFilteredEvents();" style="font-size:11px; padding:6px 14px">
+                        Show All Telemetry Logs (${cachedEvents.length})
+                    </button>
+                </div>
+            </div>`;
+        } else {
+            container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3)">No events match the active filters.</div>';
+        }
         return;
     }
 
