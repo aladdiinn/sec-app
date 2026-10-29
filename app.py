@@ -8298,9 +8298,15 @@ def api_get_app_users(request: Request, app_id: int):
         return []
     try:
         with conn.cursor() as cur:
-            # Query linked server / node IPs for this application
-            cur.execute("SELECT node_ip FROM app_components WHERE application_id = %s", (app_id,))
-            node_ips = {r["node_ip"] for r in cur.fetchall() if r.get("node_ip")}
+            # Query linked server / node IPs for this application from application_components
+            node_ips = set()
+            try:
+                cur.execute("SELECT node_ip FROM application_components WHERE application_id = %s", (app_id,))
+                for nr in cur.fetchall():
+                    if nr.get("node_ip"):
+                        node_ips.add(nr["node_ip"])
+            except Exception as e_comp:
+                logger.warning(f"Could not fetch node_ips: {e_comp}")
 
             cur.execute("""
                 SELECT 
@@ -8318,7 +8324,7 @@ def api_get_app_users(request: Request, app_id: int):
                         WHEN bool_or(severity = 'low') THEN 'low'
                         ELSE 'info'
                     END AS peak_severity,
-                    (ARRAY_AGG(url_path ORDER BY id DESC))[1] AS recent_path,
+                    MAX(url_path) AS recent_path,
                     CASE
                         WHEN bool_or(url_path ILIKE '%/api/%' OR url_path ILIKE '%/bsmartApi/%' OR url_path ILIKE '%/ws/%' OR url_path ILIKE '%.do%') THEN 'api'
                         WHEN bool_or(url_path ILIKE '%/login%' OR url_path ILIKE '%.html' OR url_path ILIKE '%.jsp') THEN 'web'
