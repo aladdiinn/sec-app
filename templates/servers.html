@@ -929,15 +929,53 @@ function formatLocal(dateStr) {
                     incList.innerHTML = '<div style="text-align:center; padding:30px; color:var(--green); font-weight:600">✅ No active incidents or alerts for this asset</div>';
                 } else {
                     incList.innerHTML = alerts.map(a => {
-                        const isCrit = (a.severity || '').toLowerCase() === 'critical';
+                        const sev = (a.severity || 'warning').toLowerCase();
+                        const isCrit = sev === 'critical';
+                        const isHigh = sev === 'high';
+                        const isMed = sev === 'medium' || sev === 'warning';
+
+                        let sevBorder = '#38bdf8';
+                        let sevBg = 'rgba(56,189,248,0.2)';
+                        let sevFg = '#38bdf8';
+                        let sevLabel = 'INFO';
+
+                        if (isCrit) {
+                            sevBorder = '#ef4444';
+                            sevBg = 'rgba(239,68,68,0.2)';
+                            sevFg = '#f87171';
+                            sevLabel = 'CRITICAL';
+                        } else if (isHigh || isMed) {
+                            sevBorder = '#f59e0b';
+                            sevBg = 'rgba(245,158,11,0.2)';
+                            sevFg = '#fbbf24';
+                            sevLabel = 'WARNING';
+                        }
+
+                        const incNumber = a.id ? `#INC-${a.id}` : '';
+                        const dateStr = a.created_at ? new Date(a.created_at).toLocaleString() : 'recently';
+                        const targetName = escapeHtml(srv.hostname || srv.ip || a.server_name || a.target || 'This Asset');
+                        const assigned = escapeHtml(a.assigned_to || 'Unassigned');
+
                         return `
-                        <div style="background:rgba(255,255,255,0.03); border-left:3px solid ${isCrit?'var(--red)':'var(--amber)'}; padding:10px 14px; margin-bottom:8px; border-radius:4px">
-                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
-                                <strong style="color:var(--text); font-size:12px">${escapeHtml(a.title || a.alert_type)}</strong>
-                                <span style="font-size:10px; color:#64748b"></span>
+                        <div class="i3-alert-item" id="alert-card-${a.id}" style="background:var(--card, #121316) !important; border:1px solid rgba(255,255,255,0.08) !important; border-left:4px solid ${sevBorder} !important; border-radius:6px !important; padding:16px 20px !important; margin-bottom:12px !important; box-shadow:0 4px 6px rgba(0,0,0,0.2) !important;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+                                    <span style="background:${sevBg}; color:${sevFg}; border:1px solid ${sevBorder}; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:800; letter-spacing:0.5px; text-transform:uppercase">${sevLabel}</span>
+                                    <span style="background:rgba(239,68,68,0.12); color:#f87171; border:1px solid rgba(239,68,68,0.25); padding:2px 7px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase">OPEN</span>
+                                    ${incNumber ? `<span style="font-size:11px; color:var(--text3); font-family:var(--font-mono, monospace); font-weight:600">${incNumber}</span>` : ''}
+                                </div>
+                                <div style="display:flex; align-items:center; gap:8px">
+                                    <span style="font-size:11px; color:var(--text3); font-family:var(--font-mono, monospace)">${dateStr}</span>
+                                </div>
                             </div>
-                            <div style="font-size:11px; color:var(--text2)">${escapeHtml(a.message || '')}</div>
-                        </div>`;
+                            <h3 style="font-size:15px; margin:4px 0 8px 0; color:var(--text); font-weight:600; line-height:1.3">${escapeHtml(a.title || a.alert_type || 'Security Alert')}</h3>
+                            <p style="margin:0 0 12px 0; font-size:13px; color:var(--text2); line-height:1.5">${escapeHtml(a.message || a.description || '')}</p>
+                            <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:12px; color:var(--text2); padding-top:8px; border-top:1px solid rgba(255,255,255,0.05)">
+                                <span>Assigned: <strong style="color:var(--text)">${assigned}</strong></span>
+                                <span>Target: <strong style="color:var(--text)">${targetName}</strong></span>
+                            </div>
+                        </div>
+                        `;
                     }).join('');
                 }
             }

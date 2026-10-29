@@ -50,44 +50,43 @@
 
 /* ── LIGHT THEME OVERRIDES ──────────────────────────────────────────────────── */
 [data-theme="light"] {
-  --bg:    #f0f4fa;
-  --bg2:   #ffffff;
-  --bg3:   #e8eef8;
-  --cyan:  #0070a0;
-  --cyan2: rgba(0,112,160,0.10);
-  --cyan3: rgba(0,112,160,0.05);
-  --green: #114577;
-  --red:   #cc1a35;
-  --amber: #b87000;
-  --border:  rgba(0,112,160,0.22);
-  --border2: rgba(0,112,160,0.45);
-  --text:  #0d1a2e;
-  --text2: rgba(13,26,46,0.65);
-  --text3: rgba(13,26,46,0.38);
+  --bg:    #F8FAFC;
+  --bg2:   #FFFFFF;
+  --bg3:   #F1F5F9;
+  --cyan:  #0972D3;
+  --cyan2: rgba(9,114,211,0.12);
+  --cyan3: rgba(9,114,211,0.06);
+  --green: #15803D;
+  --red:   #DC2626;
+  --amber: #D97706;
+  --border:  #E2E8F0;
+  --border2: #CBD5E1;
+  --text:  #0F172A;
+  --text2: #334155;
+  --text3: #64748B;
 
   /* legacy compat overrides */
-  --bg-deep:    #f0f4fa;
-  --bg-surface: #ffffff;
-  --bg-card:    #ffffff;
-  --bg-glass:   rgba(0,112,160,0.04);
-  --border-glass:  rgba(0,112,160,0.22);
-  --border-bright: rgba(0,112,160,0.45);
-  --text-primary:   #0d1a2e;
-  --text-secondary: #8a5000;
-  --text-muted:     rgba(138,80,0,0.78);
-  --accent-blue:   #0070a0;
-  --accent-cyan:   #0070a0;
-  --accent-green:  #114577;
-  --accent-red:    #cc1a35;
-  --accent-orange: #b87000;
+  --bg-deep:    #F8FAFC;
+  --bg-surface: #FFFFFF;
+  --bg-card:    #FFFFFF;
+  --bg-glass:   #FFFFFF;
+  --border-glass:  #E2E8F0;
+  --border-bright: #CBD5E1;
+  --text-primary:   #0F172A;
+  --text-secondary: #334155;
+  --text-muted:     #64748B;
+  --accent-blue:   #0972D3;
+  --accent-cyan:   #0972D3;
+  --accent-green:  #15803D;
+  --accent-red:    #DC2626;
+  --accent-orange: #D97706;
 }
 
 /* Light mode specific overrides for elements that use hardcoded colors */
 [data-theme="light"] body {
-  background: #f0f4fa;
-  background-image:
-    repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,112,160,0.025) 3px, rgba(0,112,160,0.025) 4px);
-  color: #0d1a2e;
+  background: #F8FAFC !important;
+  background-image: none !important;
+  color: #0F172A !important;
 }
 
 [data-theme="light"] .sidebar {

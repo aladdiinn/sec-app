@@ -358,6 +358,118 @@
     color: #047857 !important;
     border: 1px solid rgba(16, 185, 129, 0.3) !important;
 }
+
+/* AWS LIGHT THEME CONTRAST & VISIBILITY ENHANCEMENTS */
+[data-theme="light"] .service-card {
+    background: #FFFFFF !important;
+    border: 1px solid #CBD5E1 !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+}
+[data-theme="light"] .service-card:hover {
+    box-shadow: 0 8px 20px rgba(9, 114, 211, 0.12) !important;
+}
+[data-theme="light"] .service-title {
+    color: #0F172A !important;
+    font-weight: 800 !important;
+}
+[data-theme="light"] .service-host {
+    color: #0972D3 !important;
+    font-weight: 600 !important;
+}
+[data-theme="light"] .service-card.appnode-card {
+    background: #FFFFFF !important;
+    border: 1px solid #CBD5E1 !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06) !important;
+}
+[data-theme="light"] .service-card.appnode-card:hover {
+    border-color: #0972D3 !important;
+    box-shadow: 0 8px 20px rgba(9, 114, 211, 0.14) !important;
+}
+[data-theme="light"] .appnode-card .appnode-title {
+    color: #0F172A !important;
+    font-weight: 800 !important;
+}
+[data-theme="light"] .appnode-card .appnode-url {
+    color: #0972D3 !important;
+}
+[data-theme="light"] .appnode-card .st-appnode {
+    background: #FEF3C7 !important;
+    color: #B45309 !important;
+    border: 1px solid #FCD34D !important;
+    font-weight: 700 !important;
+}
+[data-theme="light"] .donut-gauges-row,
+[data-theme="light"] .service-metrics {
+    background: #F8FAFC !important;
+    border: 1px solid #E2E8F0 !important;
+}
+[data-theme="light"] .donut-gauge-label {
+    color: #475569 !important;
+    font-weight: 700 !important;
+}
+[data-theme="light"] .donut-gauge-val {
+    color: #0F172A !important;
+    font-weight: 800 !important;
+}
+[data-theme="light"] .card-security-bar {
+    background: #F8FAFC !important;
+    border-top: 1px solid #E2E8F0 !important;
+    border-bottom: 1px solid #E2E8F0 !important;
+}
+[data-theme="light"] .card-sec-label {
+    color: #475569 !important;
+    font-weight: 700 !important;
+}
+[data-theme="light"] .service-alert-box {
+    background: #FEF2F2 !important;
+    border: 1px solid #FCA5A5 !important;
+    color: #991B1B !important;
+    font-weight: 600 !important;
+}
+[data-theme="light"] .service-alert-box strong {
+    color: #7F1D1D !important;
+}
+[data-theme="light"] .service-alert-box.sab-trouble {
+    background: #FFFBEB !important;
+    border: 1px solid #FCD34D !important;
+    color: #92400E !important;
+}
+[data-theme="light"] .service-alert-box.sab-trouble strong {
+    color: #78350F !important;
+}
+[data-theme="light"] .service-alert-box.sab-normal {
+    background: #F0FDF4 !important;
+    border: 1px solid #86EFAC !important;
+    color: #166534 !important;
+}
+[data-theme="light"] .service-alert-box.sab-normal strong {
+    color: #14532D !important;
+}
+[data-theme="light"] .noc-metric-circle {
+    background: #FFFFFF !important;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08) !important;
+}
+[data-theme="light"] .noc-metric-label {
+    color: #334155 !important;
+    font-weight: 700 !important;
+}
+[data-theme="light"] .header-metric-box {
+    background: #FFFFFF !important;
+    border: 1px solid #E2E8F0 !important;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05) !important;
+}
+[data-theme="light"] .header-metric-label {
+    color: #64748B !important;
+}
+[data-theme="light"] .header-metric-val {
+    color: #0F172A !important;
+}
+[data-theme="light"] .i3-alert-item {
+    background: #FFFFFF !important;
+    border-color: #E2E8F0 !important;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06) !important;
+}
+
 </style>
 {% endblock %}
 
@@ -1511,24 +1623,52 @@ async function openImage3Modal(serverId) {
             incList.innerHTML = '<div style="text-align:center; padding:30px; color:var(--green); font-weight:600">✅ No active incidents or alerts for this asset</div>';
         } else {
             incList.innerHTML = alerts.map(a => {
-                const isCrit = (a.severity || '').toLowerCase() === 'critical';
-                const sevBg = isCrit ? 'rgba(239,68,68,0.18)' : 'rgba(245,158,11,0.18)';
-                const sevBorder = isCrit ? '#ef4444' : '#f59e0b';
-                const sevColor = isCrit ? '#f87171' : '#fbbf24';
-                const sevLabel = (a.severity || 'WARNING').toUpperCase();
+                const sev = (a.severity || 'warning').toLowerCase();
+                const isCrit = sev === 'critical';
+                const isHigh = sev === 'high';
+                const isMed = sev === 'medium' || sev === 'warning';
+
+                let sevBorder = '#38bdf8';
+                let sevBg = 'rgba(56,189,248,0.2)';
+                let sevFg = '#38bdf8';
+                let sevLabel = 'INFO';
+
+                if (isCrit) {
+                    sevBorder = '#ef4444';
+                    sevBg = 'rgba(239,68,68,0.2)';
+                    sevFg = '#f87171';
+                    sevLabel = 'CRITICAL';
+                } else if (isHigh || isMed) {
+                    sevBorder = '#f59e0b';
+                    sevBg = 'rgba(245,158,11,0.2)';
+                    sevFg = '#fbbf24';
+                    sevLabel = 'WARNING';
+                }
+
+                const incNumber = a.id ? `#INC-${a.id}` : '';
+                const dateStr = a.created_at ? new Date(a.created_at).toLocaleString() : 'recently';
+                const targetName = escapeHtml(srv.hostname || srv.ip || a.server_name || a.target || 'This Asset');
+                const assigned = escapeHtml(a.assigned_to || 'Unassigned');
+
                 return `
-                <div class="i3-alert-item" id="alert-card-${a.id}" style="border-left: 4px solid ${sevBorder} !important; background: var(--bg2, #181926) !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 8px !important; padding: 14px 18px !important; margin-bottom: 10px !important;">
+                <div class="i3-alert-item" id="alert-card-${a.id}" style="background:var(--card, #121316) !important; border:1px solid rgba(255,255,255,0.08) !important; border-left:4px solid ${sevBorder} !important; border-radius:6px !important; padding:16px 20px !important; margin-bottom:12px !important; box-shadow:0 4px 6px rgba(0,0,0,0.2) !important;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-                        <div style="display:flex; align-items:center; gap:8px">
-                            <span style="background:${sevBg}; color:${sevColor}; border:1px solid ${sevBorder}; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:800; letter-spacing:0.5px">${sevLabel}</span>
-                            <strong style="color:var(--text, #f8fafc); font-size:13px; font-weight:700">${escapeHtml(a.title || a.alert_type || 'Security Alert')}</strong>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+                            <span style="background:${sevBg}; color:${sevFg}; border:1px solid ${sevBorder}; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:800; letter-spacing:0.5px; text-transform:uppercase">${sevLabel}</span>
+                            <span style="background:rgba(239,68,68,0.12); color:#f87171; border:1px solid rgba(239,68,68,0.25); padding:2px 7px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase">OPEN</span>
+                            ${incNumber ? `<span style="font-size:11px; color:var(--text3); font-family:var(--font-mono, monospace); font-weight:600">${incNumber}</span>` : ''}
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <span style="font-size:10px; color:var(--text3, #94a3b8); font-family:monospace">${new Date(a.created_at).toLocaleString()}</span>
-                            <input type="checkbox" title="Mark Closed" style="cursor:pointer;" onchange="resolveSingleAlert(${a.id}, this)">
+                        <div style="display:flex; align-items:center; gap:8px">
+                            <span style="font-size:11px; color:var(--text3); font-family:var(--font-mono, monospace)">${dateStr}</span>
+                            <input type="checkbox" title="Mark Closed" style="cursor:pointer; width:15px; height:15px" onchange="resolveSingleAlert(${a.id}, this)">
                         </div>
                     </div>
-                    <div style="font-size:12px; color:var(--text2, #cbd5e1); font-family:system-ui,sans-serif; line-height:1.5; word-break:break-word">${escapeHtml(a.message || '')}</div>
+                    <h3 style="font-size:15px; margin:4px 0 8px 0; color:var(--text); font-weight:600; line-height:1.3">${escapeHtml(a.title || a.alert_type || 'Security Alert')}</h3>
+                    <p style="margin:0 0 12px 0; font-size:13px; color:var(--text2); line-height:1.5">${escapeHtml(a.message || a.description || '')}</p>
+                    <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:12px; color:var(--text2); padding-top:8px; border-top:1px solid rgba(255,255,255,0.05)">
+                        <span>Assigned: <strong style="color:var(--text)">${assigned}</strong></span>
+                        <span>Target: <strong style="color:var(--text)">${targetName}</strong></span>
+                    </div>
                 </div>
                 `;
             }).join('');
