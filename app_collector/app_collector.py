@@ -83,7 +83,9 @@ def post_json(endpoint: str, payload: dict, timeout: float = 6.0) -> dict:
         "User-Agent": f"SecurePulse-App-Collector/{COLLECTOR_VERSION}"
     })
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # Explicitly bypass system proxy for direct communication with SOC server
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
             return json.loads(body) if body else {"status": "ok"}
     except urllib.error.HTTPError as e:

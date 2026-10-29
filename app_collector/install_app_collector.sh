@@ -33,20 +33,32 @@ echo "SOC Server:      $SOC_URL"
 echo "======================================================================"
 
 # 1. Onboarding Approval Check (Aligned with Server Asset Security Architecture)
+# Bypass local environment proxies for SOC communication
+SOC_HOST=$(echo "$SOC_URL" | sed -e 's|^[^/]*//||' -e 's|[:/].*$||')
+export no_proxy="$no_proxy,*,${SOC_HOST},localhost,127.0.0.1"
+export NO_PROXY="$NO_PROXY,*,${SOC_HOST},localhost,127.0.0.1"
+
 echo ""
 echo "======================================================================"
 echo "[*] Submitting Application Collector Onboarding Request to SOC..."
 echo "======================================================================"
-HOST_IP=$(curl -s --connect-timeout 2 ifconfig.me || hostname -I | awk '{print $1}')
-if [ -z "$HOST_IP" ]; then HOST_IP="127.0.0.1"; fi
+HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+if [ -z "$HOST_IP" ] || [ "$HOST_IP" = "127.0.0.1" ]; then
+    HOST_IP=$(curl -s --connect-timeout 2 --noproxy "*" ifconfig.me 2>/dev/null || ip route get 1.1.1.1 2>/dev/null | awk '{print $7}' || echo "127.0.0.1")
+fi
 
-REQ_RES=$(curl -s -X POST "${SOC_URL}/api/approvals/request" \
+REQ_RES=$(curl -s --noproxy "*" -X POST "${SOC_URL}/api/approvals/request" \
     -H "Content-Type: application/json" \
     -d "{\"hostname\":\"${NODE_NAME}\",\"ip\":\"${HOST_IP}\",\"token\":\"${TOKEN}\",\"app_id\":${APP_ID},\"role\":\"${ROLE}\"}" || echo '{"ok":false}')
 
+if echo "$REQ_RES" | grep -q "<!DOCTYPE"; then
+    echo "⚠️  [WARNING] Received HTTP proxy response instead of SOC server JSON."
+    echo "   Ensure your network proxy allows traffic to $SOC_URL on port 8000"
+fi
+
 STATUS="pending"
 # Check if already approved (e.g. re-run or pre-approved)
-CHECK_RES=$(curl -s -G "${SOC_URL}/api/agent/status" --data-urlencode "token=${TOKEN}" --data-urlencode "hostname=${NODE_NAME}" || echo '{"status":"pending"}')
+CHECK_RES=$(curl -s --noproxy "*" -G "${SOC_URL}/api/agent/status" --data-urlencode "token=${TOKEN}" --data-urlencode "hostname=${NODE_NAME}" || echo '{"status":"pending"}')
 STATUS=$(echo "$CHECK_RES" | grep -o '"status":"[^"]*' | cut -d'"' -f4 || echo "pending")
 
 if [ "$STATUS" = "approved" ]; then
@@ -59,7 +71,7 @@ else
     while [ "$STATUS" = "pending" ] && [ $WAITED -lt $MAX_WAIT ]; do
         sleep 5
         WAITED=$((WAITED+5))
-        CHECK_RES=$(curl -s -G "${SOC_URL}/api/agent/status" --data-urlencode "token=${TOKEN}" --data-urlencode "hostname=${NODE_NAME}" || echo '{"status":"pending"}')
+        CHECK_RES=$(curl -s --noproxy "*" -G "${SOC_URL}/api/agent/status" --data-urlencode "token=${TOKEN}" --data-urlencode "hostname=${NODE_NAME}" || echo '{"status":"pending"}')
         STATUS=$(echo "$CHECK_RES" | grep -o '"status":"[^"]*' | cut -d'"' -f4 || echo "pending")
         if [ "$STATUS" = "pending" ]; then
             echo -n "."
@@ -107,12 +119,14 @@ POLL_INTERVAL_SEC=0.5
 BATCH_MAX_LINES=50
 BATCH_MAX_WAIT_SEC=2.0
 HEARTBEAT_INTERVAL_SEC=30.0
+no_proxy="*"
+NO_PROXY="*"
 EOF
 chmod 600 /etc/securepulse-app/collector.env
 
 # 5. Fetch collector script from SOC server
 echo "[+] Downloading SecurePulse Application Collector..."
-curl -sSL "${SOC_URL}/api/app/collector.py?token=${TOKEN}" -o /opt/securepulse-app/app_collector.py
+curl -sSL --noproxy "*" "${SOC_URL}/api/app/collector.py?token=${TOKEN}" -o /opt/securepulse-app/app_collector.py
 chmod 755 /opt/securepulse-app/app_collector.py
 
 # 6. Install systemd service
