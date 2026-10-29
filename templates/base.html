@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -10,7 +10,7 @@
     <!-- Theme init: run before paint to prevent flash -->
     <script>
       (function() {
-        var t = localStorage.getItem('bsmart-theme') || localStorage.getItem('sp_theme') || 'light';
+        var t = localStorage.getItem('bsmart-theme') || localStorage.getItem('sp_theme') || 'dark';
         document.documentElement.setAttribute('data-theme', t);
         window.USER_ROLE = "{{ session.get('user_role', 'normal') }}";
       })();
@@ -485,10 +485,16 @@
         window.setTheme = function(theme) {
             if (theme === 'light') {
                 document.documentElement.setAttribute('data-theme', 'light');
-                localStorage.setItem('sp_theme', 'light');
+                try {
+                    localStorage.setItem('bsmart-theme', 'light');
+                    localStorage.setItem('sp_theme', 'light');
+                } catch(e) {}
             } else {
-                document.documentElement.removeAttribute('data-theme');
-                localStorage.setItem('sp_theme', 'dark');
+                document.documentElement.setAttribute('data-theme', 'dark');
+                try {
+                    localStorage.setItem('bsmart-theme', 'dark');
+                    localStorage.setItem('sp_theme', 'dark');
+                } catch(e) {}
             }
         };
         window.getTheme = function() {
@@ -555,7 +561,7 @@
         }
 
         function toggleTheme() {
-            var cur = document.documentElement.getAttribute('data-theme') || 'light';
+            var cur = document.documentElement.getAttribute('data-theme') || 'dark';
             var next = (cur === 'dark') ? 'light' : 'dark';
             document.documentElement.setAttribute('data-theme', next);
             try {
