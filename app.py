@@ -7893,6 +7893,18 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                         if m_u:
                             user = urllib.parse.unquote(m_u.group(1))
 
+                    # Auto-decode Base64 usernames (e.g. U2hhbGx5MQ== -> Shally1)
+                    if user and user != "-" and len(user) >= 4 and len(user) % 4 == 0 and re.match(r'^[A-Za-z0-9+/]+={0,2}$', user):
+                        try:
+                            dec_u = base64.b64decode(user).decode('utf-8', errors='ignore').strip()
+                            if dec_u.isprintable() and len(dec_u) >= 2 and all(32 <= ord(c) < 127 for c in dec_u):
+                                user = dec_u
+                        except Exception:
+                            pass
+
+                    # Redact passwords from logged URI paths
+                    sanitized_path = re.sub(r'((?:pwd|password|passwd|pass)=)[^& \t\r\n\'"]+', r'\g<1>********', raw_path, flags=re.IGNORECASE)
+
                     event_type, severity, rule_title, mitre_tag = evaluate_web_security_event(
                         method, raw_path, status_code, user, client_ip
                     )
@@ -7907,7 +7919,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                         RETURNING id;
                     """, (
                         actual_app_id, comp_id, node_name, source_type, event_type,
-                        client_ip, user if user != "-" else None, method, raw_path,
+                        client_ip, user if user != "-" else None, method, sanitized_path,
                         status_code, bytes_sent, severity, psycopg2.extras.Json(ev)
                     ))
                     ev_row = cur.fetchone()
@@ -8272,7 +8284,21 @@ def api_get_app_users(request: Request, app_id: int):
                 cip = str(item.get("client_ip") or "").strip()
                 uname = item.get("user_name")
                 raw_path = str(item.get("recent_path") or "").lower()
-                
+
+                # Auto-decode Base64 usernames in existing records
+                if uname and len(uname) >= 4 and len(uname) % 4 == 0 and re.match(r'^[A-Za-z0-9+/]+={0,2}$', uname):
+                    try:
+                        dec_u = base64.b64decode(uname).decode('utf-8', errors='ignore').strip()
+                        if dec_u.isprintable() and len(dec_u) >= 2 and all(32 <= ord(c) < 127 for c in dec_u):
+                            uname = dec_u
+                            item["user_name"] = dec_u
+                            item["identifier"] = dec_u
+                    except Exception:
+                        pass
+
+                if item.get("recent_path"):
+                    item["recent_path"] = re.sub(r'((?:pwd|password|passwd|pass)=)[^& \t\r\n\'"]+', r'\g<1>********', item["recent_path"], flags=re.IGNORECASE)
+
                 if uname and uname not in ("-", "Anonymous", "null", "None"):
                     item["client_category"] = "user"
                     item["display_role"] = f"👤 {uname}"
