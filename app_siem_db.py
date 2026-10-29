@@ -678,6 +678,10 @@ def update_application(conn, app_id: int, **kwargs):
     with conn.cursor() as cur:
         cur.execute(f"UPDATE applications SET {', '.join(set_clauses)} WHERE id = %s RETURNING id;", tuple(params))
         res = cur.fetchone()
+        try:
+            conn.commit()
+        except Exception:
+            pass
         return bool(res)
 
 def delete_application(conn, app_id: int):

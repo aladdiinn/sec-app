@@ -650,11 +650,16 @@ async function pollWizardComponents() {
                         </div>
                         <div style="font-size:10.5px; color:var(--text3); margin-top:2px">${precisionInfo}</div>
                     </div>
-                    <div style="display:flex; align-items:center; gap:10px">
+                    <div style="display:flex; align-items:center; gap:8px">
                         <div>${statusBadge}</div>
                         <button class="btn btn-glass" onclick="event.stopPropagation(); displayAndCopyComponentScript(${c.id})" 
                                 style="padding:4px 10px; font-size:11px; color:var(--cyan); border-color:rgba(0,191,255,0.3); font-weight:700">
                             📋 Copy Script
+                        </button>
+                        <button class="btn btn-glass" onclick="event.stopPropagation(); deleteWizardComponent(${c.id})" 
+                                style="padding:4px 10px; font-size:11px; color:var(--red); border-color:rgba(255,59,92,0.35); font-weight:700" 
+                                title="Delete this component script">
+                            🗑️ Delete
                         </button>
                     </div>
                 </div>
@@ -663,6 +668,29 @@ async function pollWizardComponents() {
         }
     } catch(e) {
         console.error("Error polling wizard components", e);
+    }
+}
+
+async function deleteWizardComponent(compId) {
+    if (!createdAppId) return;
+    if (!confirm("Are you sure you want to delete this component script?")) return;
+    try {
+        const res = await fetch(`/api/apps/${createdAppId}/components/${compId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (res.ok) {
+            delete wizardComponentsById[compId];
+            const box = document.getElementById('wiz-command-box');
+            if (box) box.style.display = 'none';
+            if (typeof showToast === 'function') showToast("Component script deleted successfully", "info");
+            await pollWizardComponents();
+        } else {
+            const err = await res.json().catch(() => ({}));
+            if (typeof showToast === 'function') showToast(err.detail || "Failed to delete component", "error");
+        }
+    } catch(e) {
+        if (typeof showToast === 'function') showToast("Network error deleting component", "error");
     }
 }
 

@@ -688,6 +688,9 @@ async function loadAppComponentsTab(appId) {
                                 ✓ Approve Component
                             </button>
                             ` : ''}
+                            <button class="btn btn-ghost" onclick="deleteComponentFromModal(${appId}, ${c.id})" style="border:1px solid rgba(239,68,68,0.4); color:var(--red); font-size:10.5px; padding:4px 10px" title="Delete Component">
+                                🗑️ Delete
+                            </button>
                         </div>
                     </div>
 
@@ -719,6 +722,24 @@ async function approveComponentFromModal(appId, compId) {
         }
     } catch(e) {
         if (typeof showToast === 'function') showToast('Network error approving component', 'error');
+    }
+}
+
+async function deleteComponentFromModal(appId, compId) {
+    if (!confirm('Are you sure you want to delete this component and revoke its collector token?')) return;
+    try {
+        const res = await fetch(`/api/apps/${appId}/components/${compId}`, { method: 'DELETE' });
+        if (res.ok) {
+            if (typeof showToast === 'function') showToast('Component removed successfully', 'info');
+            loadAppComponentsTab(appId);
+            if (typeof loadApplications === 'function') loadApplications();
+            if (typeof loadDashboardData === 'function') loadDashboardData();
+        } else {
+            const err = await res.json().catch(() => ({}));
+            if (typeof showToast === 'function') showToast(err.detail || 'Failed to delete component', 'error');
+        }
+    } catch(e) {
+        if (typeof showToast === 'function') showToast('Network error deleting component', 'error');
     }
 }
 
