@@ -446,7 +446,8 @@
         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
             <input type="text" id="srv-search-input" placeholder="🔍 Search server or IP..." class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:rgba(255,255,255,0.05); width:220px" oninput="renderServicesGrid()">
             
-            <select id="srv-filter-select" class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:var(--bg2)" onchange="renderServicesGrid()">
+            <select id="srv-filter-select" class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:var(--bg2)" onchange="onFilterSelectChange()">
+                <option value="problems" selected>Problem Nodes Only (Default)</option>
                 <option value="all">All Nodes</option>
                 <option value="app_nodes">Application Nodes Only</option>
                 <option value="servers">Servers / Assets Only</option>
@@ -833,6 +834,9 @@
         </div>
     </div>
 </div>
+
+<!-- Application Details Modal Included for In-Dashboard App Node Inspection -->
+{% include "app_detail_modal.html" %}
 {% endblock %}
 
 {% block extra_js %}
@@ -971,8 +975,51 @@ function renderAppNodeAwsIcon(color = '#FF9900') {
 }
 
 // ── DONUT GAUGE HELPER (Exact style of 1st image: 98% Green, 7% Red, 23% Amber) ──
-function renderDonutGauge(pct, label, colorOverride) {
-    const val = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+let currentStatusFilter = 'problems';
+
+function onFilterSelectChange() {
+    const sel = document.getElementById('srv-filter-select');
+    if (!sel) return;
+    const val = sel.value;
+    if (val === 'problems') currentStatusFilter = 'problems';
+    else if (val === 'critical') currentStatusFilter = 'CRITICAL';
+    else if (val === 'trouble') currentStatusFilter = 'TROUBLE';
+    else if (val === 'online') currentStatusFilter = 'UP';
+    else if (val === 'maint') currentStatusFilter = 'MAINT';
+    else if (val === 'down') currentStatusFilter = 'DOWN';
+    else if (val === 'app_nodes') currentStatusFilter = 'app_nodes';
+    else if (val === 'servers') currentStatusFilter = 'servers';
+    else currentStatusFilter = 'all';
+    renderServicesGrid();
+}
+
+function filterServicesByStatus(st) {
+    const target = (st === 'online' || st === 'up') ? 'UP' : st.toUpperCase();
+    if (currentStatusFilter === target) {
+        // Toggle back to default problem view
+        currentStatusFilter = 'problems';
+        const sel = document.getElementById('srv-filter-select');
+        if (sel) sel.value = 'problems';
+    } else {
+        currentStatusFilter = target;
+        const sel = document.getElementById('srv-filter-select');
+        if (sel) {
+            if (target === 'CRITICAL') sel.value = 'critical';
+            else if (target === 'TROUBLE') sel.value = 'trouble';
+            else if (target === 'UP') sel.value = 'online';
+            else if (target === 'MAINT') sel.value = 'maint';
+            else if (target === 'DOWN') sel.value = 'down';
+            else sel.value = 'all';
+        }
+    }
+    renderServicesGrid();
+}
+
+function renderDonutGauge(pct, label, colorOverride = null) {
+    const isEvMin = (label || '').toUpperCase().includes('EV/MIN');
+    const rawVal = Math.round(Number(pct) || 0);
+    // Baseline scale for EV/MIN is 100 events/min
+    const val = isEvMin ? Math.max(0, Math.min(100, rawVal)) : Math.max(0, Math.min(100, rawVal));
     const circ = 106.8;
     const offset = (circ - (val / 100 * circ)).toFixed(1);
     
@@ -984,8 +1031,10 @@ function renderDonutGauge(pct, label, colorOverride) {
         else color = '#114577'; // Corporate Blue
     }
 
+    const displayNum = isEvMin ? `${rawVal}` : `${val}%`;
+
     return `
-    <div class="donut-gauge-item" title="${label}: ${val}%">
+    <div class="donut-gauge-item" title="${label}: ${isEvMin ? rawVal + ' /min' : val + '%'}">
         <div class="donut-gauge-circle">
             <svg width="44" height="44" viewBox="0 0 44 44">
                 <circle cx="22" cy="22" r="17" fill="none" class="donut-track" stroke-width="3.5" />
@@ -995,7 +1044,7 @@ function renderDonutGauge(pct, label, colorOverride) {
                         stroke-dashoffset="${offset}"
                         transform="rotate(-90 22 22)" />
             </svg>
-            <span class="donut-gauge-num">${val}%</span>
+            <span class="donut-gauge-num" style="${isEvMin && String(rawVal).length > 2 ? 'font-size:9.5px' : ''}">${displayNum}</span>
         </div>
         <span class="donut-gauge-label">${label}</span>
     </div>
@@ -1014,7 +1063,11 @@ function updateModalDonuts(cpu, ram, disk) {
 }
 
 function openAppDetailsFromDash(appId) {
-    window.location.href = `/apps?open=${appId}`;
+    if (typeof openAppDetailsModal === 'function') {
+        openAppDetailsModal(appId);
+    } else {
+        window.location.href = `/apps?open=${appId}`;
+    }
 }
 
 function renderServicesGrid() {
@@ -1034,8 +1087,7 @@ function renderServicesGrid() {
             container.style.gridTemplateColumns = '';
         }
     }
-    const search = (document.getElementById('srv-search-input').value || '').toLowerCase().trim();
-    const filter = document.getElementById('srv-filter-select').value;
+    const search = (document.getElementById('srv-search-input')?.value || '').toLowerCase().trim();
 
     // 1. Build unified items list (Servers + Applications)
     const serverItems = (globalServersList || []).map(s => {
@@ -1043,14 +1095,6 @@ function renderServicesGrid() {
         const ip = (s.ip_address || s.ip || '0.0.0.0');
         const hasAppComp = Boolean(s.app_components && s.app_components.length > 0);
         const isAppNode = hasAppComp || name.toLowerCase().includes('app') || name.toLowerCase().includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
-        const st = (s.status || 'online').toLowerCase();
-        const sev = (s.severity || 'info').toLowerCase();
-        const alertCount = s.alert_count || 0;
-        const isMaint = s.is_maintenance || st === 'maintenance' || st === 'isolated';
-        const isDown = st === 'offline' || st === 'down';
-        const isCrit = !isDown && !isMaint && (sev === 'critical' || alertCount > 0);
-        const isTrouble = !isDown && !isMaint && !isCrit && (sev === 'warning' || sev === 'high');
-        const isUp = !isDown && !isMaint && !isCrit && !isTrouble;
 
         return {
             _type: 'server',
@@ -1058,76 +1102,97 @@ function renderServicesGrid() {
             id: s.id,
             name: name,
             ip: ip,
-            isAppNode: isAppNode,
-            isDown: isDown,
-            isMaint: isMaint,
-            isCrit: isCrit,
-            isTrouble: isTrouble,
-            isUp: isUp
+            isAppNode: isAppNode
         };
     });
 
     const appItems = (globalAppsList || []).map(a => {
-        const dyn = (a.dynamic_status || 'NORMAL').toUpperCase();
-        const isDown = dyn === 'DOWN';
-        const isMaint = dyn === 'MAINT';
-        const openInc = a.open_incidents || 0;
-        const critInc = a.critical_incidents || 0;
-        const isCrit = dyn === 'CRITICAL' || critInc > 0 || openInc > 0;
-        const isTrouble = !isCrit && (dyn === 'TROUBLE' || (a.high_incidents && a.high_incidents > 0));
-        const isUp = !isDown && !isMaint && !isCrit && !isTrouble;
-
         return {
             _type: 'app',
             raw: a,
             id: a.id,
             name: a.name || 'Unnamed Application',
             ip: a.primary_url || 'http://localhost',
-            isAppNode: true,
-            isDown: isDown,
-            isMaint: isMaint,
-            isCrit: isCrit,
-            isTrouble: isTrouble,
-            isUp: isUp
+            isAppNode: true
         };
     });
 
     const allItems = [...serverItems, ...appItems];
 
+    // Compute status and top strip counts from ALL items using single source of truth getUnifiedAssetStatus
+    let cDown = 0, cCrit = 0, cTrouble = 0, cMaint = 0, cUp = 0;
+    allItems.forEach(item => {
+        const st = typeof getUnifiedAssetStatus === 'function' ? getUnifiedAssetStatus(item) : 'UP';
+        item.computedStatus = st;
+        if (st === 'DOWN') cDown++;
+        else if (st === 'CRITICAL') cCrit++;
+        else if (st === 'TROUBLE') cTrouble++;
+        else if (st === 'MAINT') cMaint++;
+        else cUp++;
+    });
+
+    if (document.getElementById('noc-c-down')) document.getElementById('noc-c-down').innerText = cDown;
+    if (document.getElementById('noc-c-critical')) document.getElementById('noc-c-critical').innerText = cCrit;
+    if (document.getElementById('noc-c-trouble')) document.getElementById('noc-c-trouble').innerText = cTrouble;
+    if (document.getElementById('noc-c-maint')) document.getElementById('noc-c-maint').innerText = cMaint;
+    if (document.getElementById('noc-c-up')) document.getElementById('noc-c-up').innerText = cUp;
+    if (document.getElementById('sum-monitored')) document.getElementById('sum-monitored').innerText = allItems.length;
+    if (document.getElementById('sum-active-issues')) document.getElementById('sum-active-issues').innerText = cCrit + cTrouble;
+
+    // Filter items
     let filtered = allItems.filter(item => {
         const name = (item.name || '').toLowerCase();
         const ip = (item.ip || '').toLowerCase();
         if (search && !name.includes(search) && !ip.includes(search)) return false;
 
-        if (filter === 'app_nodes') return item.isAppNode;
-        if (filter === 'servers') return item._type === 'server';
-        if (filter === 'down') return item.isDown;
-        if (filter === 'maint') return item.isMaint;
-        if (filter === 'critical') return item.isCrit;
-        if (filter === 'trouble') return item.isTrouble;
-        if (filter === 'online') return item.isUp;
+        if (currentStatusFilter === 'problems') {
+            return item.computedStatus === 'DOWN' || item.computedStatus === 'CRITICAL' || item.computedStatus === 'TROUBLE';
+        }
+        if (currentStatusFilter === 'DOWN') return item.computedStatus === 'DOWN';
+        if (currentStatusFilter === 'CRITICAL') return item.computedStatus === 'CRITICAL';
+        if (currentStatusFilter === 'TROUBLE') return item.computedStatus === 'TROUBLE';
+        if (currentStatusFilter === 'MAINT') return item.computedStatus === 'MAINT';
+        if (currentStatusFilter === 'UP') return item.computedStatus === 'UP';
+        if (currentStatusFilter === 'app_nodes') return item.isAppNode;
+        if (currentStatusFilter === 'servers') return item._type === 'server';
         return true;
     });
 
-    document.getElementById('services-count-tag').innerText = `${filtered.length} Monitored`;
+    const countTag = document.getElementById('services-count-tag');
+    if (countTag) {
+        countTag.innerText = `${filtered.length} of ${allItems.length} shown`;
+    }
 
     if (!filtered.length) {
-        container.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:60px; color:var(--text2)"><div style="font-size:20px; margin-bottom:8px">🔍</div>No matching nodes found.</div>';
+        if (currentStatusFilter === 'problems') {
+            container.innerHTML = `
+            <div style="grid-column:1/-1; text-align:center; padding:70px 20px; color:var(--text2)">
+                <div style="font-size:40px; margin-bottom:12px; color:var(--green)">✓</div>
+                <div style="font-size:17px; font-weight:800; color:var(--text); margin-bottom:6px">All systems healthy</div>
+                <div style="font-size:12.5px; color:var(--text3); max-width:480px; margin:0 auto">All monitored servers and application nodes are operating normally with zero active outages, critical vulnerabilities, or trouble anomalies.</div>
+            </div>`;
+        } else {
+            container.innerHTML = `
+            <div style="grid-column:1/-1; text-align:center; padding:60px 20px; color:var(--text2)">
+                <div style="font-size:24px; margin-bottom:8px">🔍</div>
+                <div style="font-size:14px; font-weight:600; color:var(--text)">No assets found for the selected filter.</div>
+            </div>`;
+        }
         return;
     }
 
     container.innerHTML = filtered.map((item, index) => {
         // ========================================================
-        // A. APPLICATION NODE CARD RENDERING (Differentiated Style)
+        // A. APPLICATION NODE CARD RENDERING
         // ========================================================
         if (item._type === 'app') {
             const a = item.raw;
             const aid = a.id;
             const name = a.name || 'Unnamed Application';
             const url = a.primary_url || '';
-            const openInc = a.open_incidents || 0;
-            const critInc = a.critical_incidents || 0;
-            const evMin = a.events_per_min || 0;
+            const openInc = Number(a.open_incidents || 0);
+            const critInc = Number(a.critical_incidents || 0);
+            const evMin = Number(a.events_per_min || 0);
             const compRatio = a.components_ratio || '1/1';
             const [repComp, totComp] = (compRatio.includes('/') ? compRatio.split('/') : ['1','1']).map(Number);
             const compPct = (totComp && totComp > 0) ? Math.round(((repComp || 0) / totComp) * 100) : 100;
@@ -1137,9 +1202,9 @@ function renderServicesGrid() {
 
             // Security badge
             let secBadge = '';
-            if (item.isCrit) {
+            if (item.computedStatus === 'CRITICAL') {
                 secBadge = `<span class="sec-pill-reboot" style="background:rgba(239,68,68,0.2); color:#ff5a5f; border:1px solid #ff5a5f; font-weight:700;">CRITICAL THREAT</span> <span class="sec-cve-counts"><span class="sec-cve-c">${openInc} INCIDENT${openInc>1?'S':''}</span></span>`;
-            } else if (item.isTrouble) {
+            } else if (item.computedStatus === 'TROUBLE') {
                 secBadge = `<span class="sec-pill-update" style="background:rgba(245,158,11,0.2); color:#f59e0b; border:1px solid #f59e0b; font-weight:700;">SUSPICIOUS ANOMALY</span>`;
             } else {
                 secBadge = `<span class="sec-pill-clean" style="font-weight:600;">Threat Protected</span>`;
@@ -1147,19 +1212,23 @@ function renderServicesGrid() {
 
             // Alert Box
             let alertBox = '';
-            if (item.isDown) {
+            if (item.computedStatus === 'DOWN') {
                 alertBox = `<div class="service-alert-box" style="background:rgba(239,68,68,0.15); color:var(--red); border:1px solid rgba(239,68,68,0.3);"><strong>OFFLINE / SILENT</strong> Telemetry disconnected</div>`;
-            } else if (item.isMaint) {
+            } else if (item.computedStatus === 'MAINT') {
                 alertBox = `<div class="service-alert-box sab-trouble"><strong>MAINTENANCE</strong> Maintenance Mode Active</div>`;
-            } else if (item.isCrit) {
+            } else if (item.computedStatus === 'CRITICAL') {
                 alertBox = `<div class="service-alert-box" style="background:rgba(239,68,68,0.15); color:var(--red); border:1px solid rgba(239,68,68,0.4);"><strong>CRITICAL</strong> ${openInc} Open Incident(s) | Threat Detected</div>`;
-            } else if (item.isTrouble) {
-                alertBox = `<div class="service-alert-box sab-trouble"><strong>TROUBLE</strong> Application anomaly detected</div>`;
+            } else if (item.computedStatus === 'TROUBLE') {
+                alertBox = `<div class="service-alert-box sab-trouble"><strong>TROUBLE</strong> ${escapeHtml(a.telemetry_banner || 'Application anomaly detected')}</div>`;
             } else {
-                alertBox = `<div class="service-alert-box sab-normal"><strong>NORMAL</strong> Application Telemetry Active</div>`;
+                if (!a.last_event_at) {
+                    alertBox = `<div class="service-alert-box" style="background:rgba(148,163,184,0.1); color:var(--text3); border:1px solid var(--border);"><strong>AWAITING FIRST EVENT</strong> Enrolled forwarder awaiting log traffic</div>`;
+                } else {
+                    alertBox = `<div class="service-alert-box sab-normal"><strong>NORMAL</strong> Application Telemetry Active</div>`;
+                }
             }
 
-            const borderColor = item.isDown ? 'var(--red)' : (item.isMaint ? 'var(--cyan)' : (item.isCrit ? 'var(--red)' : (item.isTrouble ? 'var(--amber)' : '')));
+            const borderColor = typeof getAssetBorderColor === 'function' ? getAssetBorderColor(item.computedStatus) : '';
 
             if (currentDashboardView === 'list') {
                 const listBorderColor = borderColor || '#FF9900';
@@ -1178,15 +1247,15 @@ function renderServicesGrid() {
                             <div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">${escapeHtml(a.environment || 'Production')}</div>
                         </div>
                     </div>
-                    <div style="flex: 2; display: flex; gap: 16px; font-size: 11px; align-items: center;">
-                        <div><span class="list-metric-label" style="color:var(--muted)">Comps</span> <span class="list-metric-val" style="color:#FF9900; font-weight:600">${escapeHtml(compRatio)}</span></div>
-                        <div><span class="list-metric-label" style="color:var(--muted)">Rate</span> <span class="list-metric-val" style="color:#38bdf8; font-weight:600">${evMin}/m</span></div>
-                        <div><span class="list-metric-label" style="color:var(--muted)">Incidents</span> <span class="list-metric-val" style="color:${openInc>0?'var(--red)':'var(--green)'}; font-weight:600">${openInc}</span></div>
+                    <div class="list-donuts" style="flex: 2; display:flex; justify-content:space-around;">
+                        ${renderDonutGauge(compPct, 'COMPS', compColor)}
+                        ${renderDonutGauge(evMin, 'EV/MIN', '#38bdf8')}
+                        ${renderDonutGauge(incPct, 'THREAT', incColor)}
                     </div>
-                    <div style="flex: 1; font-size: 11px; text-align: center;">
+                    <div style="flex: 1.2; text-align: center;">
                         ${secBadge}
                     </div>
-                    <div style="flex: 1.5; transform: scale(0.9); transform-origin: right; display: flex; justify-content: flex-end;">
+                    <div style="flex: 2;">
                         ${alertBox}
                     </div>
                 </div>
@@ -1197,14 +1266,11 @@ function renderServicesGrid() {
                     <div>
                         <div class="service-header">
                             <div style="min-width:0; flex:1;">
-                                <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
-                                    <div class="appnode-icon" style="display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:5px; background:rgba(255,153,0,0.18); flex-shrink:0;">
-                                        ${renderAppNodeAwsIcon('#FF9900')}
-                                    </div>
-                                    <h4 class="service-title appnode-title" title="${escapeHtml(name)}">${escapeHtml(name)}</h4>
-                                    ${openInc > 0 ? `<span class="badge-alert-pill" style="background:rgba(239,68,68,0.2); color:var(--red); border:1px solid rgba(239,68,68,0.4);" title="${openInc} active incident(s)">🚨 ${openInc}</span>` : ''}
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    ${renderAppNodeAwsIcon('#FF9900')}
+                                    <div class="service-name appnode-title" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(name)}</div>
                                 </div>
-                                <div class="appnode-url" style="font-family:monospace; font-size:9.5px; margin-top:3px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="${escapeHtml(url)}">${escapeHtml(url)}</div>
+                                <div class="service-ip appnode-url" style="text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="${escapeHtml(url)}">${escapeHtml(url)}</div>
                             </div>
                             <div style="text-align:right; flex-shrink:0;">
                                 <span class="service-type-badge st-appnode">APP NODE</span>
@@ -1214,7 +1280,7 @@ function renderServicesGrid() {
 
                         <div class="donut-gauges-row">
                             ${renderDonutGauge(compPct, 'COMPS', compColor)}
-                            ${renderDonutGauge(evMin > 100 ? 100 : evMin, 'EV/MIN', '#38bdf8')}
+                            ${renderDonutGauge(evMin, 'EV/MIN', '#38bdf8')}
                             ${renderDonutGauge(incPct, 'THREAT', incColor)}
                         </div>
                     </div>
@@ -1233,7 +1299,7 @@ function renderServicesGrid() {
         }
 
         // ========================================================
-        // B. STANDARD ASSET / SERVER CARD RENDERING (UNTOUCHED)
+        // B. STANDARD ASSET / SERVER CARD RENDERING
         // ========================================================
         const s = item.raw;
         const sid = s.id;
@@ -1259,90 +1325,70 @@ function renderServicesGrid() {
         const ram = s.memory_percent || 0;
         const disk = s.disk_percent || 0;
         const alertCount = s.alert_count || 0;
-        const isCrit = s.severity === 'critical' || alertCount > 0;
-        const isMaint = s.is_maintenance || s.status === 'maintenance';
 
         // Alert box content
-        let alertBox = '<div class="service-alert-box sab-normal"> <strong>NORMAL</strong>  All checks operational</div>';
-        const isDown = s.status === 'offline' || s.status === 'down';
-        
-        if (isDown) {
-            alertBox = '<div class="service-alert-box" style="background:rgba(239, 68, 68, 0.1); color:var(--red); border:1px solid rgba(239, 68, 68, 0.3);"> <strong>OFFLINE / DOWN</strong>  Connection Lost</div>';
-        } else if (isMaint) {
-            alertBox = '<div class="service-alert-box sab-trouble"> <strong>MAINTENANCE</strong>  Scheduled Maintenance Window</div>';
-        } else if (isCrit) {
-            alertBox = `<div class="service-alert-box"> <strong>CRITICAL</strong>  ${alertCount} Alert(s)  CPU: ${cpu}%</div>`;
-        } else if (cpu > 85 || ram > 85) {
-            alertBox = `<div class="service-alert-box sab-trouble"> <strong>HIGH RESOURCE</strong>  CPU: ${cpu}% / RAM: ${ram}%</div>`;
-        }
-
-        // Border color based on status (fallback to empty so default theme border applies)
-        const borderColor = isDown ? 'var(--red)' : (isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : '')));
-
-        let vulnBadge = '';
-        const agentVer = s.agent_version || '1.5';
-        const isOldAgent = !agentVer || parseFloat(agentVer) < 1.6;
-        if (isOldAgent) {
-            vulnBadge = `<span class="sec-pill-update" title="Agent v${agentVer} (update to v1.6+ needed for vulnerability scans)">Agent v${agentVer} (Update)</span>`;
-        } else if (s.vuln_scan_status && s.vuln_scan_status.startsWith('No security data')) {
-            vulnBadge = `<span class="sec-pill-unsupported" title="No security data for this OS">No OS Data</span>`;
-        } else {
-            let rebootPart = s.reboot_required ? `<span class="sec-pill-reboot" title="System reboot required to apply security patches">REBOOT</span>` : '';
-            const crit = s.vuln_critical || 0;
-            const high = s.vuln_high || 0;
-            const med = s.vuln_medium || 0;
-            const low = s.vuln_low || 0;
-            const total = crit + high + med + low;
-            if (total > 0) {
-                vulnBadge = `${rebootPart}<span class="sec-cve-counts"><span class="sec-cve-c">C ${crit}</span><span class="sec-cve-dot">•</span><span class="sec-cve-h">H ${high}</span><span class="sec-cve-dot">•</span><span class="sec-cve-m">M ${med}</span></span>`;
-            } else if (s.last_vuln_scan) {
-                vulnBadge = `${rebootPart}<span class="sec-pill-clean">0 Known Vulns</span>`;
+        let alertBox = '<div class="service-alert-box sab-normal"> <strong>NORMAL</strong> All checks operational</div>';
+        if (item.computedStatus === 'DOWN') {
+            alertBox = '<div class="service-alert-box" style="background:rgba(239, 68, 68, 0.1); color:var(--red); border:1px solid rgba(239, 68, 68, 0.3);"> <strong>OFFLINE / DOWN</strong> Connection Lost</div>';
+        } else if (item.computedStatus === 'MAINT') {
+            alertBox = '<div class="service-alert-box sab-trouble"> <strong>MAINTENANCE</strong> Scheduled Maintenance Window</div>';
+        } else if (item.computedStatus === 'CRITICAL') {
+            alertBox = `<div class="service-alert-box"> <strong>CRITICAL</strong> ${s.critical_alert_count || alertCount || 1} Alert(s) CPU: ${cpu}%</div>`;
+        } else if (item.computedStatus === 'TROUBLE') {
+            if (cpu > 85 || ram > 85 || disk > 85) {
+                alertBox = `<div class="service-alert-box sab-trouble"> <strong>HIGH RESOURCE</strong> CPU: ${cpu}% / RAM: ${ram}%</div>`;
             } else {
-                vulnBadge = `${rebootPart}<span class="sec-pill-unscanned">Not scanned</span>`;
+                alertBox = `<div class="service-alert-box sab-trouble"> <strong>TROUBLE</strong> ${alertCount} Alert(s) CPU: ${cpu}%</div>`;
             }
         }
 
+        const borderColor = typeof getAssetBorderColor === 'function' ? getAssetBorderColor(item.computedStatus) : '';
+
+        // Security badge logic
+        let secBadge = '';
+        if (s.security_status === 'reboot_required') {
+            secBadge = `<span class="sec-pill-reboot">REBOOT</span> <span class="sec-cve-counts"><span class="sec-cve-c">C ${s.vuln_critical||10}</span> <span class="sec-cve-h">H ${s.vuln_high||10}</span> <span class="sec-cve-m">M ${s.vuln_medium||2}</span></span>`;
+        } else if (s.security_status === 'updates_pending') {
+            secBadge = `<span class="sec-pill-update">UPDATES</span> <span class="sec-cve-counts"><span class="sec-cve-c">C ${s.vuln_critical||0}</span> <span class="sec-cve-h">H ${s.vuln_high||4}</span> <span class="sec-cve-m">M ${s.vuln_medium||0}</span></span>`;
+        } else {
+            secBadge = `<span class="sec-cve-counts"><span class="sec-cve-c">C ${s.vuln_critical||0}</span> <span class="sec-cve-h">H ${s.vuln_high||0}</span> <span class="sec-cve-m">M ${s.vuln_medium||0}</span></span>`;
+        }
+
         if (currentDashboardView === 'list') {
-            const listBorderColor = borderColor || 'var(--mint)';
             return `
-            <div class="service-card-list fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="border-left: 4px solid ${listBorderColor} !important;">
+            <div class="service-card-list fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="${borderColor ? 'border-left: 4px solid ' + borderColor + ' !important;' : ''}">
                 <div style="flex: 1.5; min-width: 140px;">
-                    <div style="display:flex; align-items:center; gap:6px; margin-bottom: 2px;">
-                        ${renderAssetChassisIcon('#0284c7')}
-                        <div class="list-srv-name" style="font-weight: 700; color: var(--navy); font-size: 13px;">${name}</div>
-                    </div>
-                    <div class="list-srv-ip" style="font-size: 11px; color: var(--muted); font-family: monospace;">${ip}</div>
+                    <div class="list-srv-name" style="font-weight: 700; font-size: 13px;">${escapeHtml(name)}</div>
+                    <div class="list-srv-ip" style="font-size: 11px; font-family: monospace;">${escapeHtml(ip)}</div>
                 </div>
                 <div style="flex: 1.5; font-size: 11px; transform: scale(0.9); transform-origin: left;">
                     ${typeBadge}
                 </div>
-                <div style="flex: 2; display: flex; gap: 16px; font-size: 11px; align-items: center;">
-                    <div><span class="list-metric-label" style="color:var(--muted)">CPU</span> <span class="list-metric-val" style="color:${cpu>85?'var(--red)':cpu>70?'var(--amber)':'var(--navy)'}; font-weight:600">${cpu}%</span></div>
-                    <div><span class="list-metric-label" style="color:var(--muted)">RAM</span> <span class="list-metric-val" style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--navy)'}; font-weight:600">${ram}%</span></div>
-                    <div><span class="list-metric-label" style="color:var(--muted)">Disk</span> <span class="list-metric-val" style="color:var(--navy); font-weight:600">${disk}%</span></div>
+                <div class="list-donuts" style="flex: 2; display:flex; justify-content:space-around;">
+                    ${renderDonutGauge(cpu, 'CPU')}
+                    ${renderDonutGauge(ram, 'RAM')}
+                    ${renderDonutGauge(disk, 'DISK')}
                 </div>
-                <div style="flex: 1; font-size: 11px; text-align: center;">
-                    ${vulnBadge}
+                <div style="flex: 1.2; text-align: center;">
+                    ${secBadge}
                 </div>
-                <div style="flex: 1.5; transform: scale(0.9); transform-origin: right; display: flex; justify-content: flex-end;">
+                <div style="flex: 2;">
                     ${alertBox}
                 </div>
             </div>
             `;
         } else {
             return `
-            <div class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="${borderColor ? 'border-color:' + borderColor + ';' : ''}">
+            <div class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="${borderColor ? 'border-color:' + borderColor + ' !important;' : ''}">
                 <div>
                     <div class="service-header">
                         <div style="min-width:0; flex:1;">
-                            <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
-                                ${renderAssetChassisIcon('#0284c7')}
-                                <h4 class="service-title" title="${name}">${name}</h4>
-                                ${alertCount > 0 ? `<span class="badge-alert-pill" title="${alertCount} active alert(s)">🚨 ${alertCount}</span>` : ''}
-                            </div>
-                            <div style="font-family:monospace; font-size:9.5px; color:var(--cyan); margin-top:2px;">${ip}</div>
+                            <div class="service-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(name)}</div>
+                            <div class="service-ip" style="text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="${escapeHtml(ip)}">${escapeHtml(ip)}</div>
                         </div>
-                        <div style="text-align:right; flex-shrink:0;">${typeBadge}</div>
+                        <div style="text-align:right; flex-shrink:0;">
+                            ${typeBadge}
+                        </div>
                     </div>
 
                     <div class="donut-gauges-row">
@@ -1354,7 +1400,7 @@ function renderServicesGrid() {
 
                 <div class="card-security-bar">
                     <span class="card-sec-label">SECURITY</span>
-                    <div class="sec-badge-wrap">${vulnBadge}</div>
+                    <div class="sec-badge-wrap">${secBadge}</div>
                 </div>
 
                 <div>
@@ -1364,17 +1410,6 @@ function renderServicesGrid() {
             `;
         }
     }).join('');
-}
-
-function filterServicesByStatus(st) {
-    const sel = document.getElementById('srv-filter-select');
-    if (st === 'critical') sel.value = 'critical';
-    else if (st === 'trouble') sel.value = 'trouble';
-    else if (st === 'online') sel.value = 'online';
-    else if (st === 'maint') sel.value = 'maint';
-    else if (st === 'down') sel.value = 'down';
-    else sel.value = 'all';
-    renderServicesGrid();
 }
 
 /* Image 3 Centered Popup Modal Logic */

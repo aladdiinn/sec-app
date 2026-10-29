@@ -546,26 +546,34 @@ function formatLocal(dateStr) {
                 const id = s.id;
                 const hostname = String(s.hostname || s.name || s.ip || 'server-node').replace(/'/g, "\\'");
                 const ip = s.ip_address || s.ip || '127.0.0.1';
-                const isMaint = s.is_maintenance || (s.maintenance_until && new Date(s.maintenance_until) > new Date());
-                const statusStr = isMaint ? 'maintenance' : String(s.status || 'online').toLowerCase();
+                const unifiedStatus = typeof getUnifiedAssetStatus === 'function' ? getUnifiedAssetStatus(s) : 'UP';
+                const isDown = unifiedStatus === 'DOWN';
+                const isMaint = unifiedStatus === 'MAINT';
+                const isCrit = unifiedStatus === 'CRITICAL';
+                const isTrouble = unifiedStatus === 'TROUBLE';
                 const cpu = s.cpu_percent || 0;
                 const ram = s.memory_percent || 0;
                 const disk = s.disk_percent || 0;
                 const alertCount = s.alert_count || 0;
-                const isCrit = s.severity === 'critical' || alertCount > 0;
                 
                 const typeBadge = `<div style="text-align:right"><span class="service-type-badge st-server">LINUX SERVER</span><div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${s.agent_version || '1.5'}</div></div>`;
                 
                 let alertBox = '<div class="service-alert-box sab-normal"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>NORMAL</strong> – All checks operational</div>';
-                if (isMaint) {
+                if (isDown) {
+                    alertBox = '<div class="service-alert-box" style="background:rgba(239, 68, 68, 0.1); color:var(--red); border:1px solid rgba(239, 68, 68, 0.3);"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>OFFLINE / DOWN</strong> – Connection Lost</div>';
+                } else if (isMaint) {
                     alertBox = '<div class="service-alert-box sab-trouble"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>MAINTENANCE</strong> – Scheduled Maintenance Window</div>';
                 } else if (isCrit) {
-                    alertBox = `<div class="service-alert-box"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>CRITICAL</strong> – ${alertCount} Alert(s) • CPU: ${cpu}%</div>`;
-                } else if (cpu > 85 || ram > 85) {
-                    alertBox = `<div class="service-alert-box sab-trouble"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>HIGH RESOURCE</strong> – CPU: ${cpu}% / RAM: ${ram}%</div>`;
+                    alertBox = `<div class="service-alert-box"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>CRITICAL</strong> – ${s.critical_alert_count || alertCount || 1} Alert(s) • CPU: ${cpu}%</div>`;
+                } else if (isTrouble) {
+                    if (cpu > 85 || ram > 85 || disk > 85) {
+                        alertBox = `<div class="service-alert-box sab-trouble"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>HIGH RESOURCE</strong> – CPU: ${cpu}% / RAM: ${ram}%</div>`;
+                    } else {
+                        alertBox = `<div class="service-alert-box sab-trouble"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>TROUBLE</strong> – ${alertCount} Alert(s) • CPU: ${cpu}%</div>`;
+                    }
                 }
 
-                const borderColor = isMaint ? 'var(--cyan)' : (isCrit ? 'var(--red)' : (cpu > 85 || ram > 85 ? 'var(--amber)' : 'rgba(255,255,255,0.08)'));
+                const borderColor = typeof getAssetBorderColor === 'function' ? (getAssetBorderColor(unifiedStatus) || 'rgba(255,255,255,0.08)') : 'rgba(255,255,255,0.08)';
 
                 let vulnBadge = '';
                 const agentVer = s.agent_version || '1.5';

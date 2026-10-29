@@ -1382,6 +1382,8 @@ def get_servers(project_id=None):
             query = f"""
                 SELECT s.*, 
                        (SELECT COUNT(*) FROM alerts a WHERE a.server_id = s.id AND a.is_resolved IS NOT TRUE) as alert_count,
+                       (SELECT COUNT(*) FROM alerts a WHERE a.server_id = s.id AND a.severity = 'critical' AND a.is_resolved IS NOT TRUE) as critical_alert_count,
+                       (SELECT COUNT(*) FROM alerts a WHERE a.server_id = s.id AND (a.severity = 'warning' OR a.severity = 'high' OR a.severity = 'medium') AND a.is_resolved IS NOT TRUE) as trouble_alert_count,
                        (SELECT CASE 
                            WHEN EXISTS (SELECT 1 FROM alerts a WHERE a.server_id = s.id AND a.severity = 'critical' AND a.is_resolved IS NOT TRUE) THEN 'critical'
                            WHEN EXISTS (SELECT 1 FROM alerts a WHERE a.server_id = s.id AND (a.severity = 'warning' OR a.severity = 'high') AND a.is_resolved IS NOT TRUE) THEN 'warning'
@@ -2782,7 +2784,7 @@ def get_dashboard_counts(project_id=None):
                 app_list = app_siem_db.get_applications(conn, project_id=project_id)
                 total_apps = len(app_list)
                 for ap in app_list:
-                    dyn = (ap.get("dynamic_status") or "").upper()
+                    dyn = (ap.get("computed_status") or ap.get("dynamic_status") or "").upper()
                     if dyn == "CRITICAL":
                         crit_apps += 1
                     elif dyn == "TROUBLE":

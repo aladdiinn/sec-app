@@ -7688,21 +7688,27 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
             readiness = psycopg2.extras.Json({"monitored_files": files, "collector_version": version})
             cur.execute("""
                 UPDATE application_components
-                SET status = 'RECEIVING', 
-                    last_seen = NOW(), 
+                SET last_seen = NOW(), 
                     last_heartbeat = NOW(),
                     collector_version = %s, 
                     monitored_files = %s,
-                    config_readiness = %s
+                    config_readiness = %s,
+                    status = CASE 
+                        WHEN last_event_at >= NOW() - INTERVAL '5 minutes' THEN 'RECEIVING'
+                        WHEN last_event_at IS NOT NULL THEN 'SILENT'
+                        ELSE 'AWAITING FIRST EVENT'
+                    END
                 WHERE id = %s;
             """, (version, psycopg2.extras.Json(files), readiness, comp["id"]))
 
-            # Auto-promote application from unconfigured statuses to NORMAL
+            # Auto-promote application from unconfigured statuses only if real events were received
             cur.execute("""
                 UPDATE applications
                 SET status = 'NORMAL', updated_at = NOW()
-                WHERE id = %s AND status IN ('WAITING', 'WAITING_DATA', 'INITIALIZING', 'PENDING_APPROVAL');
-            """, (comp["application_id"],))
+                WHERE id = %s 
+                  AND status IN ('WAITING', 'WAITING_DATA', 'INITIALIZING', 'PENDING_APPROVAL')
+                  AND EXISTS (SELECT 1 FROM app_events WHERE application_id = %s);
+            """, (comp["application_id"], comp["application_id"]))
 
             conn.commit()
             return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"]}

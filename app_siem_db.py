@@ -472,54 +472,87 @@ def get_applications(conn, project_id=None, status_filter=None):
         rows = cur.fetchall()
 
         result = []
+        now_utc = datetime.now(timezone.utc)
         for r in rows:
             item = dict(r)
             total_comp = item.get("total_components", 0)
             rep_comp = item.get("reporting_components", 0)
             crit_inc = item.get("critical_incidents", 0)
             high_inc = item.get("high_incidents", 0)
-            last_dt = item.get("last_event_at") or item.get("last_seen_component")
-            item["components_ratio"] = f"{rep_comp}/{total_comp}"
-            item["last_event_formatted"] = format_time_ago(last_dt)
-            item["events_per_min"] = int(item.get("events_per_min", 0))
-            item["open_incidents"] = int(item.get("open_incidents", 0))
+            open_inc = int(item.get("open_incidents", 0))
+            last_ev = item.get("last_event_at")
+            
+            # Format last event time strictly from real events
+            if last_ev:
+                item["last_event_formatted"] = format_time_ago(last_ev)
+            else:
+                item["last_event_formatted"] = "never"
 
-            # Evaluate Dynamic Status
+            item["components_ratio"] = f"{rep_comp}/{total_comp}"
+            item["events_per_min"] = int(item.get("events_per_min", 0))
+            item["open_incidents"] = open_inc
+
+            # Stale check (> 5 mins since last event)
+            is_stale = False
+            if last_ev:
+                if last_ev.tzinfo is None:
+                    last_ev_tz = last_ev.replace(tzinfo=timezone.utc)
+                else:
+                    last_ev_tz = last_ev
+                is_stale = (now_utc - last_ev_tz).total_seconds() > 300
+
+            # Evaluate Unified Status & Telemetry Banner
             settings = item.get("settings") or {}
             is_maint = settings.get("maintenance_mode", False) or item.get("status") == "MAINT"
-            
+
             if is_maint:
                 dyn_status = "MAINT"
-                status_color = "b" # blue
+                status_color = "b"
                 status_desc = "Maintenance mode active"
+                telemetry_banner = "MAINTENANCE Scheduled Maintenance Window"
             elif crit_inc > 0:
                 dyn_status = "CRITICAL"
-                status_color = "r" # red
+                status_color = "r"
                 status_desc = f"{crit_inc} Open critical incident{'s' if crit_inc>1 else ''}"
+                telemetry_banner = f"CRITICAL {open_inc} Open Incident(s) | Threat Detected"
             elif high_inc > 0:
                 dyn_status = "TROUBLE"
-                status_color = "a" # amber
+                status_color = "a"
                 status_desc = f"{high_inc} Open high incident{'s' if high_inc>1 else ''}"
-            elif total_comp == 0 or not last_dt:
-                dyn_status = "WAITING"
-                status_color = "m" # muted/gray
-                status_desc = "Waiting for first event"
-            elif rep_comp < total_comp:
+                telemetry_banner = "TROUBLE Application anomaly detected"
+            elif not last_ev:
+                # App has never sent an event: Awaiting first event in grey, UP state
+                dyn_status = "UP"
+                status_color = "m"
+                status_desc = "Awaiting first event"
+                telemetry_banner = "AWAITING FIRST EVENT"
+            elif is_stale:
                 dyn_status = "TROUBLE"
-                status_color = "a" # amber
-                status_desc = f"{total_comp - rep_comp} component(s) silent"
+                status_color = "a"
+                time_str = format_time_ago(last_ev)
+                status_desc = f"No telemetry for {time_str}"
+                telemetry_banner = f"NO TELEMETRY: last event {time_str}"
             elif rep_comp == 0 and total_comp > 0:
                 dyn_status = "DOWN"
-                status_color = "r" # red
+                status_color = "r"
                 status_desc = "All components offline"
+                telemetry_banner = "OFFLINE / SILENT Telemetry disconnected"
+            elif rep_comp < total_comp and total_comp > 0:
+                dyn_status = "TROUBLE"
+                status_color = "a"
+                status_desc = f"{total_comp - rep_comp} component(s) silent"
+                telemetry_banner = f"TROUBLE {total_comp - rep_comp} component(s) silent"
             else:
-                dyn_status = "NORMAL"
-                status_color = "ok" # green
-                status_desc = "All components reporting"
+                dyn_status = "UP"
+                status_color = "ok"
+                status_desc = "Application Telemetry Active"
+                telemetry_banner = "NORMAL Application Telemetry Active"
 
             item["computed_status"] = dyn_status
+            item["dynamic_status"] = dyn_status
             item["status_color"] = status_color
             item["status_desc"] = status_desc
+            item["telemetry_banner"] = telemetry_banner
 
             # Apply status filter if specified
             if status_filter and status_filter.lower() not in ('all', 'all_including_pending'):
@@ -531,12 +564,37 @@ def get_applications(conn, project_id=None, status_filter=None):
         return result
 
 def get_application_by_id(conn, app_id: int):
-    """Retrieves full application details with components."""
+    """Retrieves full application details with components, enriched metrics & live status."""
     if not conn:
         return None
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT a.*, p.name as project_name
+            SELECT a.*, p.name as project_name,
+                   (
+                       SELECT COUNT(*) 
+                       FROM app_incidents inc 
+                       WHERE inc.application_id = a.id AND inc.status IN ('Open', 'Investigating')
+                   ) as open_incidents,
+                   (
+                       SELECT COUNT(*) FILTER (WHERE inc2.severity = 'critical')
+                       FROM app_incidents inc2 
+                       WHERE inc2.application_id = a.id AND inc2.status IN ('Open', 'Investigating')
+                   ) as critical_incidents,
+                   (
+                       SELECT COUNT(*) FILTER (WHERE inc3.severity = 'high')
+                       FROM app_incidents inc3 
+                       WHERE inc3.application_id = a.id AND inc3.status IN ('Open', 'Investigating')
+                   ) as high_incidents,
+                   (
+                       SELECT COALESCE(ROUND(COUNT(*)::numeric / 5.0, 0), 0)
+                       FROM app_events ev
+                       WHERE ev.application_id = a.id AND ev.event_time >= NOW() - INTERVAL '5 minutes'
+                   ) as events_per_min,
+                   (
+                       SELECT MAX(event_time)
+                       FROM app_events ev2
+                       WHERE ev2.application_id = a.id
+                   ) as last_event_at
             FROM applications a
             LEFT JOIN projects p ON a.project_id = p.id
             WHERE a.id = %s;
@@ -546,14 +604,46 @@ def get_application_by_id(conn, app_id: int):
             return None
         app = dict(row)
 
+        last_ev = app.get("last_event_at")
+        app["events_per_min"] = int(app.get("events_per_min", 0))
+        app["open_incidents"] = int(app.get("open_incidents", 0))
+        app["critical_incidents"] = int(app.get("critical_incidents", 0))
+        app["high_incidents"] = int(app.get("high_incidents", 0))
+        app["last_event_formatted"] = format_time_ago(last_ev) if last_ev else "never"
+
         cur.execute("""
-            SELECT c.*, s.hostname as linked_server_hostname, s.ip as linked_server_ip
+            SELECT c.*, s.hostname as linked_server_hostname, s.ip as linked_server_ip,
+                   (
+                       SELECT MAX(event_time)
+                       FROM app_events ev
+                       WHERE ev.component_id = c.id
+                   ) as component_last_event_at
             FROM application_components c
             LEFT JOIN servers s ON c.linked_server_id = s.id
             WHERE c.application_id = %s
             ORDER BY c.role DESC, c.node_name ASC;
         """, (app_id,))
-        app["components"] = [dict(c) for c in cur.fetchall()]
+        raw_components = cur.fetchall()
+        now_utc = datetime.now(timezone.utc)
+        components = []
+        for raw_c in raw_components:
+            c = dict(raw_c)
+            # Evaluate component live status strictly based on real events
+            c_last_ev = c.get("component_last_event_at") or c.get("last_event_at")
+            if not c_last_ev:
+                c["status"] = "AWAITING FIRST EVENT"
+            else:
+                if c_last_ev.tzinfo is None:
+                    c_ev_tz = c_last_ev.replace(tzinfo=timezone.utc)
+                else:
+                    c_ev_tz = c_last_ev
+                sec_ago = (now_utc - c_ev_tz).total_seconds()
+                if sec_ago <= 300: # received event within last 5 minutes
+                    c["status"] = "RECEIVING"
+                else:
+                    c["status"] = "SILENT"
+            components.append(c)
+        app["components"] = components
         return app
 
 def update_application(conn, app_id: int, **kwargs):
