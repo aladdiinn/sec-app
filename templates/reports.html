@@ -965,10 +965,10 @@
 
             const app = data.app || {};
             const summary = data.summary || {};
-            const events = data.events || [];
-            const incidents = data.incidents || [];
-            const users = data.users || [];
-            const capNote = data.cap_note || '';
+            const events = (data.sections && data.sections.events) || data.events || [];
+            const incidents = (data.sections && data.sections.incidents) || data.incidents || [];
+            const users = (data.sections && data.sections.users) || data.users || [];
+            const capNote = (data.summary && data.summary.cap_note) || data.cap_note || '';
 
             let content = '';
 

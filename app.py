@@ -9133,6 +9133,13 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
             selected_ids = payload.get("selected_ids", [])
             selected_type = payload.get("selected_type", "events").lower().rstrip("s")
             output_format = payload.get("format", "json").lower()
+            # Cast selected_ids to int for bigint PK comparisons (app_events.id and app_incidents.id)
+            _selected_ids_int = []
+            if selected_ids:
+                try:
+                    _selected_ids_int = [int(x) for x in selected_ids]
+                except (ValueError, TypeError):
+                    _selected_ids_int = []
 
             start_dt, end_dt, range_label = parse_timeframe_range(timeframe, from_date, to_date)
 
@@ -9149,9 +9156,9 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                 where_clauses = ["application_id = %s"]
                 params = [app_id]
 
-                if rep_type == "selected" and selected_ids:
+                if rep_type == "selected" and _selected_ids_int:
                     where_clauses.append("id = ANY(%s)")
-                    params.append(selected_ids)
+                    params.append(_selected_ids_int)
                 else:
                     where_clauses.append("event_time >= %s AND event_time <= %s")
                     params.extend([start_dt, end_dt])
@@ -9193,9 +9200,9 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                 where_clauses = ["i.application_id = %s"]
                 params = [app_id]
 
-                if rep_type == "selected" and selected_ids:
+                if rep_type == "selected" and _selected_ids_int:
                     where_clauses.append("i.id = ANY(%s)")
-                    params.append(selected_ids)
+                    params.append(_selected_ids_int)
                 else:
                     where_clauses.append("i.last_event_at >= %s AND i.last_event_at <= %s")
                     params.extend([start_dt, end_dt])
@@ -9324,6 +9331,10 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
             info_count = sum(1 for e in events_data if e.get("severity") == "info")
             open_count = sum(1 for e in events_data if (e.get("status") or "open").lower() == "open") + sum(1 for i in incidents_data if (i.get("status") or "Open") in ("Open", "Investigating")) + sum(1 for u in users_data if (u.get("status") or "open").lower() == "open")
             closed_count = sum(1 for e in events_data if (e.get("status") or "").lower() == "closed") + sum(1 for i in incidents_data if (i.get("status") or "").lower() == "closed") + sum(1 for u in users_data if (u.get("status") or "").lower() == "closed")
+            # KPI fields read by frontend
+            security_attacks_count = sum(1 for e in events_data if e.get("severity") in ("medium", "high", "critical"))
+            open_incidents_count = sum(1 for i in incidents_data if (i.get("status") or "Open") in ("Open", "Investigating", "open", "investigating"))
+            active_identities_count = len(users_data)
 
             client_ip = request.client.host if request.client else None
             db.log_audit(
@@ -9367,7 +9378,10 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                     "open": open_count,
                     "closed": closed_count,
                     "is_capped": is_capped,
-                    "cap_note": cap_note
+                    "cap_note": cap_note,
+                    "security_attacks": security_attacks_count,
+                    "open_incidents": open_incidents_count,
+                    "active_identities": active_identities_count
                 },
                 "sections": {
                     "events": events_data,

@@ -65,7 +65,7 @@
                        oninput="debouncedReloadEvents()">
                 <select id="events-filter-severity" class="glass" 
                         style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
-                        onchange="loadAppEvents(activeModalAppId)">
+                        onchange="quickFilterSeverity(this.value)">
                     <option value="all" selected>All Telemetry (Including Info Logs)</option>
                     <option value="security">Security Events (Attacks & Warnings)</option>
                     <option value="critical">Critical Only</option>
@@ -1201,7 +1201,7 @@ async function generateTabReport(tab, isPreview=false) {
 
         const data = await res.json();
         const app = data.app || {};
-        const capNote = data.cap_note || '';
+        const capNote = (data.summary && data.summary.cap_note) || data.cap_note || '';
 
         let content = '';
         if (capNote) {
@@ -1213,10 +1213,10 @@ async function generateTabReport(tab, isPreview=false) {
         }
 
         if (tab === 'events') {
-            const events = data.events || [];
+            const events = (data.sections && data.sections.events) || data.events || [];
             content += `
                 <div style="margin-bottom:24px">
-                    <h2 style="font-size:18px; color:#0f172a; margin-bottom:12px; font-weight:700">Database Telemetry Events (${data.total_events_in_db || events.length} Total Matching)</h2>
+                    <h2 style="font-size:18px; color:#0f172a; margin-bottom:12px; font-weight:700">Database Telemetry Events (${(data.summary && data.summary.total_events_in_db) || data.total_events_in_db || events.length} Total Matching)</h2>
                     <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left">
                         <thead>
                             <tr style="border-bottom:2px solid #e2e8f0; color:#64748b">
@@ -1247,7 +1247,7 @@ async function generateTabReport(tab, isPreview=false) {
                 </div>
             `;
         } else if (tab === 'incidents') {
-            const incs = data.incidents || [];
+            const incs = (data.sections && data.sections.incidents) || data.incidents || [];
             content += `
                 <div style="margin-bottom:24px">
                     <h2 style="font-size:18px; color:#0f172a; margin-bottom:12px; font-weight:700">Security Incidents (${incs.length})</h2>
@@ -1268,7 +1268,7 @@ async function generateTabReport(tab, isPreview=false) {
                 </div>
             `;
         } else if (tab === 'users') {
-            const users = data.users || [];
+            const users = (data.sections && data.sections.users) || data.users || [];
             content += `
                 <div style="margin-bottom:24px">
                     <h2 style="font-size:18px; color:#0f172a; margin-bottom:12px; font-weight:700">Observed Identities & Actors (${users.length})</h2>
@@ -1644,5 +1644,22 @@ async function deleteAppFromModal() {
     } catch(e) {
         if (typeof showToast === 'function') showToast('Network error deleting application', 'error');
     }
+}
+
+// Severity quick-filter helper
+function quickFilterSeverity(sev) {
+    const sel = document.getElementById('events-filter-severity');
+    if (sel) sel.value = sev;
+    // Highlight active badge
+    document.querySelectorAll('.sev-quick-btn').forEach(btn => {
+        btn.style.fontWeight = 'normal';
+        btn.style.boxShadow = 'none';
+    });
+    const active = document.getElementById('sevbtn-' + sev);
+    if (active) {
+        active.style.fontWeight = 'bold';
+        active.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.15)';
+    }
+    if (typeof activeModalAppId !== 'undefined') loadAppEvents(activeModalAppId);
 }
 </script>
