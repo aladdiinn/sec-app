@@ -6359,7 +6359,7 @@ async def add_suppression(request: Request):
         with conn.cursor() as cur:
             cur.execute("INSERT INTO alert_suppressions (rule_or_generator, match_field, match_type, match_value, reason, created_by) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
                         (body.get("rule_or_generator"), body.get("match_field"), body.get("match_type"), body.get("match_value"), body.get("reason"), user))
-            new_id = cur.fetchone()[0]
+            new_id = get_scalar(cur.fetchone(), 0)
         conn.commit()
         global _alert_suppressions_last_fetch
         _alert_suppressions_last_fetch = 0
@@ -8228,6 +8228,19 @@ def api_app_events(request: Request, payload: dict = Body(...)):
 # APPLICATION SIEM REPORTING, REDACTION, EXPLANATION & CLOSE WORKFLOWS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def get_scalar(row, default=0):
+    """Safely extracts first scalar from a fetchone result, supporting RealDictRow, dict, or tuple."""
+    if not row:
+        return default
+    if isinstance(row, dict):
+        if "count" in row:
+            return row["count"]
+        return next(iter(row.values()), default)
+    try:
+        return row[0]
+    except Exception:
+        return default
+
 def redact_sensitive_params(text: str) -> str:
     """
     Redacts sensitive tokens and secrets in request paths, query strings, and headers:
@@ -8515,7 +8528,7 @@ def api_get_app_events(
 
             # Total matching count in DB
             cur.execute(f"SELECT COUNT(*) FROM app_events WHERE {' AND '.join(where_clauses)};", tuple(params))
-            total_count = cur.fetchone()[0]
+            total_count = get_scalar(cur.fetchone(), 0)
 
             # Limit query
             cur.execute(f"""
@@ -8564,7 +8577,7 @@ def api_get_app_incidents(
                 where_clauses.append("i.status IN ('Closed', 'closed', 'Resolved')")
 
             cur.execute(f"SELECT COUNT(*) FROM app_incidents i WHERE {' AND '.join(where_clauses)};", tuple(params))
-            total_count = cur.fetchone()[0]
+            total_count = get_scalar(cur.fetchone(), 0)
 
             cur.execute(f"""
                 SELECT i.*, 
@@ -8776,7 +8789,7 @@ def api_close_app_incidents(request: Request, app_id: int, payload: dict = Body(
                 SELECT COUNT(*) FROM app_incidents 
                 WHERE application_id = %s AND status IN ('Open', 'Investigating');
             """, (app_id,))
-            remaining_open = cur.fetchone()[0]
+            remaining_open = get_scalar(cur.fetchone(), 0)
             if remaining_open == 0:
                 cur.execute("UPDATE applications SET status = 'NORMAL', updated_at = NOW() WHERE id = %s AND status NOT IN ('MAINT', 'WAITING');", (app_id,))
 
@@ -8929,7 +8942,7 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                             where_clauses.append("status = 'closed'")
 
                 cur.execute(f"SELECT COUNT(*) FROM app_events WHERE {' AND '.join(where_clauses)};", tuple(params))
-                total_events_in_db = cur.fetchone()[0]
+                total_events_in_db = get_scalar(cur.fetchone(), 0)
 
                 cap_limit = 5000 if output_format != "csv" else 50000
                 cur.execute(f"""
@@ -8964,7 +8977,7 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                             where_clauses.append("i.status IN ('Closed', 'closed', 'Resolved')")
 
                 cur.execute(f"SELECT COUNT(*) FROM app_incidents i WHERE {' AND '.join(where_clauses)};", tuple(params))
-                total_incidents_in_db = cur.fetchone()[0]
+                total_incidents_in_db = get_scalar(cur.fetchone(), 0)
 
                 cap_limit = 1000 if output_format != "csv" else 10000
                 cur.execute(f"""

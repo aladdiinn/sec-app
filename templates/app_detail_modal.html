@@ -742,8 +742,10 @@ async function loadAppEvents(appId, silent = false) {
         const res = await fetch(url);
         if (res.ok) {
             const data = await res.json();
-            const items = data.items || [];
-            cachedTabResponses.events = data;
+            const items = Array.isArray(data) ? data : (data.items || []);
+            const totalCount = (typeof data === 'object' && !Array.isArray(data) && data.total_count !== undefined) ? data.total_count : items.length;
+            const tfLabel = (typeof data === 'object' && !Array.isArray(data) && data.timeframe_label) ? data.timeframe_label : tf;
+            cachedTabResponses.events = { items: items, total_count: totalCount, timeframe_label: tfLabel };
             cachedEvents = items;
 
             if (items.length === 0) {
@@ -861,8 +863,10 @@ async function loadAppIncidents(appId) {
         const res = await fetch(url);
         if (res.ok) {
             const data = await res.json();
-            const incs = data.items || [];
-            cachedTabResponses.incidents = data;
+            const incs = Array.isArray(data) ? data : (data.items || []);
+            const totalCount = (typeof data === 'object' && !Array.isArray(data) && data.total_count !== undefined) ? data.total_count : incs.length;
+            const tfLabel = (typeof data === 'object' && !Array.isArray(data) && data.timeframe_label) ? data.timeframe_label : tf;
+            cachedTabResponses.incidents = { items: incs, total_count: totalCount, timeframe_label: tfLabel };
 
             if (incs.length === 0) {
                 container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3); border:1px dashed var(--border); border-radius:8px">🛡️ No security incidents match the active timeframe and status filter.</div>';
@@ -980,8 +984,10 @@ async function loadAppUsers(appId) {
         const res = await fetch(url);
         if (res.ok) {
             const data = await res.json();
-            const users = data.items || [];
-            cachedTabResponses.users = data;
+            const users = Array.isArray(data) ? data : (data.items || []);
+            const totalCount = (typeof data === 'object' && !Array.isArray(data) && data.total_count !== undefined) ? data.total_count : users.length;
+            const tfLabel = (typeof data === 'object' && !Array.isArray(data) && data.timeframe_label) ? data.timeframe_label : tf;
+            cachedTabResponses.users = { items: users, total_count: totalCount, timeframe_label: tfLabel };
 
             if (users.length === 0) {
                 container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3)">No user activity matches the active timeframe and status filter.</div>';
