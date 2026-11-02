@@ -22,7 +22,7 @@ TARGET_PORT="__TARGET_PORT__"
 TARGET_DB="__TARGET_DB__"
 
 echo "======================================================================"
-echo "    SecurePulse Application-Level SIEM Collector Setup (v1.7.1)       "
+echo "    SecurePulse Application-Level SIEM Collector Setup (v1.7.2)       "
 echo "======================================================================"
 echo "Application ID:  $APP_ID"
 echo "Node Name:       $NODE_NAME"

@@ -574,14 +574,18 @@ def ensure_app_siem_schema_columns():
                 conn.rollback()
 
             try:
-                # Startup optimization: Purge historical routine anonymous browsing noise from app_events
-                cur.execute("""
+                # Startup optimization: Purge historical routine anonymous browsing noise and static 404s from app_events
+                cur.execute(r"""
                     DELETE FROM app_events
-                    WHERE severity = 'info'
-                      AND (user_name IS NULL OR user_name IN ('-', 'Anonymous', 'null', 'None'))
-                      AND (status_code IS NULL OR status_code < 400)
-                      AND (method IS NULL OR UPPER(method) IN ('GET', 'HEAD', 'OPTIONS'))
-                      AND event_type IN ('HTTP_ACCESS', 'HTTP_REQUEST');
+                    WHERE (
+                        severity = 'info'
+                        AND (user_name IS NULL OR user_name IN ('-', 'Anonymous', 'null', 'None'))
+                        AND (status_code IS NULL OR status_code < 400)
+                        AND event_type IN ('HTTP_ACCESS', 'HTTP_REQUEST')
+                    ) OR (
+                        severity = 'info'
+                        AND url_path ~* '\.(png|jpe?g|gif|svg|ico|css|js|woff2?|ttf|eot|map|webp)($|\?)'
+                    );
                 """)
                 conn.commit()
             except Exception:
@@ -7771,7 +7775,7 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
             """, (comp["application_id"], comp["application_id"]))
 
             conn.commit()
-            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"], "latest_version": "1.7.1"}
+            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"], "latest_version": "1.7.2"}
     except Exception as e:
         logger.error(f"Error in api_app_heartbeat: {e}")
         return JSONResponse(status_code=500, content={"status": "error", "reason": str(e)})
@@ -8138,14 +8142,20 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     )
 
                     # SIEM Optimization: Only store meaningful security telemetry
-                    # Drop routine anonymous GET/HEAD requests returning 200/302/304 with no attack and no user
+                    # 1. Drop static asset requests (including 404s like missing .js/.css/.png)
+                    clean_path = raw_path.split("?")[0].lower()
+                    if STATIC_EXT_RE.search(clean_path):
+                        continue
+
+                    # 2. Drop routine anonymous operational traffic returning < 400 with no attack and no user
+                    # In legacy Java apps, both GET and POST are heavily used for read-only polling/grids/beacons
+                    # e.g. POST /tab-close-logout, POST /fullViewMDAS, POST /update-logout-time, POST /nonBilledConsumerdata
                     if severity == "info" and event_type in ("HTTP_ACCESS", "HTTP_REQUEST"):
                         has_user = bool(user and user not in ("-", "Anonymous", "null", "None"))
                         is_error_probe = bool(status_code and status_code >= 400)
-                        is_mutation = bool(method and method.upper() not in ("GET", "HEAD", "OPTIONS"))
                         
-                        if not has_user and not is_error_probe and not is_mutation:
-                            # Routine anonymous operational browsing (e.g. /dtsurveyreport, /getDivByCircle, /getStockSummary)
+                        if not has_user and not is_error_probe:
+                            # Routine anonymous operational browsing/beacons (e.g. /dtsurveyreport, /tab-close-logout, /fullViewMDAS)
                             continue
 
                     # Insert partitioned event and get its ID
