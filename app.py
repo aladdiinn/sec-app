@@ -572,6 +572,20 @@ def ensure_app_siem_schema_columns():
                 conn.commit()
             except Exception:
                 conn.rollback()
+
+            try:
+                # Startup optimization: Purge historical routine anonymous browsing noise from app_events
+                cur.execute("""
+                    DELETE FROM app_events
+                    WHERE severity = 'info'
+                      AND (user_name IS NULL OR user_name IN ('-', 'Anonymous', 'null', 'None'))
+                      AND (status_code IS NULL OR status_code < 400)
+                      AND (method IS NULL OR UPPER(method) IN ('GET', 'HEAD', 'OPTIONS'))
+                      AND event_type IN ('HTTP_ACCESS', 'HTTP_REQUEST');
+                """)
+                conn.commit()
+            except Exception:
+                conn.rollback()
     except Exception as e:
         logger.warning(f"ensure_app_siem_schema_columns note: {e}")
     finally:
@@ -7757,7 +7771,7 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
             """, (comp["application_id"], comp["application_id"]))
 
             conn.commit()
-            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"], "latest_version": "1.7.0"}
+            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"], "latest_version": "1.7.1"}
     except Exception as e:
         logger.error(f"Error in api_app_heartbeat: {e}")
         return JSONResponse(status_code=500, content={"status": "error", "reason": str(e)})
@@ -7833,6 +7847,10 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
     # 6. Authentication Failure / Brute Force
     if any(k in p_lower for k in ("login", "auth", "signin")) and status in (401, 403):
         return "LOGIN_FAILURE", "medium", "Failed User Authentication (HTTP 401)", "T1110 - Brute Force"
+
+    # 7. Expression Language / SSTI Injection Probes (e.g. ${pageContext, ${class, #{...})
+    if re.search(r'(\$\{|\%24\%7b|\#\{|\%23\%7b)(pagecontext|class|loader|application|session|param|request)', p_lower):
+        return "SSTI_PROBE", "medium", "Expression Language / Template Injection Probe", "T1190 - Exploit Public-Facing Application"
 
     return "HTTP_ACCESS", "info", None, None
 
@@ -8119,6 +8137,17 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                         method, raw_path, status_code, user, client_ip
                     )
 
+                    # SIEM Optimization: Only store meaningful security telemetry
+                    # Drop routine anonymous GET/HEAD requests returning 200/302/304 with no attack and no user
+                    if severity == "info" and event_type in ("HTTP_ACCESS", "HTTP_REQUEST"):
+                        has_user = bool(user and user not in ("-", "Anonymous", "null", "None"))
+                        is_error_probe = bool(status_code and status_code >= 400)
+                        is_mutation = bool(method and method.upper() not in ("GET", "HEAD", "OPTIONS"))
+                        
+                        if not has_user and not is_error_probe and not is_mutation:
+                            # Routine anonymous operational browsing (e.g. /dtsurveyreport, /getDivByCircle, /getStockSummary)
+                            continue
+
                     # Insert partitioned event and get its ID
                     cur.execute("""
                         INSERT INTO app_events (
@@ -8286,6 +8315,10 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     elif "warn" in cat_lower:
                         ev_type = "APP_WARN"
                         sev = "info"
+
+                    # Drop routine generic catalina.out stdout noise with no error, exception, or user
+                    if ev_type == "APP_LOG" and sev == "info" and not cat_user:
+                        continue
 
                     # Deduplication check: prevent duplicate log line floods within 60 seconds
                     cur.execute("""

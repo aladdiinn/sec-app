@@ -24,7 +24,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-COLLECTOR_VERSION = "1.7.0"
+COLLECTOR_VERSION = "1.7.1"
 
 # Configuration defaults (overridden by /etc/securepulse-app/collector.env)
 CONFIG = {
@@ -325,7 +325,8 @@ class LogFileTailer:
 STATIC_EXT_RE = re.compile(r'\.(?:png|jpe?g|gif|svg|ico|css|js|woff2?|ttf|eot|map|webp)$', re.IGNORECASE)
 ATTACK_PATH_TOKENS = (
     "..", "/etc/", "union", "select", "<script", "onerror", "${jndi", 
-    "exec", "cmd", "drop", "eval", "'", "%27", "%22", "%3c", "%3e", "0x", "sleep("
+    "exec", "cmd", "drop", "eval", "'", "%27", "%22", "%3c", "%3e", "0x", "sleep(",
+    "${", "%24%7b", "#{"
 )
 USER_QUERY_TOKENS = (
     "user=", "username=", "userName=", "userid=", "user_id=", 
