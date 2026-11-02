@@ -824,11 +824,34 @@
             </div>
 
             <!-- Sub-tabs navigation -->
-            <div style="display:flex; gap:8px; border-bottom:1px solid var(--border); margin-bottom:14px; padding-bottom:6px;">
-                <button class="filter-pill active" onclick="switchVulnSubTab('cves', this)">Vulnerabilities (<span id="cnt-sub-cves">0</span>)</button>
-                <button class="filter-pill" onclick="switchVulnSubTab('packages', this)">Installed Packages (<span id="cnt-sub-pkgs">0</span>)</button>
-                <button class="filter-pill" onclick="switchVulnSubTab('software', this)">Standalone Software (<span id="cnt-sub-sw">0</span>)</button>
-                <button class="filter-pill" onclick="switchVulnSubTab('history', this)">Change History (<span id="cnt-sub-hist">0</span>)</button>
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); margin-bottom:12px; padding-bottom:6px;">
+                <div style="display:flex; gap:8px;">
+                    <button class="filter-pill active" onclick="switchVulnSubTab('cves', this)">Vulnerabilities (<span id="cnt-sub-cves">0</span>)</button>
+                    <button class="filter-pill" onclick="switchVulnSubTab('packages', this)">Installed Packages (<span id="cnt-sub-pkgs">0</span>)</button>
+                    <button class="filter-pill" onclick="switchVulnSubTab('software', this)">Standalone Software (<span id="cnt-sub-sw">0</span>)</button>
+                    <button class="filter-pill" onclick="switchVulnSubTab('history', this)">Change History (<span id="cnt-sub-hist">0</span>)</button>
+                </div>
+            </div>
+
+            <!-- Reporting Toolbar Row -->
+            <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px; padding:6px 10px; margin-bottom:10px">
+                <label style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:6px; cursor:pointer">
+                    <input type="checkbox" id="vuln-apply-filters" checked style="accent-color:var(--cyan)"> Apply current search/severity filters to report
+                </label>
+                <div style="display:flex; gap:6px; align-items:center">
+                    <button class="btn btn-glass" onclick="generateVulnReport(true)" style="padding:4px 10px; font-size:11px">👁️ PREVIEW</button>
+                    <button class="btn btn-primary" onclick="generateVulnReport(false)" style="padding:4px 12px; font-size:11px">📄 GENERATE REPORT</button>
+                    <button class="btn btn-glass" onclick="exportVulnCSV()" title="Export to CSV" style="padding:4px 8px; font-size:11px">⬇ CSV</button>
+                </div>
+            </div>
+
+            <!-- Selection Action Bar (Shown when 1 or more rows selected) -->
+            <div id="vuln-selection-bar" style="display:none; justify-content:space-between; align-items:center; background:rgba(2,132,199,0.15); border:1px solid var(--cyan); border-radius:6px; padding:6px 12px; margin-bottom:10px">
+                <span style="font-size:11.5px; font-weight:700; color:var(--cyan)"><span id="vuln-selected-count">0</span> rows selected</span>
+                <div style="display:flex; gap:6px; align-items:center">
+                    <button class="btn btn-primary" onclick="generateVulnSelectedReport()" style="padding:4px 12px; font-size:11px">📄 Report for Selected</button>
+                    <button class="btn btn-ghost" onclick="clearVulnSelection()" style="padding:4px 8px; font-size:11px; color:var(--text3)">Clear</button>
+                </div>
             </div>
 
             <!-- SUB-PANEL 1: VULNERABILITIES LIST -->
@@ -847,6 +870,7 @@
                     <table class="vuln-table" style="font-size:11px; width:100%; border-collapse:collapse;">
                         <thead>
                             <tr>
+                                <th style="width:30px; text-align:center; padding:6px 4px; border-bottom:1px solid var(--border)"><input type="checkbox" id="vuln-select-all-cves" onchange="toggleSelectAllVulnSubtab('cves', this)" style="accent-color:var(--cyan)"></th>
                                 <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">CVE ID</th>
                                 <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Severity</th>
                                 <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Component</th>
@@ -873,6 +897,7 @@
                     <table class="vuln-table" style="font-size:11px; width:100%; border-collapse:collapse;">
                         <thead>
                             <tr>
+                                <th style="width:30px; text-align:center; padding:6px 4px; border-bottom:1px solid var(--border)"><input type="checkbox" id="vuln-select-all-packages" onchange="toggleSelectAllVulnSubtab('packages', this)" style="accent-color:var(--cyan)"></th>
                                 <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Package Name</th>
                                 <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Version</th>
                                 <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Arch</th>
@@ -888,15 +913,49 @@
 
             <!-- SUB-PANEL 3: STANDALONE SOFTWARE -->
             <div id="sub-vuln-software" style="display:none">
-                <div id="modal-sw-list" style="display:flex; flex-direction:column; gap:8px;">
-                    <!-- Populated by JS -->
+                <div style="margin-bottom:10px">
+                    <input type="text" id="modal-sw-search" oninput="filterModalSoftware()" placeholder="Search standalone software..."
+                        style="background:var(--bg3); border:1px solid var(--border); border-radius:4px; padding:6px 10px; font-size:11px; color:var(--text); width:300px;">
+                </div>
+                <div style="max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:6px;">
+                    <table class="vuln-table" style="font-size:11px; width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th style="width:30px; text-align:center; padding:6px 4px; border-bottom:1px solid var(--border)"><input type="checkbox" id="vuln-select-all-software" onchange="toggleSelectAllVulnSubtab('software', this)" style="accent-color:var(--cyan)"></th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Product</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Version</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Path / Location</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Detection Evidence</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modal-sw-table-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
             <!-- SUB-PANEL 4: CHANGE HISTORY -->
             <div id="sub-vuln-history" style="display:none">
-                <div id="modal-hist-list" style="display:flex; flex-direction:column; gap:6px;">
-                    <!-- Populated by JS -->
+                <div style="margin-bottom:10px">
+                    <input type="text" id="modal-hist-search" oninput="filterModalHistory()" placeholder="Search package change history..."
+                        style="background:var(--bg3); border:1px solid var(--border); border-radius:4px; padding:6px 10px; font-size:11px; color:var(--text); width:300px;">
+                </div>
+                <div style="max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:6px;">
+                    <table class="vuln-table" style="font-size:11px; width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th style="width:30px; text-align:center; padding:6px 4px; border-bottom:1px solid var(--border)"><input type="checkbox" id="vuln-select-all-history" onchange="toggleSelectAllVulnSubtab('history', this)" style="accent-color:var(--cyan)"></th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Action</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Package Name</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Version Transition</th>
+                                <th style="text-align:left; padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text-sub)">Detected At</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modal-hist-table-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -944,6 +1003,15 @@
                 </div>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- Vulnerability & Asset Posture Report In-Browser Preview Modal -->
+<div id="vuln-report-preview-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:10020; padding:30px; overflow-y:auto; backdrop-filter:blur(4px)">
+    <div style="background:#ffffff; max-width:920px; margin:0 auto; padding:40px; border-radius:8px; position:relative; color:#0f172a; box-shadow:0 25px 50px -12px rgba(0,0,0,0.5)">
+        <button onclick="document.getElementById('vuln-report-preview-modal').style.display='none'" style="position:absolute; top:20px; right:20px; background:#e2e8f0; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; color:#0f172a; font-weight:bold; font-size:12px">✕ Close Preview</button>
+        <button onclick="window.print()" style="position:absolute; top:20px; right:150px; background:#0284c7; color:#fff; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; font-weight:bold; font-size:12px">🖨️ Print / Save PDF</button>
+        <div id="vuln-report-preview-content"></div>
     </div>
 </div>
 
@@ -1074,6 +1142,14 @@ function renderAssetChassisIcon(color = '#0284c7') {
         <rect x="2" y="13" width="20" height="7.5" rx="3.5" fill="${color}" />
         <circle cx="15.5" cy="16.75" r="1.1" fill="#080e1a" />
         <circle cx="18.5" cy="16.75" r="1.1" fill="#080e1a" />
+    </svg>`;
+}
+
+function renderDatabaseIcon(color = '#a855f7') {
+    return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="${color}" stroke-width="2" style="vertical-align: middle; flex-shrink: 0; display: inline-block;">
+        <ellipse cx="12" cy="5" rx="9" ry="3"/>
+        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
     </svg>`;
 }
 
@@ -1418,18 +1494,22 @@ function renderServicesGrid() {
         const name = s.hostname || s.name || 'Unknown Node';
         const ip = s.ip_address || s.ip || '0.0.0.0';
         const hasAppComp = Boolean(s.app_components && s.app_components.length > 0);
-        const isDb = name.toLowerCase().includes('db') || (s.os_info||'').toLowerCase().includes('postgres');
+        const isDb = name.toLowerCase().includes('db') || (s.os_info||'').toLowerCase().includes('postgres') || (s.os_info||'').toLowerCase().includes('mysql');
         const isApp = hasAppComp || name.toLowerCase().includes('app') || name.toLowerCase().includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
         
         let rawBadge = '<span class="service-type-badge st-server">LINUX SERVER</span>';
+        let nodeIcon = renderAssetChassisIcon('#0284c7');
         if (hasAppComp) {
             const firstApp = s.app_components[0];
             const appRole = (firstApp.role || 'WEB').toUpperCase();
             rawBadge = `<span class="service-type-badge st-app" title="${escapeHtml(firstApp.app_name || 'App')}">${escapeHtml(appRole)} APP NODE</span>`;
+            nodeIcon = renderAppNodeAwsIcon('#00E5FF');
         } else if (isDb) {
             rawBadge = '<span class="service-type-badge st-database">DATABASE</span>';
+            nodeIcon = renderDatabaseIcon('#a855f7');
         } else if (isApp) {
-            rawBadge = '<span class="service-type-badge st-app">APP NODE</span>';
+            rawBadge = '<span class="service-type-badge st-app">WEB APP NODE</span>';
+            nodeIcon = renderAppNodeAwsIcon('#00E5FF');
         }
         const typeBadge = `<div style="text-align:right">${rawBadge}<div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">v${s.agent_version || '1.5'}</div></div>`;
 
@@ -1470,8 +1550,11 @@ function renderServicesGrid() {
             return `
             <div class="service-card-list fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="${borderColor ? 'border-left: 4px solid ' + borderColor + ' !important;' : ''}">
                 <div style="flex: 1.5; min-width: 140px;">
-                    <div class="list-srv-name" style="font-weight: 700; font-size: 13px;">${escapeHtml(name)}</div>
-                    <div class="list-srv-ip" style="font-size: 11px; font-family: monospace;">${escapeHtml(ip)}</div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        ${nodeIcon}
+                        <div class="list-srv-name" style="font-weight: 700; font-size: 13px;">${escapeHtml(name)}</div>
+                    </div>
+                    <div class="list-srv-ip" style="font-size: 11px; font-family: monospace; margin-left:26px;">${escapeHtml(ip)}</div>
                 </div>
                 <div style="flex: 1.5; font-size: 11px; transform: scale(0.9); transform-origin: left;">
                     ${typeBadge}
@@ -1495,8 +1578,11 @@ function renderServicesGrid() {
                 <div>
                     <div class="service-header">
                         <div style="min-width:0; flex:1;">
-                            <div class="service-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(name)}</div>
-                            <div class="service-ip" style="text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="${escapeHtml(ip)}">${escapeHtml(ip)}</div>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                ${nodeIcon}
+                                <div class="service-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(name)}</div>
+                            </div>
+                            <div class="service-ip" style="text-overflow:ellipsis; overflow:hidden; white-space:nowrap; margin-left:26px;" title="${escapeHtml(ip)}">${escapeHtml(ip)}</div>
                         </div>
                         <div style="text-align:right; flex-shrink:0;">
                             ${typeBadge}
@@ -1560,10 +1646,31 @@ async function openImage3Modal(serverId) {
         const ip = srv.ip_address || srv.ip || '0.0.0.0';
         const status = (srv.status || 'online').toLowerCase();
 
+        currentModalServer = srv;
         document.getElementById('i3-srv-name').innerText = name;
         const b = document.getElementById('i3-srv-status-badge');
         b.innerText = status.toUpperCase();
         b.style.background = status === 'online' ? 'var(--green)' : status === 'maintenance' ? 'var(--amber)' : 'var(--red)';
+
+        const mHasApp = Boolean(srv.app_components && srv.app_components.length > 0);
+        const mIsDb = name.toLowerCase().includes('db') || (srv.os_info||'').toLowerCase().includes('postgres');
+        const mIsApp = mHasApp || name.toLowerCase().includes('app') || name.toLowerCase().includes('web') || (srv.os_info||'').toLowerCase().includes('tomcat');
+        const mIconBox = document.getElementById('i3-srv-icon');
+        if (mIconBox) {
+            if (mHasApp || mIsApp) {
+                mIconBox.innerHTML = renderAppNodeAwsIcon('#00E5FF');
+                mIconBox.style.background = 'rgba(0, 229, 255, 0.15)';
+                mIconBox.style.borderColor = 'rgba(0, 229, 255, 0.3)';
+            } else if (mIsDb) {
+                mIconBox.innerHTML = renderDatabaseIcon('#a855f7');
+                mIconBox.style.background = 'rgba(168, 85, 247, 0.15)';
+                mIconBox.style.borderColor = 'rgba(168, 85, 247, 0.3)';
+            } else {
+                mIconBox.innerHTML = renderAssetChassisIcon('#0284c7');
+                mIconBox.style.background = 'rgba(2, 132, 199, 0.15)';
+                mIconBox.style.borderColor = 'rgba(2, 132, 199, 0.3)';
+            }
+        }
 
         document.getElementById('i3-srv-sub').innerText = `Host: ${ip} · OS: ${srv.os_info || 'Linux'} · Project: ${srv.project_name || 'N/A'}`;
 
@@ -2307,20 +2414,49 @@ async function saveServerNetwork(e) {
     }
 }
 
-    // --- VULNERABILITY MODAL LOGIC ---
+    // --- VULNERABILITY MODAL LOGIC & REPORTING ---
     let modalServerVulns = [];
     let modalServerPkgs = [];
     let modalServerSw = [];
     let modalServerHist = [];
     let modalActiveSevFilter = 'ALL';
+    let currentVulnSubTab = 'cves';
+    let currentModalServer = null;
+    let currentModalInventory = null;
+
+    const selectedVulnItems = {
+        cves: new Set(),
+        packages: new Set(),
+        software: new Set(),
+        history: new Set()
+    };
+
+    function ensureHtml2Pdf() {
+        return new Promise((resolve, reject) => {
+            if (window.html2pdf) return resolve(true);
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+            s.onload = () => resolve(true);
+            s.onerror = () => reject(new Error('Failed to load html2pdf library'));
+            document.head.appendChild(s);
+        });
+    }
 
     async function loadModalVulnerabilities(serverId) {
         if (!serverId) return;
         try {
             const data = await apiFetch(`/api/servers/${serverId}/inventory`);
+            currentModalInventory = data;
             const os = data.os_info || {};
             const agentVer = data.agent_version || '1.5';
             const isOldAgent = !agentVer || parseFloat(agentVer) < 1.6;
+
+            // Clear selections on fresh load
+            selectedVulnItems.cves.clear();
+            selectedVulnItems.packages.clear();
+            selectedVulnItems.software.clear();
+            selectedVulnItems.history.clear();
+            updateVulnSelectionBar();
 
             // Top bar
             const osBadge = document.getElementById('i3-vuln-os-badge');
@@ -2418,6 +2554,7 @@ async function saveServerNetwork(e) {
     }
 
     function switchVulnSubTab(tab, btn) {
+        currentVulnSubTab = tab;
         ['cves', 'packages', 'software', 'history'].forEach(t => {
             const el = document.getElementById(`sub-vuln-${t}`);
             if (el) el.style.display = (t === tab) ? 'block' : 'none';
@@ -2426,6 +2563,8 @@ async function saveServerNetwork(e) {
             btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
         }
+        updateVulnSelectionBar();
+        updateVulnSelectAllCheckbox(tab);
     }
 
     function setModalSevFilter(sev, btn) {
@@ -2443,6 +2582,84 @@ async function saveServerNetwork(e) {
 
     function filterModalPackages() {
         renderModalPackages();
+    }
+
+    function filterModalSoftware() {
+        renderModalSoftware();
+    }
+
+    function filterModalHistory() {
+        renderModalHistory();
+    }
+
+    function onVulnRowToggle(type, id, cb) {
+        if (!selectedVulnItems[type]) selectedVulnItems[type] = new Set();
+        if (cb.checked) {
+            selectedVulnItems[type].add(id);
+        } else {
+            selectedVulnItems[type].delete(id);
+        }
+        updateVulnSelectionBar();
+        updateVulnSelectAllCheckbox(type);
+    }
+
+    function toggleSelectAllVulnSubtab(type, masterCb) {
+        const isChecked = masterCb.checked;
+        if (!selectedVulnItems[type]) selectedVulnItems[type] = new Set();
+        const tableBodyId = type === 'cves' ? 'modal-vuln-table-body' :
+                            type === 'packages' ? 'modal-pkg-table-body' :
+                            type === 'software' ? 'modal-sw-table-body' : 'modal-hist-table-body';
+        const tbody = document.getElementById(tableBodyId);
+        if (!tbody) return;
+        const cbs = tbody.querySelectorAll('.vuln-cb');
+        cbs.forEach(cb => {
+            cb.checked = isChecked;
+            const id = cb.getAttribute('data-id');
+            if (id) {
+                if (isChecked) selectedVulnItems[type].add(id);
+                else selectedVulnItems[type].delete(id);
+            }
+        });
+        updateVulnSelectionBar();
+    }
+
+    function updateVulnSelectAllCheckbox(type) {
+        const masterCb = document.getElementById(`vuln-select-all-${type}`);
+        if (!masterCb) return;
+        const tableBodyId = type === 'cves' ? 'modal-vuln-table-body' :
+                            type === 'packages' ? 'modal-pkg-table-body' :
+                            type === 'software' ? 'modal-sw-table-body' : 'modal-hist-table-body';
+        const tbody = document.getElementById(tableBodyId);
+        if (!tbody) return;
+        const cbs = tbody.querySelectorAll('.vuln-cb');
+        if (!cbs.length) {
+            masterCb.checked = false;
+            return;
+        }
+        const allChecked = Array.from(cbs).every(cb => cb.checked);
+        masterCb.checked = allChecked;
+    }
+
+    function updateVulnSelectionBar() {
+        const bar = document.getElementById('vuln-selection-bar');
+        const cntEl = document.getElementById('vuln-selected-count');
+        if (!bar) return;
+        const count = selectedVulnItems[currentVulnSubTab] ? selectedVulnItems[currentVulnSubTab].size : 0;
+        if (cntEl) cntEl.innerText = count;
+        bar.style.display = count > 0 ? 'flex' : 'none';
+    }
+
+    function clearVulnSelection() {
+        if (selectedVulnItems[currentVulnSubTab]) {
+            selectedVulnItems[currentVulnSubTab].clear();
+        }
+        updateVulnSelectionBar();
+        const masterCb = document.getElementById(`vuln-select-all-${currentVulnSubTab}`);
+        if (masterCb) masterCb.checked = false;
+        if (currentVulnSubTab === 'cves') renderModalCVEs();
+        else if (currentVulnSubTab === 'packages') renderModalPackages();
+        else if (currentVulnSubTab === 'software') renderModalSoftware();
+        else if (currentVulnSubTab === 'history') renderModalHistory();
     }
 
     function renderModalCVEs() {
@@ -2463,7 +2680,8 @@ async function saveServerNetwork(e) {
         });
 
         if (!filtered.length) {
-            tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:25px; color:var(--text-sub)">No matching vulnerabilities found.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:25px; color:var(--text-sub)">No matching vulnerabilities found.</td></tr>`;
+            updateVulnSelectAllCheckbox('cves');
             return;
         }
 
@@ -2475,11 +2693,15 @@ async function saveServerNetwork(e) {
             else if (sev === 'MEDIUM') sevColor = '#eab308';
             else if (sev === 'LOW') sevColor = 'var(--cyan)';
 
+            const isChecked = selectedVulnItems.cves.has(v.cve_id);
             const kevBadge = v.is_cisa_kev ? `<span style="background:var(--red); color:#fff; font-size:9px; padding:1px 5px; border-radius:3px; margin-left:6px; font-weight:700">CISA KEV</span>` : '';
             const advisoryUrl = v.advisory_url || (v.cve_id ? `https://nvd.nist.gov/vuln/detail/${v.cve_id}` : '#');
 
             return `
             <tr>
+                <td style="text-align:center; padding:6px 4px; border-bottom:1px solid var(--border)">
+                    <input type="checkbox" class="vuln-cb" data-id="${escapeHtml(v.cve_id)}" ${isChecked ? 'checked' : ''} onchange="onVulnRowToggle('cves', '${escapeHtml(v.cve_id)}', this)" style="accent-color:var(--cyan)">
+                </td>
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)">
                     <a href="${advisoryUrl}" target="_blank" style="color:var(--cyan); font-family:var(--mono); font-weight:700; text-decoration:none">
                         ${escapeHtml(v.cve_id)}
@@ -2491,11 +2713,12 @@ async function saveServerNetwork(e) {
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><span style="font-family:var(--mono); color:var(--red)">${escapeHtml(v.installed_version)}</span></td>
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong style="font-family:var(--mono); color:var(--green)">${escapeHtml(v.fixed_version || 'None')}</strong></td>
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong>${v.cvss_score ? v.cvss_score.toFixed(1) : '--'}</strong></td>
-                <td style="padding:6px 10px; border-bottom:1px solid var(--border); min-width:260px; max-width:440px; font-size:11.5px; line-height:1.45; color:var(--text); word-break:break-word;">
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); min-width:240px; max-width:420px; font-size:11.5px; line-height:1.45; color:var(--text); word-break:break-word;">
                     ${escapeHtml(v.summary || v.advisory_id || 'Fix available in upstream repository')}
                 </td>
             </tr>`;
         }).join('');
+        updateVulnSelectAllCheckbox('cves');
     }
 
     function renderModalPackages() {
@@ -2510,61 +2733,86 @@ async function saveServerNetwork(e) {
         });
 
         if (!filtered.length) {
-            tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:25px; color:var(--text-sub)">No packages found.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:25px; color:var(--text-sub)">No packages found.</td></tr>`;
+            updateVulnSelectAllCheckbox('packages');
             return;
         }
 
-        tbody.innerHTML = filtered.slice(0, 300).map(p => `
+        tbody.innerHTML = filtered.slice(0, 300).map(p => {
+            const isChecked = selectedVulnItems.packages.has(p.name);
+            return `
             <tr>
+                <td style="text-align:center; padding:6px 4px; border-bottom:1px solid var(--border)">
+                    <input type="checkbox" class="vuln-cb" data-id="${escapeHtml(p.name)}" ${isChecked ? 'checked' : ''} onchange="onVulnRowToggle('packages', '${escapeHtml(p.name)}', this)" style="accent-color:var(--cyan)">
+                </td>
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong style="color:var(--text)">${escapeHtml(p.name)}</strong></td>
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><span style="font-family:var(--mono); color:var(--cyan)">${escapeHtml(p.version)}</span></td>
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><span style="color:var(--text-sub)">${escapeHtml(p.arch || '--')}</span></td>
                 <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><span style="color:var(--text3); font-family:var(--mono)">${escapeHtml(p.source_name || p.name)}</span></td>
-            </tr>
-        `).join('');
+            </tr>`;
+        }).join('');
+        updateVulnSelectAllCheckbox('packages');
     }
 
     function renderModalSoftware() {
-        const container = document.getElementById('modal-sw-list');
-        if (!container) return;
-        if (!modalServerSw.length) {
-            container.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-sub); font-size:12px">No standalone Tomcat, Java or PostgreSQL installations discovered.</div>`;
+        const tbody = document.getElementById('modal-sw-table-body');
+        if (!tbody) return;
+        const q = (document.getElementById('modal-sw-search')?.value || '').toLowerCase().trim();
+        const filtered = modalServerSw.filter(sw => {
+            const p = (sw.product || sw.software_name || '').toLowerCase();
+            const v = (sw.version || '').toLowerCase();
+            const loc = (sw.path || sw.install_path || '').toLowerCase();
+            return !q || p.includes(q) || v.includes(q) || loc.includes(q);
+        });
+
+        if (!filtered.length) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:25px; color:var(--text-sub)">No standalone Tomcat, Java or PostgreSQL installations discovered.</td></tr>`;
+            updateVulnSelectAllCheckbox('software');
             return;
         }
 
-        container.innerHTML = modalServerSw.map(sw => {
+        tbody.innerHTML = filtered.map((sw, idx) => {
+            const pName = sw.product || sw.software_name || 'Software';
+            const key = pName + '::' + (sw.version || idx);
+            const isChecked = selectedVulnItems.software.has(key);
             let icon = '📦';
-            const sn = (sw.product || sw.software_name || '').toLowerCase();
-            if (sn.includes('tomcat')) icon = '☕';
-            else if (sn.includes('java')) icon = '☕';
+            const sn = pName.toLowerCase();
+            if (sn.includes('tomcat') || sn.includes('java')) icon = '☕';
             else if (sn.includes('postgres')) icon = '🐘';
 
             return `
-            <div style="background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center">
-                <div style="display:flex; align-items:center; gap:12px">
-                    <span style="font-size:20px">${icon}</span>
-                    <div>
-                        <div style="font-size:12px; font-weight:700; color:var(--text)">${escapeHtml(sw.product || sw.software_name)}</div>
-                        <div style="font-size:10px; color:var(--cyan); font-family:var(--mono)">${escapeHtml(sw.path || sw.install_path || '')}</div>
-                    </div>
-                </div>
-                <div style="text-align:right">
-                    <div style="font-size:12px; font-family:var(--mono); font-weight:700; color:var(--green)">v${escapeHtml(sw.version || 'unknown')}</div>
-                    <div style="font-size:9px; color:var(--text3)">${escapeHtml(sw.detection_evidence || sw.source_detection || 'agent discovery')}</div>
-                </div>
-            </div>`;
+            <tr>
+                <td style="text-align:center; padding:6px 4px; border-bottom:1px solid var(--border)">
+                    <input type="checkbox" class="vuln-cb" data-id="${escapeHtml(key)}" ${isChecked ? 'checked' : ''} onchange="onVulnRowToggle('software', '${escapeHtml(key)}', this)" style="accent-color:var(--cyan)">
+                </td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong style="color:var(--text); display:inline-flex; align-items:center; gap:6px;"><span>${icon}</span> ${escapeHtml(pName)}</strong></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong style="font-family:var(--mono); color:var(--green)">v${escapeHtml(sw.version || 'unknown')}</strong></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><span style="font-family:var(--mono); color:var(--cyan); font-size:10.5px">${escapeHtml(sw.path || sw.install_path || '-')}</span></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); font-size:10px; color:var(--text-sub)">${escapeHtml(sw.detection_evidence || sw.source_detection || 'agent discovery')}</td>
+            </tr>`;
         }).join('');
+        updateVulnSelectAllCheckbox('software');
     }
 
     function renderModalHistory() {
-        const container = document.getElementById('modal-hist-list');
-        if (!container) return;
-        if (!modalServerHist.length) {
-            container.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-sub); font-size:12px">No recent package change events recorded for this node.</div>`;
+        const tbody = document.getElementById('modal-hist-table-body');
+        if (!tbody) return;
+        const q = (document.getElementById('modal-hist-search')?.value || '').toLowerCase().trim();
+        const filtered = modalServerHist.filter(h => {
+            const p = (h.package_name || '').toLowerCase();
+            const t = (h.change_type || '').toLowerCase();
+            return !q || p.includes(q) || t.includes(q);
+        });
+
+        if (!filtered.length) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:25px; color:var(--text-sub)">No recent package change events recorded for this node.</td></tr>`;
+            updateVulnSelectAllCheckbox('history');
             return;
         }
 
-        container.innerHTML = modalServerHist.map(h => {
+        tbody.innerHTML = filtered.map((h, idx) => {
+            const key = (h.package_name || '') + '::' + (h.detected_at || idx);
+            const isChecked = selectedVulnItems.history.has(key);
             let typeColor = 'var(--cyan)';
             let typeLabel = (h.change_type || 'CHANGE').toUpperCase();
             if (typeLabel === 'UPGRADED') typeColor = 'var(--green)';
@@ -2572,19 +2820,413 @@ async function saveServerNetwork(e) {
             else if (typeLabel === 'INSTALLED') typeColor = '#38bdf8';
 
             return `
-            <div style="background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:10px 14px; display:flex; justify-content:space-between; align-items:center">
-                <div>
-                    <span style="font-size:9px; font-weight:700; padding:2px 6px; border-radius:3px; background:rgba(255,255,255,0.06); color:${typeColor}; margin-right:8px">${typeLabel}</span>
-                    <strong style="font-size:12px; color:var(--text)">${escapeHtml(h.package_name)}</strong>
-                    <span style="font-size:11px; font-family:var(--mono); color:var(--text-sub); margin-left:8px">
-                        ${h.old_version ? escapeHtml(h.old_version) + ' ➔ ' : ''}${escapeHtml(h.new_version || '')}
-                    </span>
-                </div>
-                <div style="font-size:10px; color:var(--text3)">
-                    ${h.detected_at ? new Date(h.detected_at).toLocaleString() : ''}
-                </div>
-            </div>`;
+            <tr>
+                <td style="text-align:center; padding:6px 4px; border-bottom:1px solid var(--border)">
+                    <input type="checkbox" class="vuln-cb" data-id="${escapeHtml(key)}" ${isChecked ? 'checked' : ''} onchange="onVulnRowToggle('history', '${escapeHtml(key)}', this)" style="accent-color:var(--cyan)">
+                </td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)">
+                    <span style="font-size:9.5px; font-weight:700; padding:2px 6px; border-radius:3px; background:rgba(255,255,255,0.06); color:${typeColor}">${typeLabel}</span>
+                </td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border)"><strong style="color:var(--text)">${escapeHtml(h.package_name)}</strong></td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); font-family:var(--mono); font-size:10.5px; color:var(--text-sub)">
+                    ${h.old_version ? escapeHtml(h.old_version) + ' ➔ ' : ''}<strong style="color:var(--green)">${escapeHtml(h.new_version || '')}</strong>
+                </td>
+                <td style="padding:6px 10px; border-bottom:1px solid var(--border); font-size:10px; color:var(--text-sub)">
+                    ${h.detected_at ? new Date(h.detected_at).toLocaleString() : '-'}
+                </td>
+            </tr>`;
         }).join('');
+        updateVulnSelectAllCheckbox('history');
+    }
+
+    function generateVulnSelectedReport() {
+        generateVulnReport(false, true);
+    }
+
+    function generateVulnReport(isPreview = false, selectedOnly = false) {
+        if (!activeModalServerId) return;
+        const srv = currentModalServer || {};
+        const srvName = srv.hostname || srv.name || 'node';
+        const srvIp = srv.ip_address || srv.ip || '0.0.0.0';
+        const srvOs = srv.os_info || (currentModalInventory?.os_info?.pretty_name) || 'Linux';
+        const agentVer = srv.agent_version || (currentModalInventory?.agent_version) || '1.6';
+        const applyFilters = document.getElementById('vuln-apply-filters')?.checked ?? true;
+
+        const subTab = currentVulnSubTab;
+        const selectedSet = selectedVulnItems[subTab] || new Set();
+        const hasSelection = selectedSet.size > 0;
+        const isOnlySelected = selectedOnly || hasSelection;
+
+        let title = '';
+        let subtitle = `Target Asset: ${srvName} (${srvIp}) | OS: ${srvOs} | Agent: v${agentVer}`;
+        let meta = `Asset ID: #${activeModalServerId} | Generated: ${new Date().toLocaleString()} | Scope: ${isOnlySelected ? `Selected ${selectedSet.size} Item(s)` : 'Full Subtab Audit'}`;
+        let content = '';
+
+        if (subTab === 'cves') {
+            title = `${srvName} - Vulnerability & Security Posture Report`;
+            const q = (document.getElementById('modal-cve-search')?.value || '').toLowerCase().trim();
+            let items = modalServerVulns;
+            if (isOnlySelected) {
+                items = items.filter(v => selectedSet.has(v.cve_id));
+            } else if (applyFilters) {
+                items = items.filter(v => {
+                    const matchesQuery = !q ||
+                        (v.cve_id && v.cve_id.toLowerCase().includes(q)) ||
+                        (v.package_name && v.package_name.toLowerCase().includes(q)) ||
+                        (v.summary && v.summary.toLowerCase().includes(q));
+                    let matchesSev = true;
+                    if (modalActiveSevFilter !== 'ALL') matchesSev = (v.severity || '').toUpperCase() === modalActiveSevFilter;
+                    return matchesQuery && matchesSev;
+                });
+            }
+
+            let crit = 0, high = 0, med = 0, kev = 0;
+            items.forEach(v => {
+                const s = (v.severity || '').toUpperCase();
+                if (s === 'CRITICAL') crit++;
+                else if (s === 'HIGH') high++;
+                else if (s === 'MEDIUM') med++;
+                if (v.is_cisa_kev) kev++;
+            });
+
+            content += `
+                <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:10px; margin-bottom:24px;">
+                    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px; text-align:center;">
+                        <div style="font-size:22px; font-weight:800; color:#0f172a;">${items.length}</div>
+                        <div style="font-size:9.5px; font-weight:700; color:#64748b;">TOTAL VULNS</div>
+                    </div>
+                    <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:12px; text-align:center;">
+                        <div style="font-size:22px; font-weight:800; color:#dc2626;">${crit}</div>
+                        <div style="font-size:9.5px; font-weight:700; color:#991b1b;">CRITICAL</div>
+                    </div>
+                    <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:12px; text-align:center;">
+                        <div style="font-size:22px; font-weight:800; color:#d97706;">${high}</div>
+                        <div style="font-size:9.5px; font-weight:700; color:#92400e;">HIGH</div>
+                    </div>
+                    <div style="background:#fefce8; border:1px solid #fef08a; border-radius:6px; padding:12px; text-align:center;">
+                        <div style="font-size:22px; font-weight:800; color:#ca8a04;">${med}</div>
+                        <div style="font-size:9.5px; font-weight:700; color:#854d0e;">MEDIUM</div>
+                    </div>
+                    <div style="background:#faf5ff; border:1px solid #e9d5ff; border-radius:6px; padding:12px; text-align:center;">
+                        <div style="font-size:22px; font-weight:800; color:#9333ea;">${kev}</div>
+                        <div style="font-size:9.5px; font-weight:700; color:#6b21a8;">CISA KEV</div>
+                    </div>
+                </div>
+            `;
+
+            if (isOnlySelected) {
+                content += `<h3 style="font-size:16px; color:#0f172a; margin-bottom:14px; font-weight:700">Detailed Explanations for ${items.length} Selected Vulnerabilities</h3>`;
+                items.forEach((v, idx) => {
+                    const sev = (v.severity || 'MEDIUM').toUpperCase();
+                    const sevBg = sev === 'CRITICAL' ? '#fee2e2' : sev === 'HIGH' ? '#fef3c7' : '#fef08a';
+                    const sevCol = sev === 'CRITICAL' ? '#dc2626' : sev === 'HIGH' ? '#d97706' : '#854d0e';
+                    const advisoryUrl = v.advisory_url || (v.cve_id ? `https://nvd.nist.gov/vuln/detail/${v.cve_id}` : '#');
+
+                    content += `
+                    <div style="border:1.5px solid #e2e8f0; border-radius:8px; padding:16px; margin-bottom:14px; background:#ffffff; page-break-inside:avoid">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                            <div>
+                                <span style="font-size:15px; font-weight:800; color:#0f172a">#${idx+1}. ${escapeHtml(v.cve_id)}</span>
+                                ${v.is_cisa_kev ? '<span style="background:#dc2626; color:#fff; font-size:9px; padding:2px 6px; border-radius:3px; margin-left:6px; font-weight:bold">CISA KEV</span>' : ''}
+                            </div>
+                            <div>
+                                <span style="padding:2px 8px; border-radius:4px; font-size:10.5px; font-weight:bold; background:${sevBg}; color:${sevCol}">${sev}</span>
+                                <span style="margin-left:6px; font-size:11px; font-weight:bold; color:#475569">CVSS ${v.cvss_score ? v.cvss_score.toFixed(1) : '--'}</span>
+                            </div>
+                        </div>
+                        <div style="font-size:12px; color:#334155; margin-bottom:8px; line-height:1.5">
+                            <strong>Threat Summary:</strong> ${escapeHtml(v.summary || 'Vulnerability matched against distribution security advisory.')}
+                        </div>
+                        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px 12px; font-size:11px; display:grid; grid-template-columns:1fr 1fr; gap:6px; color:#0f172a; margin-bottom:8px;">
+                            <div>Affected Component: <b>${escapeHtml(v.package_name)}</b></div>
+                            <div>Installed Version: <span style="font-family:monospace; color:#dc2626; font-weight:bold">${escapeHtml(v.installed_version)}</span></div>
+                            <div>Fixed Version: <span style="font-family:monospace; color:#16a34a; font-weight:bold">${escapeHtml(v.fixed_version || 'None')}</span></div>
+                            <div>Advisory Reference: <a href="${advisoryUrl}" target="_blank" style="color:#0284c7; text-decoration:none; font-family:monospace">${escapeHtml(v.advisory_id || v.cve_id)}</a></div>
+                        </div>
+                        <div style="font-size:11px; color:#059669; background:#ecfdf5; border:1px solid #a7f3d0; padding:8px 12px; border-radius:4px">
+                            <strong>Remediation Guidance:</strong> Upgrade package <code>${escapeHtml(v.package_name)}</code> to version <code>${escapeHtml(v.fixed_version || 'latest')}</code> using <code>apt-get --only-upgrade install ${escapeHtml(v.package_name)}</code>.
+                        </div>
+                    </div>
+                    `;
+                });
+            }
+
+            content += `
+                <h3 style="font-size:16px; color:#0f172a; margin-top:20px; margin-bottom:12px; font-weight:700">Vulnerabilities Audit Findings (${items.length} Records)</h3>
+                <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left">
+                    <thead>
+                        <tr style="border-bottom:2px solid #e2e8f0; color:#64748b">
+                            <th style="padding:6px 8px">CVE ID</th>
+                            <th style="padding:6px 8px">Severity</th>
+                            <th style="padding:6px 8px">Component</th>
+                            <th style="padding:6px 8px">Installed</th>
+                            <th style="padding:6px 8px">Fixed Version</th>
+                            <th style="padding:6px 8px">CVSS</th>
+                            <th style="padding:6px 8px">Summary</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.map(v => {
+                            const sev = (v.severity || 'MEDIUM').toUpperCase();
+                            const sevBg = sev === 'CRITICAL' ? '#fee2e2' : sev === 'HIGH' ? '#fef3c7' : '#fef08a';
+                            const sevCol = sev === 'CRITICAL' ? '#dc2626' : sev === 'HIGH' ? '#d97706' : '#854d0e';
+                            return `
+                            <tr style="border-bottom:1px solid #f1f5f9">
+                                <td style="padding:6px 8px; font-weight:bold; color:#0284c7; font-family:monospace">${escapeHtml(v.cve_id)}</td>
+                                <td style="padding:6px 8px"><span style="padding:1px 6px; border-radius:3px; font-size:9.5px; font-weight:bold; background:${sevBg}; color:${sevCol}">${sev}</span></td>
+                                <td style="padding:6px 8px; font-weight:bold">${escapeHtml(v.package_name)}</td>
+                                <td style="padding:6px 8px; font-family:monospace; color:#dc2626">${escapeHtml(v.installed_version)}</td>
+                                <td style="padding:6px 8px; font-family:monospace; color:#16a34a; font-weight:bold">${escapeHtml(v.fixed_version || 'None')}</td>
+                                <td style="padding:6px 8px; font-weight:bold">${v.cvss_score ? v.cvss_score.toFixed(1) : '--'}</td>
+                                <td style="padding:6px 8px; font-size:10.5px; color:#475569; max-width:280px">${escapeHtml(v.summary || 'Patch available')}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            `;
+        } else if (subTab === 'packages') {
+            title = `${srvName} - Installed Packages Inventory Report`;
+            const q = (document.getElementById('modal-pkg-search')?.value || '').toLowerCase().trim();
+            let items = modalServerPkgs;
+            if (isOnlySelected) {
+                items = items.filter(p => selectedSet.has(p.name));
+            } else if (applyFilters && q) {
+                items = items.filter(p => (p.name && p.name.toLowerCase().includes(q)) || (p.version && p.version.toLowerCase().includes(q)));
+            }
+
+            content += `
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <strong style="font-size:14px; color:#0f172a">Total Packages Audited:</strong> <span style="font-size:16px; font-weight:bold; color:#0284c7">${items.length}</span>
+                    </div>
+                    <div style="font-size:12px; color:#64748b">Filter: ${q ? `"${escapeHtml(q)}"` : 'All Packages'}</div>
+                </div>
+                <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left">
+                    <thead>
+                        <tr style="border-bottom:2px solid #e2e8f0; color:#64748b">
+                            <th style="padding:6px 8px">Package Name</th>
+                            <th style="padding:6px 8px">Installed Version</th>
+                            <th style="padding:6px 8px">Architecture</th>
+                            <th style="padding:6px 8px">Source Package</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.slice(0, 500).map(p => `
+                        <tr style="border-bottom:1px solid #f1f5f9">
+                            <td style="padding:6px 8px; font-weight:bold; color:#0f172a">${escapeHtml(p.name)}</td>
+                            <td style="padding:6px 8px; font-family:monospace; color:#0284c7">${escapeHtml(p.version)}</td>
+                            <td style="padding:6px 8px; color:#64748b">${escapeHtml(p.arch || '-')}</td>
+                            <td style="padding:6px 8px; font-family:monospace; color:#475569">${escapeHtml(p.source_name || p.name)}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+                ${items.length > 500 ? `<div style="font-size:11px; color:#64748b; text-align:center; padding:12px">Showing first 500 packages in print view. Export CSV for all ${items.length} records.</div>` : ''}
+            `;
+        } else if (subTab === 'software') {
+            title = `${srvName} - Standalone Software Discovery Report`;
+            const q = (document.getElementById('modal-sw-search')?.value || '').toLowerCase().trim();
+            let items = modalServerSw;
+            if (isOnlySelected) {
+                items = items.filter((sw, idx) => selectedSet.has((sw.product || sw.software_name || '') + '::' + (sw.version || idx)));
+            } else if (applyFilters && q) {
+                items = items.filter(sw => {
+                    const p = (sw.product || sw.software_name || '').toLowerCase();
+                    const v = (sw.version || '').toLowerCase();
+                    return p.includes(q) || v.includes(q);
+                });
+            }
+
+            content += `
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px; margin-bottom:20px;">
+                    <strong style="font-size:14px; color:#0f172a">Discovered Standalone Software Installations:</strong> <span style="font-size:16px; font-weight:bold; color:#0284c7">${items.length}</span>
+                </div>
+                <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left">
+                    <thead>
+                        <tr style="border-bottom:2px solid #e2e8f0; color:#64748b">
+                            <th style="padding:6px 8px">Product / Software</th>
+                            <th style="padding:6px 8px">Version</th>
+                            <th style="padding:6px 8px">Path / Installation Location</th>
+                            <th style="padding:6px 8px">Detection Evidence</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.map(sw => `
+                        <tr style="border-bottom:1px solid #f1f5f9">
+                            <td style="padding:6px 8px; font-weight:bold; color:#0f172a">${escapeHtml(sw.product || sw.software_name)}</td>
+                            <td style="padding:6px 8px; font-family:monospace; color:#16a34a; font-weight:bold">v${escapeHtml(sw.version || 'unknown')}</td>
+                            <td style="padding:6px 8px; font-family:monospace; color:#0284c7; font-size:10.5px">${escapeHtml(sw.path || sw.install_path || '-')}</td>
+                            <td style="padding:6px 8px; font-size:10px; color:#64748b">${escapeHtml(sw.detection_evidence || sw.source_detection || 'agent discovery')}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            `;
+        } else if (subTab === 'history') {
+            title = `${srvName} - Package Change History Audit Report`;
+            const q = (document.getElementById('modal-hist-search')?.value || '').toLowerCase().trim();
+            let items = modalServerHist;
+            if (isOnlySelected) {
+                items = items.filter((h, idx) => selectedSet.has((h.package_name || '') + '::' + (h.detected_at || idx)));
+            } else if (applyFilters && q) {
+                items = items.filter(h => (h.package_name || '').toLowerCase().includes(q) || (h.change_type || '').toLowerCase().includes(q));
+            }
+
+            content += `
+                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px; margin-bottom:20px;">
+                    <strong style="font-size:14px; color:#0f172a">Package Modification Events Recorded:</strong> <span style="font-size:16px; font-weight:bold; color:#0284c7">${items.length}</span>
+                </div>
+                <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left">
+                    <thead>
+                        <tr style="border-bottom:2px solid #e2e8f0; color:#64748b">
+                            <th style="padding:6px 8px">Action</th>
+                            <th style="padding:6px 8px">Package Name</th>
+                            <th style="padding:6px 8px">Version Transition</th>
+                            <th style="padding:6px 8px">Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.map(h => {
+                            const typeLabel = (h.change_type || 'CHANGE').toUpperCase();
+                            const color = typeLabel === 'UPGRADED' ? '#16a34a' : typeLabel === 'REMOVED' ? '#dc2626' : '#0284c7';
+                            return `
+                            <tr style="border-bottom:1px solid #f1f5f9">
+                                <td style="padding:6px 8px"><span style="font-size:9.5px; font-weight:bold; padding:2px 6px; border-radius:3px; background:#f1f5f9; color:${color}">${typeLabel}</span></td>
+                                <td style="padding:6px 8px; font-weight:bold; color:#0f172a">${escapeHtml(h.package_name)}</td>
+                                <td style="padding:6px 8px; font-family:monospace; color:#475569">${h.old_version ? escapeHtml(h.old_version) + ' ➔ ' : ''}<b style="color:#16a34a">${escapeHtml(h.new_version || '')}</b></td>
+                                <td style="padding:6px 8px; font-size:10.5px; color:#64748b">${h.detected_at ? new Date(h.detected_at).toLocaleString() : '-'}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        renderVulnReportPDF(title, subtitle, meta, content, isPreview);
+    }
+
+    function renderVulnReportPDF(title, subtitle, meta, htmlContent, isPreview=false) {
+        const out = `
+            <div class="pdf-header" style="border-bottom:2px solid #0284c7; padding-bottom:20px; margin-bottom:25px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <div>
+                        <h1 style="font-size:24px; color:#0f172a; margin:0 0 5px 0; font-weight:800;">${title}</h1>
+                        <div style="font-size:13.5px; color:#0284c7; font-weight:600;">${subtitle}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <span style="display:inline-block; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:bold; background:#e0f2fe; color:#0369a1;">BSmart SOC Asset Security</span>
+                    </div>
+                </div>
+                <div style="margin-top:14px; color:#64748b; font-size:11.5px; white-space:pre-wrap;">${meta}</div>
+            </div>
+            ${htmlContent}
+            <div class="pdf-footer" style="margin-top:35px; padding-top:18px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; font-size:11px; color:#94a3b8;">
+                <div>BSmart SOC · Asset Vulnerability & Posture Report</div>
+                <div>${isPreview ? 'Preview Mode' : 'Confidential — Internal SOC Audit'}</div>
+            </div>
+        `;
+
+        const previewModal = document.getElementById('vuln-report-preview-modal') || document.getElementById('app-detail-preview-modal');
+        const previewContent = document.getElementById('vuln-report-preview-content') || document.getElementById('app-detail-preview-content');
+        if (!previewContent || !previewModal) return;
+
+        previewContent.innerHTML = out;
+
+        if (isPreview) {
+            previewModal.style.display = 'block';
+        } else {
+            ensureHtml2Pdf().then(() => {
+                const element = previewContent;
+                element.style.padding = '20px';
+                element.style.background = '#ffffff';
+                element.style.color = '#0f172a';
+
+                window.html2pdf().set({
+                    margin: [10, 10, 10, 10],
+                    filename: `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`,
+                    image: { type: 'jpeg', quality: 0.98 },
+                    html2canvas: { scale: 2, useCORS: true },
+                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                }).from(element).save().then(() => {
+                    element.style.padding = '0';
+                });
+            }).catch(err => {
+                alert('PDF generation failed: ' + err.message);
+            });
+        }
+    }
+
+    function exportVulnCSV() {
+        if (!activeModalServerId) return;
+        const srv = currentModalServer || {};
+        const srvName = (srv.hostname || srv.name || 'node').replace(/[^a-z0-9_-]/gi, '_');
+        const subTab = currentVulnSubTab;
+        const selectedSet = selectedVulnItems[subTab] || new Set();
+        const hasSelection = selectedSet.size > 0;
+        const applyFilters = document.getElementById('vuln-apply-filters')?.checked ?? true;
+
+        let rows = [];
+        let filename = `${srvName}_${subTab}_report.csv`;
+
+        if (subTab === 'cves') {
+            const q = (document.getElementById('modal-cve-search')?.value || '').toLowerCase().trim();
+            let items = modalServerVulns;
+            if (hasSelection) items = items.filter(v => selectedSet.has(v.cve_id));
+            else if (applyFilters) {
+                items = items.filter(v => {
+                    const matchesQuery = !q || (v.cve_id && v.cve_id.toLowerCase().includes(q)) || (v.package_name && v.package_name.toLowerCase().includes(q));
+                    let matchesSev = true;
+                    if (modalActiveSevFilter !== 'ALL') matchesSev = (v.severity || '').toUpperCase() === modalActiveSevFilter;
+                    return matchesQuery && matchesSev;
+                });
+            }
+            rows.push(["CVE ID", "Severity", "Component", "Installed Version", "Fixed Version", "CVSS Score", "CISA KEV", "Summary", "Advisory URL"]);
+            items.forEach(v => {
+                rows.push([
+                    v.cve_id || "",
+                    v.severity || "",
+                    v.package_name || "",
+                    v.installed_version || "",
+                    v.fixed_version || "",
+                    v.cvss_score || "",
+                    v.is_cisa_kev ? "YES" : "NO",
+                    (v.summary || "").replace(/"/g, '""'),
+                    v.advisory_url || ""
+                ]);
+            });
+        } else if (subTab === 'packages') {
+            const q = (document.getElementById('modal-pkg-search')?.value || '').toLowerCase().trim();
+            let items = modalServerPkgs;
+            if (hasSelection) items = items.filter(p => selectedSet.has(p.name));
+            else if (applyFilters && q) items = items.filter(p => (p.name && p.name.toLowerCase().includes(q)) || (p.version && p.version.toLowerCase().includes(q)));
+            rows.push(["Package Name", "Version", "Architecture", "Source Package"]);
+            items.forEach(p => {
+                rows.push([p.name || "", p.version || "", p.arch || "", p.source_name || p.name || ""]);
+            });
+        } else if (subTab === 'software') {
+            let items = modalServerSw;
+            if (hasSelection) items = items.filter((sw, idx) => selectedSet.has((sw.product || sw.software_name || '') + '::' + (sw.version || idx)));
+            rows.push(["Product", "Version", "Path", "Detection Evidence"]);
+            items.forEach(sw => {
+                rows.push([sw.product || sw.software_name || "", sw.version || "", sw.path || sw.install_path || "", sw.detection_evidence || ""]);
+            });
+        } else if (subTab === 'history') {
+            let items = modalServerHist;
+            if (hasSelection) items = items.filter((h, idx) => selectedSet.has((h.package_name || '') + '::' + (h.detected_at || idx)));
+            rows.push(["Action", "Package Name", "Old Version", "New Version", "Timestamp"]);
+            items.forEach(h => {
+                rows.push([h.change_type || "", h.package_name || "", h.old_version || "", h.new_version || "", h.detected_at || ""]);
+            });
+        }
+
+        const csvContent = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+        const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     async function scanNowCurrentServer() {

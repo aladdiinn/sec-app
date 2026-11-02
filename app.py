@@ -3246,6 +3246,127 @@ def api_get_server_inventory(server_id: int, request: Request, search: Optional[
     }
 
 
+@app.post("/api/servers/{server_id}/report")
+@app.post("/api/servers/{server_id}/vulnerability-report")
+def api_generate_server_vulnerability_report(request: Request, server_id: int, payload: dict = Body(default={})):
+    """
+    Server Asset Vulnerability, Package, and Configuration Audit Report Generator.
+    Supports JSON output and direct CSV download.
+    """
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    srv = db.get_server_by_id(server_id)
+    if not srv:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    rep_type = payload.get("type", "cves").lower()
+    selected_ids = set(payload.get("selected_ids", []))
+    apply_filters = payload.get("apply_filters", True)
+    severity_filter = payload.get("severity", "ALL").upper()
+    query_filter = payload.get("query", "").strip().lower()
+    output_format = payload.get("format", "json").lower()
+
+    os_info = db.get_server_os_info(server_id) or {}
+    vulns = db.get_server_vulnerabilities(server_id)
+    packages = db.get_server_packages(server_id, limit=2000)
+    software = db.get_server_software(server_id)
+    history = db.get_server_package_history(server_id, limit=200)
+
+    # Filter based on selections or query
+    if rep_type in ("cves", "vulnerabilities"):
+        items = vulns
+        if selected_ids:
+            items = [v for v in items if v.get("cve_id") in selected_ids]
+        elif apply_filters:
+            if severity_filter != "ALL":
+                items = [v for v in items if (v.get("severity") or "").upper() == severity_filter]
+            if query_filter:
+                items = [v for v in items if query_filter in (v.get("cve_id") or "").lower() or query_filter in (v.get("package_name") or "").lower() or query_filter in (v.get("summary") or "").lower()]
+    elif rep_type == "packages":
+        items = packages
+        if selected_ids:
+            items = [p for p in items if p.get("name") in selected_ids]
+        elif apply_filters and query_filter:
+            items = [p for p in items if query_filter in (p.get("name") or "").lower() or query_filter in (p.get("version") or "").lower()]
+    elif rep_type == "software":
+        items = software
+        if selected_ids:
+            items = [sw for idx, sw in enumerate(items) if f"{sw.get('product') or sw.get('software_name')}::{sw.get('version') or idx}" in selected_ids or (sw.get("product") or sw.get("software_name")) in selected_ids]
+        elif apply_filters and query_filter:
+            items = [sw for sw in items if query_filter in (sw.get("product") or "").lower() or query_filter in (sw.get("software_name") or "").lower()]
+    elif rep_type == "history":
+        items = history
+        if selected_ids:
+            items = [h for idx, h in enumerate(items) if f"{h.get('package_name')}::{h.get('detected_at') or idx}" in selected_ids or h.get("package_name") in selected_ids]
+        elif apply_filters and query_filter:
+            items = [h for h in items if query_filter in (h.get("package_name") or "").lower() or query_filter in (h.get("change_type") or "").lower()]
+    else:
+        items = vulns
+
+    # Handle CSV format
+    if output_format == "csv":
+        csv_buffer = io.StringIO()
+        writer = csv.writer(csv_buffer)
+        if rep_type in ("cves", "vulnerabilities"):
+            writer.writerow(["CVE ID", "Severity", "Component", "Installed Version", "Fixed Version", "CVSS Score", "CISA KEV", "Summary", "Advisory URL"])
+            for v in items:
+                writer.writerow([v.get("cve_id"), v.get("severity"), v.get("package_name"), v.get("installed_version"), v.get("fixed_version"), v.get("cvss_score"), "YES" if v.get("is_cisa_kev") else "NO", v.get("summary"), v.get("advisory_url")])
+        elif rep_type == "packages":
+            writer.writerow(["Package Name", "Version", "Architecture", "Source Package"])
+            for p in items:
+                writer.writerow([p.get("name"), p.get("version"), p.get("arch"), p.get("source_name")])
+        elif rep_type == "software":
+            writer.writerow(["Product", "Version", "Install Path", "Detection Evidence"])
+            for sw in items:
+                writer.writerow([sw.get("product") or sw.get("software_name"), sw.get("version"), sw.get("path") or sw.get("install_path"), sw.get("detection_evidence")])
+        elif rep_type == "history":
+            writer.writerow(["Action", "Package Name", "Old Version", "New Version", "Timestamp"])
+            for h in items:
+                writer.writerow([h.get("change_type"), h.get("package_name"), h.get("old_version"), h.get("new_version"), h.get("detected_at")])
+
+        db.log_audit(user.get("username", "admin"), "SERVER_REPORT_CSV_DOWNLOAD", "server", str(server_id), f"Downloaded {rep_type} CSV report for server {srv.get('hostname') or srv.get('name')}")
+        csv_buffer.seek(0)
+        return StreamingResponse(
+            io.BytesIO(csv_buffer.getvalue().encode("utf-8")),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=server_{server_id}_{rep_type}_report.csv"}
+        )
+
+    crit_cnt = sum(1 for v in vulns if (v.get("severity") or "").upper() == "CRITICAL")
+    high_cnt = sum(1 for v in vulns if (v.get("severity") or "").upper() == "HIGH")
+    med_cnt = sum(1 for v in vulns if (v.get("severity") or "").upper() == "MEDIUM")
+    kev_cnt = sum(1 for v in vulns if v.get("is_cisa_kev"))
+
+    db.log_audit(user.get("username", "admin"), "SERVER_REPORT_GENERATED", "server", str(server_id), f"Generated {rep_type} report for server {srv.get('hostname') or srv.get('name')}")
+
+    return {
+        "ok": True,
+        "server": {
+            "id": server_id,
+            "hostname": srv.get("hostname") or srv.get("name"),
+            "ip": srv.get("ip_address") or srv.get("ip"),
+            "os_info": srv.get("os_info") or os_info.get("pretty_name"),
+            "agent_version": srv.get("agent_version") or "1.6",
+            "project_name": srv.get("project_name")
+        },
+        "type": rep_type,
+        "summary": {
+            "total_items": len(items),
+            "total_vulns": len(vulns),
+            "critical": crit_cnt,
+            "high": high_cnt,
+            "medium": med_cnt,
+            "cisa_kev": kev_cnt,
+            "total_packages": len(packages),
+            "total_software": len(software),
+            "total_changes": len(history)
+        },
+        "items": items
+    }
+
+
 @app.get("/api/alerts")
 def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False, log_type: Optional[str] = None):
     conn = db.get_db_connection()
