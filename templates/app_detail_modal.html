@@ -57,14 +57,15 @@
 
     <!-- 2. EVENTS TAB -->
     <div id="pop-tab-events" class="modal-tab-pane" style="display:none">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:10px">
-            <div style="display:flex; gap:8px; flex:1">
+        <!-- Toolbar Row 1: Filters -->
+        <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px">
+            <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; flex:1">
                 <input type="text" id="events-filter-query" placeholder="Filter events by IP, path, method..." 
-                       class="glass" style="padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; width:260px; color:var(--text)"
-                       oninput="renderFilteredEvents()">
+                       class="glass" style="padding:6px 12px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; width:220px; color:var(--text)"
+                       oninput="debouncedReloadEvents()">
                 <select id="events-filter-severity" class="glass" 
                         style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
-                        onchange="renderFilteredEvents()">
+                        onchange="loadAppEvents(activeModalAppId)">
                     <option value="all" selected>All Telemetry (Including Info Logs)</option>
                     <option value="security">Security Events (Attacks & Warnings)</option>
                     <option value="critical">Critical Only</option>
@@ -72,6 +73,31 @@
                     <option value="medium">Medium, High, Critical</option>
                     <option value="info">Info Logs Only</option>
                 </select>
+                <select id="events-filter-timeframe" class="glass" 
+                        style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
+                        onchange="onEventsTimeframeChange()">
+                    <option value="1h">Last 1 hr</option>
+                    <option value="3h">Last 3 hr</option>
+                    <option value="8h">Last 8 hr</option>
+                    <option value="1d">Last 1 day</option>
+                    <option value="7d" selected>Last 7 days</option>
+                    <option value="15d">Last 15 days</option>
+                    <option value="1m">Last 1 month</option>
+                    <option value="custom">Custom (from/to)</option>
+                </select>
+                <select id="events-filter-status" class="glass" 
+                        style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
+                        onchange="loadAppEvents(activeModalAppId)">
+                    <option value="open" selected>Status: Open</option>
+                    <option value="closed">Status: Closed</option>
+                    <option value="all">Status: All</option>
+                </select>
+                <div id="events-custom-dates" style="display:none; gap:4px; align-items:center">
+                    <input type="date" id="events-date-from" class="glass" style="padding:4px 8px; font-size:11px; border-radius:4px; border:1px solid var(--border); color:var(--text)">
+                    <span style="font-size:11px; color:var(--text3)">to</span>
+                    <input type="date" id="events-date-to" class="glass" style="padding:4px 8px; font-size:11px; border-radius:4px; border:1px solid var(--border); color:var(--text)">
+                    <button class="btn btn-glass" onclick="loadAppEvents(activeModalAppId)" style="padding:4px 8px; font-size:11px">Apply</button>
+                </div>
             </div>
             <div style="display:flex; gap:8px; align-items:center">
                 <label style="font-size:11px; color:var(--text3); display:flex; align-items:center; gap:4px; cursor:pointer">
@@ -80,34 +106,164 @@
                 <button class="btn btn-glass" onclick="loadAppEvents(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
             </div>
         </div>
+
+        <!-- Toolbar Row 2: Reporting Toolbar -->
+        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px; padding:6px 10px; margin-bottom:10px">
+            <label style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:6px; cursor:pointer">
+                <input type="checkbox" id="events-apply-filters"> Apply current search/severity filters to report
+            </label>
+            <div style="display:flex; gap:6px; align-items:center">
+                <button class="btn btn-glass" onclick="generateTabReport('events', true)" style="padding:4px 10px; font-size:11px">👁️ Preview</button>
+                <button class="btn btn-primary" onclick="generateTabReport('events', false)" style="padding:4px 12px; font-size:11px">📄 Generate Report</button>
+                <button class="btn btn-glass" onclick="exportTabCSV('events')" title="Export filtered events from DB to CSV" style="padding:4px 8px; font-size:11px">⬇ CSV</button>
+            </div>
+        </div>
+
+        <!-- Selection Action Bar (Shown when 1 or more rows selected) -->
+        <div id="events-selection-bar" style="display:none; justify-content:space-between; align-items:center; background:rgba(2,132,199,0.15); border:1px solid var(--cyan); border-radius:6px; padding:6px 12px; margin-bottom:10px">
+            <span style="font-size:11.5px; font-weight:700; color:var(--cyan)"><span id="events-selected-count">0</span> rows selected</span>
+            <div style="display:flex; gap:6px; align-items:center">
+                <button class="btn btn-glass" onclick="openCloseModal('events')" style="padding:4px 10px; font-size:11px; color:var(--amber); border-color:rgba(245,158,11,0.4)">✓ Mark as Closed</button>
+                <button class="btn btn-glass" onclick="batchReopenRows('events')" style="padding:4px 10px; font-size:11px; color:var(--green); border-color:rgba(16,185,129,0.4)">↺ Reopen</button>
+                <button class="btn btn-primary" onclick="generateSelectedReport('events')" style="padding:4px 12px; font-size:11px">📄 Report for Selected</button>
+                <button class="btn btn-ghost" onclick="clearTabSelection('events')" style="padding:4px 8px; font-size:11px; color:var(--text3)">Clear</button>
+            </div>
+        </div>
+
         <div id="pop-events-content" style="max-height:480px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; background:var(--bg2)">
             <div style="padding:30px; text-align:center; color:var(--text3)">Loading live event stream...</div>
         </div>
+        <div id="pop-events-footer" style="padding:8px 12px; font-size:11px; color:var(--text3); display:flex; justify-content:space-between; border-top:1px solid var(--border)"></div>
     </div>
 
     <!-- 3. INCIDENTS TAB -->
     <div id="pop-tab-incidents" class="modal-tab-pane" style="display:none">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-            <span style="font-size:12px; color:var(--text3)">Correlated attack timelines aggregated by attacker key</span>
-            <button class="btn btn-glass" onclick="loadAppIncidents(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+        <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px">
+            <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; flex:1">
+                <select id="incidents-filter-timeframe" class="glass" 
+                        style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
+                        onchange="onIncidentsTimeframeChange()">
+                    <option value="1h">Last 1 hr</option>
+                    <option value="3h">Last 3 hr</option>
+                    <option value="8h">Last 8 hr</option>
+                    <option value="1d">Last 1 day</option>
+                    <option value="7d" selected>Last 7 days</option>
+                    <option value="15d">Last 15 days</option>
+                    <option value="1m">Last 1 month</option>
+                    <option value="custom">Custom (from/to)</option>
+                </select>
+                <select id="incidents-filter-status" class="glass" 
+                        style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
+                        onchange="loadAppIncidents(activeModalAppId)">
+                    <option value="open" selected>Status: Open</option>
+                    <option value="closed">Status: Closed</option>
+                    <option value="all">Status: All</option>
+                </select>
+                <div id="incidents-custom-dates" style="display:none; gap:4px; align-items:center">
+                    <input type="date" id="incidents-date-from" class="glass" style="padding:4px 8px; font-size:11px; border-radius:4px; border:1px solid var(--border); color:var(--text)">
+                    <span style="font-size:11px; color:var(--text3)">to</span>
+                    <input type="date" id="incidents-date-to" class="glass" style="padding:4px 8px; font-size:11px; border-radius:4px; border:1px solid var(--border); color:var(--text)">
+                    <button class="btn btn-glass" onclick="loadAppIncidents(activeModalAppId)" style="padding:4px 8px; font-size:11px">Apply</button>
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center">
+                <button class="btn btn-glass" onclick="loadAppIncidents(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+            </div>
         </div>
+
+        <!-- Reporting Toolbar -->
+        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px; padding:6px 10px; margin-bottom:10px">
+            <label style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:6px; cursor:pointer">
+                <input type="checkbox" id="incidents-apply-filters"> Apply current filters to report
+            </label>
+            <div style="display:flex; gap:6px; align-items:center">
+                <button class="btn btn-glass" onclick="generateTabReport('incidents', true)" style="padding:4px 10px; font-size:11px">👁️ Preview</button>
+                <button class="btn btn-primary" onclick="generateTabReport('incidents', false)" style="padding:4px 12px; font-size:11px">📄 Generate Report</button>
+                <button class="btn btn-glass" onclick="exportTabCSV('incidents')" title="Export incidents to CSV" style="padding:4px 8px; font-size:11px">⬇ CSV</button>
+            </div>
+        </div>
+
+        <!-- Selection Bar -->
+        <div id="incidents-selection-bar" style="display:none; justify-content:space-between; align-items:center; background:rgba(2,132,199,0.15); border:1px solid var(--cyan); border-radius:6px; padding:6px 12px; margin-bottom:10px">
+            <span style="font-size:11.5px; font-weight:700; color:var(--cyan)"><span id="incidents-selected-count">0</span> incidents selected</span>
+            <div style="display:flex; gap:6px; align-items:center">
+                <button class="btn btn-glass" onclick="openCloseModal('incidents')" style="padding:4px 10px; font-size:11px; color:var(--amber); border-color:rgba(245,158,11,0.4)">✓ Mark as Closed</button>
+                <button class="btn btn-glass" onclick="batchReopenRows('incidents')" style="padding:4px 10px; font-size:11px; color:var(--green); border-color:rgba(16,185,129,0.4)">↺ Reopen</button>
+                <button class="btn btn-primary" onclick="generateSelectedReport('incidents')" style="padding:4px 12px; font-size:11px">📄 Report for Selected</button>
+                <button class="btn btn-ghost" onclick="clearTabSelection('incidents')" style="padding:4px 8px; font-size:11px; color:var(--text3)">Clear</button>
+            </div>
+        </div>
+
         <div id="pop-incidents-content" style="max-height:480px; overflow-y:auto; display:flex; flex-direction:column; gap:12px">
             <div style="padding:30px; text-align:center; color:var(--text3)">Loading correlated incidents...</div>
         </div>
+        <div id="pop-incidents-footer" style="padding:8px 12px; font-size:11px; color:var(--text3); display:flex; justify-content:space-between; border-top:1px solid var(--border)"></div>
     </div>
 
     <!-- 4. USERS & ATTACKERS TAB -->
     <div id="pop-tab-users" class="modal-tab-pane" style="display:none">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-            <span style="font-size:12px; color:var(--text3)">Observed client IPs and authenticated users interacting with this application</span>
-            <button class="btn btn-glass" onclick="loadAppUsers(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+        <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px">
+            <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; flex:1">
+                <select id="users-filter-timeframe" class="glass" 
+                        style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
+                        onchange="onUsersTimeframeChange()">
+                    <option value="1h">Last 1 hr</option>
+                    <option value="3h">Last 3 hr</option>
+                    <option value="8h">Last 8 hr</option>
+                    <option value="1d">Last 1 day</option>
+                    <option value="7d" selected>Last 7 days</option>
+                    <option value="15d">Last 15 days</option>
+                    <option value="1m">Last 1 month</option>
+                    <option value="custom">Custom (from/to)</option>
+                </select>
+                <select id="users-filter-status" class="glass" 
+                        style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
+                        onchange="loadAppUsers(activeModalAppId)">
+                    <option value="open" selected>Status: Open</option>
+                    <option value="closed">Status: Closed</option>
+                    <option value="all">Status: All</option>
+                </select>
+                <div id="users-custom-dates" style="display:none; gap:4px; align-items:center">
+                    <input type="date" id="users-date-from" class="glass" style="padding:4px 8px; font-size:11px; border-radius:4px; border:1px solid var(--border); color:var(--text)">
+                    <span style="font-size:11px; color:var(--text3)">to</span>
+                    <input type="date" id="users-date-to" class="glass" style="padding:4px 8px; font-size:11px; border-radius:4px; border:1px solid var(--border); color:var(--text)">
+                    <button class="btn btn-glass" onclick="loadAppUsers(activeModalAppId)" style="padding:4px 8px; font-size:11px">Apply</button>
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center">
+                <button class="btn btn-glass" onclick="loadAppUsers(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+            </div>
         </div>
+
+        <!-- Reporting Toolbar -->
+        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px; padding:6px 10px; margin-bottom:10px">
+            <label style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:6px; cursor:pointer">
+                <input type="checkbox" id="users-apply-filters"> Apply current filters to report
+            </label>
+            <div style="display:flex; gap:6px; align-items:center">
+                <button class="btn btn-glass" onclick="generateTabReport('users', true)" style="padding:4px 10px; font-size:11px">👁️ Preview</button>
+                <button class="btn btn-primary" onclick="generateTabReport('users', false)" style="padding:4px 12px; font-size:11px">📄 Generate Report</button>
+                <button class="btn btn-glass" onclick="exportTabCSV('users')" title="Export identities to CSV" style="padding:4px 8px; font-size:11px">⬇ CSV</button>
+            </div>
+        </div>
+
+        <!-- Selection Bar -->
+        <div id="users-selection-bar" style="display:none; justify-content:space-between; align-items:center; background:rgba(2,132,199,0.15); border:1px solid var(--cyan); border-radius:6px; padding:6px 12px; margin-bottom:10px">
+            <span style="font-size:11.5px; font-weight:700; color:var(--cyan)"><span id="users-selected-count">0</span> identities selected</span>
+            <div style="display:flex; gap:6px; align-items:center">
+                <button class="btn btn-glass" onclick="openCloseModal('users')" style="padding:4px 10px; font-size:11px; color:var(--amber); border-color:rgba(245,158,11,0.4)">✓ Mark as Closed</button>
+                <button class="btn btn-glass" onclick="batchReopenRows('users')" style="padding:4px 10px; font-size:11px; color:var(--green); border-color:rgba(16,185,129,0.4)">↺ Reopen</button>
+                <button class="btn btn-primary" onclick="generateSelectedReport('users')" style="padding:4px 12px; font-size:11px">📄 Report for Selected</button>
+                <button class="btn btn-ghost" onclick="clearTabSelection('users')" style="padding:4px 8px; font-size:11px; color:var(--text3)">Clear</button>
+            </div>
+        </div>
+
         <div id="pop-users-content" style="max-height:480px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; background:var(--bg2)">
             <div style="padding:30px; text-align:center; color:var(--text3)">Loading user activity...</div>
         </div>
+        <div id="pop-users-footer" style="padding:8px 12px; font-size:11px; color:var(--text3); display:flex; justify-content:space-between; border-top:1px solid var(--border)"></div>
     </div>
-
-    <!-- 5. RULES TAB -->
+<!-- 5. RULES TAB -->
     <div id="pop-tab-rules" class="modal-tab-pane" style="display:none">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
             <span style="font-size:12px; color:var(--text3)">Application SIEM heuristic and signature detection rules</span>
@@ -163,6 +319,31 @@
             </div>
         </div>
     </div>
+
+<!-- Close Action Note Modal -->
+<div id="app-close-action-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:10005; backdrop-filter:blur(3px); align-items:center; justify-content:center">
+    <div style="background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:22px; width:440px; max-width:90%; box-shadow:0 10px 25px rgba(0,0,0,0.5)">
+        <h4 style="margin:0 0 8px 0; font-size:14px; font-weight:700; color:var(--text)" id="app-close-modal-title">Mark Items as Closed</h4>
+        <p style="font-size:12px; color:var(--text3); margin-bottom:14px">Closing rows stores review state in the database and updates open threat counts.</p>
+        <div style="margin-bottom:16px">
+            <label style="display:block; font-size:11px; color:var(--text2); margin-bottom:5px">Optional Closure Note / Resolution Detail:</label>
+            <input type="text" id="app-close-modal-note" placeholder="e.g. Verified legitimate, False positive, Mitigated" class="glass" style="width:100%; padding:8px 10px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text)">
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:8px">
+            <button class="btn btn-ghost" onclick="closeCloseModal()" style="font-size:11.5px; padding:6px 14px">Cancel</button>
+            <button class="btn btn-primary" onclick="confirmCloseModal()" style="font-size:11.5px; padding:6px 16px; background:var(--amber); border-color:var(--amber); color:#000; font-weight:700">Confirm Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- App Detail PDF Preview Modal -->
+<div id="app-detail-preview-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:10010; padding:30px; overflow-y:auto; backdrop-filter:blur(4px)">
+    <div style="background:#ffffff; max-width:900px; margin:0 auto; padding:40px; border-radius:8px; position:relative; color:#0f172a; box-shadow:0 25px 50px -12px rgba(0,0,0,0.5)">
+        <button onclick="document.getElementById('app-detail-preview-modal').style.display='none'" style="position:absolute; top:20px; right:20px; background:#e2e8f0; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; color:#0f172a; font-weight:bold; font-size:12px">Close Preview</button>
+        <button onclick="window.print()" style="position:absolute; top:20px; right:140px; background:#0284c7; color:#fff; border:none; padding:8px 16px; border-radius:4px; cursor:pointer; font-weight:bold; font-size:12px">Print</button>
+        <div id="app-detail-preview-content"></div>
+    </div>
+</div>
 </div>
 
 <script>
@@ -315,17 +496,342 @@ function switchModalTab(tabName) {
     }
 }
 
-// Load Events Tab
-async function loadAppEvents(appId, silent = false) {
-    const container = document.getElementById('pop-events-content');
-    if (!container) return;
-    if (!silent) container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">Fetching live events...</div>';
+// ══════════════════════════════════════════════════════════════════
+// APPLICATION SIEM SELECTION, REVIEW / CLOSE & REPORTING CONTROLLER
+// ══════════════════════════════════════════════════════════════════
+
+const selectedTabRows = {
+    events: new Set(),
+    incidents: new Set(),
+    users: new Set()
+};
+
+let cachedTabResponses = {
+    events: { items: [], total_count: 0, timeframe_label: '' },
+    incidents: { items: [], total_count: 0, timeframe_label: '' },
+    users: { items: [], total_count: 0, timeframe_label: '' }
+};
+
+let pendingCloseTab = null;
+let eventsReloadDebounceTimer = null;
+
+function redactClientParams(str) {
+    if (!str || typeof str !== 'string') return str || '';
+    const pattern = /((?:otp|pwd|password|passwd|pass|token|session|auth|key|secret|authorization)=)([^& 	
+'"]+)/gi;
+    return str.replace(pattern, '$1******');
+}
+
+function onEventsTimeframeChange() {
+    const val = document.getElementById('events-filter-timeframe')?.value;
+    const box = document.getElementById('events-custom-dates');
+    if (box) box.style.display = (val === 'custom') ? 'flex' : 'none';
+    loadAppEvents(activeModalAppId);
+}
+
+function onIncidentsTimeframeChange() {
+    const val = document.getElementById('incidents-filter-timeframe')?.value;
+    const box = document.getElementById('incidents-custom-dates');
+    if (box) box.style.display = (val === 'custom') ? 'flex' : 'none';
+    loadAppIncidents(activeModalAppId);
+}
+
+function onUsersTimeframeChange() {
+    const val = document.getElementById('users-filter-timeframe')?.value;
+    const box = document.getElementById('users-custom-dates');
+    if (box) box.style.display = (val === 'custom') ? 'flex' : 'none';
+    loadAppUsers(activeModalAppId);
+}
+
+function debouncedReloadEvents() {
+    if (eventsReloadDebounceTimer) clearTimeout(eventsReloadDebounceTimer);
+    eventsReloadDebounceTimer = setTimeout(() => {
+        loadAppEvents(activeModalAppId);
+    }, 250);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// SELECTION ACTIONS & BAR
+// ──────────────────────────────────────────────────────────────────
+function toggleRowSelect(tab, id, checked) {
+    id = String(id);
+    if (checked) {
+        selectedTabRows[tab].add(id);
+    } else {
+        selectedTabRows[tab].delete(id);
+    }
+    updateSelectionBar(tab);
+    updateSelectAllCheckbox(tab);
+}
+
+function toggleSelectAll(tab, checked) {
+    const items = cachedTabResponses[tab].items || [];
+    items.forEach(item => {
+        const id = String(item.id || item.identifier);
+        if (checked) selectedTabRows[tab].add(id);
+        else selectedTabRows[tab].delete(id);
+    });
+
+    // Update checkboxes in DOM
+    const cbs = document.querySelectorAll(`.${tab}-row-cb`);
+    cbs.forEach(cb => cb.checked = checked);
+    updateSelectionBar(tab);
+}
+
+function updateSelectAllCheckbox(tab) {
+    const headerCb = document.getElementById(`${tab}-select-all`);
+    if (!headerCb) return;
+    const items = cachedTabResponses[tab].items || [];
+    if (items.length === 0) {
+        headerCb.checked = false;
+        headerCb.indeterminate = false;
+        return;
+    }
+    const selectedCountOnPage = items.filter(it => selectedTabRows[tab].has(String(it.id || it.identifier))).length;
+    if (selectedCountOnPage === 0) {
+        headerCb.checked = false;
+        headerCb.indeterminate = false;
+    } else if (selectedCountOnPage === items.length) {
+        headerCb.checked = true;
+        headerCb.indeterminate = false;
+    } else {
+        headerCb.checked = false;
+        headerCb.indeterminate = true;
+    }
+}
+
+function updateSelectionBar(tab) {
+    const bar = document.getElementById(`${tab}-selection-bar`);
+    const countSpan = document.getElementById(`${tab}-selected-count`);
+    const count = selectedTabRows[tab].size;
+    if (countSpan) countSpan.innerText = count;
+    if (bar) {
+        bar.style.display = count > 0 ? 'flex' : 'none';
+    }
+}
+
+function clearTabSelection(tab) {
+    selectedTabRows[tab].clear();
+    const cbs = document.querySelectorAll(`.${tab}-row-cb`);
+    cbs.forEach(cb => cb.checked = false);
+    const headerCb = document.getElementById(`${tab}-select-all`);
+    if (headerCb) { headerCb.checked = false; headerCb.indeterminate = false; }
+    updateSelectionBar(tab);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// CLOSE & REOPEN ACTIONS
+// ──────────────────────────────────────────────────────────────────
+function openCloseModal(tab, singleId = null) {
+    pendingCloseTab = tab;
+    if (singleId !== null) {
+        selectedTabRows[tab].clear();
+        selectedTabRows[tab].add(String(singleId));
+        updateSelectionBar(tab);
+    }
+    const count = selectedTabRows[tab].size;
+    if (count === 0) {
+        alert('Please select at least one row to mark as closed.');
+        return;
+    }
+    const titleEl = document.getElementById('app-close-modal-title');
+    if (titleEl) {
+        const noun = tab === 'events' ? 'Events' : (tab === 'incidents' ? 'Incidents' : 'User Identities');
+        titleEl.innerText = `Mark ${count} ${noun} as Closed`;
+    }
+    document.getElementById('app-close-modal-note').value = '';
+    const modal = document.getElementById('app-close-action-modal');
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeCloseModal() {
+    pendingCloseTab = null;
+    const modal = document.getElementById('app-close-action-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function confirmCloseModal() {
+    const tab = pendingCloseTab;
+    if (!tab) return;
+    const ids = Array.from(selectedTabRows[tab]);
+    const note = document.getElementById('app-close-modal-note').value.trim();
+
+    closeCloseModal();
+    try {
+        const res = await fetch(`/api/apps/${activeModalAppId}/${tab}/close`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'close',
+                ids: ids,
+                close_note: note
+            })
+        });
+        if (res.ok) {
+            clearTabSelection(tab);
+            if (tab === 'events') loadAppEvents(activeModalAppId);
+            else if (tab === 'incidents') {
+                loadAppIncidents(activeModalAppId);
+                // Also refresh app open incident counts on modal and dashboard
+                if (typeof loadAppOverviewCounts === 'function') loadAppOverviewCounts(activeModalAppId);
+            } else if (tab === 'users') loadAppUsers(activeModalAppId);
+        } else {
+            alert('Failed to mark items as closed.');
+        }
+    } catch (e) {
+        alert('Error closing items: ' + e.message);
+    }
+}
+
+async function batchReopenRows(tab, singleId = null) {
+    if (singleId !== null) {
+        selectedTabRows[tab].clear();
+        selectedTabRows[tab].add(String(singleId));
+    }
+    const ids = Array.from(selectedTabRows[tab]);
+    if (ids.length === 0) {
+        alert('Please select at least one row to reopen.');
+        return;
+    }
 
     try {
-        const res = await fetch(`/api/apps/${appId}/events?limit=100`);
+        const res = await fetch(`/api/apps/${activeModalAppId}/${tab}/close`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'reopen',
+                ids: ids
+            })
+        });
         if (res.ok) {
-            cachedEvents = await res.json();
-            renderFilteredEvents();
+            clearTabSelection(tab);
+            if (tab === 'events') loadAppEvents(activeModalAppId);
+            else if (tab === 'incidents') {
+                loadAppIncidents(activeModalAppId);
+                if (typeof loadAppOverviewCounts === 'function') loadAppOverviewCounts(activeModalAppId);
+            } else if (tab === 'users') loadAppUsers(activeModalAppId);
+        } else {
+            alert('Failed to reopen items.');
+        }
+    } catch (e) {
+        alert('Error reopening items: ' + e.message);
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// 2. EVENTS TAB LOADER & RENDERER
+// ──────────────────────────────────────────────────────────────────
+async function loadAppEvents(appId, silent = false) {
+    const container = document.getElementById('pop-events-content');
+    const footer = document.getElementById('pop-events-footer');
+    if (!container || !appId) return;
+
+    if (!silent) container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">Fetching live events...</div>';
+
+    const q = (document.getElementById('events-filter-query')?.value || '').trim();
+    const sev = document.getElementById('events-filter-severity')?.value || 'all';
+    const tf = document.getElementById('events-filter-timeframe')?.value || '7d';
+    const status = document.getElementById('events-filter-status')?.value || 'open';
+    const fromDate = document.getElementById('events-date-from')?.value;
+    const toDate = document.getElementById('events-date-to')?.value;
+
+    let url = `/api/apps/${appId}/events?limit=100&timeframe=${encodeURIComponent(tf)}&status=${encodeURIComponent(status)}&severity=${encodeURIComponent(sev)}`;
+    if (q) url += `&query=${encodeURIComponent(q)}`;
+    if (tf === 'custom' && fromDate && toDate) url += `&from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`;
+
+    try {
+        const res = await fetch(url);
+        if (res.ok) {
+            const data = await res.json();
+            const items = data.items || [];
+            cachedTabResponses.events = data;
+            cachedEvents = items;
+
+            if (items.length === 0) {
+                container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3)">No events match active timeframe and filters.</div>';
+                if (footer) footer.innerHTML = `<span>Showing 0 of 0 events</span><span>(Database query for ${data.timeframe_label || tf})</span>`;
+                updateSelectAllCheckbox('events');
+                return;
+            }
+
+            container.innerHTML = `
+            <table style="width:100%; border-collapse:collapse; text-align:left; font-size:11.5px">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border); color:var(--text3); font-size:10.5px; background:var(--bg)">
+                        <th style="padding:8px 10px; width:36px; text-align:center">
+                            <input type="checkbox" id="events-select-all" onchange="toggleSelectAll('events', this.checked)">
+                        </th>
+                        <th style="padding:8px 12px">TIMESTAMP</th>
+                        <th style="padding:8px 12px">EVENT TYPE</th>
+                        <th style="padding:8px 12px">SEVERITY</th>
+                        <th style="padding:8px 12px">SOURCE / NODE</th>
+                        <th style="padding:8px 12px">CLIENT IP</th>
+                        <th style="padding:8px 12px">REQUEST / PATH</th>
+                        <th style="padding:8px 12px">STATUS</th>
+                        <th style="padding:8px 12px; text-align:right">REVIEW</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${items.map(ev => {
+                        const isSelected = selectedTabRows.events.has(String(ev.id));
+                        let sevBg = 'rgba(148,163,184,0.1)'; let sevFg = 'var(--text3)';
+                        if (ev.severity === 'critical') { sevBg = 'rgba(239,68,68,0.2)'; sevFg = 'var(--red)'; }
+                        else if (ev.severity === 'high') { sevBg = 'rgba(245,158,11,0.2)'; sevFg = 'var(--amber)'; }
+                        else if (ev.severity === 'medium') { sevBg = 'rgba(56,189,248,0.2)'; sevFg = 'var(--cyan)'; }
+
+                        const isClosed = ev.status === 'closed';
+                        const timeStr = ev.event_time ? new Date(ev.event_time).toLocaleTimeString() : 'now';
+                        const safePath = redactClientParams(ev.url_path || '-');
+
+                        return `
+                        <tr style="border-bottom:1px solid var(--border); transition:background 0.15s; ${isSelected ? 'background:rgba(2,132,199,0.1);' : ''}" class="table-row-hover">
+                            <td style="padding:8px 10px; text-align:center">
+                                <input type="checkbox" class="events-row-cb" data-id="${ev.id}" ${isSelected ? 'checked' : ''} onchange="toggleRowSelect('events', ${ev.id}, this.checked)">
+                            </td>
+                            <td style="padding:8px 12px; font-family:var(--font-mono), monospace; color:var(--text3)">${timeStr}</td>
+                            <td style="padding:8px 12px; font-weight:700; color:var(--text)">${escapeHtml(ev.event_type || 'HTTP_ACCESS')}</td>
+                            <td style="padding:8px 12px">
+                                <span style="padding:2px 8px; border-radius:4px; font-size:9.5px; font-weight:700; text-transform:uppercase; background:${sevBg}; color:${sevFg}">
+                                    ${ev.severity}
+                                </span>
+                            </td>
+                            <td style="padding:8px 12px; color:var(--text2)">${escapeHtml(ev.source_type || '')} (${escapeHtml(ev.node || '')})</td>
+                            <td style="padding:8px 12px; font-family:var(--font-mono), monospace; color:var(--cyan)">
+                                <div>${escapeHtml(ev.client_ip || '-')}</div>
+                                ${ev.user_name && ev.user_name !== '-' && ev.user_name !== 'Anonymous' ? `<div style="font-size:10.5px; color:#F59E0B; font-weight:700; margin-top:2px">👤 ${escapeHtml(ev.user_name)}</div>` : ''}
+                            </td>
+                            <td style="padding:8px 12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(safePath)}">
+                                <b style="color:var(--text3)">${escapeHtml(ev.method || '')}</b> 
+                                <span style="font-family:var(--font-mono), monospace">${escapeHtml(safePath)}</span>
+                            </td>
+                            <td style="padding:8px 12px; font-family:var(--font-mono), monospace">
+                                <span style="color:${ev.status_code >= 400 ? 'var(--amber)' : ev.status_code ? 'var(--green)' : 'var(--text3)'}">${ev.status_code || '-'}</span>
+                            </td>
+                            <td style="padding:8px 12px; text-align:right">
+                                ${isClosed ? `
+                                    <span class="badge" title="Closed by ${escapeHtml(ev.closed_by || 'user')}${ev.closed_note ? ': ' + escapeHtml(ev.closed_note) : ''}" style="background:rgba(16,185,129,0.15); color:var(--green); border:1px solid rgba(16,185,129,0.3); font-size:9px; cursor:pointer" onclick="batchReopenRows('events', ${ev.id})">
+                                        ✓ CLOSED (Reopen)
+                                    </span>
+                                ` : `
+                                    <button class="btn btn-ghost" onclick="openCloseModal('events', ${ev.id})" style="padding:2px 8px; font-size:9.5px; color:var(--text3)">
+                                        Close
+                                    </button>
+                                `}
+                            </td>
+                        </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+            `;
+
+            if (footer) {
+                footer.innerHTML = `
+                    <span>Showing latest <b>${items.length}</b> of <b>${data.total_count}</b> events</span>
+                    <span>Database query for <b>${data.timeframe_label || tf}</b></span>
+                `;
+            }
+            updateSelectAllCheckbox('events');
         } else {
             container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Failed to load events.</div>';
         }
@@ -334,110 +840,40 @@ async function loadAppEvents(appId, silent = false) {
     }
 }
 
-function renderFilteredEvents() {
-    const container = document.getElementById('pop-events-content');
-    if (!container) return;
-
-    const q = (document.getElementById('events-filter-query')?.value || '').toLowerCase().trim();
-    const sev = document.getElementById('events-filter-severity')?.value || 'all';
-
-    const filtered = cachedEvents.filter(ev => {
-        if (sev === 'security' && !['medium', 'high', 'critical'].includes(ev.severity)) return false;
-        if (sev === 'critical' && ev.severity !== 'critical') return false;
-        if (sev === 'high' && !['high', 'critical'].includes(ev.severity)) return false;
-        if (sev === 'medium' && !['medium', 'high', 'critical'].includes(ev.severity)) return false;
-        if (sev === 'info' && ev.severity !== 'info') return false;
-
-        if (!q) return true;
-        const str = `${ev.client_ip || ''} ${ev.url_path || ''} ${ev.method || ''} ${ev.event_type || ''} ${ev.node || ''}`.toLowerCase();
-        return str.includes(q);
-    });
-
-    if (filtered.length === 0) {
-        if (cachedEvents.length > 0 && sev === 'security') {
-            container.innerHTML = `
-            <div style="padding:40px; text-align:center; color:var(--text3)">
-                <div style="font-size:24px; margin-bottom:8px">🛡️</div>
-                <div style="font-weight:700; color:var(--text); font-size:13px; margin-bottom:4px">No Security Attacks or Threat Anomalies</div>
-                <div style="font-size:12px; color:var(--text3)">All incoming requests are normal legitimate traffic (<b>${cachedEvents.length}</b> events received).</div>
-                <div style="margin-top:12px">
-                    <button class="btn btn-glass" onclick="document.getElementById('events-filter-severity').value='all'; renderFilteredEvents();" style="font-size:11px; padding:6px 14px">
-                        Show All Telemetry Logs (${cachedEvents.length})
-                    </button>
-                </div>
-            </div>`;
-        } else {
-            container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3)">No events match the active filters.</div>';
-        }
-        return;
-    }
-
-    container.innerHTML = `
-    <table style="width:100%; border-collapse:collapse; text-align:left; font-size:11.5px">
-        <thead>
-            <tr style="border-bottom:1px solid var(--border); color:var(--text3); font-size:10.5px; background:var(--bg)">
-                <th style="padding:8px 12px">TIMESTAMP</th>
-                <th style="padding:8px 12px">EVENT TYPE</th>
-                <th style="padding:8px 12px">SEVERITY</th>
-                <th style="padding:8px 12px">SOURCE / NODE</th>
-                <th style="padding:8px 12px">CLIENT IP</th>
-                <th style="padding:8px 12px">REQUEST / PATH</th>
-                <th style="padding:8px 12px">STATUS</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${filtered.map(ev => {
-                let sevBg = 'rgba(148,163,184,0.1)'; let sevFg = 'var(--text3)';
-                if (ev.severity === 'critical') { sevBg = 'rgba(239,68,68,0.2)'; sevFg = 'var(--red)'; }
-                else if (ev.severity === 'high') { sevBg = 'rgba(245,158,11,0.2)'; sevFg = 'var(--amber)'; }
-                else if (ev.severity === 'medium') { sevBg = 'rgba(56,189,248,0.2)'; sevFg = 'var(--cyan)'; }
-
-                const timeStr = ev.event_time ? new Date(ev.event_time).toLocaleTimeString() : 'now';
-                return `
-                <tr style="border-bottom:1px solid var(--border); transition:background 0.15s" class="table-row-hover">
-                    <td style="padding:8px 12px; font-family:var(--font-mono), monospace; color:var(--text3)">${timeStr}</td>
-                    <td style="padding:8px 12px; font-weight:700; color:var(--text)">${escapeHtml(ev.event_type || 'HTTP_ACCESS')}</td>
-                    <td style="padding:8px 12px">
-                        <span style="padding:2px 8px; border-radius:4px; font-size:9.5px; font-weight:700; text-transform:uppercase; background:${sevBg}; color:${sevFg}">
-                            ${ev.severity}
-                        </span>
-                    </td>
-                    <td style="padding:8px 12px; color:var(--text2)">${escapeHtml(ev.source_type || '')} (${escapeHtml(ev.node || '')})</td>
-                    <td style="padding:8px 12px; font-family:var(--font-mono), monospace; color:var(--cyan)">
-                        <div>${escapeHtml(ev.client_ip || '-')}</div>
-                        ${ev.user_name && ev.user_name !== '-' && ev.user_name !== 'Anonymous' ? `<div style="font-size:10.5px; color:#F59E0B; font-weight:700; margin-top:2px">👤 ${escapeHtml(ev.user_name)}</div>` : ''}
-                    </td>
-                    <td style="padding:8px 12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(ev.url_path || '')}">
-                        <b style="color:var(--text3)">${escapeHtml(ev.method || '')}</b> 
-                        <span style="font-family:var(--font-mono), monospace">${escapeHtml(ev.url_path || '-')}</span>
-                    </td>
-                    <td style="padding:8px 12px; font-family:var(--font-mono), monospace">
-                        <span style="color:${ev.status_code >= 400 ? 'var(--amber)' : ev.status_code ? 'var(--green)' : 'var(--text3)'}">${ev.status_code || '-'}</span>
-                    </td>
-                </tr>
-                `;
-            }).join('')}
-        </tbody>
-    </table>
-    `;
-}
-
-// Load Incidents Tab
+// ──────────────────────────────────────────────────────────────────
+// 3. INCIDENTS TAB LOADER & RENDERER
+// ──────────────────────────────────────────────────────────────────
 async function loadAppIncidents(appId) {
     const container = document.getElementById('pop-incidents-content');
-    if (!container) return;
+    const footer = document.getElementById('pop-incidents-footer');
+    if (!container || !appId) return;
+
     container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">Fetching correlated incidents...</div>';
 
+    const tf = document.getElementById('incidents-filter-timeframe')?.value || '7d';
+    const status = document.getElementById('incidents-filter-status')?.value || 'open';
+    const fromDate = document.getElementById('incidents-date-from')?.value;
+    const toDate = document.getElementById('incidents-date-to')?.value;
+
+    let url = `/api/apps/${appId}/incidents?timeframe=${encodeURIComponent(tf)}&status=${encodeURIComponent(status)}`;
+    if (tf === 'custom' && fromDate && toDate) url += `&from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`;
+
     try {
-        const res = await fetch(`/api/apps/${appId}/incidents`);
+        const res = await fetch(url);
         if (res.ok) {
-            const incs = await res.json();
-            if (!incs || incs.length === 0) {
-                container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3); border:1px dashed var(--border); border-radius:8px">🛡️ No security incidents currently detected for this application.</div>';
+            const data = await res.json();
+            const incs = data.items || [];
+            cachedTabResponses.incidents = data;
+
+            if (incs.length === 0) {
+                container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3); border:1px dashed var(--border); border-radius:8px">🛡️ No security incidents match the active timeframe and status filter.</div>';
+                if (footer) footer.innerHTML = `<span>Showing 0 of 0 incidents</span><span>(Database query for ${data.timeframe_label || tf})</span>`;
+                updateSelectAllCheckbox('incidents');
                 return;
             }
 
             container.innerHTML = incs.map(i => {
+                const isSelected = selectedTabRows.incidents.has(String(i.id));
                 let sevBg = 'rgba(239,68,68,0.15)'; let sevFg = 'var(--red)'; let sevBorder = 'rgba(239,68,68,0.4)';
                 if (i.severity === 'medium') {
                     sevBg = 'rgba(56,189,248,0.15)'; sevFg = 'var(--cyan)'; sevBorder = 'rgba(56,189,248,0.4)';
@@ -445,37 +881,51 @@ async function loadAppIncidents(appId) {
                     sevBg = 'rgba(245,158,11,0.15)'; sevFg = 'var(--amber)'; sevBorder = 'rgba(245,158,11,0.4)';
                 }
 
+                const isClosed = (i.status || '').toLowerCase() === 'closed';
                 const tactics = i.mitre_tactics || [];
                 const timeline = i.timeline || [];
 
                 return `
-                <div style="background:var(--bg2); border:1px solid ${sevBorder}; border-radius:10px; padding:18px; box-shadow:0 4px 12px rgba(0,0,0,0.2)">
+                <div style="background:var(--bg2); border:1px solid ${isSelected ? 'var(--cyan)' : sevBorder}; border-radius:10px; padding:18px; box-shadow:0 4px 12px rgba(0,0,0,0.2)">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
-                        <div>
-                            <div style="display:flex; align-items:center; gap:8px">
-                                <span class="badge" style="background:${sevBg}; color:${sevFg}; border:1px solid ${sevBorder}; font-size:10px; font-weight:800; text-transform:uppercase">
-                                    ${i.severity}
-                                </span>
-                                <h4 style="margin:0; font-size:14.5px; font-weight:700; color:var(--text)">${escapeHtml(i.title || 'Security Incident')}</h4>
-                            </div>
-                            <div style="font-size:11.5px; color:var(--text3); margin-top:4px">
-                                Attacker: <b style="color:var(--cyan); font-family:var(--font-mono), monospace">${escapeHtml(i.client_ip || i.attacker_key || 'Unknown')}</b> • 
-                                Observed Events: <b style="color:var(--text)">${i.events_count || 1}</b> • 
-                                Status: <b style="color:${i.status === 'Open' ? 'var(--red)' : 'var(--green)'}">${i.status || 'Open'}</b>
+                        <div style="display:flex; gap:12px; align-items:flex-start">
+                            <input type="checkbox" class="incidents-row-cb" data-id="${i.id}" ${isSelected ? 'checked' : ''} onchange="toggleRowSelect('incidents', ${i.id}, this.checked)" style="margin-top:4px">
+                            <div>
+                                <div style="display:flex; align-items:center; gap:8px">
+                                    <span class="badge" style="background:${sevBg}; color:${sevFg}; border:1px solid ${sevBorder}; font-size:10px; font-weight:800; text-transform:uppercase">
+                                        ${i.severity}
+                                    </span>
+                                    <h4 style="margin:0; font-size:14.5px; font-weight:700; color:var(--text)">${escapeHtml(i.title || 'Security Incident')}</h4>
+                                    <span class="badge" style="background:${isClosed ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}; color:${isClosed ? 'var(--green)' : 'var(--red)'}; font-size:9.5px">
+                                        ${isClosed ? 'CLOSED' : 'OPEN'}
+                                    </span>
+                                </div>
+                                <div style="font-size:11.5px; color:var(--text3); margin-top:4px">
+                                    Attacker: <b style="color:var(--cyan); font-family:var(--font-mono), monospace">${escapeHtml(i.client_ip || i.attacker_key || 'Unknown')}</b> • 
+                                    Observed Events: <b style="color:var(--text)">${i.events_count || 1}</b>
+                                    ${isClosed ? ` • <span style="color:var(--green)">Closed by ${escapeHtml(i.closed_by || 'user')} ${i.closed_note ? `("${escapeHtml(i.closed_note)}")` : ''}</span>` : ''}
+                                </div>
                             </div>
                         </div>
-                        <div style="font-size:11px; color:var(--text3); text-align:right">
-                            Last seen: <b>${i.last_event_at ? new Date(i.last_event_at).toLocaleTimeString() : 'now'}</b>
+                        <div style="text-align:right">
+                            <div style="font-size:11px; color:var(--text3)">Last seen: <b>${i.last_event_at ? new Date(i.last_event_at).toLocaleTimeString() : 'now'}</b></div>
+                            <div style="margin-top:6px">
+                                ${isClosed ? `
+                                    <button class="btn btn-ghost" onclick="batchReopenRows('incidents', ${i.id})" style="font-size:10px; padding:3px 8px; color:var(--green)">↺ Reopen</button>
+                                ` : `
+                                    <button class="btn btn-ghost" onclick="openCloseModal('incidents', ${i.id})" style="font-size:10px; padding:3px 8px; color:var(--amber)">✓ Mark Closed</button>
+                                `}
+                            </div>
                         </div>
                     </div>
 
                     ${tactics.length > 0 ? `
-                    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px">
+                    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; margin-left:26px">
                         ${tactics.map(t => `<span class="badge" style="font-size:9.5px; background:rgba(0,212,255,0.08); color:var(--cyan); border:1px solid rgba(0,212,255,0.25)">🎯 ${escapeHtml(t)}</span>`).join('')}
                     </div>
                     ` : ''}
 
-                    <div style="border-top:1px solid var(--border); padding-top:10px; margin-top:8px">
+                    <div style="border-top:1px solid var(--border); padding-top:10px; margin-top:8px; margin-left:26px">
                         <div style="font-size:11px; font-weight:700; color:var(--text2); margin-bottom:6px">ATTACK TIMELINE STEPS:</div>
                         ${timeline.length === 0 ? '<div style="font-size:11px; color:var(--text3)">No detailed event steps recorded.</div>' : `
                         <div style="display:flex; flex-direction:column; gap:6px">
@@ -484,7 +934,7 @@ async function loadAppIncidents(appId) {
                                 <span style="font-weight:700; color:var(--cyan); font-family:var(--font-mono), monospace">#${idx+1}</span>
                                 <span style="color:var(--text3); font-size:10px">${step.event_time ? new Date(step.event_time).toLocaleTimeString() : ''}</span>
                                 <span style="color:var(--text); font-weight:600">${escapeHtml(step.rule_name || '')}:</span>
-                                <span style="color:var(--text2); font-family:var(--font-mono), monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(step.step_summary || '')}</span>
+                                <span style="color:var(--text2); font-family:var(--font-mono), monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(redactClientParams(step.step_summary || ''))}</span>
                             </div>
                             `).join('')}
                         </div>
@@ -493,6 +943,14 @@ async function loadAppIncidents(appId) {
                 </div>
                 `;
             }).join('');
+
+            if (footer) {
+                footer.innerHTML = `
+                    <span>Showing <b>${incs.length}</b> of <b>${data.total_count}</b> incidents</span>
+                    <span>Database query for <b>${data.timeframe_label || tf}</b></span>
+                `;
+            }
+            updateSelectAllCheckbox('incidents');
         } else {
             container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Failed to load incidents.</div>';
         }
@@ -501,18 +959,35 @@ async function loadAppIncidents(appId) {
     }
 }
 
-// Load Users Tab
+// ──────────────────────────────────────────────────────────────────
+// 4. USERS TAB LOADER & RENDERER
+// ──────────────────────────────────────────────────────────────────
 async function loadAppUsers(appId) {
     const container = document.getElementById('pop-users-content');
-    if (!container) return;
+    const footer = document.getElementById('pop-users-footer');
+    if (!container || !appId) return;
+
     container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">Loading user interactions...</div>';
 
+    const tf = document.getElementById('users-filter-timeframe')?.value || '7d';
+    const status = document.getElementById('users-filter-status')?.value || 'open';
+    const fromDate = document.getElementById('users-date-from')?.value;
+    const toDate = document.getElementById('users-date-to')?.value;
+
+    let url = `/api/apps/${appId}/users?timeframe=${encodeURIComponent(tf)}&status=${encodeURIComponent(status)}`;
+    if (tf === 'custom' && fromDate && toDate) url += `&from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`;
+
     try {
-        const res = await fetch(`/api/apps/${appId}/users`);
+        const res = await fetch(url);
         if (res.ok) {
-            const users = await res.json();
-            if (!users || users.length === 0) {
-                container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3)">No user activity recorded yet.</div>';
+            const data = await res.json();
+            const users = data.items || [];
+            cachedTabResponses.users = data;
+
+            if (users.length === 0) {
+                container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3)">No user activity matches the active timeframe and status filter.</div>';
+                if (footer) footer.innerHTML = `<span>Showing 0 of 0 identities</span><span>(Database query for ${data.timeframe_label || tf})</span>`;
+                updateSelectAllCheckbox('users');
                 return;
             }
 
@@ -523,6 +998,9 @@ async function loadAppUsers(appId) {
             <table style="width:100%; border-collapse:collapse; text-align:left; font-size:11.5px">
                 <thead>
                     <tr style="border-bottom:1px solid var(--border); color:var(--text3); font-size:10.5px; background:var(--bg)">
+                        <th style="padding:8px 10px; width:36px; text-align:center">
+                            <input type="checkbox" id="users-select-all" onchange="toggleSelectAll('users', this.checked)">
+                        </th>
                         <th style="padding:8px 12px">IDENTIFIER / IP</th>
                         <th style="padding:8px 12px">IDENTITY / ACTOR TYPE</th>
                         <th style="padding:8px 12px">TOTAL REQUESTS</th>
@@ -530,10 +1008,15 @@ async function loadAppUsers(appId) {
                         <th style="padding:8px 12px">PEAK SEVERITY</th>
                         <th style="padding:8px 12px">FIRST SEEN</th>
                         <th style="padding:8px 12px">LAST SEEN</th>
+                        <th style="padding:8px 12px; text-align:right">STATUS</th>
                     </tr>
                 </thead>
                 <tbody>
                     ${users.map(u => {
+                        const rowKey = String(u.id || u.identifier);
+                        const isSelected = selectedTabRows.users.has(rowKey);
+                        const isClosed = (u.status || '').toLowerCase() === 'closed';
+
                         let userBadge = '';
                         if (u.client_category === 'user' || (u.user_name && u.user_name !== '-' && u.user_name !== 'Anonymous')) {
                             userBadge = `<b style="color:var(--cyan); font-family:var(--font-mono), monospace">👤 ${escapeHtml(u.user_name || u.identifier)}</b>`;
@@ -545,14 +1028,19 @@ async function loadAppUsers(appId) {
                             userBadge = `<span style="color:var(--text3); font-size:11px; font-style:italic">🌐 Web Visitor (Unauthenticated)</span>`;
                         }
 
-                        let pathSnippet = u.recent_path ? `<div style="font-size:10px; color:var(--text3); font-family:var(--font-mono), monospace; margin-top:2px; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(u.recent_path)}">${escapeHtml(u.recent_path)}</div>` : '';
+                        const safeRecentPath = redactClientParams(u.recent_path || '');
+                        let pathSnippet = safeRecentPath ? `<div style="font-size:10px; color:var(--text3); font-family:var(--font-mono), monospace; margin-top:2px; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(safeRecentPath)}">${escapeHtml(safeRecentPath)}</div>` : '';
 
                         let sevBg = 'rgba(148,163,184,0.1)'; let sevFg = 'var(--text3)';
                         if (u.peak_severity === 'critical') { sevBg = 'rgba(239,68,68,0.2)'; sevFg = 'var(--red)'; }
                         else if (u.peak_severity === 'high') { sevBg = 'rgba(245,158,11,0.2)'; sevFg = 'var(--amber)'; }
                         else if (u.peak_severity === 'medium') { sevBg = 'rgba(56,189,248,0.2)'; sevFg = 'var(--cyan)'; }
+
                         return `
-                        <tr style="border-bottom:1px solid var(--border)">
+                        <tr style="border-bottom:1px solid var(--border); ${isSelected ? 'background:rgba(2,132,199,0.1);' : ''}">
+                            <td style="padding:8px 10px; text-align:center">
+                                <input type="checkbox" class="users-row-cb" data-id="${rowKey}" ${isSelected ? 'checked' : ''} onchange="toggleRowSelect('users', '${escapeHtml(rowKey)}', this.checked)">
+                            </td>
                             <td style="padding:8px 12px; font-family:var(--font-mono), monospace; font-weight:700; color:var(--text)">
                                 <div>${escapeHtml(u.identifier)}</div>
                                 ${pathSnippet}
@@ -571,12 +1059,31 @@ async function loadAppUsers(appId) {
                             </td>
                             <td style="padding:8px 12px; color:var(--text3)">${u.first_seen ? new Date(u.first_seen).toLocaleTimeString() : '-'}</td>
                             <td style="padding:8px 12px; color:var(--text3)">${u.last_seen ? new Date(u.last_seen).toLocaleTimeString() : '-'}</td>
+                            <td style="padding:8px 12px; text-align:right">
+                                ${isClosed ? `
+                                    <span class="badge" title="Closed by ${escapeHtml(u.closed_by || 'user')}${u.closed_note ? ': ' + escapeHtml(u.closed_note) : ''}" style="background:rgba(16,185,129,0.15); color:var(--green); border:1px solid rgba(16,185,129,0.3); font-size:9px; cursor:pointer" onclick="batchReopenRows('users', '${escapeHtml(rowKey)}')">
+                                        ✓ CLOSED (Reopen)
+                                    </span>
+                                ` : `
+                                    <button class="btn btn-ghost" onclick="openCloseModal('users', '${escapeHtml(rowKey)}')" style="padding:2px 8px; font-size:9.5px; color:var(--text3)">
+                                        Close
+                                    </button>
+                                `}
+                            </td>
                         </tr>
                         `;
                     }).join('')}
                 </tbody>
             </table>
             `;
+
+            if (footer) {
+                footer.innerHTML = `
+                    <span>Showing latest <b>${users.length}</b> of <b>${data.total_count}</b> identities</span>
+                    <span>Database query for <b>${data.timeframe_label || tf}</b></span>
+                `;
+            }
+            updateSelectAllCheckbox('users');
         } else {
             container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Failed to load users.</div>';
         }
@@ -584,6 +1091,339 @@ async function loadAppUsers(appId) {
         container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Network error loading users.</div>';
     }
 }
+
+// ──────────────────────────────────────────────────────────────────
+// TAB & SELECTED ROWS PDF / CSV REPORTING
+// ──────────────────────────────────────────────────────────────────
+async function ensureHtml2Pdf() {
+    if (typeof window.html2pdf !== 'undefined') return true;
+    return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        s.onload = () => resolve(true);
+        s.onerror = () => reject(new Error('Failed to load html2pdf library'));
+        document.head.appendChild(s);
+    });
+}
+
+function renderAppDetailPDF(title, subtitle, meta, htmlContent, isPreview=false) {
+    const out = `
+        <div class="pdf-header" style="border-bottom:2px solid #3b82f6; padding-bottom:20px; margin-bottom:30px;">
+            <h1 style="font-size:26px; color:#0f172a; margin:0 0 5px 0; font-weight:800;">${title}</h1>
+            <div style="font-size:15px; color:#3b82f6; font-weight:600;">${subtitle}</div>
+            <div style="margin-top:16px; color:#64748b; font-size:12px; white-space:pre-wrap;">${meta}</div>
+        </div>
+        ${htmlContent}
+        <div class="pdf-footer" style="margin-top:40px; padding-top:20px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; font-size:11px; color:#94a3b8;">
+            <div>App SIEM Security Report</div>
+            <div>${isPreview ? 'Preview Mode' : 'Confidential'}</div>
+        </div>
+    `;
+
+    const previewModal = document.getElementById('app-detail-preview-modal');
+    const previewContent = document.getElementById('app-detail-preview-content');
+    if (!previewContent || !previewModal) return;
+
+    previewContent.innerHTML = out;
+
+    if (isPreview) {
+        previewModal.style.display = 'block';
+    } else {
+        ensureHtml2Pdf().then(() => {
+            const element = previewContent;
+            element.style.padding = '20px';
+            element.style.background = '#ffffff';
+            element.style.color = '#0f172a';
+
+            window.html2pdf().set({
+                margin: [10, 10, 10, 10],
+                filename: `${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, useCORS: true },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            }).from(element).save().then(() => {
+                element.style.padding = '0';
+            });
+        }).catch(err => {
+            alert('PDF generation failed: ' + err.message);
+        });
+    }
+}
+
+async function generateTabReport(tab, isPreview=false) {
+    if (!activeModalAppId) return;
+
+    const tf = document.getElementById(`${tab}-filter-timeframe`)?.value || '7d';
+    const status = document.getElementById(`${tab}-filter-status`)?.value || 'all';
+    const applyFilters = document.getElementById(`${tab}-apply-filters`)?.checked || false;
+    const sev = document.getElementById('events-filter-severity')?.value || 'all';
+    const q = (document.getElementById('events-filter-query')?.value || '').trim();
+    const fromDate = document.getElementById(`${tab}-date-from`)?.value;
+    const toDate = document.getElementById(`${tab}-date-to`)?.value;
+
+    const payload = {
+        type: tab,
+        timeframe: tf,
+        from_date: fromDate,
+        to_date: toDate,
+        status_filter: status,
+        apply_filters: applyFilters,
+        severity: sev,
+        query: q,
+        format: 'json'
+    };
+
+    try {
+        const res = await fetch(`/api/apps/${activeModalAppId}/report`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error('Failed to generate report from database');
+
+        const data = await res.json();
+        const app = data.app || {};
+        const capNote = data.cap_note || '';
+
+        let content = '';
+        if (capNote) {
+            content += `
+                <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:12px 16px; margin-bottom:20px; font-size:12px; color:#92400e;">
+                    ⚠️ <b>Report Truncation Notice</b>: ${escapeHtml(capNote)}
+                </div>
+            `;
+        }
+
+        if (tab === 'events') {
+            const events = data.events || [];
+            content += `
+                <div style="margin-bottom:24px">
+                    <h2 style="font-size:18px; color:#0f172a; margin-bottom:12px; font-weight:700">Database Telemetry Events (${data.total_events_in_db || events.length} Total Matching)</h2>
+                    <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left">
+                        <thead>
+                            <tr style="border-bottom:2px solid #e2e8f0; color:#64748b">
+                                <th style="padding:6px 8px">Timestamp</th>
+                                <th style="padding:6px 8px">Type</th>
+                                <th style="padding:6px 8px">Severity</th>
+                                <th style="padding:6px 8px">Client IP / User</th>
+                                <th style="padding:6px 8px">Request Path</th>
+                                <th style="padding:6px 8px">Status</th>
+                                <th style="padding:6px 8px">Review</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${events.slice(0, 300).map(ev => `
+                                <tr style="border-bottom:1px solid #f1f5f9">
+                                    <td style="padding:6px 8px; color:#64748b; white-space:nowrap">${ev.event_time ? new Date(ev.event_time).toLocaleTimeString() : '-'}</td>
+                                    <td style="padding:6px 8px; font-weight:bold">${escapeHtml(ev.event_type || 'HTTP')}</td>
+                                    <td style="padding:6px 8px"><span style="padding:1px 6px; border-radius:3px; font-size:9.5px; font-weight:bold; text-transform:uppercase; background:#f1f5f9; color:#475569">${ev.severity}</span></td>
+                                    <td style="padding:6px 8px; font-family:monospace">${escapeHtml(ev.client_ip || '-')} ${ev.user_name ? `(${escapeHtml(ev.user_name)})` : ''}</td>
+                                    <td style="padding:6px 8px; font-family:monospace; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(ev.method || '')} ${escapeHtml(ev.url_path || '-')}</td>
+                                    <td style="padding:6px 8px; font-family:monospace">${ev.status_code || '-'}</td>
+                                    <td style="padding:6px 8px"><span style="color:${ev.status === 'closed' ? '#059669' : '#dc2626'}; font-weight:bold; font-size:10px">${(ev.status || 'open').toUpperCase()}</span></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    ${events.length > 300 ? `<div style="font-size:11px; color:#64748b; text-align:center; padding:10px 0">Showing first 300 events in document view. Export CSV for all ${data.total_events_in_db} records.</div>` : ''}
+                </div>
+            `;
+        } else if (tab === 'incidents') {
+            const incs = data.incidents || [];
+            content += `
+                <div style="margin-bottom:24px">
+                    <h2 style="font-size:18px; color:#0f172a; margin-bottom:12px; font-weight:700">Security Incidents (${incs.length})</h2>
+                    ${incs.map(i => `
+                        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:14px; margin-bottom:12px; background:#f8fafc">
+                            <div style="display:flex; justify-content:space-between">
+                                <strong style="color:#0f172a; font-size:13px">${escapeHtml(i.title || 'Incident')}</strong>
+                                <span style="font-size:11px; font-weight:bold; color:${i.status==='Closed'?'#059669':'#dc2626'}">${(i.status||'Open').toUpperCase()}</span>
+                            </div>
+                            <div style="font-size:11.5px; color:#475569; margin-top:4px">Attacker: <b>${escapeHtml(i.client_ip || i.attacker_key || 'Unknown')}</b> • Severity: <b>${i.severity}</b> • Events: <b>${i.events_count}</b></div>
+                            ${i.timeline && i.timeline.length ? `
+                                <div style="margin-top:6px; font-size:11px; color:#334155">
+                                    ${i.timeline.map((st, idx) => `<div>#${idx+1} ${st.event_time ? new Date(st.event_time).toLocaleTimeString() : ''} - <b>${escapeHtml(st.rule_name || '')}</b>: <code>${escapeHtml(st.step_summary || '')}</code></div>`).join('')}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        } else if (tab === 'users') {
+            const users = data.users || [];
+            content += `
+                <div style="margin-bottom:24px">
+                    <h2 style="font-size:18px; color:#0f172a; margin-bottom:12px; font-weight:700">Observed Identities & Actors (${users.length})</h2>
+                    <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left">
+                        <thead>
+                            <tr style="border-bottom:2px solid #e2e8f0; color:#64748b">
+                                <th style="padding:6px 8px">Identifier / IP</th>
+                                <th style="padding:6px 8px">Category</th>
+                                <th style="padding:6px 8px">Total Req</th>
+                                <th style="padding:6px 8px">Attacks</th>
+                                <th style="padding:6px 8px">Peak Severity</th>
+                                <th style="padding:6px 8px">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${users.map(u => `
+                                <tr style="border-bottom:1px solid #f1f5f9">
+                                    <td style="padding:6px 8px; font-family:monospace; font-weight:bold">${escapeHtml(u.identifier)}</td>
+                                    <td style="padding:6px 8px">${escapeHtml(u.client_category || 'actor')}</td>
+                                    <td style="padding:6px 8px">${u.total_requests}</td>
+                                    <td style="padding:6px 8px; font-weight:bold; color:${u.attack_events > 0 ? '#dc2626' : '#059669'}">${u.attack_events}</td>
+                                    <td style="padding:6px 8px">${u.peak_severity || 'info'}</td>
+                                    <td style="padding:6px 8px"><span style="color:${u.status === 'closed' ? '#059669' : '#dc2626'}; font-weight:bold">${(u.status || 'open').toUpperCase()}</span></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        const reportTitle = `${app.name || 'Application'} - ${tab.toUpperCase()} Security Report`;
+        const reportSubtitle = `Target: ${app.primary_url || '-'} | Environment: ${(app.environment || 'production').toUpperCase()}`;
+        const reportMeta = `Timeframe: ${data.range_label || tf}
+Generated: ${new Date().toISOString()}`;
+
+        renderAppDetailPDF(reportTitle, reportSubtitle, reportMeta, content, isPreview);
+
+    } catch (e) {
+        alert('Report generation failed: ' + e.message);
+    }
+}
+
+async function generateSelectedReport(tab) {
+    if (!activeModalAppId) return;
+    const ids = Array.from(selectedTabRows[tab]);
+    if (ids.length === 0) {
+        alert('Please select at least one row first.');
+        return;
+    }
+
+    const payload = {
+        type: 'selected',
+        selected_ids: ids,
+        selected_type: tab,
+        format: 'json'
+    };
+
+    try {
+        const res = await fetch(`/api/apps/${activeModalAppId}/report`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error('Failed to generate selected report');
+
+        const data = await res.json();
+        const app = data.app || {};
+        const explanations = data.explanations || [];
+
+        let content = `
+            <div style="margin-bottom:24px">
+                <h2 style="font-size:18px; color:#0f172a; margin-bottom:8px; font-weight:700">Detailed Explanations for ${explanations.length} Selected Items</h2>
+                <p style="font-size:12px; color:#64748b; margin-bottom:20px">Deterministic root-cause, threat vector, and remediation guidance for each selected security event.</p>
+                
+                ${explanations.map((exp, idx) => `
+                    <div style="border:2px solid #e2e8f0; border-radius:10px; padding:18px; margin-bottom:18px; background:#ffffff; page-break-inside:avoid">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
+                            <div style="font-size:14px; font-weight:bold; color:#0f172a">#${idx+1}. ${escapeHtml(exp.title || 'Security Analysis')}</div>
+                            <div>
+                                <span style="display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:bold; text-transform:uppercase; background:${exp.severity==='critical'?'#fee2e2':(exp.severity==='high'?'#fef3c7':'#e0f2fe')}; color:${exp.severity==='critical'?'#dc2626':(exp.severity==='high'?'#d97706':'#0284c7')}">${exp.severity || 'info'}</span>
+                                <span style="display:inline-block; margin-left:6px; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:bold; text-transform:uppercase; background:${exp.status==='closed'?'#dcfce7':'#fee2e2'}; color:${exp.status==='closed'?'#15803d':'#b91c1c'}">${(exp.status || 'open').toUpperCase()}</span>
+                            </div>
+                        </div>
+
+                        <div style="font-size:12px; line-height:1.6; color:#334155; margin-bottom:10px">
+                            <strong style="color:#0f172a">What Happened:</strong> ${escapeHtml(exp.what_happened)}
+                        </div>
+
+                        <div style="font-size:12px; line-height:1.6; color:#334155; margin-bottom:10px">
+                            <strong style="color:#0f172a">Detection Reason & Rule:</strong> ${escapeHtml(exp.why_flagged)}
+                        </div>
+
+                        <div style="font-size:12px; line-height:1.6; color:#334155; margin-bottom:10px">
+                            <strong style="color:#0f172a">Impact & Threat Vector:</strong> ${escapeHtml(exp.impact)}
+                        </div>
+
+                        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px 12px; font-size:11.5px; margin-bottom:10px">
+                            <div style="font-weight:bold; color:#475569; margin-bottom:4px">Source & Telemetry Context:</div>
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-family:monospace; color:#0f172a">
+                                <div>Client IP: <b>${escapeHtml(exp.source_details?.client_ip || '-')}</b></div>
+                                <div>User Account: <b>${escapeHtml(exp.source_details?.user || 'Anonymous')}</b></div>
+                                <div>Path: <b>${escapeHtml(exp.source_details?.path || '-')}</b></div>
+                                <div>HTTP Status: <b>${exp.source_details?.status_code || '-'}</b></div>
+                                <div>Node / Component: <b>${escapeHtml(exp.source_details?.node || '-')}</b></div>
+                                <div>Timestamp: <b>${exp.source_details?.event_time || '-'}</b></div>
+                            </div>
+                        </div>
+
+                        <div style="font-size:12px; line-height:1.6; color:#0369a1; background:#f0f9ff; border:1px solid #bae6fd; border-radius:6px; padding:8px 12px">
+                            <strong>Recommended Remediation Action:</strong> ${escapeHtml(exp.recommended_action)}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        const reportTitle = `${app.name || 'Application'} - Forensic Incident Explanations`;
+        const reportSubtitle = `Target: ${app.primary_url || '-'} | Selected Records: ${explanations.length}`;
+        const reportMeta = `Report Type: Forensic Item Explanations
+Generated: ${new Date().toISOString()}`;
+
+        renderAppDetailPDF(reportTitle, reportSubtitle, reportMeta, content, false);
+
+    } catch (e) {
+        alert('Selected report failed: ' + e.message);
+    }
+}
+
+async function exportTabCSV(tab) {
+    if (!activeModalAppId) return;
+
+    const tf = document.getElementById(`${tab}-filter-timeframe`)?.value || '7d';
+    const status = document.getElementById(`${tab}-filter-status`)?.value || 'all';
+    const applyFilters = document.getElementById(`${tab}-apply-filters`)?.checked || false;
+    const sev = document.getElementById('events-filter-severity')?.value || 'all';
+    const q = (document.getElementById('events-filter-query')?.value || '').trim();
+    const fromDate = document.getElementById(`${tab}-date-from`)?.value;
+    const toDate = document.getElementById(`${tab}-date-to`)?.value;
+
+    try {
+        const resp = await fetch(`/api/apps/${activeModalAppId}/report`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: tab,
+                timeframe: tf,
+                from_date: fromDate,
+                to_date: toDate,
+                status_filter: status,
+                apply_filters: applyFilters,
+                severity: sev,
+                query: q,
+                format: 'csv'
+            })
+        });
+
+        if (!resp.ok) throw new Error('CSV generation failed');
+
+        const blob = await resp.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = `app_${activeModalAppId}_${tab}_${tf}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+    } catch (e) {
+        alert('Export CSV failed: ' + e.message);
+    }
+}
+
 
 // Load Rules Tab
 async function loadAppRules(appId) {

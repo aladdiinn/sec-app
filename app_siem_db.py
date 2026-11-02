@@ -130,6 +130,10 @@ def init_app_siem_schema(conn):
                 severity VARCHAR(30) DEFAULT 'info',
                 parse_status VARCHAR(30) DEFAULT 'parsed',
                 dedup_key VARCHAR(128),
+                status VARCHAR(50) DEFAULT 'open',
+                closed_by VARCHAR(100),
+                closed_at TIMESTAMPTZ,
+                closed_note TEXT,
                 raw JSONB,
                 PRIMARY KEY (id, event_time)
             ) PARTITION BY RANGE (event_time);
@@ -165,7 +169,20 @@ def init_app_siem_schema(conn):
             CREATE INDEX IF NOT EXISTS idx_app_events_type ON app_events (application_id, event_type, event_time DESC);
             CREATE INDEX IF NOT EXISTS idx_app_events_sev ON app_events (application_id, severity, event_time DESC);
             CREATE INDEX IF NOT EXISTS idx_app_events_dedup ON app_events (dedup_key);
+            CREATE INDEX IF NOT EXISTS idx_app_events_status ON app_events (application_id, status);
         """)
+
+        # Idempotent column check for app_events
+        for col, col_type in [
+            ("status", "VARCHAR(50) DEFAULT 'open'"),
+            ("closed_by", "VARCHAR(100)"),
+            ("closed_at", "TIMESTAMPTZ"),
+            ("closed_note", "TEXT")
+        ]:
+            try:
+                cur.execute(f"ALTER TABLE app_events ADD COLUMN IF NOT EXISTS {col} {col_type};")
+            except Exception:
+                pass
 
         # 4. app_rules table
         cur.execute("""
@@ -207,14 +224,42 @@ def init_app_siem_schema(conn):
                 mitre_tactics JSONB DEFAULT '[]'::jsonb,
                 owner VARCHAR(100),
                 notes TEXT,
+                closed_by VARCHAR(100),
+                closed_at TIMESTAMPTZ,
+                closed_note TEXT,
                 audit_id INTEGER,
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             );
 
+        for col, col_type in [
+            ("closed_by", "VARCHAR(100)"),
+            ("closed_at", "TIMESTAMPTZ"),
+            ("closed_note", "TEXT")
+        ]:
+            try:
+                cur.execute(f"ALTER TABLE app_incidents ADD COLUMN IF NOT EXISTS {col} {col_type};")
+            except Exception:
+                pass
+
             CREATE INDEX IF NOT EXISTS idx_app_incidents_app ON app_incidents (application_id, last_event_at DESC);
             CREATE INDEX IF NOT EXISTS idx_app_incidents_status ON app_incidents (application_id, status);
             CREATE INDEX IF NOT EXISTS idx_app_incidents_attacker ON app_incidents (application_id, attacker_key, status);
+
+            CREATE TABLE IF NOT EXISTS app_user_status (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                identifier VARCHAR(255) NOT NULL,
+                status VARCHAR(50) DEFAULT 'open',
+                closed_by VARCHAR(100),
+                closed_at TIMESTAMPTZ,
+                closed_note TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (application_id, identifier)
+            );
+            CREATE INDEX IF NOT EXISTS idx_app_user_status_app ON app_user_status (application_id, identifier);
+            CREATE INDEX IF NOT EXISTS idx_app_user_status_status ON app_user_status (application_id, status);
 
             CREATE TABLE IF NOT EXISTS app_incident_events (
                 id SERIAL PRIMARY KEY,

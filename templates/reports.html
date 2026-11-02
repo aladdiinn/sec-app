@@ -138,6 +138,57 @@
         </form>
     </div>
 
+    <!-- NEW App Level Report -->
+    <div class="card glass" style="margin-bottom:24px">
+        <h3 class="card-title" style="margin-bottom:8px">App Level Report</h3>
+        <p style="font-size:13px; color:var(--text-sub); margin-bottom:20px">Generate comprehensive security posture, events, incidents, and identity audit reports for an application.</p>
+
+        <form id="app-gen-form" style="display:grid; grid-template-columns: 2fr 1.2fr 1.5fr auto; gap:14px; align-items:flex-end; margin-bottom:0">
+            <div style="position:relative">
+                <label class="text-meta" style="display:block; margin-bottom:6px">Search Application (Name, URL, or ID)</label>
+                <input id="app-report-search" type="text" class="mono" placeholder="Enter App Name or URL e.g. hp-1" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px" required autocomplete="off">
+                <input type="hidden" id="app-report-id">
+                <div id="app-autocomplete" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--bg2); border:1px solid var(--border); border-top:none; z-index:100; max-height:220px; overflow-y:auto; border-bottom-left-radius:4px; border-bottom-right-radius:4px; box-shadow:0 4px 6px rgba(0,0,0,0.3);"></div>
+            </div>
+            <div>
+                <label class="text-meta" style="display:block; margin-bottom:6px">Time Period</label>
+                <select id="app-timeframe" class="mono" style="width:100%; padding:9px; background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px" onchange="toggleAppCustomDates()">
+                    <option value="1h">Last 1 Hour</option>
+                    <option value="3h">Last 3 Hours</option>
+                    <option value="8h">Last 8 Hours</option>
+                    <option value="1d">Last 1 Day</option>
+                    <option value="7d" selected>Last 7 Days</option>
+                    <option value="15d">Last 15 Days</option>
+                    <option value="1m">Last 1 Month</option>
+                    <option value="custom">Custom Range</option>
+                </select>
+                <div id="app-custom-dates" style="display:none; gap:6px; margin-top:6px">
+                    <input type="date" id="app-date-from" class="mono" style="width:48%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:4px 6px; border-radius:4px; font-size:11px">
+                    <input type="date" id="app-date-to" class="mono" style="width:48%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:4px 6px; border-radius:4px; font-size:11px">
+                </div>
+            </div>
+            <div>
+                <label class="text-meta" style="display:block; margin-bottom:6px">Include Sections</label>
+                <div style="display:flex; gap:12px; align-items:center; padding:8px 0">
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer">
+                        <input type="checkbox" id="app-inc-events" checked> Events
+                    </label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer">
+                        <input type="checkbox" id="app-inc-incidents" checked> Incidents
+                    </label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer">
+                        <input type="checkbox" id="app-inc-users" checked> Users
+                    </label>
+                </div>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-glass" id="btn-app-prev" style="padding:9px 16px; font-size:12px; white-space:nowrap" onclick="generateAppLevelReport(event, true)">Preview</button>
+                <button type="button" class="btn btn-primary" id="btn-app-gen" style="padding:9px 16px; font-size:12px; white-space:nowrap" onclick="generateAppLevelReport(event, false)">Generate PDF</button>
+                <button type="button" class="btn btn-glass" id="btn-app-csv" title="Export Full Database Data to CSV" style="padding:9px 12px; font-size:12px; white-space:nowrap" onclick="exportAppLevelCSV(event)">⬇ CSV</button>
+            </div>
+        </form>
+    </div>
+
     <!-- Custom Date Range Executive Report Generator -->
     <div class="card glass">
         <h3 class="card-title" style="margin-bottom:8px">Custom Executive Report Generator</h3>
@@ -690,12 +741,430 @@
         }
     }
 
+    
+    // ══════════════════════════════════════════════════════════════════
+    // APP LEVEL REPORT CONTROLLER & AUTOCOMPLETE
+    // ══════════════════════════════════════════════════════════════════
+    let appSearchDebounceTimer = null;
+    let appSearchResults = [];
+    let appActiveIndex = -1;
+
+    function toggleAppCustomDates() {
+        const tf = document.getElementById('app-timeframe').value;
+        const custBox = document.getElementById('app-custom-dates');
+        if (custBox) {
+            custBox.style.display = (tf === 'custom') ? 'flex' : 'none';
+        }
+    }
+
+    function setupAppReportAutocomplete() {
+        const searchInput = document.getElementById('app-report-search');
+        const dropdown = document.getElementById('app-autocomplete');
+        const hiddenId = document.getElementById('app-report-id');
+        if (!searchInput || !dropdown) return;
+
+        function renderDropdown(items) {
+            appSearchResults = items;
+            appActiveIndex = -1;
+            if (!items || items.length === 0) {
+                dropdown.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:var(--text-sub);">No matching applications found</div>';
+                dropdown.style.display = 'block';
+                return;
+            }
+
+            dropdown.innerHTML = items.map((app, idx) => `
+                <div class="app-autocomplete-item" data-idx="${idx}" style="padding:8px 12px; font-size:12px; cursor:pointer; border-bottom:1px solid var(--border); color:var(--text);"
+                     onclick="selectAppResult(${idx})">
+                    <div style="font-weight:bold; color:var(--text);">${escapeHtml(app.name)} <span style="font-size:10px; font-weight:normal; color:var(--cyan); margin-left:6px">${escapeHtml(app.environment || 'production')}</span></div>
+                    <div style="font-size:11px; color:var(--text-meta); margin-top:2px">${escapeHtml(app.primary_url || 'No URL')} ${app.project_name ? '• ' + escapeHtml(app.project_name) : ''}</div>
+                </div>
+            `).join('');
+            dropdown.style.display = 'block';
+
+            dropdown.querySelectorAll('.app-autocomplete-item').forEach(el => {
+                el.addEventListener('mouseenter', e => {
+                    dropdown.querySelectorAll('.app-autocomplete-item').forEach(x => x.style.background = 'transparent');
+                    el.style.background = 'var(--bg3)';
+                });
+                el.addEventListener('mouseleave', e => {
+                    el.style.background = 'transparent';
+                });
+            });
+        }
+
+        searchInput.addEventListener('input', (e) => {
+            const query = e.target.value.trim();
+            hiddenId.value = '';
+            if (appSearchDebounceTimer) clearTimeout(appSearchDebounceTimer);
+            if (!query) {
+                dropdown.style.display = 'none';
+                return;
+            }
+            appSearchDebounceTimer = setTimeout(async () => {
+                try {
+                    const res = await apiFetch(`/api/apps/search?q=${encodeURIComponent(query)}`);
+                    const list = Array.isArray(res) ? res : [];
+                    renderDropdown(list);
+                } catch (err) {
+                    dropdown.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:var(--red);">Search error</div>';
+                    dropdown.style.display = 'block';
+                }
+            }, 250);
+        });
+
+        searchInput.addEventListener('keydown', (e) => {
+            const items = dropdown.querySelectorAll('.app-autocomplete-item');
+            if (dropdown.style.display === 'none' || items.length === 0) return;
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                appActiveIndex = (appActiveIndex + 1) % items.length;
+                updateAppActiveItem(items);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                appActiveIndex = (appActiveIndex - 1 + items.length) % items.length;
+                updateAppActiveItem(items);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (appActiveIndex >= 0 && appActiveIndex < appSearchResults.length) {
+                    selectAppResult(appActiveIndex);
+                } else if (appSearchResults.length > 0) {
+                    selectAppResult(0);
+                }
+            } else if (e.key === 'Escape') {
+                dropdown.style.display = 'none';
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!searchInput.contains(e.target) && !dropdown.contains(e.target)) {
+                dropdown.style.display = 'none';
+            }
+        });
+    }
+
+    function updateAppActiveItem(items) {
+        items.forEach((item, idx) => {
+            if (idx === appActiveIndex) {
+                item.style.background = 'var(--bg3)';
+                item.scrollIntoView({ block: 'nearest' });
+            } else {
+                item.style.background = 'transparent';
+            }
+        });
+    }
+
+    function selectAppResult(idx) {
+        const app = appSearchResults[idx];
+        if (!app) return;
+        document.getElementById('app-report-search').value = app.name;
+        document.getElementById('app-report-id').value = app.id;
+        document.getElementById('app-autocomplete').style.display = 'none';
+    }
+
+    async function getValidatedAppId() {
+        let appId = document.getElementById('app-report-id').value;
+        const searchInput = document.getElementById('app-report-search');
+        const query = (searchInput.value || '').trim();
+
+        if (!query) {
+            showToast('Please enter an application to search', 'error');
+            searchInput.focus();
+            return null;
+        }
+
+        if (!appId) {
+            try {
+                const res = await apiFetch(`/api/apps/search?q=${encodeURIComponent(query)}`);
+                const apps = Array.isArray(res) ? res : [];
+                const exactMatch = apps.find(a => a.name.toLowerCase() === query.toLowerCase() || String(a.id) === query);
+                if (exactMatch) {
+                    appId = exactMatch.id;
+                    document.getElementById('app-report-id').value = exactMatch.id;
+                    searchInput.value = exactMatch.name;
+                } else if (apps.length > 0) {
+                    appId = apps[0].id;
+                    document.getElementById('app-report-id').value = apps[0].id;
+                    searchInput.value = apps[0].name;
+                } else {
+                    showToast(`No application found matching "${query}"`, 'error');
+                    return null;
+                }
+            } catch (err) {
+                showToast('Failed to validate application', 'error');
+                return null;
+            }
+        }
+        return appId;
+    }
+
+    function getSelectedAppSections() {
+        const sections = [];
+        if (document.getElementById('app-inc-events')?.checked) sections.push('events');
+        if (document.getElementById('app-inc-incidents')?.checked) sections.push('incidents');
+        if (document.getElementById('app-inc-users')?.checked) sections.push('users');
+        return sections;
+    }
+
+    async function generateAppLevelReport(e, isPreview=false) {
+        e.preventDefault();
+        const btn = document.getElementById(isPreview ? 'btn-app-prev' : 'btn-app-gen');
+        const originalText = btn.innerText;
+
+        const appId = await getValidatedAppId();
+        if (!appId) return;
+
+        const sections = getSelectedAppSections();
+        if (sections.length === 0) {
+            showToast('Please select at least one section: Events, Incidents, or Users', 'error');
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerText = isPreview ? 'Loading...' : 'Generating...';
+
+        try {
+            const timeframe = document.getElementById('app-timeframe').value;
+            const fromDate = document.getElementById('app-date-from')?.value;
+            const toDate = document.getElementById('app-date-to')?.value;
+
+            const payload = {
+                type: 'all',
+                timeframe: timeframe,
+                from_date: fromDate,
+                to_date: toDate,
+                sections: sections,
+                format: 'json'
+            };
+
+            const data = await apiFetch(`/api/apps/${appId}/report`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const app = data.app || {};
+            const summary = data.summary || {};
+            const events = data.events || [];
+            const incidents = data.incidents || [];
+            const users = data.users || [];
+            const capNote = data.cap_note || '';
+
+            let content = '';
+
+            // Cap note banner if > 5000 rows
+            if (capNote) {
+                content += `
+                    <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:12px 16px; margin-bottom:20px; font-size:12.5px; color:#92400e;">
+                        ⚠️ <b>Report Truncation Notice</b>: ${escapeHtml(capNote)}
+                    </div>
+                `;
+            }
+
+            // Executive Summary KPIs
+            content += `
+                <div class="pdf-section">
+                    <h2 class="pdf-h2">Application Security Posture & Metrics</h2>
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:16px; margin-bottom:24px">
+                        <div class="pdf-card" style="text-align:center">
+                            <div style="font-size:24px; font-weight:bold; color:#0284c7">${summary.total_events || 0}</div>
+                            <div style="font-size:11.5px; color:#64748b; margin-top:5px">Total Events</div>
+                        </div>
+                        <div class="pdf-card" style="text-align:center">
+                            <div style="font-size:24px; font-weight:bold; color:#dc2626">${summary.security_attacks || 0}</div>
+                            <div style="font-size:11.5px; color:#64748b; margin-top:5px">Security Attacks</div>
+                        </div>
+                        <div class="pdf-card" style="text-align:center">
+                            <div style="font-size:24px; font-weight:bold; color:#d97706">${summary.open_incidents || 0}</div>
+                            <div style="font-size:11.5px; color:#64748b; margin-top:5px">Open Incidents</div>
+                        </div>
+                        <div class="pdf-card" style="text-align:center">
+                            <div style="font-size:24px; font-weight:bold; color:#059669">${summary.active_identities || 0}</div>
+                            <div style="font-size:11.5px; color:#64748b; margin-top:5px">Active Identities</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Incidents Section
+            if (sections.includes('incidents')) {
+                content += `
+                    <div class="pdf-section">
+                        <h2 class="pdf-h2">Correlated Security Incidents (${incidents.length})</h2>
+                        <div class="pdf-card">
+                            ${incidents.length === 0 ? '<div style="font-size:12px; color:#64748b; text-align:center; padding:12px 0">No security incidents detected during this period.</div>' : incidents.map(i => `
+                                <div style="margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid #f1f5f9">
+                                    <div style="display:flex; justify-content:space-between; align-items:flex-start">
+                                        <div>
+                                            <span style="display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:bold; text-transform:uppercase; background:${i.severity==='critical'?'#fee2e2':(i.severity==='high'?'#fef3c7':'#e0f2fe')}; color:${i.severity==='critical'?'#dc2626':(i.severity==='high'?'#d97706':'#0284c7')}">${escapeHtml(i.severity || 'high')}</span>
+                                            <strong style="margin-left:8px; font-size:13px; color:#0f172a">${escapeHtml(i.title || 'Security Incident')}</strong>
+                                        </div>
+                                        <div style="font-size:11px; color:#64748b">${i.last_event_at ? new Date(i.last_event_at).toLocaleString() : ''}</div>
+                                    </div>
+                                    <div style="font-size:11.5px; color:#475569; margin-top:6px">
+                                        Attacker: <b>${escapeHtml(i.client_ip || i.attacker_key || 'Unknown')}</b> • Events: <b>${i.events_count || 1}</b> • Status: <b style="color:${i.status==='Closed'?'#059669':'#dc2626'}">${escapeHtml(i.status || 'Open')}</b>
+                                    </div>
+                                    ${(i.mitre_tactics && i.mitre_tactics.length) ? `
+                                        <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap">
+                                            ${i.mitre_tactics.map(t => `<span style="font-size:10px; background:#f1f5f9; color:#334155; padding:2px 6px; border-radius:3px">🎯 ${escapeHtml(t)}</span>`).join('')}
+                                        </div>
+                                    ` : ''}
+                                    ${(i.timeline && i.timeline.length) ? `
+                                        <div style="margin-top:8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; font-size:11px">
+                                            <b>Attack Timeline Steps:</b>
+                                            ${i.timeline.slice(0, 5).map((step, idx) => `
+                                                <div style="margin-top:4px; color:#334155">
+                                                    <span style="font-weight:bold; color:#0284c7">#${idx+1}</span> ${step.event_time ? new Date(step.event_time).toLocaleTimeString() : ''} - <b>${escapeHtml(step.rule_name || '')}</b>: <code>${escapeHtml(step.step_summary || '')}</code>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Events Section
+            if (sections.includes('events')) {
+                content += `
+                    <div class="pdf-section">
+                        <h2 class="pdf-h2">Telemetry & Security Events (${events.length} rows)</h2>
+                        <div class="pdf-card" style="overflow-x:auto">
+                            <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left">
+                                <thead>
+                                    <tr style="border-bottom:2px solid #e2e8f0; color:#64748b">
+                                        <th style="padding:6px 8px">Timestamp</th>
+                                        <th style="padding:6px 8px">Type</th>
+                                        <th style="padding:6px 8px">Severity</th>
+                                        <th style="padding:6px 8px">Client IP / User</th>
+                                        <th style="padding:6px 8px">Request Path</th>
+                                        <th style="padding:6px 8px">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${events.slice(0, 200).map(ev => `
+                                        <tr style="border-bottom:1px solid #f1f5f9">
+                                            <td style="padding:6px 8px; color:#64748b; white-space:nowrap">${ev.event_time ? new Date(ev.event_time).toLocaleTimeString() : '-'}</td>
+                                            <td style="padding:6px 8px; font-weight:bold">${escapeHtml(ev.event_type || 'HTTP')}</td>
+                                            <td style="padding:6px 8px">
+                                                <span style="padding:1px 6px; border-radius:3px; font-size:9.5px; font-weight:bold; text-transform:uppercase; background:${ev.severity==='critical'?'#fee2e2':(ev.severity==='high'?'#fef3c7':(ev.severity==='medium'?'#e0f2fe':'#f1f5f9'))}; color:${ev.severity==='critical'?'#dc2626':(ev.severity==='high'?'#d97706':(ev.severity==='medium'?'#0284c7':'#64748b'))}">${ev.severity}</span>
+                                            </td>
+                                            <td style="padding:6px 8px; font-family:monospace">${escapeHtml(ev.client_ip || '-')} ${ev.user_name && ev.user_name !== '-' && ev.user_name !== 'Anonymous' ? `<span style="color:#d97706">(${escapeHtml(ev.user_name)})</span>` : ''}</td>
+                                            <td style="padding:6px 8px; font-family:monospace; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(ev.method || '')} ${escapeHtml(ev.url_path || '-')}</td>
+                                            <td style="padding:6px 8px; font-family:monospace">${ev.status_code || '-'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                            ${events.length > 200 ? `<div style="font-size:11px; color:#64748b; text-align:center; padding:10px 0">Showing first 200 of ${events.length} events in report view. Export CSV for complete tabular records.</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Users Section
+            if (sections.includes('users')) {
+                content += `
+                    <div class="pdf-section">
+                        <h2 class="pdf-h2">Observed Identities & Actors (${users.length} entities)</h2>
+                        <div class="pdf-card" style="overflow-x:auto">
+                            <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left">
+                                <thead>
+                                    <tr style="border-bottom:2px solid #e2e8f0; color:#64748b">
+                                        <th style="padding:6px 8px">Identifier / IP</th>
+                                        <th style="padding:6px 8px">Category / Type</th>
+                                        <th style="padding:6px 8px">Total Req</th>
+                                        <th style="padding:6px 8px">Attacks</th>
+                                        <th style="padding:6px 8px">Peak Severity</th>
+                                        <th style="padding:6px 8px">Last Seen</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${users.map(u => `
+                                        <tr style="border-bottom:1px solid #f1f5f9">
+                                            <td style="padding:6px 8px; font-family:monospace; font-weight:bold">${escapeHtml(u.identifier || '-')}</td>
+                                            <td style="padding:6px 8px">${escapeHtml(u.client_category || 'actor')}</td>
+                                            <td style="padding:6px 8px">${u.total_requests || 0}</td>
+                                            <td style="padding:6px 8px; font-weight:bold; color:${u.attack_events > 0 ? '#dc2626' : '#059669'}">${u.attack_events || 0}</td>
+                                            <td style="padding:6px 8px"><span style="padding:1px 6px; border-radius:3px; font-size:9.5px; font-weight:bold; text-transform:uppercase; background:#f1f5f9; color:#475569">${u.peak_severity || 'info'}</span></td>
+                                            <td style="padding:6px 8px; color:#64748b">${u.last_seen ? new Date(u.last_seen).toLocaleTimeString() : '-'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            }
+
+            const reportTitle = `Application Security Audit: ${app.name || 'App'}`;
+            const reportSubtitle = `Target: ${app.primary_url || 'N/A'} | Environment: ${(app.environment || 'production').toUpperCase()} | Project: ${app.project_name || 'Global'}`;
+            const reportMeta = `Timeframe: ${data.range_label || timeframe}
+Generated: ${new Date().toISOString()}
+Total Telemetry Queried: ${summary.total_events || 0} events from Database`;
+
+            renderPDF(reportTitle, reportSubtitle, reportMeta, content, isPreview);
+
+        } catch (err) {
+            showToast(err.message || 'App report generation failed', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = originalText;
+        }
+    }
+
+    async function exportAppLevelCSV(e) {
+        e.preventDefault();
+        const appId = await getValidatedAppId();
+        if (!appId) return;
+
+        const sections = getSelectedAppSections();
+        const timeframe = document.getElementById('app-timeframe').value;
+        const fromDate = document.getElementById('app-date-from')?.value;
+        const toDate = document.getElementById('app-date-to')?.value;
+
+        showToast('Preparing CSV database export...', 'info');
+        try {
+            const resp = await fetch(`/api/apps/${appId}/report`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    type: 'all',
+                    timeframe: timeframe,
+                    from_date: fromDate,
+                    to_date: toDate,
+                    sections: sections,
+                    format: 'csv'
+                })
+            });
+
+            if (!resp.ok) throw new Error('CSV generation failed');
+
+            const blob = await resp.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `app_report_${appId}_${timeframe}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            showToast('CSV downloaded successfully', 'success');
+        } catch (err) {
+            showToast(err.message || 'CSV export failed', 'error');
+        }
+    }
+
+
     window.addEventListener('load', () => {
         const now = new Date();
         const thirtyDaysAgo = new Date(now - 30 * 86400000);
         document.getElementById('date_to').value = now.toISOString().split('T')[0];
         document.getElementById('date_from').value = thirtyDaysAgo.toISOString().split('T')[0];
         loadKPIs();
+        setupAppReportAutocomplete();
     });
 </script>
 

@@ -454,7 +454,8 @@ from typing import Optional, List, Dict, Any
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, Depends, Form, HTTPException, status, Query, Body
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse, StreamingResponse
+import io, csv
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -7903,7 +7904,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                             pass
 
                     # Redact passwords from logged URI paths
-                    sanitized_path = re.sub(r'((?:pwd|password|passwd|pass)=)[^& \t\r\n\'"]+', r'\g<1>********', raw_path, flags=re.IGNORECASE)
+                    sanitized_path = redact_sensitive_params(raw_path)
 
                     event_type, severity, rule_title, mitre_tag = evaluate_web_security_event(
                         method, raw_path, status_code, user, client_ip
@@ -8167,63 +8168,387 @@ def api_app_events(request: Request, payload: dict = Body(...)):
     finally:
         conn.close()
 
+# ══════════════════════════════════════════════════════════════════════════════
+# APPLICATION SIEM REPORTING, REDACTION, EXPLANATION & CLOSE WORKFLOWS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def redact_sensitive_params(text: str) -> str:
+    """
+    Redacts sensitive tokens and secrets in request paths, query strings, and headers:
+    otp, pwd, password, passwd, pass, token, session, auth, key, secret, authorization.
+    Replaces values with '******' (Requirement E).
+    """
+    if not text or not isinstance(text, str):
+        return text if text is not None else ""
+    pattern = r'((?:otp|pwd|password|passwd|pass|token|session|auth|key|secret|authorization)=)([^& \t\r\n\'"]+)'
+    return re.sub(pattern, r'\g<1>******', text, flags=re.IGNORECASE)
+
+def parse_timeframe_range(timeframe: str, from_date: str = None, to_date: str = None):
+    """
+    Resolves standard timeframes into UTC start_dt, end_dt, and display label.
+    Supports: 1h, 3h, 8h, 1d, 7d, 15d, 1m (30d), and custom range.
+    """
+    now_utc = datetime.now(timezone.utc)
+    tf = (timeframe or "7d").lower()
+    if tf == "1h":
+        return now_utc - timedelta(hours=1), now_utc, "Last 1 Hour"
+    elif tf == "3h":
+        return now_utc - timedelta(hours=3), now_utc, "Last 3 Hours"
+    elif tf == "8h":
+        return now_utc - timedelta(hours=8), now_utc, "Last 8 Hours"
+    elif tf in ("1d", "24h"):
+        return now_utc - timedelta(days=1), now_utc, "Last 1 Day"
+    elif tf == "7d":
+        return now_utc - timedelta(days=7), now_utc, "Last 7 Days"
+    elif tf == "15d":
+        return now_utc - timedelta(days=15), now_utc, "Last 15 Days"
+    elif tf in ("1m", "30d", "1month"):
+        return now_utc - timedelta(days=30), now_utc, "Last 1 Month"
+    elif tf == "custom" and from_date and to_date:
+        try:
+            f_dt = datetime.fromisoformat(from_date.replace("Z", "+00:00")) if "T" in from_date else datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            t_dt = datetime.fromisoformat(to_date.replace("Z", "+00:00")) if "T" in to_date else datetime.strptime(to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+            return f_dt, t_dt, f"Custom ({from_date} to {to_date})"
+        except Exception:
+            return now_utc - timedelta(days=7), now_utc, "Last 7 Days"
+    return now_utc - timedelta(days=7), now_utc, "Last 7 Days"
+
+def explainItem(item_type: str, item: dict) -> dict:
+    """
+    Deterministic template engine generating security explanations for:
+    - 'event': Single telemetry event
+    - 'incident': Correlated multi-stage attack incident
+    - 'user': Observed identity or actor
+    Designed with a unified interface so a future LLM layer can replace
+    or enhance explanations without touching downstream reporting code.
+    """
+    item_type = (item_type or "").lower().rstrip("s")
+    if item_type == "event":
+        method = item.get("method") or "HTTP"
+        raw_path = item.get("url_path") or "/"
+        path = redact_sensitive_params(raw_path)
+        status = item.get("status_code") or "-"
+        client_ip = item.get("client_ip") or "unknown"
+        node = item.get("node") or "application"
+        user_name = item.get("user_name")
+        ev_type = item.get("event_type") or "HTTP_ACCESS"
+        severity = (item.get("severity") or "info").lower()
+        status_state = (item.get("status") or "open").lower()
+        closed_by = item.get("closed_by") or "N/A"
+        closed_note = item.get("closed_note") or "None"
+        event_time = str(item.get("event_time") or "N/A")
+
+        plain = f"Client IP {client_ip} performed an HTTP {method} request to '{path}', returning status {status}."
+        if user_name and user_name not in ("-", "Anonymous"):
+            plain += f" Associated with authenticated user '{user_name}'."
+
+        if ev_type in ("PATH_TRAVERSAL", "LFI"):
+            why = "Flagged because the request path contains directory traversal sequences ('../', '/etc/passwd'). Corresponds to MITRE ATT&CK T1083 (File and Directory Discovery)."
+            impact = "High: Threat actor attempting unauthorized discovery or exfiltration of sensitive operating system / configuration files."
+            recommendation = "Verify application input sanitization. Block malicious source IP at perimeter WAF if not a legitimate security test."
+        elif ev_type in ("SQL_INJECTION", "SQLI"):
+            why = "Flagged due to SQL manipulation tokens ('UNION SELECT', quotes, comments, or sleep probes). Corresponds to MITRE ATT&CK T1190 (Exploit Public-Facing Application)."
+            impact = "Critical: High risk of backend database compromise, unauthorized data extraction, or authentication bypass."
+            recommendation = "Audit database queries for parameterized statements / ORM usage. Restrict database user privileges."
+        elif ev_type in ("JNDI_EXPLOIT", "LOG4SHELL"):
+            why = "Flagged due to JNDI injection patterns ('${jndi:ldap...'). Corresponds to MITRE ATT&CK T1190."
+            impact = "Critical: Remote Code Execution (RCE) attempt against backend logging infrastructure."
+            recommendation = "Ensure log4j and Java runtime dependencies are fully patched. Restrict outbound LDAP/RMI connections."
+        elif ev_type in ("XSS_ATTACK", "XSS"):
+            why = "Flagged due to injected JavaScript tags or event handlers ('<script>', 'onerror='). Corresponds to MITRE ATT&CK T1059.007."
+            impact = "Medium: Potential client-side session hijacking or defacement of victim user browsers."
+            recommendation = "Implement context-aware HTML output encoding and strict Content Security Policy (CSP)."
+        elif ev_type in ("LOGIN_FAILURE", "AUTH_FAILURE"):
+            why = "Flagged due to failed authentication response (HTTP 401/403) targeting login or credential endpoints. Corresponds to MITRE ATT&CK T1110 (Brute Force)."
+            impact = "Medium: Unauthorized actor attempting credential guessing or credential stuffing."
+            recommendation = "Enforce rate limiting, multi-factor authentication (MFA), and account lockout mechanisms."
+        elif ev_type in ("ADMIN_ACCESS_ABUSE", "PRIVILEGE_VIOLATION"):
+            why = "Flagged because an unprivileged or unauthenticated actor attempted access to restricted administrative functionality. Corresponds to MITRE ATT&CK T1078."
+            impact = "High: Potential privilege escalation or unauthorized administrative access."
+            recommendation = "Audit role-based access control (RBAC) rules and ensure administrative paths require valid session authentication."
+        else:
+            why = f"Monitored application telemetry event ({ev_type})."
+            impact = f"{severity.capitalize()}: Standard operational request tracking."
+            recommendation = "No defensive remediation required unless part of a broader abnormal traffic anomaly."
+
+        return {
+            "type": "event",
+            "id": item.get("id"),
+            "title": f"{ev_type} ({severity.upper()})",
+            "what_happened": plain,
+            "why_flagged": why,
+            "severity": severity.upper(),
+            "impact": impact,
+            "severity_impact": f"Severity: {severity.upper()} | {impact}",
+            "source_details": {
+                "client_ip": client_ip,
+                "user": user_name or "Anonymous",
+                "path": path,
+                "status_code": status,
+                "node": node,
+                "event_time": event_time
+            },
+            "source_telemetry": f"Source Node: {node} | Client IP: {client_ip} | User: {user_name or 'Unauthenticated'} | Path: {path} | Status: {status} | Time: {event_time}",
+            "recommended_action": recommendation,
+            "status": status_state.lower(),
+            "status_state": f"Status: {status_state.upper()} (Closed by: {closed_by}, Note: {closed_note})"
+        }
+
+    elif item_type == "incident":
+        title = item.get("title") or "Correlated Attack Incident"
+        attacker_key = item.get("attacker_key") or "unknown"
+        client_ip = item.get("client_ip") or attacker_key.replace("ip:", "")
+        user_name = item.get("user_name")
+        events_count = item.get("events_count") or 1
+        stages_count = item.get("stages_count") or 1
+        severity = (item.get("severity") or "high").lower()
+        tactics = item.get("mitre_tactics") or []
+        if isinstance(tactics, str):
+            try: tactics = json.loads(tactics)
+            except: tactics = []
+        status_state = (item.get("status") or "Open")
+        closed_by = item.get("closed_by") or "N/A"
+        closed_note = item.get("closed_note") or "None"
+        first_seen = str(item.get("first_event_at") or "N/A")
+        last_seen = str(item.get("last_event_at") or "N/A")
+        timeline = item.get("timeline") or []
+        if isinstance(timeline, str):
+            try: timeline = json.loads(timeline)
+            except: timeline = []
+
+        plain = f"Aggregated security incident '{title}' initiated by threat actor key '{attacker_key}'. A total of {events_count} attack event(s) were correlated across {stages_count} progression stage(s)."
+        why = f"Correlated by rule heuristics due to repeated or multi-vector attack activity from {client_ip} targeting application routes."
+        if tactics:
+            why += f" Tagged with MITRE ATT&CK: {', '.join(tactics)}."
+        impact = f"{severity.capitalize()}: Active exploit progression against public-facing application infrastructure."
+
+        steps_desc = []
+        for idx, s in enumerate(timeline[:10]):
+            summary = redact_sensitive_params(s.get("step_summary") or "")
+            steps_desc.append(f"#{idx+1} [{s.get('event_time', '')}] {s.get('rule_name', '')}: {summary}")
+        timeline_str = " | ".join(steps_desc) if steps_desc else "No sub-events recorded."
+
+        recommendation = "Immediately evaluate attacker IP reputation. Isolate attacker at Load Balancer / WAF perimeter. Check related database and application components for state corruption."
+
+        return {
+            "type": "incident",
+            "id": item.get("id"),
+            "title": title,
+            "what_happened": plain,
+            "why_flagged": why,
+            "severity": severity.upper(),
+            "impact": impact,
+            "severity_impact": f"Severity: {severity.upper()} | {impact}",
+            "source_details": {
+                "client_ip": client_ip,
+                "attacker_key": attacker_key,
+                "user": user_name or "None",
+                "events_count": events_count,
+                "first_seen": first_seen,
+                "last_seen": last_seen
+            },
+            "source_telemetry": f"Attacker IP: {client_ip} | Target User: {user_name or 'None'} | First Seen: {first_seen} | Last Seen: {last_seen} | Timeline Steps: {timeline_str}",
+            "recommended_action": recommendation,
+            "status": str(status_state).lower(),
+            "status_state": f"Status: {status_state.upper()} (Closed by: {closed_by}, Note: {closed_note})"
+        }
+
+    elif item_type == "user":
+        identifier = item.get("identifier") or "Unknown"
+        client_ip = item.get("client_ip") or identifier
+        user_name = item.get("user_name")
+        total_req = item.get("total_requests") or 0
+        attacks = item.get("attack_events") or 0
+        peak_sev = (item.get("peak_severity") or "info").lower()
+        recent_path = redact_sensitive_params(item.get("recent_path") or "/")
+        first_seen = str(item.get("first_seen") or "N/A")
+        last_seen = str(item.get("last_seen") or "N/A")
+        category = item.get("client_category") or "visitor"
+        status_state = (item.get("status") or "open").lower()
+        closed_by = item.get("closed_by") or "N/A"
+        closed_note = item.get("closed_note") or "None"
+
+        plain = f"Observed identity/actor '{identifier}' categorized as {category}. Generated {total_req} total HTTP requests, of which {attacks} were classified as security threats."
+        if attacks > 0:
+            why = f"Identity generated suspicious/malicious traffic with peak threat severity '{peak_sev.upper()}', targeting endpoints such as '{recent_path}'."
+            impact = f"{peak_sev.capitalize()}: Potential compromised account, automated vulnerability scanner, or malicious external visitor."
+            recommendation = "Review authentication history for this identity. If legitimate user account, reset credentials and verify session tokens. If external IP scanner, add to firewall blacklist."
+        else:
+            why = "Routine operational identity attribution. Requests matched baseline legitimate application operations."
+            impact = "Info: Standard legitimate user activity."
+            recommendation = "No security remediation necessary. Continue baseline behavior profiling."
+
+        return {
+            "type": "user",
+            "id": identifier,
+            "title": f"Identity: {identifier} ({category.upper()})",
+            "what_happened": plain,
+            "why_flagged": why,
+            "severity": peak_sev.upper(),
+            "impact": impact,
+            "severity_impact": f"Peak Severity: {peak_sev.upper()} | {impact}",
+            "source_details": {
+                "identifier": identifier,
+                "client_ip": client_ip,
+                "user": user_name or "Unauthenticated",
+                "total_requests": total_req,
+                "attacks": attacks,
+                "path": recent_path
+            },
+            "source_telemetry": f"Actor Category: {category} | Client IP: {client_ip} | User: {user_name or 'Unauthenticated'} | Requests: {total_req} | Attacks: {attacks} | Recent Path: {recent_path} | Window: {first_seen} to {last_seen}",
+            "recommended_action": recommendation,
+            "status": status_state.lower(),
+            "status_state": f"Status: {status_state.upper()} (Closed by: {closed_by}, Note: {closed_note})"
+        }
+
+    return {
+        "type": item_type,
+        "title": "Item Analysis",
+        "what_happened": "No item details available.",
+        "why_flagged": "N/A",
+        "severity_impact": "N/A",
+        "source_telemetry": "N/A",
+        "recommended_action": "N/A",
+        "status_state": "OPEN"
+    }
+
 @app.get("/api/apps/{app_id}/events")
-def api_get_app_events(request: Request, app_id: int, limit: int = 50):
-    """Retrieves live stream of parsed application SIEM events."""
+def api_get_app_events(
+    request: Request,
+    app_id: int,
+    limit: int = 100,
+    offset: int = 0,
+    timeframe: str = "7d",
+    from_date: str = None,
+    to_date: str = None,
+    status: str = "open",
+    severity: str = "all",
+    query: str = ""
+):
+    """Retrieves live stream of parsed application SIEM events with timeframe, status filtering, and total counts."""
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
     conn = db.get_db_connection()
     if not conn:
-        return []
+        return {"items": [], "total_count": 0, "showing_count": 0}
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, event_time, node, source_type, event_type, client_ip, user_name, method, url_path, status_code, severity
+            start_dt, end_dt, _ = parse_timeframe_range(timeframe, from_date, to_date)
+            where_clauses = ["application_id = %s", "event_time >= %s", "event_time <= %s"]
+            params = [app_id, start_dt, end_dt]
+
+            stat = (status or "open").lower()
+            if stat == "open":
+                where_clauses.append("(status IS NULL OR status = 'open' OR status = '')")
+            elif stat == "closed":
+                where_clauses.append("status = 'closed'")
+
+            sev = (severity or "all").lower()
+            if sev == "security":
+                where_clauses.append("severity IN ('medium', 'high', 'critical')")
+            elif sev != "all":
+                where_clauses.append("severity = %s")
+                params.append(sev)
+
+            q_clean = (query or "").strip()
+            if q_clean:
+                where_clauses.append("(client_ip ILIKE %s OR user_name ILIKE %s OR url_path ILIKE %s OR method ILIKE %s OR node ILIKE %s)")
+                q_param = f"%{q_clean}%"
+                params.extend([q_param, q_param, q_param, q_param, q_param])
+
+            # Total matching count in DB
+            cur.execute(f"SELECT COUNT(*) FROM app_events WHERE {' AND '.join(where_clauses)};", tuple(params))
+            total_count = cur.fetchone()[0]
+
+            # Limit query
+            cur.execute(f"""
+                SELECT id, event_time, node, source_type, event_type, client_ip, user_name, method, url_path, status_code, severity, status, closed_by, closed_at, closed_note
                 FROM app_events
-                WHERE application_id = %s
+                WHERE {' AND '.join(where_clauses)}
                 ORDER BY event_time DESC
-                LIMIT %s;
-            """, (app_id, limit))
-            return [dict(r) for r in cur.fetchall()]
+                LIMIT %s OFFSET %s;
+            """, tuple(params + [limit, offset]))
+            items = []
+            for r in cur.fetchall():
+                d = dict(r)
+                d["url_path"] = redact_sensitive_params(d.get("url_path") or "")
+                items.append(d)
+
+            return {"items": items, "total_count": total_count, "showing_count": len(items)}
     finally:
         conn.close()
 
 @app.get("/api/apps/{app_id}/incidents")
-def api_get_app_incidents(request: Request, app_id: int):
-    """Retrieves correlated attack incidents for an application."""
+def api_get_app_incidents(
+    request: Request,
+    app_id: int,
+    timeframe: str = "7d",
+    from_date: str = None,
+    to_date: str = None,
+    status: str = "open"
+):
+    """Retrieves correlated attack incidents for an application with timeframe, status filtering, and total counts."""
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
     conn = db.get_db_connection()
     if not conn:
-        return []
+        return {"items": [], "total_count": 0, "showing_count": 0}
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            start_dt, end_dt, _ = parse_timeframe_range(timeframe, from_date, to_date)
+            where_clauses = ["i.application_id = %s", "i.last_event_at >= %s", "i.last_event_at <= %s"]
+            params = [app_id, start_dt, end_dt]
+
+            stat = (status or "open").lower()
+            if stat == "open":
+                where_clauses.append("i.status IN ('Open', 'Investigating', 'open')")
+            elif stat == "closed":
+                where_clauses.append("i.status IN ('Closed', 'closed', 'Resolved')")
+
+            cur.execute(f"SELECT COUNT(*) FROM app_incidents i WHERE {' AND '.join(where_clauses)};", tuple(params))
+            total_count = cur.fetchone()[0]
+
+            cur.execute(f"""
                 SELECT i.*, 
                     (SELECT json_agg(e ORDER BY e.event_time ASC) FROM app_incident_events e WHERE e.incident_id = i.id) as timeline
                 FROM app_incidents i
-                WHERE i.application_id = %s
+                WHERE {' AND '.join(where_clauses)}
                 ORDER BY i.last_event_at DESC;
-            """, (app_id,))
-            return [dict(r) for r in cur.fetchall()]
+            """, tuple(params))
+            items = []
+            for r in cur.fetchall():
+                d = dict(r)
+                if d.get("timeline"):
+                    for t_step in d["timeline"]:
+                        t_step["step_summary"] = redact_sensitive_params(t_step.get("step_summary") or "")
+                items.append(d)
+
+            return {"items": items, "total_count": total_count, "showing_count": len(items)}
     finally:
         conn.close()
 
-
 @app.get("/api/apps/{app_id}/users")
-def api_get_app_users(request: Request, app_id: int):
-    """Retrieves observed users and attacker client IPs for an application with intelligent automated identity attribution."""
+def api_get_app_users(
+    request: Request,
+    app_id: int,
+    limit: int = 50,
+    timeframe: str = "7d",
+    from_date: str = None,
+    to_date: str = None,
+    status: str = "open"
+):
+    """Retrieves observed users and attacker client IPs for an application with intelligent identity attribution and review state."""
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
     conn = db.get_db_connection()
     if not conn:
-        return []
+        return {"items": [], "total_count": 0, "showing_count": 0}
     try:
         with conn.cursor() as cur:
-            # Query linked server / node IPs for this application from application_components
+            start_dt, end_dt, _ = parse_timeframe_range(timeframe, from_date, to_date)
             node_ips = set()
             try:
                 cur.execute("SELECT node_ip FROM application_components WHERE application_id = %s", (app_id,))
@@ -8233,67 +8558,56 @@ def api_get_app_users(request: Request, app_id: int):
             except Exception as e_comp:
                 logger.warning(f"Could not fetch node_ips: {e_comp}")
 
-            # Ultra-reliable query without complex boolean expressions in SQL
-            try:
-                cur.execute("""
-                    SELECT 
-                        COALESCE(user_name, client_ip) AS identifier,
-                        client_ip,
-                        user_name,
-                        COUNT(*) AS total_requests,
-                        COUNT(*) FILTER (WHERE severity IN ('medium', 'high', 'critical')) AS attack_events,
-                        MAX(event_time) AS last_seen,
-                        MIN(event_time) AS first_seen,
-                        CASE 
-                            WHEN bool_or(severity = 'critical') THEN 'critical'
-                            WHEN bool_or(severity = 'high') THEN 'high'
-                            WHEN bool_or(severity = 'medium') THEN 'medium'
-                            WHEN bool_or(severity = 'low') THEN 'low'
-                            ELSE 'info'
-                        END AS peak_severity,
-                        MAX(url_path) AS recent_path
-                    FROM app_events
-                    WHERE application_id = %s AND client_ip IS NOT NULL
-                    GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
-                    ORDER BY 
-                        (CASE WHEN user_name IS NOT NULL AND user_name != '-' AND user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
-                        last_seen DESC,
-                        attack_events DESC,
-                        total_requests DESC
-                    LIMIT 100;
-                """, (app_id,))
-                rows = cur.fetchall()
-            except Exception as e_q:
-                logger.error(f"Error in users main query, trying basic fallback: {e_q}")
-                cur.execute("""
-                    SELECT 
-                        COALESCE(user_name, client_ip) AS identifier,
-                        client_ip,
-                        user_name,
-                        COUNT(*) AS total_requests,
-                        COUNT(*) FILTER (WHERE severity IN ('medium', 'high', 'critical')) AS attack_events,
-                        MAX(event_time) AS last_seen,
-                        MIN(event_time) AS first_seen
-                    FROM app_events
-                    WHERE application_id = %s AND client_ip IS NOT NULL
-                    GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
-                    ORDER BY 
-                        (CASE WHEN user_name IS NOT NULL AND user_name != '-' AND user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
-                        last_seen DESC,
-                        attack_events DESC,
-                        total_requests DESC
-                    LIMIT 100;
-                """, (app_id,))
-                rows = cur.fetchall()
+            where_clauses = ["e.application_id = %s", "e.client_ip IS NOT NULL", "e.event_time >= %s", "e.event_time <= %s"]
+            params = [app_id, start_dt, end_dt]
 
-            res = []
-            for r in rows:
+            stat = (status or "open").lower()
+            if stat == "open":
+                where_clauses.append("(s.status IS NULL OR s.status = 'open')")
+            elif stat == "closed":
+                where_clauses.append("s.status = 'closed'")
+
+            cur.execute(f"""
+                SELECT 
+                    COALESCE(e.user_name, e.client_ip) AS identifier,
+                    e.client_ip,
+                    e.user_name,
+                    COUNT(*) AS total_requests,
+                    COUNT(*) FILTER (WHERE e.severity IN ('medium', 'high', 'critical')) AS attack_events,
+                    MAX(e.event_time) AS last_seen,
+                    MIN(e.event_time) AS first_seen,
+                    CASE 
+                        WHEN bool_or(e.severity = 'critical') THEN 'critical'
+                        WHEN bool_or(e.severity = 'high') THEN 'high'
+                        WHEN bool_or(e.severity = 'medium') THEN 'medium'
+                        WHEN bool_or(e.severity = 'low') THEN 'low'
+                        ELSE 'info'
+                    END AS peak_severity,
+                    MAX(e.url_path) AS recent_path,
+                    COALESCE(s.status, 'open') as status,
+                    s.closed_by,
+                    s.closed_at,
+                    s.closed_note
+                FROM app_events e
+                LEFT JOIN app_user_status s ON s.application_id = e.application_id AND s.identifier = COALESCE(e.user_name, e.client_ip)
+                WHERE {' AND '.join(where_clauses)}
+                GROUP BY COALESCE(e.user_name, e.client_ip), e.client_ip, e.user_name, s.status, s.closed_by, s.closed_at, s.closed_note
+                ORDER BY 
+                    (CASE WHEN e.user_name IS NOT NULL AND e.user_name != '-' AND e.user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
+                    last_seen DESC,
+                    attack_events DESC,
+                    total_requests DESC;
+            """, tuple(params))
+            all_rows = cur.fetchall()
+            total_count = len(all_rows)
+
+            items = []
+            for r in all_rows[:limit]:
                 item = dict(r)
                 cip = str(item.get("client_ip") or "").strip()
                 uname = item.get("user_name")
                 raw_path = str(item.get("recent_path") or "").lower()
 
-                # Auto-decode Base64 usernames in existing records
                 if uname and len(uname) >= 4 and len(uname) % 4 == 0 and re.match(r'^[A-Za-z0-9+/]+={0,2}$', uname):
                     try:
                         dec_u = base64.b64decode(uname).decode('utf-8', errors='ignore').strip()
@@ -8304,8 +8618,7 @@ def api_get_app_users(request: Request, app_id: int):
                     except Exception:
                         pass
 
-                if item.get("recent_path"):
-                    item["recent_path"] = re.sub(r'((?:pwd|password|passwd|pass)=)[^& \t\r\n\'"]+', r'\g<1>********', item["recent_path"], flags=re.IGNORECASE)
+                item["recent_path"] = redact_sensitive_params(item.get("recent_path") or "")
 
                 if uname and uname not in ("-", "Anonymous", "null", "None"):
                     item["client_category"] = "user"
@@ -8319,11 +8632,508 @@ def api_get_app_users(request: Request, app_id: int):
                 else:
                     item["client_category"] = "guest"
                     item["display_role"] = "🌐 Web Visitor (Unauthenticated)"
-                res.append(item)
-            return res
-    except Exception as e:
-        logger.error(f"Error in api_get_app_users: {e}")
+                items.append(item)
+
+            return {"items": items, "total_count": total_count, "showing_count": len(items)}
+    finally:
+        conn.close()
+
+@app.post("/api/apps/{app_id}/events/close")
+def api_close_app_events(request: Request, app_id: int, payload: dict = Body(...)):
+    """Marks selected application SIEM events as reviewed / closed or reopens them."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    ids = payload.get("ids", [])
+    action = payload.get("action", "close").lower()
+    note = (payload.get("note") or "").strip()
+    if not ids:
+        return {"status": "error", "message": "No event IDs provided"}
+    
+    conn = db.get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            if action == "close":
+                cur.execute("""
+                    UPDATE app_events
+                    SET status = 'closed', closed_by = %s, closed_at = NOW(), closed_note = %s
+                    WHERE application_id = %s AND id = ANY(%s);
+                """, (user.get("username", "admin"), note or "Reviewed by security analyst", app_id, ids))
+            else:
+                cur.execute("""
+                    UPDATE app_events
+                    SET status = 'open', closed_by = NULL, closed_at = NULL, closed_note = NULL
+                    WHERE application_id = %s AND id = ANY(%s);
+                """, (app_id, ids))
+            updated_count = cur.rowcount
+            conn.commit()
+
+            client_ip = request.client.host if request.client else None
+            audit_action = "APP_EVENT_CLOSE" if action == "close" else "APP_EVENT_REOPEN"
+            db.log_audit(
+                user.get("username", "admin"),
+                audit_action,
+                "app_events",
+                str(app_id),
+                f"{action.capitalize()}d {len(ids)} events. Note: {note or 'N/A'}",
+                ip_address=client_ip
+            )
+            return {"status": "ok", "updated": updated_count, "action": action}
+    finally:
+        conn.close()
+
+@app.post("/api/apps/{app_id}/incidents/close")
+def api_close_app_incidents(request: Request, app_id: int, payload: dict = Body(...)):
+    """Marks selected application incidents as resolved / closed or reopens them."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    ids = payload.get("ids", [])
+    action = payload.get("action", "close").lower()
+    note = (payload.get("note") or "").strip()
+    if not ids:
+        return {"status": "error", "message": "No incident IDs provided"}
+    
+    conn = db.get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            if action == "close":
+                cur.execute("""
+                    UPDATE app_incidents
+                    SET status = 'Closed', closed_by = %s, closed_at = NOW(), closed_note = %s, updated_at = NOW()
+                    WHERE application_id = %s AND id = ANY(%s);
+                """, (user.get("username", "admin"), note or "Incident mitigated and resolved", app_id, ids))
+            else:
+                cur.execute("""
+                    UPDATE app_incidents
+                    SET status = 'Open', closed_by = NULL, closed_at = NULL, closed_note = NULL, updated_at = NOW()
+                    WHERE application_id = %s AND id = ANY(%s);
+                """, (app_id, ids))
+            updated_count = cur.rowcount
+
+            # Re-evaluate app dynamic status
+            cur.execute("""
+                SELECT COUNT(*) FROM app_incidents 
+                WHERE application_id = %s AND status IN ('Open', 'Investigating');
+            """, (app_id,))
+            remaining_open = cur.fetchone()[0]
+            if remaining_open == 0:
+                cur.execute("UPDATE applications SET status = 'NORMAL', updated_at = NOW() WHERE id = %s AND status NOT IN ('MAINT', 'WAITING');", (app_id,))
+
+            conn.commit()
+
+            client_ip = request.client.host if request.client else None
+            audit_action = "APP_INCIDENT_CLOSE" if action == "close" else "APP_INCIDENT_REOPEN"
+            db.log_audit(
+                user.get("username", "admin"),
+                audit_action,
+                "app_incidents",
+                str(app_id),
+                f"{action.capitalize()}d {len(ids)} incidents. Note: {note or 'N/A'}",
+                ip_address=client_ip
+            )
+            return {"status": "ok", "updated": updated_count, "action": action, "remaining_open": remaining_open}
+    finally:
+        conn.close()
+
+@app.post("/api/apps/{app_id}/users/close")
+def api_close_app_users(request: Request, app_id: int, payload: dict = Body(...)):
+    """Marks selected user / actor identities as reviewed or reopens them."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    identifiers = payload.get("identifiers", [])
+    action = payload.get("action", "close").lower()
+    note = (payload.get("note") or "").strip()
+    if not identifiers:
+        return {"status": "error", "message": "No user identifiers provided"}
+    
+    conn = db.get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            for ident in identifiers:
+                if action == "close":
+                    cur.execute("""
+                        INSERT INTO app_user_status (application_id, identifier, status, closed_by, closed_at, closed_note, updated_at)
+                        VALUES (%s, %s, 'closed', %s, NOW(), %s, NOW())
+                        ON CONFLICT (application_id, identifier)
+                        DO UPDATE SET status = 'closed', closed_by = EXCLUDED.closed_by, closed_at = NOW(), closed_note = EXCLUDED.closed_note, updated_at = NOW();
+                    """, (app_id, ident, user.get("username", "admin"), note or "Identity review completed"))
+                else:
+                    cur.execute("""
+                        INSERT INTO app_user_status (application_id, identifier, status, closed_by, closed_at, closed_note, updated_at)
+                        VALUES (%s, %s, 'open', NULL, NULL, NULL, NOW())
+                        ON CONFLICT (application_id, identifier)
+                        DO UPDATE SET status = 'open', closed_by = NULL, closed_at = NULL, closed_note = NULL, updated_at = NOW();
+                    """, (app_id, ident))
+            conn.commit()
+
+            client_ip = request.client.host if request.client else None
+            audit_action = "APP_USER_CLOSE" if action == "close" else "APP_USER_REOPEN"
+            db.log_audit(
+                user.get("username", "admin"),
+                audit_action,
+                "app_users",
+                str(app_id),
+                f"{action.capitalize()}d {len(identifiers)} users. Note: {note or 'N/A'}",
+                ip_address=client_ip
+            )
+            return {"status": "ok", "updated": len(identifiers), "action": action}
+    finally:
+        conn.close()
+
+@app.post("/api/apps/{app_id}/report")
+def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(...)):
+    """
+    Database-driven Application SIEM report generator.
+    Queries database across full time range (ignoring UI limit of 100/50).
+    Provides structured report metadata, KPI breakdowns, section tables, and deterministic explanations.
+    """
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    conn = db.get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.*, p.name as project_name 
+                FROM applications a
+                LEFT JOIN projects p ON a.project_id = p.id
+                WHERE a.id = %s;
+            """, (app_id,))
+            app_row = cur.fetchone()
+            if not app_row:
+                raise HTTPException(status_code=404, detail="Application not found or revoked")
+            app_data = dict(app_row)
+
+            effective_pid = get_effective_project_id(request)
+            if effective_pid is not None:
+                if isinstance(effective_pid, list):
+                    if app_data.get("project_id") not in effective_pid:
+                        raise HTTPException(status_code=403, detail="Forbidden: App outside authorized projects")
+                elif int(app_data.get("project_id") or 0) != int(effective_pid):
+                    raise HTTPException(status_code=403, detail="Forbidden: App outside authorized projects")
+
+            rep_type = payload.get("type", "all").lower()
+            timeframe = payload.get("timeframe", "7d")
+            from_date = payload.get("from_date")
+            to_date = payload.get("to_date")
+            sections = payload.get("sections") or ["events", "incidents", "users"]
+            apply_filters = payload.get("apply_filters", False)
+            severity_filter = payload.get("severity", "all")
+            query_filter = payload.get("query", "").strip()
+            status_filter = payload.get("status_filter", "all").lower()
+            selected_ids = payload.get("selected_ids", [])
+            selected_type = payload.get("selected_type", "events").lower().rstrip("s")
+            output_format = payload.get("format", "json").lower()
+
+            start_dt, end_dt, range_label = parse_timeframe_range(timeframe, from_date, to_date)
+
+            events_data = []
+            incidents_data = []
+            users_data = []
+            explanations_data = []
+            total_events_in_db = 0
+            total_incidents_in_db = 0
+            total_users_in_db = 0
+
+            # ── EVENTS ──
+            if "events" in sections or rep_type == "events" or (rep_type == "selected" and selected_type == "event"):
+                where_clauses = ["application_id = %s"]
+                params = [app_id]
+
+                if rep_type == "selected" and selected_ids:
+                    where_clauses.append("id = ANY(%s)")
+                    params.append(selected_ids)
+                else:
+                    where_clauses.append("event_time >= %s AND event_time <= %s")
+                    params.extend([start_dt, end_dt])
+                    if apply_filters:
+                        if severity_filter == "security":
+                            where_clauses.append("severity IN ('medium', 'high', 'critical')")
+                        elif severity_filter != "all":
+                            where_clauses.append("severity = %s")
+                            params.append(severity_filter)
+                        if query_filter:
+                            where_clauses.append("(client_ip ILIKE %s OR user_name ILIKE %s OR url_path ILIKE %s OR method ILIKE %s OR node ILIKE %s)")
+                            q_param = f"%{query_filter}%"
+                            params.extend([q_param, q_param, q_param, q_param, q_param])
+                        if status_filter == "open":
+                            where_clauses.append("(status IS NULL OR status = 'open' OR status = '')")
+                        elif status_filter == "closed":
+                            where_clauses.append("status = 'closed'")
+
+                cur.execute(f"SELECT COUNT(*) FROM app_events WHERE {' AND '.join(where_clauses)};", tuple(params))
+                total_events_in_db = cur.fetchone()[0]
+
+                cap_limit = 5000 if output_format != "csv" else 50000
+                cur.execute(f"""
+                    SELECT id, event_time, node, source_type, event_type, client_ip, user_name, method, url_path, status_code, severity, status, closed_by, closed_at, closed_note
+                    FROM app_events
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY event_time DESC
+                    LIMIT %s;
+                """, tuple(params + [cap_limit]))
+                for r in cur.fetchall():
+                    row_dict = dict(r)
+                    row_dict["url_path"] = redact_sensitive_params(row_dict.get("url_path") or "")
+                    events_data.append(row_dict)
+                    if rep_type == "selected":
+                        explanations_data.append(explainItem("event", row_dict))
+
+            # ── INCIDENTS ──
+            if "incidents" in sections or rep_type == "incidents" or (rep_type == "selected" and selected_type == "incident"):
+                where_clauses = ["i.application_id = %s"]
+                params = [app_id]
+
+                if rep_type == "selected" and selected_ids:
+                    where_clauses.append("i.id = ANY(%s)")
+                    params.append(selected_ids)
+                else:
+                    where_clauses.append("i.last_event_at >= %s AND i.last_event_at <= %s")
+                    params.extend([start_dt, end_dt])
+                    if apply_filters:
+                        if status_filter == "open":
+                            where_clauses.append("i.status IN ('Open', 'Investigating', 'open')")
+                        elif status_filter == "closed":
+                            where_clauses.append("i.status IN ('Closed', 'closed', 'Resolved')")
+
+                cur.execute(f"SELECT COUNT(*) FROM app_incidents i WHERE {' AND '.join(where_clauses)};", tuple(params))
+                total_incidents_in_db = cur.fetchone()[0]
+
+                cap_limit = 1000 if output_format != "csv" else 10000
+                cur.execute(f"""
+                    SELECT i.*,
+                        (SELECT json_agg(e ORDER BY e.event_time ASC) FROM app_incident_events e WHERE e.incident_id = i.id) as timeline
+                    FROM app_incidents i
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY i.last_event_at DESC
+                    LIMIT %s;
+                """, tuple(params + [cap_limit]))
+                for r in cur.fetchall():
+                    row_dict = dict(r)
+                    if row_dict.get("timeline"):
+                        for t_step in row_dict["timeline"]:
+                            t_step["step_summary"] = redact_sensitive_params(t_step.get("step_summary") or "")
+                    incidents_data.append(row_dict)
+                    if rep_type == "selected":
+                        explanations_data.append(explainItem("incident", row_dict))
+
+            # ── USERS ──
+            if "users" in sections or rep_type == "users" or (rep_type == "selected" and selected_type == "user"):
+                where_clauses = ["e.application_id = %s", "e.client_ip IS NOT NULL"]
+                params = [app_id]
+
+                if rep_type == "selected" and selected_ids:
+                    where_clauses.append("COALESCE(e.user_name, e.client_ip) = ANY(%s)")
+                    params.append(selected_ids)
+                else:
+                    where_clauses.append("e.event_time >= %s AND e.event_time <= %s")
+                    params.extend([start_dt, end_dt])
+                    if apply_filters:
+                        if status_filter == "open":
+                            where_clauses.append("(s.status IS NULL OR s.status = 'open')")
+                        elif status_filter == "closed":
+                            where_clauses.append("s.status = 'closed'")
+
+                cur.execute(f"""
+                    SELECT 
+                        COALESCE(e.user_name, e.client_ip) AS identifier,
+                        e.client_ip,
+                        e.user_name,
+                        COUNT(*) AS total_requests,
+                        COUNT(*) FILTER (WHERE e.severity IN ('medium', 'high', 'critical')) AS attack_events,
+                        MAX(e.event_time) AS last_seen,
+                        MIN(e.event_time) AS first_seen,
+                        CASE 
+                            WHEN bool_or(e.severity = 'critical') THEN 'critical'
+                            WHEN bool_or(e.severity = 'high') THEN 'high'
+                            WHEN bool_or(e.severity = 'medium') THEN 'medium'
+                            WHEN bool_or(e.severity = 'low') THEN 'low'
+                            ELSE 'info'
+                        END AS peak_severity,
+                        MAX(e.url_path) AS recent_path,
+                        COALESCE(s.status, 'open') as status,
+                        s.closed_by, s.closed_at, s.closed_note
+                    FROM app_events e
+                    LEFT JOIN app_user_status s ON s.application_id = e.application_id AND s.identifier = COALESCE(e.user_name, e.client_ip)
+                    WHERE {' AND '.join(where_clauses)}
+                    GROUP BY COALESCE(e.user_name, e.client_ip), e.client_ip, e.user_name, s.status, s.closed_by, s.closed_at, s.closed_note
+                    ORDER BY 
+                        (CASE WHEN e.user_name IS NOT NULL AND e.user_name != '-' AND e.user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
+                        last_seen DESC,
+                        attack_events DESC,
+                        total_requests DESC
+                    LIMIT 2000;
+                """, tuple(params))
+                raw_users = cur.fetchall()
+                total_users_in_db = len(raw_users)
+                for r in raw_users:
+                    row_dict = dict(r)
+                    row_dict["recent_path"] = redact_sensitive_params(row_dict.get("recent_path") or "")
+                    users_data.append(row_dict)
+                    if rep_type == "selected":
+                        explanations_data.append(explainItem("user", row_dict))
+
+            # CSV Format
+            if output_format == "csv":
+                csv_buffer = io.StringIO()
+                writer = csv.writer(csv_buffer)
+                if rep_type == "events" or (sections == ["events"]):
+                    writer.writerow(["Timestamp", "Event Type", "Severity", "Source Node", "Client IP", "User", "Method", "URL Path", "Status Code", "Status"])
+                    for ev in events_data:
+                        writer.writerow([ev.get("event_time"), ev.get("event_type"), ev.get("severity"), ev.get("node"), ev.get("client_ip"), ev.get("user_name"), ev.get("method"), ev.get("url_path"), ev.get("status_code"), ev.get("status") or "open"])
+                elif rep_type == "incidents" or (sections == ["incidents"]):
+                    writer.writerow(["Incident ID", "Title", "Attacker Key", "Severity", "Status", "Events Count", "First Seen", "Last Seen", "MITRE Tactics"])
+                    for inc in incidents_data:
+                        writer.writerow([inc.get("id"), inc.get("title"), inc.get("attacker_key"), inc.get("severity"), inc.get("status"), inc.get("events_count"), inc.get("first_event_at"), inc.get("last_event_at"), inc.get("mitre_tactics")])
+                else:
+                    writer.writerow(["Identifier", "Client IP", "User Name", "Total Requests", "Security Attacks", "Peak Severity", "First Seen", "Last Seen", "Recent Path", "Status"])
+                    for u in users_data:
+                        writer.writerow([u.get("identifier"), u.get("client_ip"), u.get("user_name"), u.get("total_requests"), u.get("attack_events"), u.get("peak_severity"), u.get("first_seen"), u.get("last_seen"), u.get("recent_path"), u.get("status") or "open"])
+                
+                client_ip = request.client.host if request.client else None
+                db.log_audit(
+                    user.get("username", "admin"),
+                    "APP_REPORT_CSV_DOWNLOAD",
+                    "application",
+                    str(app_id),
+                    f"Downloaded CSV report for app '{app_data.get('name')}', range: {range_label}",
+                    ip_address=client_ip
+                )
+                csv_buffer.seek(0)
+                return StreamingResponse(
+                    io.BytesIO(csv_buffer.getvalue().encode("utf-8")),
+                    media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=app_{app_id}_{rep_type}_report.csv"}
+                )
+
+            report_id = f"RPT-APP-{app_id}-{int(time.time())}"
+            gen_time_str = datetime.now(timezone.utc).strftime("%d-%m-%Y %H:%M:%S UTC")
+            
+            crit_count = sum(1 for e in events_data if e.get("severity") == "critical") + sum(1 for i in incidents_data if i.get("severity") == "critical")
+            high_count = sum(1 for e in events_data if e.get("severity") == "high") + sum(1 for i in incidents_data if i.get("severity") == "high")
+            med_count = sum(1 for e in events_data if e.get("severity") == "medium") + sum(1 for i in incidents_data if i.get("severity") == "medium")
+            info_count = sum(1 for e in events_data if e.get("severity") == "info")
+            open_count = sum(1 for e in events_data if (e.get("status") or "open").lower() == "open") + sum(1 for i in incidents_data if (i.get("status") or "Open") in ("Open", "Investigating")) + sum(1 for u in users_data if (u.get("status") or "open").lower() == "open")
+            closed_count = sum(1 for e in events_data if (e.get("status") or "").lower() == "closed") + sum(1 for i in incidents_data if (i.get("status") or "").lower() == "closed") + sum(1 for u in users_data if (u.get("status") or "").lower() == "closed")
+
+            client_ip = request.client.host if request.client else None
+            db.log_audit(
+                user.get("username", "admin"),
+                "APP_REPORT_GENERATE",
+                "application",
+                str(app_id),
+                f"Generated {rep_type} report for app '{app_data.get('name')}', range: {range_label}, rows: events={len(events_data)}, incs={len(incidents_data)}, users={len(users_data)}",
+                ip_address=client_ip
+            )
+
+            is_capped = len(events_data) >= 5000
+            cap_note = f"Showing 5,000 of {total_events_in_db:,} matching rows. Download CSV for full dataset." if is_capped else None
+
+            return {
+                "status": "ok",
+                "report_id": report_id,
+                "app": {
+                    "id": app_data.get("id"),
+                    "name": app_data.get("name"),
+                    "primary_url": app_data.get("primary_url"),
+                    "environment": app_data.get("environment") or "Production",
+                    "project_name": app_data.get("project_name") or "Unassigned"
+                },
+                "range_label": range_label,
+                "start_time": start_dt.strftime("%d-%m-%Y %H:%M:%S UTC"),
+                "end_time": end_dt.strftime("%d-%m-%Y %H:%M:%S UTC"),
+                "generated_at": gen_time_str,
+                "generated_by": user.get("username", "Security Analyst"),
+                "summary": {
+                    "total_events": len(events_data),
+                    "total_events_in_db": total_events_in_db,
+                    "total_incidents": len(incidents_data),
+                    "total_incidents_in_db": total_incidents_in_db,
+                    "total_users": len(users_data),
+                    "total_users_in_db": total_users_in_db,
+                    "critical": crit_count,
+                    "high": high_count,
+                    "medium": med_count,
+                    "info": info_count,
+                    "open": open_count,
+                    "closed": closed_count,
+                    "is_capped": is_capped,
+                    "cap_note": cap_note
+                },
+                "sections": {
+                    "events": events_data,
+                    "incidents": incidents_data,
+                    "users": users_data,
+                    "explanations": explanations_data
+                }
+            }
+    finally:
+        conn.close()
+
+@app.get("/api/apps/search")
+def api_search_apps(request: Request, q: str = ""):
+    """Live debounced application suggestions for reports page, respecting project visibility."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    conn = db.get_db_connection()
+    if not conn:
         return []
+    try:
+        with conn.cursor() as cur:
+            effective_pid = get_effective_project_id(request)
+            where_clauses = ["a.status != 'PENDING_APPROVAL'"]
+            params = []
+
+            if effective_pid is not None:
+                if isinstance(effective_pid, list):
+                    if effective_pid:
+                        where_clauses.append("a.project_id = ANY(%s)")
+                        params.append(effective_pid)
+                    else:
+                        return []
+                else:
+                    where_clauses.append("a.project_id = %s")
+                    params.append(int(effective_pid))
+
+            q_clean = (q or "").strip()
+            if q_clean:
+                where_clauses.append("""
+                    (
+                        a.name ILIKE %s OR 
+                        a.primary_url ILIKE %s OR 
+                        a.id::text = %s OR
+                        EXISTS (
+                            SELECT 1 FROM application_components c 
+                            WHERE c.application_id = a.id AND c.node_ip ILIKE %s
+                        )
+                    )
+                """)
+                q_like = f"%{q_clean}%"
+                params.extend([q_like, q_like, q_clean, q_like])
+
+            cur.execute(f"""
+                SELECT a.id, a.name, a.primary_url, a.environment, p.name as project_name,
+                    ARRAY(SELECT c.node_ip FROM application_components c WHERE c.application_id = a.id) as node_ips
+                FROM applications a
+                LEFT JOIN projects p ON a.project_id = p.id
+                WHERE {' AND '.join(where_clauses)}
+                ORDER BY a.name ASC
+                LIMIT 20;
+            """, tuple(params))
+            return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
 
