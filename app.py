@@ -7757,7 +7757,7 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
             """, (comp["application_id"], comp["application_id"]))
 
             conn.commit()
-            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"]}
+            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"], "latest_version": "1.7.0"}
     except Exception as e:
         logger.error(f"Error in api_app_heartbeat: {e}")
         return JSONResponse(status_code=500, content={"status": "error", "reason": str(e)})
@@ -7889,11 +7889,21 @@ USER_QUERY_TOKENS = (
     "user=", "username=", "userName=", "userid=", "user_id=", 
     "login=", "email=", "account=", "token=", "session=", "auth=", "empid=", "usr="
 )
+ROUTINE_POLLING_PATTERNS = (
+    "getstocksummary",
+    "getassignedtome",
+    "getassignedexception",
+    "/showstatus/",
+    "/health",
+    "/ping",
+    "/heartbeat",
+    "/favicon.ico"
+)
 
 def is_noise_tomcat_access_log(raw_line: str) -> bool:
     """
-    Tier-1 Edge Filter:
-    Returns True if the line is purely routine static asset or health-check noise (safe to drop).
+    Tier-1 Edge/Ingestion Noise Filter:
+    Returns True if the line is purely routine static asset or health/widget-polling noise (safe to drop).
     Returns False if the line has ANY security relevance, error code, user parameter, or app logic.
     """
     # 1. Quick status check: Only candidate for dropping if status is 200 or 304
@@ -7926,8 +7936,12 @@ def is_noise_tomcat_access_log(raw_line: str) -> bool:
     if STATIC_EXT_RE.search(clean_path):
         return True
 
-    # 5b. Drop root / balancer health check pings if path is strictly "/" or "/favicon.ico"
-    if clean_path in ("/", "/favicon.ico", "/health", "/ping", "/status") and "?" not in raw_path:
+    # 5b. Drop root / balancer health check pings if path is strictly "/"
+    if clean_path in ("/", "") and ("?" not in raw_path or raw_path.endswith("?")):
+        return True
+
+    # 5c. Drop routine background widget polling endpoints (Nagaland/HPSEBL stock summaries, counters, heartbeats)
+    if any(pat in clean_path for pat in ROUTINE_POLLING_PATTERNS):
         return True
 
     return False

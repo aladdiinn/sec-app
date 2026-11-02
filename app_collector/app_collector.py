@@ -331,11 +331,21 @@ USER_QUERY_TOKENS = (
     "user=", "username=", "userName=", "userid=", "user_id=", 
     "login=", "email=", "account=", "token=", "session=", "auth=", "empid=", "usr="
 )
+ROUTINE_POLLING_PATTERNS = (
+    "getstocksummary",
+    "getassignedtome",
+    "getassignedexception",
+    "/showstatus/",
+    "/health",
+    "/ping",
+    "/heartbeat",
+    "/favicon.ico"
+)
 
 def is_noise_tomcat_access_log(raw_line: str) -> bool:
     """
-    Tier-1 Edge Filter:
-    Returns True if the line is purely routine static asset or health-check noise (safe to drop).
+    Tier-1 Edge/Ingestion Noise Filter:
+    Returns True if the line is purely routine static asset or health/widget-polling noise (safe to drop).
     Returns False if the line has ANY security relevance, error code, user parameter, or app logic.
     """
     # 1. Quick status check: Only candidate for dropping if status is 200 or 304
@@ -368,11 +378,40 @@ def is_noise_tomcat_access_log(raw_line: str) -> bool:
     if STATIC_EXT_RE.search(clean_path):
         return True
 
-    # 5b. Drop root / balancer health check pings if path is strictly "/" or "/favicon.ico"
-    if clean_path in ("/", "/favicon.ico", "/health", "/ping", "/status") and "?" not in raw_path:
+    # 5b. Drop root / balancer health check pings if path is strictly "/"
+    if clean_path in ("/", "") and ("?" not in raw_path or raw_path.endswith("?")):
+        return True
+
+    # 5c. Drop routine background widget polling endpoints (Nagaland/HPSEBL stock summaries, counters, heartbeats)
+    if any(pat in clean_path for pat in ROUTINE_POLLING_PATTERNS):
         return True
 
     return False
+
+
+def check_and_apply_auto_update():
+    """Checks SOC server for newer collector code and auto-updates without manual node intervention."""
+    try:
+        soc_url = CONFIG["SOC_URL"].rstrip("/")
+        token = CONFIG["ENROLLMENT_TOKEN"]
+        url = f"{soc_url}/api/app/collector.py?token={token}"
+        req = urllib.request.Request(url, headers={"User-Agent": f"SecurePulse-App-Collector/{COLLECTOR_VERSION}"})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=5.0) as resp:
+            new_code = resp.read().decode("utf-8")
+        
+        m = re.search(r"""COLLECTOR_VERSION\s*=\s*['"]([^'"]+)['"]""", new_code)
+        if m:
+            server_version = m.group(1)
+            if server_version > COLLECTOR_VERSION:
+                print(f"[AUTO-UPDATE] Found newer collector version {server_version} (current: {COLLECTOR_VERSION}). Updating self...")
+                current_file = os.path.realpath(__file__)
+                with open(current_file, "w", encoding="utf-8") as f:
+                    f.write(new_code)
+                print(f"[AUTO-UPDATE] Successfully updated to {server_version}. Restarting process...")
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception as e:
+        pass
 
 def run_collector():
     load_env_file()
@@ -413,6 +452,8 @@ def run_collector():
                 res = post_json("/api/app/heartbeat", hb_payload)
                 if res.get("status") == "ok":
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] [HB] Heartbeat acknowledged by SOC. Monitored files: {len(tailers)}")
+                    if res.get("latest_version") and res.get("latest_version") > COLLECTOR_VERSION:
+                        check_and_apply_auto_update()
                 else:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Heartbeat warning: {res.get('reason')}")
                 last_heartbeat = now
