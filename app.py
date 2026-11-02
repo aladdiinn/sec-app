@@ -7880,6 +7880,58 @@ def evaluate_postgres_security_event(raw_line: str):
 
     return "DB_LOG", "info", None, None, db_user, db_name, level
 
+STATIC_EXT_RE = re.compile(r'\.(?:png|jpe?g|gif|svg|ico|css|js|woff2?|ttf|eot|map|webp)$', re.IGNORECASE)
+ATTACK_PATH_TOKENS = (
+    "..", "/etc/", "union", "select", "<script", "onerror", "${jndi", 
+    "exec", "cmd", "drop", "eval", "'", "%27", "%22", "%3c", "%3e", "0x", "sleep("
+)
+USER_QUERY_TOKENS = (
+    "user=", "username=", "userName=", "userid=", "user_id=", 
+    "login=", "email=", "account=", "token=", "session=", "auth=", "empid=", "usr="
+)
+
+def is_noise_tomcat_access_log(raw_line: str) -> bool:
+    """
+    Tier-1 Edge Filter:
+    Returns True if the line is purely routine static asset or health-check noise (safe to drop).
+    Returns False if the line has ANY security relevance, error code, user parameter, or app logic.
+    """
+    # 1. Quick status check: Only candidate for dropping if status is 200 or 304
+    if ' 200 ' not in raw_line and ' 304 ' not in raw_line:
+        return False  # Keep all 401, 403, 404, 500, 302, etc.
+
+    # 2. Extract request: "METHOD /path HTTP/..."
+    m_req = re.search(r'"([A-Z]+)\s+([^"\s]+)\s+HTTP/[0-9\.]+"', raw_line)
+    if not m_req:
+        return False  # Keep non-standard or malformed requests
+
+    method = m_req.group(1).upper()
+    if method not in ("GET", "HEAD", "OPTIONS"):
+        return False  # Keep all POST, PUT, DELETE, PATCH
+
+    raw_path = m_req.group(2)
+    path_lower = urllib.parse.unquote(raw_path).lower()
+
+    # 3. Never drop attacks, directory traversals, or probes
+    if any(atk in path_lower for atk in ATTACK_PATH_TOKENS):
+        return False
+
+    # 4. Never drop lines with user identities or auth tokens
+    if any(u in path_lower for u in USER_QUERY_TOKENS):
+        return False
+
+    clean_path = raw_path.split("?")[0].lower()
+
+    # 5a. Drop static assets returning 200/304
+    if STATIC_EXT_RE.search(clean_path):
+        return True
+
+    # 5b. Drop root / balancer health check pings if path is strictly "/" or "/favicon.ico"
+    if clean_path in ("/", "/favicon.ico", "/health", "/ping", "/status") and "?" not in raw_path:
+        return True
+
+    return False
+
 @app.post("/api/app/events")
 def api_app_events(request: Request, payload: dict = Body(...)):
     """Ingests, parses, normalizes and correlates telemetry events from collectors."""
@@ -8017,6 +8069,9 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                 m = TOMCAT_ACCESS_RE.match(raw_line)
 
                 if m:
+                    # Tier-1 Ingestion Optimization: Drop routine static asset 200s and root health-checks
+                    if is_noise_tomcat_access_log(raw_line):
+                        continue
                     client_ip = m.group("ip").split(",")[0].strip()
                     user = m.group("user")
                     method = m.group("method")
