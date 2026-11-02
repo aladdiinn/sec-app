@@ -574,7 +574,7 @@ def ensure_app_siem_schema_columns():
                 conn.rollback()
 
             try:
-                # Startup optimization: Purge historical routine anonymous browsing noise and static 404s from app_events
+                # Startup optimization: Purge historical routine noise, static 404s, and benign JSP pageContext bug events
                 cur.execute(r"""
                     DELETE FROM app_events
                     WHERE (
@@ -585,7 +585,16 @@ def ensure_app_siem_schema_columns():
                     ) OR (
                         severity = 'info'
                         AND url_path ~* '\.(png|jpe?g|gif|svg|ico|css|js|woff2?|ttf|eot|map|webp)($|\?)'
+                    ) OR (
+                        url_path ILIKE '%pageContext.request.contextPath%'
                     );
+
+                    DELETE FROM app_incident_events 
+                    WHERE step_summary ILIKE '%pageContext.request.contextPath%';
+
+                    DELETE FROM app_incidents 
+                    WHERE title ILIKE '%Expression Language%' 
+                       OR title ILIKE '%Template Injection%';
                 """)
                 conn.commit()
             except Exception:
@@ -7775,7 +7784,7 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
             """, (comp["application_id"], comp["application_id"]))
 
             conn.commit()
-            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"], "latest_version": "1.7.2"}
+            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"], "latest_version": "1.7.3"}
     except Exception as e:
         logger.error(f"Error in api_app_heartbeat: {e}")
         return JSONResponse(status_code=500, content={"status": "error", "reason": str(e)})
@@ -7852,9 +7861,13 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
     if any(k in p_lower for k in ("login", "auth", "signin")) and status in (401, 403):
         return "LOGIN_FAILURE", "medium", "Failed User Authentication (HTTP 401)", "T1110 - Brute Force"
 
-    # 7. Expression Language / SSTI Injection Probes (e.g. ${pageContext, ${class, #{...})
+    # 7. Expression Language / SSTI Injection Probes (e.g. ${class, ${loader, #{...})
     if re.search(r'(\$\{|\%24\%7b|\#\{|\%23\%7b)(pagecontext|class|loader|application|session|param|request)', p_lower):
-        return "SSTI_PROBE", "medium", "Expression Language / Template Injection Probe", "T1190 - Exploit Public-Facing Application"
+        if "pagecontext.request.contextpath" in p_lower:
+            # Benign client-side unparsed JSP tag bug, not an attacker probe
+            pass
+        else:
+            return "SSTI_PROBE", "medium", "Expression Language / Template Injection Probe", "T1190 - Exploit Public-Facing Application"
 
     return "HTTP_ACCESS", "info", None, None
 
@@ -8145,6 +8158,10 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     # 1. Drop static asset requests (including 404s like missing .js/.css/.png)
                     clean_path = raw_path.split("?")[0].lower()
                     if STATIC_EXT_RE.search(clean_path):
+                        continue
+
+                    # Drop benign unparsed JSP contextPath tag noise caused by broken frontend JS
+                    if "pagecontext.request.contextpath" in raw_path.lower():
                         continue
 
                     # 2. Drop routine anonymous operational traffic returning < 400 with no attack and no user

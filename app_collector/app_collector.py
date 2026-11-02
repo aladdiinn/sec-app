@@ -24,7 +24,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-COLLECTOR_VERSION = "1.7.2"
+COLLECTOR_VERSION = "1.7.3"
 
 # Configuration defaults (overridden by /etc/securepulse-app/collector.env)
 CONFIG = {
@@ -345,7 +345,8 @@ ROUTINE_POLLING_PATTERNS = (
     "update-logout-time",
     "fullviewmdas",
     "nonbilledconsumerdata",
-    "updatemrdpendingrecord"
+    "updatemrdpendingrecord",
+    "pagecontext.request.contextpath"
 )
 
 def is_noise_tomcat_access_log(raw_line: str) -> bool:
