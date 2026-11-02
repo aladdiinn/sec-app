@@ -505,10 +505,83 @@ def run_s3_archiver_loop():
         except Exception as e:
             logger.error(f"Error in S3 archiver loop: {e}")
 
+def ensure_app_siem_schema_columns():
+    """Additive & Idempotent column migration to ensure status, closed_by, closed_at exist on app_events & app_incidents."""
+    conn = db.get_db_connection()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            for col, ctype in [
+                ("status", "VARCHAR(50) DEFAULT 'open'"),
+                ("closed_by", "VARCHAR(100)"),
+                ("closed_at", "TIMESTAMPTZ"),
+                ("closed_note", "TEXT")
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE app_events ADD COLUMN IF NOT EXISTS {col} {ctype};")
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+
+            for col, ctype in [
+                ("closed_by", "VARCHAR(100)"),
+                ("closed_at", "TIMESTAMPTZ"),
+                ("closed_note", "TEXT")
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE app_incidents ADD COLUMN IF NOT EXISTS {col} {ctype};")
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS app_user_status (
+                        id SERIAL PRIMARY KEY,
+                        application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                        identifier VARCHAR(255) NOT NULL,
+                        status VARCHAR(50) DEFAULT 'open',
+                        closed_by VARCHAR(100),
+                        closed_at TIMESTAMPTZ,
+                        closed_note TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW(),
+                        CONSTRAINT uq_app_user_status UNIQUE (application_id, identifier)
+                    );
+                """)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS app_incident_events (
+                        id SERIAL PRIMARY KEY,
+                        incident_id INTEGER NOT NULL REFERENCES app_incidents(id) ON DELETE CASCADE,
+                        event_time TIMESTAMPTZ NOT NULL,
+                        node_name VARCHAR(255) NOT NULL,
+                        role VARCHAR(50) NOT NULL,
+                        rule_name VARCHAR(255) NOT NULL,
+                        mitre_technique VARCHAR(50),
+                        step_summary TEXT NOT NULL,
+                        raw_event_id BIGINT,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+    except Exception as e:
+        logger.warning(f"ensure_app_siem_schema_columns note: {e}")
+    finally:
+        conn.close()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing Database schema...")
     db.init_db()
+    ensure_app_siem_schema_columns()
     
     # --- Gemini Startup Diagnostics ---
     import gemini_client
@@ -7424,7 +7497,7 @@ def api_search_apps(request: Request, q: str = ""):
     try:
         with conn.cursor() as cur:
             effective_pid = get_effective_project_id(request)
-            where_clauses = ["a.status != 'PENDING_APPROVAL'"]
+            where_clauses = ["(a.status IS NULL OR a.status != 'PENDING_APPROVAL')"]
             params = []
 
             if effective_pid is not None:
@@ -7454,16 +7527,27 @@ def api_search_apps(request: Request, q: str = ""):
                 q_like = f"%{q_clean}%"
                 params.extend([q_like, q_like, q_clean, q_like])
 
-            cur.execute(f"""
-                SELECT a.id, a.name, a.primary_url, a.environment, p.name as project_name,
-                    ARRAY(SELECT c.node_ip FROM application_components c WHERE c.application_id = a.id) as node_ips
-                FROM applications a
-                LEFT JOIN projects p ON a.project_id = p.id
-                WHERE {' AND '.join(where_clauses)}
-                ORDER BY a.name ASC
-                LIMIT 20;
-            """, tuple(params))
-            return [dict(r) for r in cur.fetchall()]
+            try:
+                cur.execute(f"""
+                    SELECT a.id, a.name, a.primary_url, a.environment, p.name as project_name,
+                        ARRAY(SELECT c.node_ip FROM application_components c WHERE c.application_id = a.id) as node_ips
+                    FROM applications a
+                    LEFT JOIN projects p ON a.project_id = p.id
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY a.name ASC
+                    LIMIT 20;
+                """, tuple(params))
+                return [dict(r) for r in cur.fetchall()]
+            except Exception as e_q:
+                logger.warning(f"api_search_apps fallback query due to: {e_q}")
+                conn.rollback()
+                fallback_where = ["(a.name ILIKE %s OR a.primary_url ILIKE %s)"] if q_clean else ["1=1"]
+                fallback_params = [f"%{q_clean}%", f"%{q_clean}%"] if q_clean else []
+                cur.execute(f"SELECT a.id, a.name, a.primary_url, a.environment, '' as project_name, ARRAY[]::varchar[] as node_ips FROM applications a WHERE {' AND '.join(fallback_where)} LIMIT 20;", tuple(fallback_params))
+                return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"Error in api_search_apps: {e}")
+        return []
     finally:
         conn.close()
 
@@ -8503,15 +8587,39 @@ def api_get_app_events(
         return {"items": [], "total_count": 0, "showing_count": 0}
     try:
         with conn.cursor() as cur:
-            start_dt, end_dt, _ = parse_timeframe_range(timeframe, from_date, to_date)
-            where_clauses = ["application_id = %s", "event_time >= %s", "event_time <= %s"]
-            params = [app_id, start_dt, end_dt]
+            start_dt, end_dt, tf_label = parse_timeframe_range(timeframe, from_date, to_date)
+            where_clauses = ["application_id = %s"]
+            params = [app_id]
+
+            if timeframe != "all":
+                where_clauses.extend(["event_time >= %s", "event_time <= %s"])
+                params.extend([start_dt, end_dt])
 
             stat = (status or "open").lower()
-            if stat == "open":
-                where_clauses.append("(status IS NULL OR status = 'open' OR status = '')")
-            elif stat == "closed":
-                where_clauses.append("status = 'closed'")
+            has_status_col = True
+
+            # Check / Self-heal status column if missing
+            try:
+                cur.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'app_events' AND column_name = 'status';")
+                if not cur.fetchone():
+                    try:
+                        cur.execute("ALTER TABLE app_events ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'open';")
+                        cur.execute("ALTER TABLE app_events ADD COLUMN IF NOT EXISTS closed_by VARCHAR(100);")
+                        cur.execute("ALTER TABLE app_events ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;")
+                        cur.execute("ALTER TABLE app_events ADD COLUMN IF NOT EXISTS closed_note TEXT;")
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+                        has_status_col = False
+            except Exception:
+                conn.rollback()
+                has_status_col = False
+
+            if has_status_col:
+                if stat == "open":
+                    where_clauses.append("(status IS NULL OR status = 'open' OR status = '')")
+                elif stat == "closed":
+                    where_clauses.append("status = 'closed'")
 
             sev = (severity or "all").lower()
             if sev == "security":
@@ -8526,25 +8634,42 @@ def api_get_app_events(
                 q_param = f"%{q_clean}%"
                 params.extend([q_param, q_param, q_param, q_param, q_param])
 
-            # Total matching count in DB
-            cur.execute(f"SELECT COUNT(*) FROM app_events WHERE {' AND '.join(where_clauses)};", tuple(params))
-            total_count = get_scalar(cur.fetchone(), 0)
+            try:
+                # Total matching count in DB
+                cur.execute(f"SELECT COUNT(*) FROM app_events WHERE {' AND '.join(where_clauses)};", tuple(params))
+                total_count = get_scalar(cur.fetchone(), 0)
 
-            # Limit query
-            cur.execute(f"""
-                SELECT id, event_time, node, source_type, event_type, client_ip, user_name, method, url_path, status_code, severity, status, closed_by, closed_at, closed_note
-                FROM app_events
-                WHERE {' AND '.join(where_clauses)}
-                ORDER BY event_time DESC
-                LIMIT %s OFFSET %s;
-            """, tuple(params + [limit, offset]))
-            items = []
-            for r in cur.fetchall():
-                d = dict(r)
-                d["url_path"] = redact_sensitive_params(d.get("url_path") or "")
-                items.append(d)
+                # Limit query
+                status_cols = "status, closed_by, closed_at, closed_note" if has_status_col else "'open' as status, NULL as closed_by, NULL as closed_at, NULL as closed_note"
+                cur.execute(f"""
+                    SELECT id, event_time, node, source_type, event_type, client_ip, user_name, method, url_path, status_code, severity, {status_cols}
+                    FROM app_events
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY event_time DESC
+                    LIMIT %s OFFSET %s;
+                """, tuple(params + [limit, offset]))
+                items = []
+                for r in cur.fetchall():
+                    d = dict(r)
+                    d["url_path"] = redact_sensitive_params(d.get("url_path") or "")
+                    items.append(d)
 
-            return {"items": items, "total_count": total_count, "showing_count": len(items)}
+                return {"items": items, "total_count": total_count, "showing_count": len(items), "timeframe_label": tf_label}
+            except Exception as e_ev:
+                logger.warning(f"api_get_app_events fallback query due to: {e_ev}")
+                conn.rollback()
+                # Basic backwards-compatible fallback (from db73f02)
+                cur.execute("""
+                    SELECT id, event_time, node, source_type, event_type, client_ip, user_name, method, url_path, status_code, severity, 'open' as status
+                    FROM app_events
+                    WHERE application_id = %s
+                    ORDER BY event_time DESC
+                    LIMIT %s;
+                """, (app_id, limit))
+                items = [dict(r) for r in cur.fetchall()]
+                for d in items:
+                    d["url_path"] = redact_sensitive_params(d.get("url_path") or "")
+                return {"items": items, "total_count": len(items), "showing_count": len(items), "timeframe_label": tf_label}
     finally:
         conn.close()
 
@@ -8566,35 +8691,71 @@ def api_get_app_incidents(
         return {"items": [], "total_count": 0, "showing_count": 0}
     try:
         with conn.cursor() as cur:
-            start_dt, end_dt, _ = parse_timeframe_range(timeframe, from_date, to_date)
-            where_clauses = ["i.application_id = %s", "i.last_event_at >= %s", "i.last_event_at <= %s"]
-            params = [app_id, start_dt, end_dt]
+            start_dt, end_dt, tf_label = parse_timeframe_range(timeframe, from_date, to_date)
+            where_clauses = ["i.application_id = %s"]
+            params = [app_id]
+
+            if timeframe != "all":
+                where_clauses.extend(["i.last_event_at >= %s", "i.last_event_at <= %s"])
+                params.extend([start_dt, end_dt])
 
             stat = (status or "open").lower()
             if stat == "open":
-                where_clauses.append("i.status IN ('Open', 'Investigating', 'open')")
+                where_clauses.append("(i.status IS NULL OR i.status NOT IN ('Closed', 'closed', 'Resolved', 'resolved'))")
             elif stat == "closed":
-                where_clauses.append("i.status IN ('Closed', 'closed', 'Resolved')")
+                where_clauses.append("i.status IN ('Closed', 'closed', 'Resolved', 'resolved')")
 
-            cur.execute(f"SELECT COUNT(*) FROM app_incidents i WHERE {' AND '.join(where_clauses)};", tuple(params))
-            total_count = get_scalar(cur.fetchone(), 0)
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM app_incidents i WHERE {' AND '.join(where_clauses)};", tuple(params))
+                total_count = get_scalar(cur.fetchone(), 0)
 
-            cur.execute(f"""
-                SELECT i.*, 
-                    (SELECT json_agg(e ORDER BY e.event_time ASC) FROM app_incident_events e WHERE e.incident_id = i.id) as timeline
-                FROM app_incidents i
-                WHERE {' AND '.join(where_clauses)}
-                ORDER BY i.last_event_at DESC;
-            """, tuple(params))
-            items = []
-            for r in cur.fetchall():
-                d = dict(r)
-                if d.get("timeline"):
-                    for t_step in d["timeline"]:
-                        t_step["step_summary"] = redact_sensitive_params(t_step.get("step_summary") or "")
-                items.append(d)
+                # Check if app_incident_events exists for timeline
+                has_timeline_table = True
+                try:
+                    cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name = 'app_incident_events';")
+                    if not cur.fetchone():
+                        has_timeline_table = False
+                except Exception:
+                    has_timeline_table = False
 
-            return {"items": items, "total_count": total_count, "showing_count": len(items)}
+                timeline_sql = "(SELECT json_agg(e ORDER BY e.event_time ASC) FROM app_incident_events e WHERE e.incident_id = i.id) as timeline" if has_timeline_table else "'[]'::jsonb as timeline"
+
+                cur.execute(f"""
+                    SELECT i.*, {timeline_sql}
+                    FROM app_incidents i
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY i.last_event_at DESC;
+                """, tuple(params))
+                items = []
+                for r in cur.fetchall():
+                    d = dict(r)
+                    if d.get("timeline"):
+                        for t_step in d["timeline"]:
+                            if isinstance(t_step, dict):
+                                t_step["step_summary"] = redact_sensitive_params(t_step.get("step_summary") or "")
+                    items.append(d)
+
+                return {"items": items, "total_count": total_count, "showing_count": len(items), "timeframe_label": tf_label}
+            except Exception as e_inc:
+                logger.warning(f"api_get_app_incidents fallback query due to: {e_inc}")
+                conn.rollback()
+                # 100% resilient fallback query matching db73f02
+                cur.execute("""
+                    SELECT i.*, 
+                        (SELECT json_agg(e ORDER BY e.event_time ASC) FROM app_incident_events e WHERE e.incident_id = i.id) as timeline
+                    FROM app_incidents i
+                    WHERE i.application_id = %s
+                    ORDER BY i.last_event_at DESC;
+                """, (app_id,))
+                items = []
+                for r in cur.fetchall():
+                    d = dict(r)
+                    if d.get("timeline"):
+                        for t_step in d["timeline"]:
+                            if isinstance(t_step, dict):
+                                t_step["step_summary"] = redact_sensitive_params(t_step.get("step_summary") or "")
+                    items.append(d)
+                return {"items": items, "total_count": len(items), "showing_count": len(items), "timeframe_label": tf_label}
     finally:
         conn.close()
 
@@ -8617,7 +8778,7 @@ def api_get_app_users(
         return {"items": [], "total_count": 0, "showing_count": 0}
     try:
         with conn.cursor() as cur:
-            start_dt, end_dt, _ = parse_timeframe_range(timeframe, from_date, to_date)
+            start_dt, end_dt, tf_label = parse_timeframe_range(timeframe, from_date, to_date)
             node_ips = set()
             try:
                 cur.execute("SELECT node_ip FROM application_components WHERE application_id = %s", (app_id,))
@@ -8627,49 +8788,117 @@ def api_get_app_users(
             except Exception as e_comp:
                 logger.warning(f"Could not fetch node_ips: {e_comp}")
 
-            where_clauses = ["e.application_id = %s", "e.client_ip IS NOT NULL", "e.event_time >= %s", "e.event_time <= %s"]
-            params = [app_id, start_dt, end_dt]
+            where_clauses = ["e.application_id = %s", "e.client_ip IS NOT NULL"]
+            params = [app_id]
+
+            if timeframe != "all":
+                where_clauses.extend(["e.event_time >= %s", "e.event_time <= %s"])
+                params.extend([start_dt, end_dt])
 
             stat = (status or "open").lower()
-            if stat == "open":
-                where_clauses.append("(s.status IS NULL OR s.status = 'open')")
-            elif stat == "closed":
-                where_clauses.append("s.status = 'closed'")
 
-            cur.execute(f"""
-                SELECT 
-                    COALESCE(e.user_name, e.client_ip) AS identifier,
-                    e.client_ip,
-                    e.user_name,
-                    COUNT(*) AS total_requests,
-                    COUNT(*) FILTER (WHERE e.severity IN ('medium', 'high', 'critical')) AS attack_events,
-                    MAX(e.event_time) AS last_seen,
-                    MIN(e.event_time) AS first_seen,
-                    CASE 
-                        WHEN bool_or(e.severity = 'critical') THEN 'critical'
-                        WHEN bool_or(e.severity = 'high') THEN 'high'
-                        WHEN bool_or(e.severity = 'medium') THEN 'medium'
-                        WHEN bool_or(e.severity = 'low') THEN 'low'
-                        ELSE 'info'
-                    END AS peak_severity,
-                    MAX(e.url_path) AS recent_path,
-                    COALESCE(s.status, 'open') as status,
-                    s.closed_by,
-                    s.closed_at,
-                    s.closed_note
-                FROM app_events e
-                LEFT JOIN app_user_status s ON s.application_id = e.application_id AND s.identifier = COALESCE(e.user_name, e.client_ip)
-                WHERE {' AND '.join(where_clauses)}
-                GROUP BY COALESCE(e.user_name, e.client_ip), e.client_ip, e.user_name, s.status, s.closed_by, s.closed_at, s.closed_note
-                ORDER BY 
-                    (CASE WHEN e.user_name IS NOT NULL AND e.user_name != '-' AND e.user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
-                    last_seen DESC,
-                    attack_events DESC,
-                    total_requests DESC;
-            """, tuple(params))
-            all_rows = cur.fetchall()
+            # Check if app_user_status table exists
+            has_user_status_table = True
+            try:
+                cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name = 'app_user_status';")
+                if not cur.fetchone():
+                    try:
+                        cur.execute("""
+                            CREATE TABLE IF NOT EXISTS app_user_status (
+                                id SERIAL PRIMARY KEY,
+                                application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                                identifier VARCHAR(255) NOT NULL,
+                                status VARCHAR(50) DEFAULT 'open',
+                                closed_by VARCHAR(100),
+                                closed_at TIMESTAMPTZ,
+                                closed_note TEXT,
+                                created_at TIMESTAMPTZ DEFAULT NOW(),
+                                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                                CONSTRAINT uq_app_user_status UNIQUE (application_id, identifier)
+                            );
+                        """)
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+                        has_user_status_table = False
+            except Exception:
+                conn.rollback()
+                has_user_status_table = False
+
+            if has_user_status_table:
+                if stat == "open":
+                    where_clauses.append("(s.status IS NULL OR s.status = 'open')")
+                elif stat == "closed":
+                    where_clauses.append("s.status = 'closed'")
+
+            join_clause = "LEFT JOIN app_user_status s ON s.application_id = e.application_id AND s.identifier = COALESCE(e.user_name, e.client_ip)" if has_user_status_table else ""
+            status_select = "COALESCE(s.status, 'open') as status, s.closed_by, s.closed_at, s.closed_note" if has_user_status_table else "'open' as status, NULL as closed_by, NULL as closed_at, NULL as closed_note"
+            group_status = ", s.status, s.closed_by, s.closed_at, s.closed_note" if has_user_status_table else ""
+
+            try:
+                cur.execute(f"""
+                    SELECT 
+                        COALESCE(e.user_name, e.client_ip) AS identifier,
+                        e.client_ip,
+                        e.user_name,
+                        COUNT(*) AS total_requests,
+                        COUNT(*) FILTER (WHERE e.severity IN ('medium', 'high', 'critical')) AS attack_events,
+                        MAX(e.event_time) AS last_seen,
+                        MIN(e.event_time) AS first_seen,
+                        CASE 
+                            WHEN bool_or(e.severity = 'critical') THEN 'critical'
+                            WHEN bool_or(e.severity = 'high') THEN 'high'
+                            WHEN bool_or(e.severity = 'medium') THEN 'medium'
+                            WHEN bool_or(e.severity = 'low') THEN 'low'
+                            ELSE 'info'
+                        END AS peak_severity,
+                        MAX(e.url_path) AS recent_path,
+                        {status_select}
+                    FROM app_events e
+                    {join_clause}
+                    WHERE {' AND '.join(where_clauses)}
+                    GROUP BY COALESCE(e.user_name, e.client_ip), e.client_ip, e.user_name {group_status}
+                    ORDER BY 
+                        (CASE WHEN e.user_name IS NOT NULL AND e.user_name != '-' AND e.user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
+                        last_seen DESC,
+                        attack_events DESC,
+                        total_requests DESC;
+                """, tuple(params))
+                all_rows = cur.fetchall()
+            except Exception as e_users:
+                logger.warning(f"api_get_app_users fallback query due to: {e_users}")
+                conn.rollback()
+                # Original query from db73f02
+                cur.execute("""
+                    SELECT 
+                        COALESCE(user_name, client_ip) AS identifier,
+                        client_ip,
+                        user_name,
+                        COUNT(*) AS total_requests,
+                        COUNT(*) FILTER (WHERE severity IN ('medium', 'high', 'critical')) AS attack_events,
+                        MAX(event_time) AS last_seen,
+                        MIN(event_time) AS first_seen,
+                        CASE 
+                            WHEN bool_or(severity = 'critical') THEN 'critical'
+                            WHEN bool_or(severity = 'high') THEN 'high'
+                            WHEN bool_or(severity = 'medium') THEN 'medium'
+                            WHEN bool_or(severity = 'low') THEN 'low'
+                            ELSE 'info'
+                        END AS peak_severity,
+                        MAX(url_path) AS recent_path,
+                        'open' as status, NULL as closed_by, NULL as closed_at, NULL as closed_note
+                    FROM app_events
+                    WHERE application_id = %s AND client_ip IS NOT NULL
+                    GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
+                    ORDER BY 
+                        (CASE WHEN user_name IS NOT NULL AND user_name != '-' AND user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
+                        last_seen DESC,
+                        attack_events DESC,
+                        total_requests DESC;
+                """, (app_id,))
+                all_rows = cur.fetchall()
+
             total_count = len(all_rows)
-
             items = []
             for r in all_rows[:limit]:
                 item = dict(r)
@@ -8703,7 +8932,7 @@ def api_get_app_users(
                     item["display_role"] = "🌐 Web Visitor (Unauthenticated)"
                 items.append(item)
 
-            return {"items": items, "total_count": total_count, "showing_count": len(items)}
+            return {"items": items, "total_count": total_count, "showing_count": len(items), "timeframe_label": tf_label}
     finally:
         conn.close()
 

@@ -739,7 +739,10 @@ async function loadAppEvents(appId, silent = false) {
     if (tf === 'custom' && fromDate && toDate) url += `&from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`;
 
     try {
-        const res = await fetch(url);
+        let res = await fetch(url);
+        if (!res.ok) {
+            res = await fetch(`/api/apps/${appId}/events?limit=100`);
+        }
         if (res.ok) {
             const data = await res.json();
             const items = Array.isArray(data) ? data : (data.items || []);
@@ -860,7 +863,10 @@ async function loadAppIncidents(appId) {
     if (tf === 'custom' && fromDate && toDate) url += `&from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`;
 
     try {
-        const res = await fetch(url);
+        let res = await fetch(url);
+        if (!res.ok) {
+            res = await fetch(`/api/apps/${appId}/incidents`);
+        }
         if (res.ok) {
             const data = await res.json();
             const incs = Array.isArray(data) ? data : (data.items || []);
@@ -885,8 +891,12 @@ async function loadAppIncidents(appId) {
                 }
 
                 const isClosed = (i.status || '').toLowerCase() === 'closed';
-                const tactics = i.mitre_tactics || [];
-                const timeline = i.timeline || [];
+                let tactics = i.mitre_tactics || [];
+                if (typeof tactics === 'string') { try { tactics = JSON.parse(tactics); } catch(e){ tactics = []; } }
+                if (!Array.isArray(tactics)) tactics = [];
+                let timeline = i.timeline || [];
+                if (typeof timeline === 'string') { try { timeline = JSON.parse(timeline); } catch(e){ timeline = []; } }
+                if (!Array.isArray(timeline)) timeline = [];
 
                 return `
                 <div style="background:var(--bg2); border:1px solid ${isSelected ? 'var(--cyan)' : sevBorder}; border-radius:10px; padding:18px; box-shadow:0 4px 12px rgba(0,0,0,0.2)">
@@ -981,7 +991,10 @@ async function loadAppUsers(appId) {
     if (tf === 'custom' && fromDate && toDate) url += `&from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`;
 
     try {
-        const res = await fetch(url);
+        let res = await fetch(url);
+        if (!res.ok) {
+            res = await fetch(`/api/apps/${appId}/users`);
+        }
         if (res.ok) {
             const data = await res.json();
             const users = Array.isArray(data) ? data : (data.items || []);

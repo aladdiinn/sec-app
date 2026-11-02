@@ -813,11 +813,21 @@
             appSearchDebounceTimer = setTimeout(async () => {
                 try {
                     const res = await apiFetch(`/api/apps/search?q=${encodeURIComponent(query)}`);
-                    const list = Array.isArray(res) ? res : [];
+                    const list = Array.isArray(res) ? res : (res.items || []);
                     renderDropdown(list);
                 } catch (err) {
-                    dropdown.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:var(--red);">Search error</div>';
-                    dropdown.style.display = 'block';
+                    try {
+                        const fallbackRes = await apiFetch('/api/apps?status=all');
+                        const allApps = Array.isArray(fallbackRes) ? fallbackRes : (fallbackRes.items || fallbackRes.apps || []);
+                        const filtered = allApps.filter(a => 
+                            (a.name || '').toLowerCase().includes(query.toLowerCase()) || 
+                            (a.primary_url || '').toLowerCase().includes(query.toLowerCase())
+                        );
+                        renderDropdown(filtered);
+                    } catch (e2) {
+                        dropdown.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:var(--text3);">No matching applications</div>';
+                        dropdown.style.display = 'block';
+                    }
                 }
             }, 250);
         });

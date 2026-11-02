@@ -160,19 +160,7 @@ def init_app_siem_schema(conn):
             except Exception as e:
                 logger.debug(f"Partition {part_name} creation note: {e}")
 
-        # Indexes on partitioned table
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_app_events_app_time ON app_events (application_id, event_time DESC);
-            CREATE INDEX IF NOT EXISTS idx_app_events_ip ON app_events (application_id, client_ip, event_time DESC);
-            CREATE INDEX IF NOT EXISTS idx_app_events_user ON app_events (application_id, user_name, event_time DESC);
-            CREATE INDEX IF NOT EXISTS idx_app_events_session ON app_events (application_id, session_hash, event_time DESC);
-            CREATE INDEX IF NOT EXISTS idx_app_events_type ON app_events (application_id, event_type, event_time DESC);
-            CREATE INDEX IF NOT EXISTS idx_app_events_sev ON app_events (application_id, severity, event_time DESC);
-            CREATE INDEX IF NOT EXISTS idx_app_events_dedup ON app_events (dedup_key);
-            CREATE INDEX IF NOT EXISTS idx_app_events_status ON app_events (application_id, status);
-        """)
-
-        # Idempotent column check for app_events
+        # Idempotent column check for app_events (MUST RUN BEFORE INDEX CREATION)
         for col, col_type in [
             ("status", "VARCHAR(50) DEFAULT 'open'"),
             ("closed_by", "VARCHAR(100)"),
@@ -181,8 +169,25 @@ def init_app_siem_schema(conn):
         ]:
             try:
                 cur.execute(f"ALTER TABLE app_events ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                conn.commit()
             except Exception:
-                pass
+                conn.rollback()
+
+        # Indexes on partitioned table
+        try:
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_events_app_time ON app_events (application_id, event_time DESC);
+                CREATE INDEX IF NOT EXISTS idx_app_events_ip ON app_events (application_id, client_ip, event_time DESC);
+                CREATE INDEX IF NOT EXISTS idx_app_events_user ON app_events (application_id, user_name, event_time DESC);
+                CREATE INDEX IF NOT EXISTS idx_app_events_session ON app_events (application_id, session_hash, event_time DESC);
+                CREATE INDEX IF NOT EXISTS idx_app_events_type ON app_events (application_id, event_type, event_time DESC);
+                CREATE INDEX IF NOT EXISTS idx_app_events_sev ON app_events (application_id, severity, event_time DESC);
+                CREATE INDEX IF NOT EXISTS idx_app_events_dedup ON app_events (dedup_key);
+                CREATE INDEX IF NOT EXISTS idx_app_events_status ON app_events (application_id, status);
+            """)
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
         # 4. app_rules table
         cur.execute("""
@@ -205,32 +210,37 @@ def init_app_siem_schema(conn):
         """)
 
         # 5. app_incidents & app_incident_events
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS app_incidents (
-                id SERIAL PRIMARY KEY,
-                application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
-                title VARCHAR(255) NOT NULL,
-                attacker_key VARCHAR(255) NOT NULL,
-                attacker_type VARCHAR(50) DEFAULT 'ip',
-                client_ip VARCHAR(100),
-                user_name VARCHAR(255),
-                session_hash VARCHAR(64),
-                severity VARCHAR(30) NOT NULL,
-                status VARCHAR(50) DEFAULT 'Open',
-                first_event_at TIMESTAMPTZ NOT NULL,
-                last_event_at TIMESTAMPTZ NOT NULL,
-                events_count INTEGER DEFAULT 1,
-                stages_count INTEGER DEFAULT 1,
-                mitre_tactics JSONB DEFAULT '[]'::jsonb,
-                owner VARCHAR(100),
-                notes TEXT,
-                closed_by VARCHAR(100),
-                closed_at TIMESTAMPTZ,
-                closed_note TEXT,
-                audit_id INTEGER,
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-            );
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_incidents (
+                    id SERIAL PRIMARY KEY,
+                    application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                    title VARCHAR(255) NOT NULL,
+                    attacker_key VARCHAR(255) NOT NULL,
+                    attacker_type VARCHAR(50) DEFAULT 'ip',
+                    client_ip VARCHAR(100),
+                    user_name VARCHAR(255),
+                    session_hash VARCHAR(64),
+                    severity VARCHAR(30) NOT NULL,
+                    status VARCHAR(50) DEFAULT 'Open',
+                    first_event_at TIMESTAMPTZ NOT NULL,
+                    last_event_at TIMESTAMPTZ NOT NULL,
+                    events_count INTEGER DEFAULT 1,
+                    stages_count INTEGER DEFAULT 1,
+                    mitre_tactics JSONB DEFAULT '[]'::jsonb,
+                    owner VARCHAR(100),
+                    notes TEXT,
+                    closed_by VARCHAR(100),
+                    closed_at TIMESTAMPTZ,
+                    closed_note TEXT,
+                    audit_id INTEGER,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """)
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
         for col, col_type in [
             ("closed_by", "VARCHAR(100)"),
@@ -239,43 +249,60 @@ def init_app_siem_schema(conn):
         ]:
             try:
                 cur.execute(f"ALTER TABLE app_incidents ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                conn.commit()
             except Exception:
-                pass
+                conn.rollback()
 
-            CREATE INDEX IF NOT EXISTS idx_app_incidents_app ON app_incidents (application_id, last_event_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_app_incidents_status ON app_incidents (application_id, status);
-            CREATE INDEX IF NOT EXISTS idx_app_incidents_attacker ON app_incidents (application_id, attacker_key, status);
+        try:
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_app_incidents_app ON app_incidents (application_id, last_event_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_app_incidents_status ON app_incidents (application_id, status);
+                CREATE INDEX IF NOT EXISTS idx_app_incidents_attacker ON app_incidents (application_id, attacker_key, status);
+            """)
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
-            CREATE TABLE IF NOT EXISTS app_user_status (
-                id SERIAL PRIMARY KEY,
-                application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
-                identifier VARCHAR(255) NOT NULL,
-                status VARCHAR(50) DEFAULT 'open',
-                closed_by VARCHAR(100),
-                closed_at TIMESTAMPTZ,
-                closed_note TEXT,
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW(),
-                UNIQUE (application_id, identifier)
-            );
-            CREATE INDEX IF NOT EXISTS idx_app_user_status_app ON app_user_status (application_id, identifier);
-            CREATE INDEX IF NOT EXISTS idx_app_user_status_status ON app_user_status (application_id, status);
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_user_status (
+                    id SERIAL PRIMARY KEY,
+                    application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                    identifier VARCHAR(255) NOT NULL,
+                    status VARCHAR(50) DEFAULT 'open',
+                    closed_by VARCHAR(100),
+                    closed_at TIMESTAMPTZ,
+                    closed_note TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE (application_id, identifier)
+                );
+                CREATE INDEX IF NOT EXISTS idx_app_user_status_app ON app_user_status (application_id, identifier);
+                CREATE INDEX IF NOT EXISTS idx_app_user_status_status ON app_user_status (application_id, status);
+            """)
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
-            CREATE TABLE IF NOT EXISTS app_incident_events (
-                id SERIAL PRIMARY KEY,
-                incident_id INTEGER NOT NULL REFERENCES app_incidents(id) ON DELETE CASCADE,
-                event_time TIMESTAMPTZ NOT NULL,
-                node_name VARCHAR(255) NOT NULL,
-                role VARCHAR(50) NOT NULL,
-                rule_name VARCHAR(255) NOT NULL,
-                mitre_technique VARCHAR(50),
-                step_summary TEXT NOT NULL,
-                raw_event_id BIGINT,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_app_inc_events_inc ON app_incident_events (incident_id, event_time ASC);
-        """)
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_incident_events (
+                    id SERIAL PRIMARY KEY,
+                    incident_id INTEGER NOT NULL REFERENCES app_incidents(id) ON DELETE CASCADE,
+                    event_time TIMESTAMPTZ NOT NULL,
+                    node_name VARCHAR(255) NOT NULL,
+                    role VARCHAR(50) NOT NULL,
+                    rule_name VARCHAR(255) NOT NULL,
+                    mitre_technique VARCHAR(50),
+                    step_summary TEXT NOT NULL,
+                    raw_event_id BIGINT,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_app_inc_events_inc ON app_incident_events (incident_id, event_time ASC);
+            """)
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
         # 6. app_suppressions
         cur.execute("""
