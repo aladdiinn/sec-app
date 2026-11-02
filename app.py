@@ -7411,6 +7411,62 @@ def api_create_app(request: Request, payload: dict = Body(...)):
     res["status"] = "success"
     return res
 
+@app.get("/api/apps/search")
+def api_search_apps(request: Request, q: str = ""):
+    """Live debounced application suggestions for reports page, respecting project visibility."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    conn = db.get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            effective_pid = get_effective_project_id(request)
+            where_clauses = ["a.status != 'PENDING_APPROVAL'"]
+            params = []
+
+            if effective_pid is not None:
+                if isinstance(effective_pid, list):
+                    if effective_pid:
+                        where_clauses.append("a.project_id = ANY(%s)")
+                        params.append(effective_pid)
+                    else:
+                        return []
+                else:
+                    where_clauses.append("a.project_id = %s")
+                    params.append(int(effective_pid))
+
+            q_clean = (q or "").strip()
+            if q_clean:
+                where_clauses.append("""
+                    (
+                        a.name ILIKE %s OR 
+                        a.primary_url ILIKE %s OR 
+                        a.id::text = %s OR
+                        EXISTS (
+                            SELECT 1 FROM application_components c 
+                            WHERE c.application_id = a.id AND c.node_ip ILIKE %s
+                        )
+                    )
+                """)
+                q_like = f"%{q_clean}%"
+                params.extend([q_like, q_like, q_clean, q_like])
+
+            cur.execute(f"""
+                SELECT a.id, a.name, a.primary_url, a.environment, p.name as project_name,
+                    ARRAY(SELECT c.node_ip FROM application_components c WHERE c.application_id = a.id) as node_ips
+                FROM applications a
+                LEFT JOIN projects p ON a.project_id = p.id
+                WHERE {' AND '.join(where_clauses)}
+                ORDER BY a.name ASC
+                LIMIT 20;
+            """, tuple(params))
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
 @app.get("/api/apps/{app_id}")
 def api_get_app(request: Request, app_id: int):
     user = get_session_user(request)
@@ -9081,61 +9137,6 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
     finally:
         conn.close()
 
-@app.get("/api/apps/search")
-def api_search_apps(request: Request, q: str = ""):
-    """Live debounced application suggestions for reports page, respecting project visibility."""
-    user = get_session_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    
-    conn = db.get_db_connection()
-    if not conn:
-        return []
-    try:
-        with conn.cursor() as cur:
-            effective_pid = get_effective_project_id(request)
-            where_clauses = ["a.status != 'PENDING_APPROVAL'"]
-            params = []
-
-            if effective_pid is not None:
-                if isinstance(effective_pid, list):
-                    if effective_pid:
-                        where_clauses.append("a.project_id = ANY(%s)")
-                        params.append(effective_pid)
-                    else:
-                        return []
-                else:
-                    where_clauses.append("a.project_id = %s")
-                    params.append(int(effective_pid))
-
-            q_clean = (q or "").strip()
-            if q_clean:
-                where_clauses.append("""
-                    (
-                        a.name ILIKE %s OR 
-                        a.primary_url ILIKE %s OR 
-                        a.id::text = %s OR
-                        EXISTS (
-                            SELECT 1 FROM application_components c 
-                            WHERE c.application_id = a.id AND c.node_ip ILIKE %s
-                        )
-                    )
-                """)
-                q_like = f"%{q_clean}%"
-                params.extend([q_like, q_like, q_clean, q_like])
-
-            cur.execute(f"""
-                SELECT a.id, a.name, a.primary_url, a.environment, p.name as project_name,
-                    ARRAY(SELECT c.node_ip FROM application_components c WHERE c.application_id = a.id) as node_ips
-                FROM applications a
-                LEFT JOIN projects p ON a.project_id = p.id
-                WHERE {' AND '.join(where_clauses)}
-                ORDER BY a.name ASC
-                LIMIT 20;
-            """, tuple(params))
-            return [dict(r) for r in cur.fetchall()]
-    finally:
-        conn.close()
 
 @app.get("/api/apps/{app_id}/rules")
 def api_get_app_rules(request: Request, app_id: int):

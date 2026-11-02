@@ -749,6 +749,16 @@
     let appSearchResults = [];
     let appActiveIndex = -1;
 
+    function escapeHtml(str) {
+        if (!str && str !== 0) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
     function toggleAppCustomDates() {
         const tf = document.getElementById('app-timeframe').value;
         const custBox = document.getElementById('app-custom-dates');

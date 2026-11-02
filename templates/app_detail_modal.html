@@ -517,8 +517,7 @@ let eventsReloadDebounceTimer = null;
 
 function redactClientParams(str) {
     if (!str || typeof str !== 'string') return str || '';
-    const pattern = /((?:otp|pwd|password|passwd|pass|token|session|auth|key|secret|authorization)=)([^& 	
-'"]+)/gi;
+    const pattern = new RegExp('((?:otp|pwd|password|passwd|pass|token|session|auth|key|secret|authorization)=)([^& \t\r\n\'\"]+)', 'gi');
     return str.replace(pattern, '$1******');
 }
 
