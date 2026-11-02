@@ -9139,6 +9139,22 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
             timeframe = payload.get("timeframe", "7d")
             from_date = payload.get("from_date")
             to_date = payload.get("to_date")
+            apply_filters = payload.get("apply_filters", False)
+            severity_filter = payload.get("severity", "all")
+            query_filter = payload.get("query", "").strip()
+            status_filter = payload.get("status_filter", "all").lower()
+            selected_ids = payload.get("selected_ids", [])
+            selected_type = payload.get("selected_type", "events").lower().rstrip("s")
+            output_format = payload.get("format", "json").lower()
+
+            # Cast selected_ids to int for bigint PK comparisons (app_events.id and app_incidents.id)
+            _selected_ids_int = []
+            if selected_ids:
+                try:
+                    _selected_ids_int = [int(x) for x in selected_ids]
+                except (ValueError, TypeError):
+                    _selected_ids_int = []
+
             sections = payload.get("sections")
             if not sections:
                 if rep_type == "selected":
@@ -9147,20 +9163,6 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                     sections = [rep_type]
                 else:
                     sections = ["events", "incidents", "users"]
-            apply_filters = payload.get("apply_filters", False)
-            severity_filter = payload.get("severity", "all")
-            query_filter = payload.get("query", "").strip()
-            status_filter = payload.get("status_filter", "all").lower()
-            selected_ids = payload.get("selected_ids", [])
-            selected_type = payload.get("selected_type", "events").lower().rstrip("s")
-            output_format = payload.get("format", "json").lower()
-            # Cast selected_ids to int for bigint PK comparisons (app_events.id and app_incidents.id)
-            _selected_ids_int = []
-            if selected_ids:
-                try:
-                    _selected_ids_int = [int(x) for x in selected_ids]
-                except (ValueError, TypeError):
-                    _selected_ids_int = []
 
             start_dt, end_dt, range_label = parse_timeframe_range(timeframe, from_date, to_date)
 
@@ -9177,9 +9179,12 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                 where_clauses = ["application_id = %s"]
                 params = [app_id]
 
-                if rep_type == "selected" and _selected_ids_int:
-                    where_clauses.append("id = ANY(%s)")
-                    params.append(_selected_ids_int)
+                if rep_type == "selected":
+                    if _selected_ids_int:
+                        where_clauses.append("id = ANY(%s::bigint[])")
+                        params.append(_selected_ids_int)
+                    else:
+                        where_clauses.append("1=0")
                 else:
                     where_clauses.append("event_time >= %s AND event_time <= %s")
                     params.extend([start_dt, end_dt])
@@ -9221,9 +9226,12 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                 where_clauses = ["i.application_id = %s"]
                 params = [app_id]
 
-                if rep_type == "selected" and _selected_ids_int:
-                    where_clauses.append("i.id = ANY(%s)")
-                    params.append(_selected_ids_int)
+                if rep_type == "selected":
+                    if _selected_ids_int:
+                        where_clauses.append("i.id = ANY(%s::bigint[])")
+                        params.append(_selected_ids_int)
+                    else:
+                        where_clauses.append("1=0")
                 else:
                     where_clauses.append("i.last_event_at >= %s AND i.last_event_at <= %s")
                     params.extend([start_dt, end_dt])
@@ -9259,9 +9267,12 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                 where_clauses = ["e.application_id = %s", "e.client_ip IS NOT NULL"]
                 params = [app_id]
 
-                if rep_type == "selected" and selected_ids:
-                    where_clauses.append("COALESCE(e.user_name, e.client_ip) = ANY(%s)")
-                    params.append(selected_ids)
+                if rep_type == "selected":
+                    if selected_ids:
+                        where_clauses.append("COALESCE(e.user_name, e.client_ip) = ANY(%s::text[])")
+                        params.append([str(x) for x in selected_ids])
+                    else:
+                        where_clauses.append("1=0")
                 else:
                     where_clauses.append("e.event_time >= %s AND e.event_time <= %s")
                     params.extend([start_dt, end_dt])
