@@ -8969,7 +8969,8 @@ def api_get_app_users(
     timeframe: str = "7d",
     from_date: str = None,
     to_date: str = None,
-    status: str = "open"
+    status: str = "open",
+    severity: str = "threats"
 ):
     """Retrieves observed users and attacker client IPs for an application with intelligent identity attribution and review state."""
     user = get_session_user(request)
@@ -9037,6 +9038,22 @@ def api_get_app_users(
             status_select = "COALESCE(s.status, 'open') as status, s.closed_by, s.closed_at, s.closed_note" if has_user_status_table else "'open' as status, NULL as closed_by, NULL as closed_at, NULL as closed_note"
             group_status = ", s.status, s.closed_by, s.closed_at, s.closed_note" if has_user_status_table else ""
 
+            sev_filter = (severity or "threats").lower()
+            having_clauses = []
+            if sev_filter == "threats":
+                having_clauses.append("COUNT(*) FILTER (WHERE e.severity IN ('medium', 'high', 'critical')) > 0")
+            elif sev_filter == "critical":
+                having_clauses.append("bool_or(e.severity = 'critical')")
+            elif sev_filter == "high":
+                having_clauses.append("bool_or(e.severity IN ('critical', 'high'))")
+            elif sev_filter == "medium":
+                having_clauses.append("bool_or(e.severity IN ('critical', 'high', 'medium'))")
+            elif sev_filter == "info":
+                having_clauses.append("NOT bool_or(e.severity IN ('critical', 'high', 'medium'))")
+
+            having_sql = f"HAVING {' AND '.join(having_clauses)}" if having_clauses else ""
+            fallback_having = f"HAVING {' AND '.join([c.replace('e.', '') for c in having_clauses])}" if having_clauses else ""
+
             try:
                 cur.execute(f"""
                     SELECT 
@@ -9060,6 +9077,7 @@ def api_get_app_users(
                     {join_clause}
                     WHERE {' AND '.join(where_clauses)}
                     GROUP BY COALESCE(e.user_name, e.client_ip), e.client_ip, e.user_name {group_status}
+                    {having_sql}
                     ORDER BY 
                         (CASE WHEN e.user_name IS NOT NULL AND e.user_name != '-' AND e.user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
                         last_seen DESC,
@@ -9070,8 +9088,7 @@ def api_get_app_users(
             except Exception as e_users:
                 logger.warning(f"api_get_app_users fallback query due to: {e_users}")
                 conn.rollback()
-                # Original query from db73f02
-                cur.execute("""
+                cur.execute(f"""
                     SELECT 
                         COALESCE(user_name, client_ip) AS identifier,
                         client_ip,
@@ -9092,6 +9109,7 @@ def api_get_app_users(
                     FROM app_events
                     WHERE application_id = %s AND client_ip IS NOT NULL
                     GROUP BY COALESCE(user_name, client_ip), client_ip, user_name
+                    {fallback_having}
                     ORDER BY 
                         (CASE WHEN user_name IS NOT NULL AND user_name != '-' AND user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
                         last_seen DESC,
@@ -9100,13 +9118,26 @@ def api_get_app_users(
                 """, (app_id,))
                 all_rows = cur.fetchall()
 
-            total_count = len(all_rows)
             items = []
-            for r in all_rows[:limit]:
+            seen_identities = {}
+            for r in all_rows:
                 item = dict(r)
                 cip = str(item.get("client_ip") or "").strip()
                 uname = item.get("user_name")
                 raw_path = str(item.get("recent_path") or "").lower()
+
+                # Normalize Base64 usernames (e.g. RGVla3NoYVM= -> DeekshaS, TXVuaXNo -> Munish)
+                if uname and uname not in ("-", "Anonymous", "null", "None"):
+                    unquoted_u = urllib.parse.unquote(uname).strip()
+                    if len(unquoted_u) >= 4 and len(unquoted_u) % 4 == 0 and re.match(r'^[A-Za-z0-9+/]+={0,2}$', unquoted_u):
+                        try:
+                            dec_u = base64.b64decode(unquoted_u).decode('utf-8', errors='ignore').strip()
+                            if dec_u.isprintable() and len(dec_u) >= 2 and all(32 <= ord(c) < 127 for c in dec_u) and not dec_u.isdigit():
+                                uname = dec_u
+                                item["user_name"] = dec_u
+                                item["identifier"] = dec_u
+                        except Exception:
+                            pass
 
                 if uname and len(uname) >= 4 and len(uname) % 4 == 0 and re.match(r'^[A-Za-z0-9+/]+={0,2}$', uname):
                     try:
@@ -9132,9 +9163,22 @@ def api_get_app_users(
                 else:
                     item["client_category"] = "guest"
                     item["display_role"] = "🌐 Web Visitor (Unauthenticated)"
+
+                # Deduplicate merged base64 vs plaintext identities
+                ident_key = item["identifier"]
+                if ident_key in seen_identities:
+                    existing = seen_identities[ident_key]
+                    existing["total_requests"] += item["total_requests"]
+                    existing["attack_events"] += item["attack_events"]
+                    if item["last_seen"] and (not existing["last_seen"] or item["last_seen"] > existing["last_seen"]):
+                        existing["last_seen"] = item["last_seen"]
+                        existing["recent_path"] = item["recent_path"]
+                    continue
+                seen_identities[ident_key] = item
                 items.append(item)
 
-            return {"items": items, "total_count": total_count, "showing_count": len(items), "timeframe_label": tf_label}
+            total_count = len(items)
+            return {"items": items[:limit], "total_count": total_count, "showing_count": len(items[:limit]), "timeframe_label": tf_label}
     finally:
         conn.close()
 

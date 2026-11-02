@@ -216,6 +216,16 @@
                     <option value="1m">Last 1 month</option>
                     <option value="custom">Custom (from/to)</option>
                 </select>
+                <select id="users-filter-severity" class="glass" 
+                        style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
+                        onchange="loadAppUsers(activeModalAppId)">
+                    <option value="threats" selected>⚠ Threat & Anomaly Users (Attacks > 0)</option>
+                    <option value="all">All Users (Including Routine Staff)</option>
+                    <option value="critical">Critical Threats Only</option>
+                    <option value="high">High & Critical</option>
+                    <option value="medium">Medium, High & Critical</option>
+                    <option value="info">Info / Normal Staff Only</option>
+                </select>
                 <select id="users-filter-status" class="glass" 
                         style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); font-size:11.5px; color:var(--text)"
                         onchange="loadAppUsers(activeModalAppId)">
@@ -1008,11 +1018,12 @@ async function loadAppUsers(appId) {
     container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">Loading user interactions...</div>';
 
     const tf = document.getElementById('users-filter-timeframe')?.value || '7d';
+    const sev = document.getElementById('users-filter-severity')?.value || 'threats';
     const status = document.getElementById('users-filter-status')?.value || 'open';
     const fromDate = document.getElementById('users-date-from')?.value;
     const toDate = document.getElementById('users-date-to')?.value;
 
-    let url = `/api/apps/${appId}/users?timeframe=${encodeURIComponent(tf)}&status=${encodeURIComponent(status)}`;
+    let url = `/api/apps/${appId}/users?timeframe=${encodeURIComponent(tf)}&status=${encodeURIComponent(status)}&severity=${encodeURIComponent(sev)}`;
     if (tf === 'custom' && fromDate && toDate) url += `&from_date=${encodeURIComponent(fromDate)}&to_date=${encodeURIComponent(toDate)}`;
 
     try {
@@ -1028,7 +1039,11 @@ async function loadAppUsers(appId) {
             cachedTabResponses.users = { items: users, total_count: totalCount, timeframe_label: tfLabel };
 
             if (users.length === 0) {
-                container.innerHTML = '<div style="padding:40px; text-align:center; color:var(--text3)">No user activity matches the active timeframe and status filter.</div>';
+                const isThreatsOnly = sev === 'threats';
+                const emptyMsg = isThreatsOnly 
+                    ? '✅ <b>Zero User Threat Anomalies</b>: No users have performed security attacks in this timeframe. (Routine normal staff entries with 0 attacks are muted). Switch filter to "All Users" to view staff directory.'
+                    : 'No user activity matches the active timeframe and filters.';
+                container.innerHTML = `<div style="padding:40px; text-align:center; color:var(--text3); font-size:12px">${emptyMsg}</div>`;
                 if (footer) footer.innerHTML = `<span>Showing 0 of 0 identities</span><span>(Database query for ${data.timeframe_label || tf})</span>`;
                 updateSelectAllCheckbox('users');
                 return;
