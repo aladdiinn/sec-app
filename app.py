@@ -537,6 +537,25 @@ def ensure_app_siem_schema_columns():
 
             try:
                 cur.execute("""
+                    CREATE TABLE IF NOT EXISTS app_suppressions (
+                        id SERIAL PRIMARY KEY,
+                        application_id INTEGER REFERENCES applications(id) ON DELETE CASCADE,
+                        rule_id INTEGER,
+                        rule_name VARCHAR(255),
+                        target_pattern TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        expires_at TIMESTAMPTZ,
+                        created_by VARCHAR(100),
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        CONSTRAINT uq_app_supp_pat UNIQUE (application_id, target_pattern)
+                    );
+                """)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+            try:
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS app_user_status (
                         id SERIAL PRIMARY KEY,
                         application_id INTEGER NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
@@ -7830,6 +7849,42 @@ def trigger_critical_app_incident_email(app_id: int, inc_id: int, title: str, ev
     except Exception as e:
         logger.error(f"[SES] Error dispatching smart alert email for App Incident #{inc_id}: {e}")
 
+_app_suppressions_cache = {}
+_app_suppressions_last_fetch = 0.0
+
+def get_app_suppressions_patterns(app_id: int):
+    global _app_suppressions_cache, _app_suppressions_last_fetch
+    now = time.time()
+    if now - _app_suppressions_last_fetch > 15:
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT application_id, target_pattern FROM app_suppressions;")
+                    new_cache = {}
+                    for r in cur.fetchall():
+                        aid = r["application_id"]
+                        pat = (r["target_pattern"] or "").lower().strip()
+                        if pat:
+                            new_cache.setdefault(aid, []).append(pat)
+                    _app_suppressions_cache = new_cache
+                    _app_suppressions_last_fetch = now
+            except Exception:
+                pass
+            finally:
+                conn.close()
+    return _app_suppressions_cache.get(app_id, [])
+
+def is_path_suppressed(app_id: int, path: str) -> bool:
+    patterns = get_app_suppressions_patterns(app_id)
+    if not patterns:
+        return False
+    p_lower = path.lower()
+    for pat in patterns:
+        if pat in p_lower:
+            return True
+    return False
+
 def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str):
     """Real-time heuristics detecting web attacks from parsed access logs with full URL-decode support."""
     p_unquoted = urllib.parse.unquote(path).lower()
@@ -8158,6 +8213,10 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     # 1. Drop static asset requests (including 404s like missing .js/.css/.png)
                     clean_path = raw_path.split("?")[0].lower()
                     if STATIC_EXT_RE.search(clean_path):
+                        continue
+
+                    # Check dynamic app exclusion patterns (Suppression Allowlist)
+                    if is_path_suppressed(actual_app_id, raw_path):
                         continue
 
                     # Drop benign unparsed JSP contextPath tag noise caused by broken frontend JS
@@ -9087,9 +9146,14 @@ def api_close_app_events(request: Request, app_id: int, payload: dict = Body(...
         raise HTTPException(status_code=401, detail="Unauthorized")
     ids = payload.get("ids", [])
     action = payload.get("action", "close").lower()
-    note = (payload.get("note") or "").strip()
+    note = (payload.get("note") or payload.get("close_note") or "").strip()
+    suppress = bool(payload.get("suppress", False))
     if not ids:
         return {"status": "error", "message": "No event IDs provided"}
+    
+    int_ids = [int(x) for x in ids if str(x).isdigit()]
+    if not int_ids:
+        return {"status": "error", "message": "No valid numeric event IDs provided"}
     
     conn = db.get_db_connection()
     if not conn:
@@ -9100,14 +9164,34 @@ def api_close_app_events(request: Request, app_id: int, payload: dict = Body(...
                 cur.execute("""
                     UPDATE app_events
                     SET status = 'closed', closed_by = %s, closed_at = NOW(), closed_note = %s
-                    WHERE application_id = %s AND id = ANY(%s);
-                """, (user.get("username", "admin"), note or "Reviewed by security analyst", app_id, ids))
+                    WHERE application_id = %s AND id = ANY(%s::bigint[]);
+                """, (user.get("username", "admin"), note or "Reviewed by security analyst", app_id, int_ids))
+
+                # Optional suppression: auto-add unique paths to app exclusions
+                if suppress:
+                    cur.execute("""
+                        SELECT DISTINCT url_path FROM app_events
+                        WHERE application_id = %s AND id = ANY(%s::bigint[]) AND url_path IS NOT NULL;
+                    """, (app_id, int_ids))
+                    for r in cur.fetchall():
+                        raw_p = (r.get("url_path") or "").split("?")[0].strip()
+                        if raw_p and len(raw_p) >= 2:
+                            try:
+                                cur.execute("""
+                                    INSERT INTO app_suppressions (application_id, target_pattern, reason, created_by)
+                                    VALUES (%s, %s, %s, %s)
+                                    ON CONFLICT (application_id, target_pattern) DO NOTHING;
+                                """, (app_id, raw_p, note or "Suppressed via event closure", user.get("username", "admin")))
+                            except Exception:
+                                pass
+                    global _app_suppressions_last_fetch
+                    _app_suppressions_last_fetch = 0.0
             else:
                 cur.execute("""
                     UPDATE app_events
                     SET status = 'open', closed_by = NULL, closed_at = NULL, closed_note = NULL
-                    WHERE application_id = %s AND id = ANY(%s);
-                """, (app_id, ids))
+                    WHERE application_id = %s AND id = ANY(%s::bigint[]);
+                """, (app_id, int_ids))
             updated_count = cur.rowcount
             conn.commit()
 
@@ -9118,7 +9202,7 @@ def api_close_app_events(request: Request, app_id: int, payload: dict = Body(...
                 audit_action,
                 "app_events",
                 str(app_id),
-                f"{action.capitalize()}d {len(ids)} events. Note: {note or 'N/A'}",
+                f"{action.capitalize()}d {len(int_ids)} events. Note: {note or 'N/A'}",
                 ip_address=client_ip
             )
             return {"status": "ok", "updated": updated_count, "action": action}
@@ -9133,9 +9217,14 @@ def api_close_app_incidents(request: Request, app_id: int, payload: dict = Body(
         raise HTTPException(status_code=401, detail="Unauthorized")
     ids = payload.get("ids", [])
     action = payload.get("action", "close").lower()
-    note = (payload.get("note") or "").strip()
+    note = (payload.get("note") or payload.get("close_note") or "").strip()
+    suppress = bool(payload.get("suppress", False))
     if not ids:
         return {"status": "error", "message": "No incident IDs provided"}
+    
+    int_ids = [int(x) for x in ids if str(x).isdigit()]
+    if not int_ids:
+        return {"status": "error", "message": "No valid numeric incident IDs provided"}
     
     conn = db.get_db_connection()
     if not conn:
@@ -9146,14 +9235,36 @@ def api_close_app_incidents(request: Request, app_id: int, payload: dict = Body(
                 cur.execute("""
                     UPDATE app_incidents
                     SET status = 'Closed', closed_by = %s, closed_at = NOW(), closed_note = %s, updated_at = NOW()
-                    WHERE application_id = %s AND id = ANY(%s);
-                """, (user.get("username", "admin"), note or "Incident mitigated and resolved", app_id, ids))
+                    WHERE application_id = %s AND id = ANY(%s::bigint[]);
+                """, (user.get("username", "admin"), note or "Incident mitigated and resolved", app_id, int_ids))
+
+                # Optional suppression: auto-add unique step patterns to app exclusions
+                if suppress:
+                    cur.execute("""
+                        SELECT DISTINCT step_summary FROM app_incident_events
+                        WHERE incident_id = ANY(%s::bigint[]);
+                    """, (int_ids,))
+                    for r in cur.fetchall():
+                        m_p = re.search(r'[A-Z]+\s+([^?\s]+)', r.get("step_summary") or "")
+                        if m_p:
+                            pat = m_p.group(1).strip()
+                            if pat and len(pat) >= 2:
+                                try:
+                                    cur.execute("""
+                                        INSERT INTO app_suppressions (application_id, target_pattern, reason, created_by)
+                                        VALUES (%s, %s, %s, %s)
+                                        ON CONFLICT (application_id, target_pattern) DO NOTHING;
+                                    """, (app_id, pat, note or "Suppressed via incident closure", user.get("username", "admin")))
+                                except Exception:
+                                    pass
+                    global _app_suppressions_last_fetch
+                    _app_suppressions_last_fetch = 0.0
             else:
                 cur.execute("""
                     UPDATE app_incidents
                     SET status = 'Open', closed_by = NULL, closed_at = NULL, closed_note = NULL, updated_at = NOW()
-                    WHERE application_id = %s AND id = ANY(%s);
-                """, (app_id, ids))
+                    WHERE application_id = %s AND id = ANY(%s::bigint[]);
+                """, (app_id, int_ids))
             updated_count = cur.rowcount
 
             # Re-evaluate app dynamic status
@@ -9581,6 +9692,87 @@ def api_get_app_rules(request: Request, app_id: int):
     except Exception as e:
         logger.error(f"Error in api_get_app_rules: {e}")
         return []
+    finally:
+        conn.close()
+
+@app.get("/api/apps/{app_id}/suppressions")
+def api_get_app_suppressions(request: Request, app_id: int):
+    """Retrieves active path suppression / allowlist patterns for an application."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    conn = db.get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, application_id, target_pattern, reason, created_by, created_at
+                FROM app_suppressions
+                WHERE application_id = %s
+                ORDER BY id DESC;
+            """, (app_id,))
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Error in api_get_app_suppressions: {e}")
+        return []
+    finally:
+        conn.close()
+
+@app.post("/api/apps/{app_id}/suppressions")
+def api_add_app_suppression(request: Request, app_id: int, payload: dict = Body(...)):
+    """Adds a new endpoint / path suppression pattern for an application."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    pattern = (payload.get("pattern") or payload.get("target_pattern") or "").strip()
+    reason = (payload.get("reason") or "Application bug / false positive allowlist").strip()
+    if not pattern:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Pattern cannot be empty"})
+
+    conn = db.get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO app_suppressions (application_id, target_pattern, reason, created_by)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (application_id, target_pattern) 
+                DO UPDATE SET reason = EXCLUDED.reason, created_at = NOW()
+                RETURNING id;
+            """, (app_id, pattern, reason, user.get("username", "admin")))
+            row = cur.fetchone()
+            conn.commit()
+            global _app_suppressions_last_fetch
+            _app_suppressions_last_fetch = 0.0
+            return {"status": "success", "id": row["id"] if row else None, "pattern": pattern}
+    except Exception as e:
+        logger.error(f"Error adding app suppression: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.delete("/api/apps/{app_id}/suppressions/{supp_id}")
+def api_delete_app_suppression(request: Request, app_id: int, supp_id: int):
+    """Deletes an active path suppression rule."""
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    conn = db.get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM app_suppressions WHERE id = %s AND application_id = %s;", (supp_id, app_id))
+            conn.commit()
+            global _app_suppressions_last_fetch
+            _app_suppressions_last_fetch = 0.0
+            return {"status": "success", "message": "Suppression rule removed"}
+    except Exception as e:
+        logger.error(f"Error deleting app suppression: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
 
