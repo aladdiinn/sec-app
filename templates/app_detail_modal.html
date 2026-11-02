@@ -1337,7 +1337,7 @@ async function generateSelectedReport(tab) {
 
         const data = await res.json();
         const app = data.app || {};
-        const explanations = data.explanations || [];
+        const explanations = (data.sections && data.sections.explanations) || data.explanations || [];
 
         let content = `
             <div style="margin-bottom:24px">

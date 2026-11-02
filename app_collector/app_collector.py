@@ -407,7 +407,8 @@ def run_collector():
 
                         is_security = any(k in line_l for k in [
                             "auth_failure", "privilege_violation", "unauthorized", "forbidden", 
-                            "denied", "failed login", "attack", "exploit", "sqli", "xss", "jndi"
+                            "denied", "failed login", "attack", "exploit", "sqli", "xss", "jndi",
+                            "login", "logged in", "session created"
                         ])
                         if not is_security:
                             continue

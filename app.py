@@ -8030,7 +8030,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     bytes_sent = int(m.group("bytes")) if m.group("bytes").isdigit() else 0
 
                     if user == "-" or not user:
-                        m_u = re.search(r'(?:\?|&)(?:user|username|login|email)=([^& \t\r\n\'"]+)', raw_path, re.IGNORECASE)
+                        m_u = re.search(r'(?:\?|&)(?:user(?:name|_name|id|_id)?|usr|uname|login(?:id|_id)?|account|email|emp(?:id|_id)?|u)=([^& \t\r\n\'"]+)', raw_path, re.IGNORECASE)
                         if m_u:
                             user = urllib.parse.unquote(m_u.group(1))
 
@@ -8177,6 +8177,20 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                         m_ip = re.search(r'(?:from\s+ip:?|ip:?)\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', raw_line, re.IGNORECASE)
                         if m_ip:
                             cat_ip = m_ip.group(1).strip()
+
+                    elif any(k in cat_lower for k in ("login successful", "successful login", "logged in", "user logged in", "session created for")):
+                        ev_type = "USER_LOGIN"
+                        sev = "info"
+                        rule_title = "User Authentication Successful"
+                        m_u = re.search(r"""(?:user|for user|username):?\s*['"]?([a-zA-Z0-9_\-\.\@]+)['"]?""", raw_line, re.IGNORECASE)
+                        if m_u:
+                            cat_user = m_u.group(1).strip()
+                            rule_title = f"User Login ({cat_user})"
+                        m_ip = re.search(r'(?:from\s+ip:?|ip:?)\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', raw_line, re.IGNORECASE)
+                        if m_ip:
+                            cat_ip = m_ip.group(1).strip()
+                        url_path = "/login"
+                        status_code = 200
 
                     elif "privilege_violation" in cat_lower or "restricted admin access" in cat_lower:
                         m_priv = re.search(r"user\s*['\"]([^\'\"]+)['\"].*?to\s*([^\s]+).*?from ip:?\s*([^\s]+)", raw_line, re.IGNORECASE)
@@ -9125,7 +9139,14 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
             timeframe = payload.get("timeframe", "7d")
             from_date = payload.get("from_date")
             to_date = payload.get("to_date")
-            sections = payload.get("sections") or ["events", "incidents", "users"]
+            sections = payload.get("sections")
+            if not sections:
+                if rep_type == "selected":
+                    sections = [selected_type]
+                elif rep_type in ("events", "incidents", "users"):
+                    sections = [rep_type]
+                else:
+                    sections = ["events", "incidents", "users"]
             apply_filters = payload.get("apply_filters", False)
             severity_filter = payload.get("severity", "all")
             query_filter = payload.get("query", "").strip()
@@ -9152,7 +9173,7 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
             total_users_in_db = 0
 
             # ── EVENTS ──
-            if "events" in sections or rep_type == "events" or (rep_type == "selected" and selected_type == "event"):
+            if rep_type == "events" or (rep_type == "selected" and selected_type in ("event", "events")) or (rep_type not in ("selected", "events", "incidents", "users") and "events" in sections):
                 where_clauses = ["application_id = %s"]
                 params = [app_id]
 
@@ -9196,7 +9217,7 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                         explanations_data.append(explainItem("event", row_dict))
 
             # ── INCIDENTS ──
-            if "incidents" in sections or rep_type == "incidents" or (rep_type == "selected" and selected_type == "incident"):
+            if rep_type == "incidents" or (rep_type == "selected" and selected_type in ("incident", "incidents")) or (rep_type not in ("selected", "events", "incidents", "users") and "incidents" in sections):
                 where_clauses = ["i.application_id = %s"]
                 params = [app_id]
 
@@ -9234,7 +9255,7 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                         explanations_data.append(explainItem("incident", row_dict))
 
             # ── USERS ──
-            if "users" in sections or rep_type == "users" or (rep_type == "selected" and selected_type == "user"):
+            if rep_type == "users" or (rep_type == "selected" and selected_type in ("user", "users")) or (rep_type not in ("selected", "events", "incidents", "users") and "users" in sections):
                 where_clauses = ["e.application_id = %s", "e.client_ip IS NOT NULL"]
                 params = [app_id]
 
@@ -9383,6 +9404,10 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                     "open_incidents": open_incidents_count,
                     "active_identities": active_identities_count
                 },
+                "events": events_data,
+                "incidents": incidents_data,
+                "users": users_data,
+                "explanations": explanations_data,
                 "sections": {
                     "events": events_data,
                     "incidents": incidents_data,
