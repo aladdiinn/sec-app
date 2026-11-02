@@ -1702,4 +1702,99 @@ function quickFilterSeverity(sev) {
     }
     if (typeof activeModalAppId !== 'undefined') loadAppEvents(activeModalAppId);
 }
+
+// Load & Manage Application Suppressions
+async function loadAppSuppressions(appId) {
+    const container = document.getElementById('pop-suppressions-content');
+    if (!container || !appId) return;
+
+    try {
+        const res = await fetch(`/api/apps/${appId}/suppressions`);
+        if (res.ok) {
+            const items = await res.json();
+            if (!items || items.length === 0) {
+                container.innerHTML = '<div style="padding:24px; text-align:center; color:var(--text3); font-size:12px">No custom exclusions active. All traffic is evaluated against active detection rules.</div>';
+                return;
+            }
+            container.innerHTML = `
+            <table style="width:100%; border-collapse:collapse; text-align:left; font-size:11.5px">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border); color:var(--text3); font-size:10.5px; background:var(--bg)">
+                        <th style="padding:8px 12px">EXCLUDED PATH PATTERN</th>
+                        <th style="padding:8px 12px">REASON</th>
+                        <th style="padding:8px 12px">ADDED BY</th>
+                        <th style="padding:8px 12px; text-align:right">ACTION</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${items.map(s => `
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:8px 12px">
+                            <span style="font-family:var(--font-mono), monospace; color:var(--cyan); font-weight:600">${escapeHtml(s.target_pattern)}</span>
+                        </td>
+                        <td style="padding:8px 12px; color:var(--text2)">${escapeHtml(s.reason || 'App bug / false positive')}</td>
+                        <td style="padding:8px 12px; color:var(--text3)">${escapeHtml(s.created_by || 'admin')}</td>
+                        <td style="padding:8px 12px; text-align:right">
+                            <button class="btn btn-ghost" onclick="deleteAppSuppression(${s.id})" style="color:var(--red); padding:3px 8px; font-size:10.5px" title="Remove exclusion">
+                                🗑️ Remove
+                            </button>
+                        </td>
+                    </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+            `;
+        } else {
+            container.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text3)">Unable to fetch exclusions.</div>';
+        }
+    } catch(e) {
+        container.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text3)">Error loading exclusions: ' + e.message + '</div>';
+    }
+}
+
+async function promptAddAppExclusion() {
+    if (!activeModalAppId) return;
+    const pattern = prompt("Enter URL path or pattern to exclude/suppress for this application:\n(e.g. /getApiAndOperationSettingDetails or /stockSummary)");
+    if (!pattern || !pattern.trim()) return;
+
+    const reason = prompt("Enter reason for suppression:\n(e.g. Known vendor bug, Internal AJAX polling)", "Application bug / false positive allowlist") || "Application bug / false positive allowlist";
+
+    try {
+        const res = await fetch(`/api/apps/${activeModalAppId}/suppressions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                pattern: pattern.trim(),
+                reason: reason.trim()
+            })
+        });
+        if (res.ok) {
+            loadAppSuppressions(activeModalAppId);
+        } else {
+            const err = await res.json().catch(() => null);
+            alert("Failed to add exclusion: " + (err?.message || "Server error"));
+        }
+    } catch(e) {
+        alert("Error: " + e.message);
+    }
+}
+
+async function deleteAppSuppression(suppId) {
+    if (!activeModalAppId || !suppId) return;
+    if (!confirm("Are you sure you want to remove this suppression rule? Matching traffic will be evaluated again.")) return;
+
+    try {
+        const res = await fetch(`/api/apps/${activeModalAppId}/suppressions/${suppId}`, {
+            method: 'DELETE'
+        });
+        if (res.ok) {
+            loadAppSuppressions(activeModalAppId);
+        } else {
+            alert("Failed to delete suppression rule.");
+        }
+    } catch(e) {
+        alert("Error: " + e.message);
+    }
+}
+
 </script>
