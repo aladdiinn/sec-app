@@ -559,8 +559,8 @@
             <input type="text" id="srv-search-input" placeholder="🔍 Search server or IP..." class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:rgba(255,255,255,0.05); width:220px" oninput="renderServicesGrid()">
             
             <select id="srv-filter-select" class="glass mono" style="padding:6px 12px; border-radius:6px; font-size:12px; border:1px solid rgba(255,255,255,0.15); color:#fff; background:var(--bg2)" onchange="onFilterSelectChange()">
-                <option value="problems" selected>Problem Nodes Only (Default)</option>
-                <option value="all">All Nodes</option>
+                <option value="all" selected>All Monitored Assets (Default)</option>
+                <option value="problems">Problem Nodes Only (Threats / Outages)</option>
                 <option value="app_nodes">Application Nodes Only</option>
                 <option value="servers">Servers / Assets Only</option>
                 <option value="critical">Critical Issues Only</option>
@@ -1163,7 +1163,7 @@ function renderAppNodeAwsIcon(color = '#FF9900') {
 }
 
 // ── DONUT GAUGE HELPER (Exact style of 1st image: 98% Green, 7% Red, 23% Amber) ──
-let currentStatusFilter = 'problems';
+let currentStatusFilter = 'all';
 
 function onFilterSelectChange() {
     const sel = document.getElementById('srv-filter-select');
