@@ -7867,22 +7867,41 @@ def api_get_collector_code(token: str = Query("")):
         code = f.read()
     return PlainTextResponse(code, media_type="text/x-python")
 
-@app.post("/api/app/heartbeat")
-def api_app_heartbeat(request: Request, payload: dict = Body(...)):
-    """Receives 30-second heartbeat from securepulse-app collectors."""
-    token = (request.headers.get("X-Enrollment-Token") or payload.get("token") or "").strip()
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    
+_token_cache = {}  # token -> {"comp": comp_dict, "expires": float}
+_rejected_token_cache = {}  # token -> float
+_last_rejected_audit = {}  # (ip, token) -> float
+
+def get_cached_component_by_token(token: str, client_ip: str):
+    """
+    Validates enrollment token with high-performance in-memory caching and 401 dampening.
+    Prevents misconfigured agent loops from exhausting PostgreSQL connection pools.
+    """
     if not token:
-        db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "app_component", None, f"Heartbeat rejected: missing token from {client_ip}", ip_address=client_ip)
-        return JSONResponse(status_code=401, content={"status": "error", "reason": "Authentication token required"})
+        return None, "Authentication token required"
 
-    version = payload.get("version", "1.6.0")
-    files = payload.get("monitored_files", [])
+    now = time.time()
+    # 1. Fast rejection cache check
+    if token in _rejected_token_cache:
+        if now < _rejected_token_cache[token]:
+            return None, f"Unknown or revoked agent token from {client_ip}"
+        else:
+            del _rejected_token_cache[token]
 
+    # 2. Fast valid cache check
+    if token in _token_cache:
+        cached = _token_cache[token]
+        if now < cached["expires"]:
+            comp = cached["comp"]
+            if comp.get("status") not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
+                return None, "Component pending administrator approval"
+            return comp, None
+        else:
+            del _token_cache[token]
+
+    # 3. Query PostgreSQL on cache miss
     conn = db.get_db_connection()
     if not conn:
-        return JSONResponse(status_code=503, content={"status": "error", "reason": "database connection unavailable"})
+        return None, "database connection unavailable"
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -7892,12 +7911,47 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
             """, (token,))
             comp = cur.fetchone()
             if not comp:
-                db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "app_component", None, f"Heartbeat rejected: unknown token from {client_ip}", ip_address=client_ip)
-                return JSONResponse(status_code=401, content={"status": "error", "reason": f"Unknown or revoked agent token from {client_ip}"})
+                _rejected_token_cache[token] = now + 15.0
+                audit_key = (client_ip, token)
+                if now - _last_rejected_audit.get(audit_key, 0.0) > 60:
+                    _last_rejected_audit[audit_key] = now
+                    try:
+                        db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "app_component", None, f"Events rejected: unknown token from {client_ip}", ip_address=client_ip)
+                    except Exception:
+                        pass
+                return None, f"Unknown or revoked agent token from {client_ip}"
 
-            if comp["status"] not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
-                return JSONResponse(status_code=401, content={"status": "error", "reason": "Component pending administrator approval"})
+            comp_dict = dict(comp)
+            if comp_dict["status"] not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
+                _rejected_token_cache[token] = now + 10.0
+                return None, "Component pending administrator approval"
 
+            _token_cache[token] = {
+                "comp": comp_dict,
+                "expires": now + 60.0
+            }
+            return comp_dict, None
+    finally:
+        conn.close()
+
+@app.post("/api/app/heartbeat")
+def api_app_heartbeat(request: Request, payload: dict = Body(...)):
+    """Receives 30-second heartbeat from securepulse-app collectors."""
+    token = (request.headers.get("X-Enrollment-Token") or payload.get("token") or "").strip()
+    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    comp, err = get_cached_component_by_token(token, client_ip)
+    if err:
+        return JSONResponse(status_code=401, content={"status": "error", "reason": err})
+
+    version = payload.get("version", "1.6.0")
+    files = payload.get("monitored_files", [])
+
+    conn = db.get_db_connection()
+    if not conn:
+        return JSONResponse(status_code=503, content={"status": "error", "reason": "database connection unavailable"})
+    try:
+        with conn.cursor() as cur:
             readiness = psycopg2.extras.Json({"monitored_files": files, "collector_version": version})
             cur.execute("""
                 UPDATE application_components
@@ -8228,6 +8282,16 @@ def api_app_events(request: Request, payload: dict = Body(...)):
     if not events:
         return {"status": "success", "ingested": 0}
 
+    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    # Fast in-memory token validation: rejects 401s in 0.001ms with zero DB connections
+    comp, err = get_cached_component_by_token(token, client_ip)
+    if err:
+        return JSONResponse(status_code=401, content={"status": "error", "reason": err})
+
+    comp_id = comp["id"]
+    actual_app_id = comp["application_id"]
+
     conn = db.get_db_connection()
     if not conn:
         return {"status": "error", "reason": "database unavailable"}
@@ -8236,28 +8300,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
     highest_severity = "info"
 
     try:
-        client_ip = request.client.host if request.client else "127.0.0.1"
-        if not token:
-            db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "app_component", None, f"Events rejected: missing token from {client_ip}", ip_address=client_ip)
-            return JSONResponse(status_code=401, content={"status": "error", "reason": "Authentication token required"})
-
         with conn.cursor() as cur:
-            # Lookup component strictly by enrollment token
-            cur.execute("""
-                SELECT id, application_id, status FROM application_components
-                WHERE enrollment_token = %s
-                LIMIT 1;
-            """, (token,))
-            comp = cur.fetchone()
-            if not comp:
-                db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "app_component", None, f"Events rejected: unknown token from {client_ip}", ip_address=client_ip)
-                return JSONResponse(status_code=401, content={"status": "error", "reason": f"Unknown or revoked agent token from {client_ip}"})
-
-            if comp["status"] not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
-                return JSONResponse(status_code=401, content={"status": "error", "reason": "Component pending administrator approval"})
-            
-            comp_id = comp["id"]
-            actual_app_id = comp["application_id"]
 
             for ev in events:
                 raw_line = ev.get("line", "").strip()

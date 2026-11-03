@@ -463,6 +463,9 @@ def run_collector():
                         check_and_apply_auto_update()
                 else:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Heartbeat warning: {res.get('reason')}")
+                    if res.get("code") == 401:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Heartbeat unauthorized (401). Backing off for 15s...")
+                        time.sleep(15.0)
                 last_heartbeat = now
 
             # 2. Rediscover log files if none attached or every 60s
@@ -548,6 +551,9 @@ def run_collector():
                 else:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Event ingestion failed: {res}")
                     last_flush = now
+                    if res.get("code") == 401 or res.get("status") == "error":
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Agent token unauthorized / rejected by SOC. Backing off for 15s...")
+                        time.sleep(15.0)
 
             time.sleep(float(CONFIG["POLL_INTERVAL_SEC"]))
 

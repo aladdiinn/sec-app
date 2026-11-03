@@ -1095,37 +1095,40 @@ let activeModalServerId = null;
 
 async function loadDashboardData() {
     try {
-        // Load Counts
-        const counts = await apiFetch('/api/dashboard/counts');
-        document.getElementById('noc-c-down').innerText = counts.down_servers ?? 0;
-        document.getElementById('noc-c-critical').innerText = counts.critical_alerts ?? 0;
-        document.getElementById('noc-c-trouble').innerText = counts.trouble_servers ?? 0;
-        document.getElementById('noc-c-maint').innerText = counts.maintenance_servers ?? 0;
-        document.getElementById('noc-c-up').innerText = counts.online_servers ?? 0;
-        
-
-        document.getElementById('sum-servers').innerText = counts.total_servers ?? 0;
-        if (document.getElementById('sum-app-nodes')) {
-            document.getElementById('sum-app-nodes').innerText = counts.total_app_nodes ?? 0;
-        }
-        if (document.getElementById('sum-apps')) {
-            document.getElementById('sum-apps').innerText = counts.total_apps ?? 0;
-        }
-        document.getElementById('sum-monitored').innerText = (counts.total_servers ?? 0) + (counts.total_app_nodes ?? 0);
-        document.getElementById('sum-active-issues').innerText = (counts.critical_alerts ?? 0) + (counts.trouble_servers ?? 0);
-
-        // Load Servers List and Applications List for Grid
-        const [serversRes, appsRes] = await Promise.all([
+        // Parallelize fetching counts, servers, and apps for instant responsiveness
+        const [countsResult, serversResult, appsResult] = await Promise.allSettled([
+            apiFetch('/api/dashboard/counts'),
             apiFetch('/api/servers'),
             apiFetch('/api/apps').catch(() => [])
         ]);
+
+        if (countsResult.status === 'fulfilled' && countsResult.value) {
+            const counts = countsResult.value;
+            document.getElementById('noc-c-down').innerText = counts.down_servers ?? 0;
+            document.getElementById('noc-c-critical').innerText = counts.critical_alerts ?? 0;
+            document.getElementById('noc-c-trouble').innerText = counts.trouble_servers ?? 0;
+            document.getElementById('noc-c-maint').innerText = counts.maintenance_servers ?? 0;
+            document.getElementById('noc-c-up').innerText = counts.online_servers ?? 0;
+
+            document.getElementById('sum-servers').innerText = counts.total_servers ?? 0;
+            if (document.getElementById('sum-app-nodes')) {
+                document.getElementById('sum-app-nodes').innerText = counts.total_app_nodes ?? 0;
+            }
+            if (document.getElementById('sum-apps')) {
+                document.getElementById('sum-apps').innerText = counts.total_apps ?? 0;
+            }
+            document.getElementById('sum-monitored').innerText = (counts.total_servers ?? 0) + (counts.total_app_nodes ?? 0);
+            document.getElementById('sum-active-issues').innerText = (counts.critical_alerts ?? 0) + (counts.trouble_servers ?? 0);
+        }
+
+        const serversRes = serversResult.status === 'fulfilled' ? serversResult.value : [];
+        const appsRes = appsResult.status === 'fulfilled' ? appsResult.value : [];
         globalServersList = Array.isArray(serversRes) ? serversRes : (serversRes.servers || []);
         globalAppsList = Array.isArray(appsRes) ? appsRes : [];
         
         renderServicesGrid();
     } catch(e) {
         console.error('Error loading dashboard data:', e);
-        // Remove spinner and show error message
         const grid = document.getElementById('services-cards-grid');
         if (grid) {
             grid.innerHTML = `<div style="grid-column:1/-1; padding:40px; color:var(--red); text-align:center;">Failed to load dashboard data. Please check connection and try again.</div>`;
