@@ -8086,7 +8086,10 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
 
     # 9. Mass Parameter Enumeration / IDOR Data Scraping (e.g. rapid sequential consumer IDs)
     if check_mass_scraping_detection(ip, user, path, method=method):
-        return "DATA_HARVESTING", "high", "Mass Record Enumeration / IDOR Scraping Attempt", "T1005 - Data from Local System"
+        if status in (200, 201, 204):
+            return "DATA_EXFILTRATION", "critical", "Active Mass Data Exfiltration Confirmed (HTTP 200)", "T1005 - Data from Local System"
+        else:
+            return "DATA_HARVESTING", "high", "Mass Record Enumeration / IDOR Scraping Attempt", "T1005 - Data from Local System"
 
     return "HTTP_ACCESS", "info", None, None
 
