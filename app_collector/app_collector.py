@@ -11,6 +11,7 @@ Safety & Governance:
 - Zero external pip dependencies (runs on standard Python 3.6+).
 - Capped resource consumption (< 1% CPU, < 25MB RAM).
 - Automatic log rotation handling (inode tracking).
+- Intelligent backoff, Keep-Alive connection reuse, and bounded memory queue.
 """
 
 import os
@@ -20,11 +21,13 @@ import json
 import socket
 import re
 import glob
-import urllib.request
-import urllib.error
+import random
+import http.client
+import urllib.parse
+import threading
 from datetime import datetime, timezone
 
-COLLECTOR_VERSION = "1.7.3"
+COLLECTOR_VERSION = "1.8.0"
 
 # Configuration defaults (overridden by /etc/securepulse-app/collector.env)
 CONFIG = {
@@ -37,10 +40,12 @@ CONFIG = {
     "TARGET_DB_NAME": os.environ.get("TARGET_DB_NAME", ""),
     "TOMCAT_LOG_DIR": os.environ.get("TOMCAT_LOG_DIR", ""),
     "PG_LOG_DIR": os.environ.get("PG_LOG_DIR", ""),
-    "POLL_INTERVAL_SEC": float(os.environ.get("POLL_INTERVAL_SEC", "0.5")),
-    "BATCH_MAX_LINES": int(os.environ.get("BATCH_MAX_LINES", "50")),
-    "BATCH_MAX_WAIT_SEC": float(os.environ.get("BATCH_MAX_WAIT_SEC", "2.0")),
-    "HEARTBEAT_INTERVAL_SEC": float(os.environ.get("HEARTBEAT_INTERVAL_SEC", "30.0"))
+    "POLL_INTERVAL_SEC": float(os.environ.get("POLL_INTERVAL_SEC", "1.0")),
+    "BATCH_MAX_LINES": int(os.environ.get("BATCH_MAX_LINES", "100")),
+    "BATCH_MAX_WAIT_SEC": float(os.environ.get("BATCH_MAX_WAIT_SEC", "3.0")),
+    "HEARTBEAT_INTERVAL_SEC": float(os.environ.get("HEARTBEAT_INTERVAL_SEC", "30.0")),
+    "MAX_QUEUE_SIZE": int(os.environ.get("MAX_QUEUE_SIZE", "10000")),
+    "AGGREGATE_ROUTINE_ACCESS": os.environ.get("AGGREGATE_ROUTINE_ACCESS", "true").lower() in ("true", "1", "yes")
 }
 
 def load_env_file(filepath="/etc/securepulse-app/collector.env"):
@@ -58,41 +63,90 @@ def load_env_file(filepath="/etc/securepulse-app/collector.env"):
                     k = k.strip()
                     v = v.strip().strip('"').strip("'")
                     if k in CONFIG:
-                        if k == "APP_ID":
+                        if k in ("APP_ID", "BATCH_MAX_LINES", "MAX_QUEUE_SIZE"):
                             try: CONFIG[k] = int(v)
                             except ValueError: pass
                         elif k in ("POLL_INTERVAL_SEC", "BATCH_MAX_WAIT_SEC", "HEARTBEAT_INTERVAL_SEC"):
                             try: CONFIG[k] = float(v)
                             except ValueError: pass
-                        elif k == "BATCH_MAX_LINES":
-                            try: CONFIG[k] = int(v)
-                            except ValueError: pass
+                        elif k == "AGGREGATE_ROUTINE_ACCESS":
+                            CONFIG[k] = v.lower() in ("true", "1", "yes")
                         else:
                             CONFIG[k] = v
     except Exception as e:
         print(f"[WARN] Error reading {filepath}: {e}")
 
-def post_json(endpoint: str, payload: dict, timeout: float = 6.0) -> dict:
-    """Posts JSON payload to SOC server using standard library urllib."""
-    soc_url = CONFIG["SOC_URL"].rstrip("/")
-    url = f"{soc_url}{endpoint}"
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={
-        "Content-Type": "application/json",
-        "X-Enrollment-Token": CONFIG["ENROLLMENT_TOKEN"],
-        "User-Agent": f"SecurePulse-App-Collector/{COLLECTOR_VERSION}"
-    })
-    try:
-        # Explicitly bypass system proxy for direct communication with SOC server
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8")
-            return json.loads(body) if body else {"status": "ok"}
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8") if e.fp else ""
-        return {"status": "error", "code": e.code, "reason": err_body or str(e)}
-    except Exception as e:
-        return {"status": "error", "reason": str(e)}
+# ── PERSISTENT HTTP SESSION (Keep-Alive, Retry-After Parsing, Auto-Reconnect) ──
+
+class PersistentSession:
+    """Maintains a persistent HTTP/HTTPS connection with keep-alive, Retry-After parsing, and auto-reconnect."""
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+        parsed = urllib.parse.urlparse(self.base_url)
+        self.scheme = parsed.scheme or "http"
+        self.host = parsed.hostname or "127.0.0.1"
+        self.port = parsed.port or (443 if self.scheme == "https" else 80)
+        self._conn = None
+        self._lock = threading.Lock()
+
+    def _get_connection(self):
+        if self._conn is None:
+            if self.scheme == "https":
+                import ssl
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                self._conn = http.client.HTTPSConnection(self.host, self.port, timeout=10.0, context=ctx)
+            else:
+                self._conn = http.client.HTTPConnection(self.host, self.port, timeout=10.0)
+        return self._conn
+
+    def post(self, endpoint: str, payload: dict, token: str) -> dict:
+        with self._lock:
+            data = json.dumps(payload).encode("utf-8")
+            headers = {
+                "Content-Type": "application/json",
+                "Connection": "keep-alive",
+                "X-Enrollment-Token": token,
+                "User-Agent": f"SecurePulse-App-Collector/{COLLECTOR_VERSION}"
+            }
+            for attempt in range(2):
+                try:
+                    conn = self._get_connection()
+                    conn.request("POST", endpoint, body=data, headers=headers)
+                    resp = conn.getresponse()
+                    body = resp.read().decode("utf-8", errors="replace")
+                    retry_after = resp.getheader("Retry-After")
+                    res_json = {}
+                    try:
+                        res_json = json.loads(body) if body else {}
+                    except Exception:
+                        res_json = {"reason": body}
+
+                    res_json["code"] = resp.status
+                    if retry_after:
+                        res_json["retry_after"] = retry_after
+
+                    if resp.status in (200, 201):
+                        res_json["status"] = "success"
+                        return res_json
+                    else:
+                        res_json["status"] = "error"
+                        return res_json
+                except (http.client.RemoteDisconnected, BrokenPipeError, ConnectionResetError, http.client.CannotSendRequest, http.client.BadStatusLine):
+                    if self._conn:
+                        try: self._conn.close()
+                        except Exception: pass
+                    self._conn = None
+                    if attempt == 1:
+                        return {"status": "error", "code": 503, "reason": "Connection reset after reconnect attempt"}
+                except Exception as e:
+                    if self._conn:
+                        try: self._conn.close()
+                        except Exception: pass
+                    self._conn = None
+                    return {"status": "error", "code": 500, "reason": str(e)}
+            return {"status": "error", "code": 500, "reason": "Connection failure"}
 
 # ── LOG DISCOVERY ENGINE ──────────────────────────────────────────────────────
 
@@ -114,114 +168,68 @@ def find_tomcat_log_files(target_port: str = "") -> list:
                     match = re.search(r'pid=(\d+)', line)
                     if match:
                         pid = match.group(1)
-                        # Check cmdline
                         cmdline_path = f"/proc/{pid}/cmdline"
                         if os.path.exists(cmdline_path):
                             with open(cmdline_path, "r", encoding="utf-8", errors="ignore") as f:
-                                cmd = f.read().replace("\x00", " ")
-                                m = re.search(r'-Dcatalina\.base=([^\s]+)', cmd) or re.search(r'-Dcatalina\.home=([^\s]+)', cmd)
-                                if m:
-                                    cdir = os.path.join(m.group(1), "logs")
-                                    if os.path.isdir(cdir) and cdir not in candidates:
-                                        candidates.append(os.path.realpath(cdir))
-                        # Check process cwd
-                        cwd_link = f"/proc/{pid}/cwd"
-                        if os.path.exists(cwd_link):
-                            try:
-                                real_cwd = os.path.realpath(cwd_link)
-                                for p in [real_cwd, os.path.dirname(real_cwd)]:
-                                    ldir = os.path.join(p, "logs")
-                                    if os.path.isdir(ldir) and ldir not in candidates:
-                                        candidates.append(os.path.realpath(ldir))
-                            except Exception:
-                                pass
+                                cmd = f.read().replace('\x00', ' ')
+                                m_base = re.search(r'-Dcatalina\.base=([^\s]+)', cmd)
+                                if m_base:
+                                    log_dir = os.path.join(m_base.group(1), "logs")
+                                    if os.path.isdir(log_dir):
+                                        candidates.append(os.path.realpath(log_dir))
+                                m_home = re.search(r'-Dcatalina\.home=([^\s]+)', cmd)
+                                if m_home:
+                                    log_dir = os.path.join(m_home.group(1), "logs")
+                                    if os.path.isdir(log_dir):
+                                        candidates.append(os.path.realpath(log_dir))
         except Exception:
             pass
 
-    # 3. Process inspection: inspect all running java/tomcat processes
-    if sys.platform.startswith("linux"):
-        try:
-            for pid_dir in glob.glob("/proc/[0-9]*"):
-                cmd_path = os.path.join(pid_dir, "cmdline")
-                if os.path.exists(cmd_path):
-                    try:
-                        with open(cmd_path, "r", encoding="utf-8", errors="ignore") as f:
-                            cmd = f.read().replace("\x00", " ")
-                            if "catalina" in cmd.lower() or "tomcat" in cmd.lower() or "bootstrap" in cmd.lower():
-                                m = re.search(r'-Dcatalina\.base=([^\s]+)', cmd) or re.search(r'-Dcatalina\.home=([^\s]+)', cmd)
-                                if m:
-                                    ldir = os.path.join(m.group(1), "logs")
-                                    if os.path.isdir(ldir) and ldir not in candidates:
-                                        candidates.append(os.path.realpath(ldir))
-                                
-                                # Process cwd inspection
-                                cwd_link = os.path.join(pid_dir, "cwd")
-                                if os.path.exists(cwd_link):
-                                    rcwd = os.path.realpath(cwd_link)
-                                    for p in [rcwd, os.path.dirname(rcwd)]:
-                                        ldir = os.path.join(p, "logs")
-                                        if os.path.isdir(ldir) and ldir not in candidates:
-                                            candidates.append(os.path.realpath(ldir))
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-    # 4. Standard filesystem roots across Linux distributions
-    standard_roots = [
-        "/home/apache-tomcat*/logs",
-        "/home/*/apache-tomcat*/logs",
-        "/opt/apache-tomcat*/logs",
-        "/opt/tomcat*/logs",
+    # 3. Standard Tomcat locations
+    standard_paths = [
         "/var/log/tomcat*",
-        "/var/lib/tomcat*/logs",
-        "/usr/local/apache-tomcat*/logs",
+        "/opt/tomcat*/logs",
         "/usr/local/tomcat*/logs",
-        "/usr/share/tomcat*/logs",
+        "/var/lib/tomcat*/logs",
         "/home/*/tomcat*/logs",
-        "/home/tomcat*/logs"
+        "/opt/*/tomcat*/logs"
     ]
-    for pattern in standard_roots:
+    for pattern in standard_paths:
         for p in glob.glob(pattern):
             if os.path.isdir(p):
-                rp = os.path.realpath(p)
-                if rp not in candidates:
-                    candidates.append(rp)
+                candidates.append(os.path.realpath(p))
 
+    # Deduplicate candidate directories
+    unique_dirs = list(dict.fromkeys(candidates))
+
+    # Resolve active log files inside discovered directories
     active_files = []
-
-    for cdir in candidates:
-        if not os.path.isdir(cdir):
-            continue
-
-        # Access logs: look for any access log file
+    for d in unique_dirs:
+        # Access logs: prefer current date / latest modified
         access_patterns = [
-            os.path.join(cdir, "*access_log*"),
-            os.path.join(cdir, "*access*.txt"),
-            os.path.join(cdir, "*access*.log")
+            os.path.join(d, "localhost_access_log.*.txt"),
+            os.path.join(d, "*access_log*"),
+            os.path.join(d, "access.log")
         ]
         found_access = []
         for pat in access_patterns:
             for f in glob.glob(pat):
-                if os.path.isfile(f) and f not in found_access:
+                if os.path.isfile(f) and not f.endswith(".gz") and not f.endswith(".zip"):
                     found_access.append(f)
-
-        # Sort access logs by modification time (newest first)
         found_access.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
-        # Take up to the 2 most recent access logs (e.g. today's active file)
         for f in found_access[:2]:
             if not any(af["path"] == f for af in active_files):
                 active_files.append({"path": f, "source": "tomcat_access"})
 
-        # Catalina / App logs: catalina.out or catalina.YYYY-MM-DD.log
+        # Catalina / application stdout logs
         cat_patterns = [
-            os.path.join(cdir, "catalina.out"),
-            os.path.join(cdir, "catalina*.log")
+            os.path.join(d, "catalina.out"),
+            os.path.join(d, "catalina.*.log")
         ]
         found_cat = []
         for pat in cat_patterns:
             for f in glob.glob(pat):
-                if os.path.isfile(f) and f not in found_cat:
+                if os.path.isfile(f) and not f.endswith(".gz") and not f.endswith(".zip"):
                     found_cat.append(f)
         found_cat.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
         for f in found_cat[:2]:
@@ -244,12 +252,64 @@ def find_postgres_log_files(target_port: str = "") -> list:
     ]
     for pattern in standard_patterns:
         for f in glob.glob(pattern):
-            if os.path.isfile(f):
+            if os.path.isfile(f) and not f.endswith(".gz") and not f.endswith(".zip"):
                 rf = os.path.realpath(f)
                 if rf not in candidates:
                     candidates.append(rf)
 
     return [{"path": f, "source": "postgres"} for f in candidates]
+
+# ── NOISE FILTERING & PATTERNS ────────────────────────────────────────────────
+
+STATIC_EXT_RE = re.compile(r'\.(?:png|jpe?g|gif|svg|ico|css|js|woff2?|ttf|eot|map|webp)$', re.IGNORECASE)
+ATTACK_PATH_TOKENS = (
+    "..", "/etc/", "union", "select", "<script", "onerror", "${jndi", 
+    "exec", "cmd", "drop", "eval", "'", "%27", "%22", "%3c", "%3e", "0x", "sleep("
+)
+USER_QUERY_TOKENS = (
+    "user=", "username=", "userName=", "userid=", "user_id=", 
+    "login=", "email=", "account=", "token=", "session=", "auth=", "empid=", "usr="
+)
+
+def is_noise_tomcat_access_log(raw_line: str) -> bool:
+    """Returns True if the line is purely static asset or routine noise."""
+    if ' 200 ' not in raw_line and ' 304 ' not in raw_line:
+        return False  # Keep all 401, 403, 404, 500, etc.
+
+    m_req = re.search(r'"([A-Z]+)\s+([^"\s]+)\s+HTTP/[0-9\.]+"', raw_line)
+    if not m_req:
+        return False
+
+    method = m_req.group(1).upper()
+    if method not in ("GET", "HEAD", "OPTIONS"):
+        return False
+
+    raw_path = m_req.group(2)
+    path_lower = urllib.parse.unquote(raw_path).lower()
+
+    if any(atk in path_lower for atk in ATTACK_PATH_TOKENS):
+        return False
+    if any(u in path_lower for u in USER_QUERY_TOKENS):
+        return False
+
+    clean_path = raw_path.split("?")[0].lower()
+    if STATIC_EXT_RE.search(clean_path):
+        return True
+    if clean_path in ("/", "") and ("?" not in raw_path or raw_path.endswith("?")):
+        return True
+
+    return False
+
+def is_routine_access_line(raw_line: str) -> bool:
+    """Returns True if line is a standard 2xx/3xx GET/HEAD with no attacks or errors (candidate for aggregation)."""
+    if ' 200 ' not in raw_line and ' 304 ' not in raw_line and ' 204 ' not in raw_line:
+        return False
+    p_lower = raw_line.lower()
+    if any(k in p_lower for k in ATTACK_PATH_TOKENS):
+        return False
+    if any(k in p_lower for k in USER_QUERY_TOKENS):
+        return False
+    return True
 
 # ── LOG TAILER ENGINE ─────────────────────────────────────────────────────────
 
@@ -271,34 +331,26 @@ class LogFileTailer:
             stat = os.stat(self.filepath)
             self.inode = stat.st_ino
             self.file_obj = open(self.filepath, "r", encoding="utf-8", errors="replace")
-            # Production Log Tailer: seek to end of file on startup so past historical logs are NEVER replayed
-            # Only live events generated while actively testing or running the app will be captured!
+            # Seek to end on startup to avoid replaying historic logs
             self.file_obj.seek(0, os.SEEK_END)
             self.last_pos = self.file_obj.tell()
         except Exception as e:
             print(f"[WARN] Error opening {self.filepath}: {e}")
 
     def read_new_lines(self) -> list:
-        if not self.file_obj or not os.path.exists(self.filepath):
+        if not self.file_obj or self.file_obj.closed:
             self._open()
             return []
 
         try:
-            # Check rotation: if inode changed or file size shrunk
-            stat = os.stat(self.filepath)
-            if stat.st_ino != self.inode:
-                print(f"[INFO] Log rotation detected on {self.filepath} (new inode). Reopening from start...")
-                if self.file_obj:
-                    self.file_obj.close()
-                self.inode = stat.st_ino
-                self.file_obj = open(self.filepath, "r", encoding="utf-8", errors="replace")
-                self.file_obj.seek(0, os.SEEK_SET)
-                self.last_pos = 0
+            if not os.path.exists(self.filepath):
                 return []
-            elif stat.st_size < self.last_pos:
-                print(f"[INFO] Log truncation detected on {self.filepath}. Resetting offset to 0...")
-                self.file_obj.seek(0, os.SEEK_SET)
-                self.last_pos = 0
+            current_stat = os.stat(self.filepath)
+            # Detect log rotation (new inode) or file truncation
+            if current_stat.st_ino != self.inode or current_stat.st_size < self.last_pos:
+                try: self.file_obj.close()
+                except Exception: pass
+                self._open()
                 return []
 
             lines = []
@@ -306,145 +358,61 @@ class LogFileTailer:
                 line = self.file_obj.readline()
                 if not line:
                     break
-                line = line.strip("\r\n")
+                line = line.strip()
                 if line:
                     lines.append(line)
             self.last_pos = self.file_obj.tell()
             return lines
         except Exception as e:
             print(f"[WARN] Error reading {self.filepath}: {e}")
+            try: self.file_obj.close()
+            except Exception: pass
+            self.file_obj = None
             return []
 
     def close(self):
-        if self.file_obj:
+        if self.file_obj and not self.file_obj.closed:
             try: self.file_obj.close()
             except Exception: pass
 
-# ── MAIN FORWARDER LOOP ───────────────────────────────────────────────────────
-
-STATIC_EXT_RE = re.compile(r'\.(?:png|jpe?g|gif|svg|ico|css|js|woff2?|ttf|eot|map|webp)$', re.IGNORECASE)
-ATTACK_PATH_TOKENS = (
-    "..", "/etc/", "union", "select", "<script", "onerror", "${jndi", 
-    "exec", "cmd", "drop", "eval", "'", "%27", "%22", "%3c", "%3e", "0x", "sleep(",
-    "${", "%24%7b", "#{"
-)
-USER_QUERY_TOKENS = (
-    "user=", "username=", "userName=", "userid=", "user_id=", 
-    "login=", "email=", "account=", "token=", "session=", "auth=", "empid=", "usr="
-)
-ROUTINE_POLLING_PATTERNS = (
-    "getstocksummary",
-    "getassignedtome",
-    "getassignedexception",
-    "/showstatus/",
-    "/health",
-    "/ping",
-    "/heartbeat",
-    "/favicon.ico",
-    "tab-close-logout",
-    "update-logout-time",
-    "fullviewmdas",
-    "nonbilledconsumerdata",
-    "updatemrdpendingrecord",
-    "pagecontext.request.contextpath"
-)
-
-def is_noise_tomcat_access_log(raw_line: str) -> bool:
-    """
-    Tier-1 Edge/Ingestion Noise Filter:
-    Returns True if the line is purely routine static asset or health/widget-polling noise (safe to drop).
-    Returns False if the line has ANY security relevance, error code, user parameter, or app logic.
-    """
-    # 1. Quick status check: Only candidate for dropping if status is 200 or 304
-    if ' 200 ' not in raw_line and ' 304 ' not in raw_line:
-        return False  # Keep all 401, 403, 404, 500, 302, etc.
-
-    # 2. Extract request: "METHOD /path HTTP/..."
-    m_req = re.search(r'"([A-Z]+)\s+([^"\s]+)\s+HTTP/[0-9\.]+"', raw_line)
-    if not m_req:
-        return False  # Keep non-standard or malformed requests
-
-    method = m_req.group(1).upper()
-    if method not in ("GET", "HEAD", "OPTIONS"):
-        return False  # Keep all POST, PUT, DELETE, PATCH
-
-    raw_path = m_req.group(2)
-    path_lower = urllib.parse.unquote(raw_path).lower()
-
-    # 3. Never drop attacks, directory traversals, or probes
-    if any(atk in path_lower for atk in ATTACK_PATH_TOKENS):
-        return False
-
-    # 4. Never drop lines with user identities or auth tokens
-    if any(u in path_lower for u in USER_QUERY_TOKENS):
-        return False
-
-    clean_path = raw_path.split("?")[0].lower()
-
-    # 5a. Drop static assets returning 200/304
-    if STATIC_EXT_RE.search(clean_path):
-        return True
-
-    # 5b. Drop root / balancer health check pings if path is strictly "/"
-    if clean_path in ("/", "") and ("?" not in raw_path or raw_path.endswith("?")):
-        return True
-
-    # 5c. Drop routine background widget polling endpoints (Nagaland/HPSEBL stock summaries, counters, heartbeats)
-    if any(pat in clean_path for pat in ROUTINE_POLLING_PATTERNS):
-        return True
-
-    return False
-
+# ── AUTO-UPDATE ENGINE ────────────────────────────────────────────────────────
 
 def check_and_apply_auto_update():
-    """Checks SOC server for newer collector code and auto-updates without manual node intervention."""
+    """Checks for collector script updates from SOC and applies cleanly."""
+    soc_url = CONFIG["SOC_URL"].rstrip("/")
+    update_url = f"{soc_url}/api/app/collector.py"
     try:
-        soc_url = CONFIG["SOC_URL"].rstrip("/")
-        token = CONFIG["ENROLLMENT_TOKEN"]
-        url = f"{soc_url}/api/app/collector.py?token={token}"
-        req = urllib.request.Request(url, headers={"User-Agent": f"SecurePulse-App-Collector/{COLLECTOR_VERSION}"})
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(req, timeout=5.0) as resp:
-            new_code = resp.read().decode("utf-8")
-        
-        m = re.search(r"""COLLECTOR_VERSION\s*=\s*['"]([^'"]+)['"]""", new_code)
-        if m:
-            server_version = m.group(1)
-            if server_version > COLLECTOR_VERSION:
-                print(f"[AUTO-UPDATE] Found newer collector version {server_version} (current: {COLLECTOR_VERSION}). Updating self...")
-                current_file = os.path.realpath(__file__)
-                with open(current_file, "w", encoding="utf-8") as f:
-                    f.write(new_code)
-                print(f"[AUTO-UPDATE] Successfully updated to {server_version}. Restarting process...")
-                os.execv(sys.executable, [sys.executable] + sys.argv)
-    except Exception as e:
+        req = urllib.request.Request(update_url, headers={
+            "User-Agent": f"SecurePulse-App-Collector/{COLLECTOR_VERSION}"
+        })
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
+            if resp.status == 200:
+                new_code = resp.read().decode("utf-8")
+                m_ver = re.search(r'COLLECTOR_VERSION\s*=\s*["\']([^"\']+)["\']', new_code)
+                if m_ver and m_ver.group(1) > COLLECTOR_VERSION:
+                    script_path = os.path.realpath(__file__)
+                    with open(script_path + ".tmp", "w", encoding="utf-8") as tf:
+                        tf.write(new_code)
+                    os.replace(script_path + ".tmp", script_path)
+                    print(f"[UPDATE] Applied upgrade to {m_ver.group(1)}. Restarting collector...")
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+    except Exception:
         pass
 
-def run_collector():
-    load_env_file()
-    print("=" * 65)
-    print(f"  SecurePulse Application Telemetry Collector v{COLLECTOR_VERSION}")
-    print("=" * 65)
-    print(f"Node Name:   {CONFIG['NODE_NAME']}")
-    print(f"App ID:      {CONFIG['APP_ID']}")
-    print(f"Role:        {CONFIG['COMPONENT_ROLE']}")
-    print(f"Target Port: {CONFIG['TARGET_PORT'] or 'auto-detect'}")
-    print(f"Target DB:   {CONFIG['TARGET_DB_NAME'] or 'all'}")
-    print(f"SOC Target:  {CONFIG['SOC_URL']}")
-    print(f"Token:       {CONFIG['ENROLLMENT_TOKEN'][:8]}***" if CONFIG['ENROLLMENT_TOKEN'] else "Token:       (none)")
-    print("=" * 65)
+# ── DECOUPLED BACKGROUND HEARTBEAT THREAD ─────────────────────────────────────
 
-    tailers = {}
-    last_heartbeat = 0.0
-    last_flush = time.time()
-    buffered_events = []
+class HeartbeatWorker(threading.Thread):
+    def __init__(self, session: PersistentSession, stop_event: threading.Event, tailers_ref: dict, stats_ref: dict):
+        super().__init__(daemon=True)
+        self.session = session
+        self.stop_event = stop_event
+        self.tailers_ref = tailers_ref
+        self.stats_ref = stats_ref
 
-    while True:
-        try:
-            now = time.time()
-
-            # 1. Periodic Heartbeat (every 30s)
-            if now - last_heartbeat >= float(CONFIG["HEARTBEAT_INTERVAL_SEC"]):
+    def run(self):
+        while not self.stop_event.is_set():
+            try:
+                monitored = list(self.tailers_ref.keys())
                 hb_payload = {
                     "token": CONFIG["ENROLLMENT_TOKEN"],
                     "app_id": CONFIG["APP_ID"],
@@ -453,23 +421,68 @@ def run_collector():
                     "version": COLLECTOR_VERSION,
                     "target_port": CONFIG["TARGET_PORT"],
                     "target_db_name": CONFIG["TARGET_DB_NAME"],
-                    "monitored_files": list(tailers.keys()),
+                    "monitored_files": monitored,
+                    "dropped_events": self.stats_ref.get("dropped_events", 0),
+                    "buffered_events": self.stats_ref.get("buffered_events", 0),
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
-                res = post_json("/api/app/heartbeat", hb_payload)
-                if res.get("status") == "ok":
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [HB] Heartbeat acknowledged by SOC. Monitored files: {len(tailers)}")
+                res = self.session.post("/api/app/heartbeat", hb_payload, CONFIG["ENROLLMENT_TOKEN"])
+                if res.get("code") == 200:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [HB] Heartbeat acknowledged by SOC. Monitored files: {len(monitored)}")
                     if res.get("latest_version") and res.get("latest_version") > COLLECTOR_VERSION:
                         check_and_apply_auto_update()
-                else:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Heartbeat warning: {res.get('reason')}")
-                    if res.get("code") == 401:
-                        print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Heartbeat unauthorized (401). Backing off for 15s...")
-                        time.sleep(15.0)
-                last_heartbeat = now
+                elif res.get("code") == 401:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Heartbeat unauthorized (401). Check enrollment token in collector.env.")
+            except Exception as e:
+                print(f"[WARN] Heartbeat exception: {e}")
 
-            # 2. Rediscover log files if none attached or every 60s
-            if not tailers or int(now) % 60 == 0:
+            # Sleep in small slices so thread terminates quickly on shutdown
+            interval = float(CONFIG.get("HEARTBEAT_INTERVAL_SEC", 30.0))
+            for _ in range(int(interval * 2)):
+                if self.stop_event.is_set():
+                    break
+                time.sleep(0.5)
+
+# ── MAIN COLLECTOR ENGINE ─────────────────────────────────────────────────────
+
+def run_collector():
+    load_env_file()
+    print("=" * 70)
+    print(f"  SecurePulse App Collector v{COLLECTOR_VERSION}")
+    print(f"  Target Application ID: {CONFIG['APP_ID']} | Node: {CONFIG['NODE_NAME']}")
+    print(f"  Role: {CONFIG['COMPONENT_ROLE']} | SOC Endpoint: {CONFIG['SOC_URL']}")
+    print(f"  Batch Window: {CONFIG['BATCH_MAX_WAIT_SEC']}s | Batch Max Lines: {CONFIG['BATCH_MAX_LINES']}")
+    print(f"  Queue Capacity: {CONFIG['MAX_QUEUE_SIZE']} | Aggregate Routine Access: {CONFIG['AGGREGATE_ROUTINE_ACCESS']}")
+    print("=" * 70)
+
+    if not CONFIG["ENROLLMENT_TOKEN"]:
+        print("[FATAL] ENROLLMENT_TOKEN is missing. Provide valid token via collector.env or env variable.")
+        sys.exit(1)
+
+    session = PersistentSession(CONFIG["SOC_URL"])
+    stop_event = threading.Event()
+    tailers = {}
+    stats = {"dropped_events": 0, "buffered_events": 0}
+
+    # Start decoupled background heartbeat
+    hb_thread = HeartbeatWorker(session, stop_event, tailers, stats)
+    hb_thread.start()
+
+    buffered_events = []
+    routine_aggregates = {}  # key: (source, path, status) -> count
+    last_flush = time.time()
+    last_discover = 0.0
+
+    current_backoff_sec = 0.0
+    unauthorized_until = 0.0
+
+    try:
+        while not stop_event.is_set():
+            now = time.time()
+
+            # 1. Periodic Log Discovery (every 60s or on startup)
+            if not tailers or (now - last_discover >= 60.0):
+                last_discover = now
                 discovered = []
                 if CONFIG["COMPONENT_ROLE"] == "web":
                     discovered = find_tomcat_log_files(CONFIG["TARGET_PORT"])
@@ -482,32 +495,37 @@ def run_collector():
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] [DISCOVER] Monitoring log file: {fpath} ({item['source']})")
                         tailers[fpath] = LogFileTailer(fpath, item["source"])
 
-            # 3. Read new lines from all tailers
-            new_lines_total = 0
+            # 2. Read new lines from all log tailers
             for fpath, tailer in list(tailers.items()):
                 new_lines = tailer.read_new_lines()
-                if new_lines:
-                    new_lines_total += len(new_lines)
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [READ] Captured {len(new_lines)} lines from {os.path.basename(fpath)}")
                 for line in new_lines:
-                    # Filter for target db if in database role
+                    # Database filtering
                     if CONFIG["COMPONENT_ROLE"] == "database" and CONFIG["TARGET_DB_NAME"]:
                         if f"@{CONFIG['TARGET_DB_NAME']}" not in line and "FATAL" not in line:
                             continue
 
-                    # Tier-1 Edge Optimization: Suppress routine static asset 200s and root health-checks from access log
-                    if tailer.source_type == "tomcat_access" and is_noise_tomcat_access_log(line):
-                        continue
+                    # Tomcat Access Log Filtering & Aggregation
+                    if tailer.source_type == "tomcat_access":
+                        if is_noise_tomcat_access_log(line):
+                            continue
+                        
+                        # Requirement 2: Aggregate routine 2xx/3xx HTTP access lines
+                        if CONFIG["AGGREGATE_ROUTINE_ACCESS"] and is_routine_access_line(line):
+                            m_p = re.search(r'"[A-Z]+\s+([^"\s]+)\s+HTTP/[0-9\.]+"\s+(\d+)', line)
+                            if m_p:
+                                p_clean = m_p.group(1).split("?")[0][:60]
+                                s_code = m_p.group(2)
+                                agg_key = (tailer.source_type, p_clean, s_code)
+                                routine_aggregates[agg_key] = routine_aggregates.get(agg_key, 0) + 1
+                                continue
 
-                    # Suppress routine noisy INFO/startup/framework lines from catalina.out (only send security events)
+                    # Tomcat Catalina Log Filtering
                     if tailer.source_type == "tomcat_catalina":
                         line_l = line.lower()
-                        # Ignore routine framework lines
                         if any(k in line_l for k in [
                             "info [main]", "info [catalina", "server startup in", 
                             "deploying web application", "deployment of web application",
                             "at org.apache.catalina", "at org.apache.coyote", "at org.apache.tomcat",
-                            "at java.", "at javax.", "at jakarta.", "at sun.",
                             "jar was scanned for tlds", "sessionlistener", "cookie processor"
                         ]):
                             continue
@@ -527,13 +545,45 @@ def run_collector():
                         "captured_at": datetime.now(timezone.utc).isoformat()
                     })
 
+            # Append aggregated routine summaries to buffer
+            if routine_aggregates and (now - last_flush >= float(CONFIG["BATCH_MAX_WAIT_SEC"])):
+                for (src, path_s, status_s), count in list(routine_aggregates.items()):
+                    buffered_events.append({
+                        "source": src,
+                        "file": "aggregated",
+                        "line": f'AGGREGATED_ACCESS {count} requests -> GET {path_s} HTTP/1.1 {status_s}',
+                        "captured_at": datetime.now(timezone.utc).isoformat()
+                    })
+                routine_aggregates.clear()
+
+            # 3. Requirement 3: Bounded local queue (max 10,000 events)
+            max_q = int(CONFIG["MAX_QUEUE_SIZE"])
+            if len(buffered_events) > max_q:
+                excess = len(buffered_events) - max_q
+                # Drop oldest events
+                buffered_events = buffered_events[excess:]
+                stats["dropped_events"] += excess
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] [QUEUE] Buffer exceeded {max_q}. Dropped {excess} oldest events.")
+
+            stats["buffered_events"] = len(buffered_events)
+
             # 4. Flush batch to SOC if threshold reached or wait timeout elapsed
             should_flush = (
                 len(buffered_events) >= int(CONFIG["BATCH_MAX_LINES"]) or
                 (buffered_events and (now - last_flush) >= float(CONFIG["BATCH_MAX_WAIT_SEC"]))
             )
 
-            if should_flush:
+            # Requirement 4: On 401, pause event submission for 300s
+            if now < unauthorized_until:
+                time.sleep(float(CONFIG["POLL_INTERVAL_SEC"]))
+                continue
+
+            # Requirement 3: Exponential backoff on 429
+            if current_backoff_sec > 0:
+                time.sleep(current_backoff_sec)
+                current_backoff_sec = 0.0
+
+            if should_flush and buffered_events:
                 batch_size = int(CONFIG["BATCH_MAX_LINES"])
                 batch_to_send = buffered_events[:batch_size]
                 payload = {
@@ -543,27 +593,45 @@ def run_collector():
                     "role": CONFIG["COMPONENT_ROLE"],
                     "events": batch_to_send
                 }
-                res = post_json("/api/app/events", payload)
-                if res.get("status") in ("success", "ok"):
+                res = session.post("/api/app/events", payload, CONFIG["ENROLLMENT_TOKEN"])
+                status_code = res.get("code", 500)
+
+                if res.get("status") == "success":
                     buffered_events = buffered_events[len(batch_to_send):]
+                    last_flush = now
+                    current_backoff_sec = 0.0
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] [INGEST] Forwarded {len(batch_to_send)} events to SOC. Ingested: {res.get('ingested')}, Severity: {res.get('highest_severity')}")
+                elif status_code == 401:
+                    # Requirement 4: Stop sending events, log warning, retry only every 5 mins
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [ERROR] Collector unauthorized or token revoked (HTTP 401). Pausing event forwarding for 300s.")
+                    unauthorized_until = now + 300.0
+                    last_flush = now
+                elif status_code == 429:
+                    # Requirement 3: Honour Retry-After or exponential backoff with jitter
+                    retry_after = res.get("retry_after")
+                    if retry_after and retry_after.isdigit():
+                        delay = float(retry_after) + random.uniform(0.5, 2.0)
+                    else:
+                        delay = min(120.0, max(2.0, (current_backoff_sec or 2.0) * 2.0)) + random.uniform(0.5, 2.0)
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [RATE-LIMIT] Server returned 429 Too Many Requests. Backing off for {delay:.1f}s.")
+                    current_backoff_sec = delay
                     last_flush = now
                 else:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Event ingestion failed: {res}")
+                    delay = min(60.0, max(2.0, (current_backoff_sec or 2.0) * 1.5)) + random.uniform(0.5, 1.5)
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Event ingestion failed (HTTP {status_code}): {res.get('reason')}. Retrying in {delay:.1f}s...")
+                    current_backoff_sec = delay
                     last_flush = now
-                    if res.get("code") == 401 or res.get("status") == "error":
-                        print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Agent token unauthorized / rejected by SOC. Backing off for 15s...")
-                        time.sleep(15.0)
 
             time.sleep(float(CONFIG["POLL_INTERVAL_SEC"]))
 
-        except KeyboardInterrupt:
-            print("\nShutting down collector...")
-            for t in tailers.values(): t.close()
-            break
-        except Exception as e:
-            print(f"[ERROR] Collector loop exception: {e}")
-            time.sleep(2.0)
+    except KeyboardInterrupt:
+        print("\n[INFO] Collector received shutdown signal. Terminating cleanly...")
+    finally:
+        stop_event.set()
+        hb_thread.join(timeout=2.0)
+        for t in tailers.values():
+            t.close()
+        print("[INFO] Collector shutdown complete.")
 
 if __name__ == "__main__":
     run_collector()

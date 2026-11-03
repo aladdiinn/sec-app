@@ -1095,14 +1095,17 @@ let activeModalServerId = null;
 
 async function loadDashboardData() {
     try {
-        // Parallelize fetching counts, servers, and apps for instant responsiveness
+        // Parallelize fetching counts, servers, and apps with client-side timeout protection (Requirement 14)
         const [countsResult, serversResult, appsResult] = await Promise.allSettled([
-            apiFetch('/api/dashboard/counts'),
-            apiFetch('/api/servers'),
-            apiFetch('/api/apps').catch(() => [])
+            apiFetch('/api/dashboard/counts', { timeout: 8000 }),
+            apiFetch('/api/servers', { timeout: 8000 }),
+            apiFetch('/api/apps', { timeout: 8000 }).catch(() => [])
         ]);
 
+        let hasData = false;
+
         if (countsResult.status === 'fulfilled' && countsResult.value) {
+            hasData = true;
             const counts = countsResult.value;
             document.getElementById('noc-c-down').innerText = counts.down_servers ?? 0;
             document.getElementById('noc-c-critical').innerText = counts.critical_alerts ?? 0;
@@ -1121,17 +1124,44 @@ async function loadDashboardData() {
             document.getElementById('sum-active-issues').innerText = (counts.critical_alerts ?? 0) + (counts.trouble_servers ?? 0);
         }
 
-        const serversRes = serversResult.status === 'fulfilled' ? serversResult.value : [];
-        const appsRes = appsResult.status === 'fulfilled' ? appsResult.value : [];
-        globalServersList = Array.isArray(serversRes) ? serversRes : (serversRes.servers || []);
-        globalAppsList = Array.isArray(appsRes) ? appsRes : [];
-        
-        renderServicesGrid();
+        if (serversResult.status === 'fulfilled' && serversResult.value) {
+            hasData = true;
+            const sVal = serversResult.value;
+            globalServersList = Array.isArray(sVal) ? sVal : (sVal.servers || []);
+        }
+
+        if (appsResult.status === 'fulfilled' && appsResult.value) {
+            hasData = true;
+            globalAppsList = Array.isArray(appsResult.value) ? appsResult.value : [];
+        }
+
+        // Only re-render if we received data or if we already had assets rendered
+        if (hasData || (globalServersList && globalServersList.length > 0) || (globalAppsList && globalAppsList.length > 0)) {
+            renderServicesGrid();
+        } else {
+            // First load failed under heavy ingestion load: show Degraded / Retry banner instead of infinite spinner
+            const grid = document.getElementById('services-cards-grid');
+            if (grid) {
+                grid.innerHTML = `
+                    <div style="grid-column:1/-1; padding:60px 20px; text-align:center; background:rgba(239,68,68,0.05); border:1px solid rgba(239,68,68,0.25); border-radius:12px; margin:20px 0;">
+                        <div style="font-size:32px; margin-bottom:12px;">⚠️</div>
+                        <div style="font-size:16px; font-weight:700; color:var(--red); margin-bottom:6px;">TELEMETRY INGESTION HIGH LOAD — DASHBOARD DEGRADED</div>
+                        <div style="font-size:13px; color:var(--text3); max-width:550px; margin:0 auto 16px;">The central monitoring backend is processing incoming telemetry batches or shedding load. Monitored nodes and NOC counters will catch up automatically.</div>
+                        <button class="btn btn-sm btn-outline-cyan" onclick="loadDashboardData()" style="padding:6px 18px; font-size:12px; cursor:pointer;">🔄 Retry Connection</button>
+                    </div>`;
+            }
+        }
     } catch(e) {
         console.error('Error loading dashboard data:', e);
         const grid = document.getElementById('services-cards-grid');
-        if (grid) {
-            grid.innerHTML = `<div style="grid-column:1/-1; padding:40px; color:var(--red); text-align:center;">Failed to load dashboard data. Please check connection and try again.</div>`;
+        if (grid && (!globalServersList || globalServersList.length === 0)) {
+            grid.innerHTML = `
+                <div style="grid-column:1/-1; padding:60px 20px; text-align:center; background:rgba(239,68,68,0.05); border:1px solid rgba(239,68,68,0.25); border-radius:12px; margin:20px 0;">
+                    <div style="font-size:32px; margin-bottom:12px;">⚠️</div>
+                    <div style="font-size:16px; font-weight:700; color:var(--red); margin-bottom:6px;">CONNECTION TIMEOUT / HIGH LOAD</div>
+                    <div style="font-size:13px; color:var(--text3); max-width:520px; margin:0 auto 16px;">Dashboard request timed out. Retrying automatically in 5s.</div>
+                    <button class="btn btn-sm btn-outline-cyan" onclick="loadDashboardData()" style="padding:6px 18px; font-size:12px; cursor:pointer;">🔄 Retry Now</button>
+                </div>`;
         }
     }
 }

@@ -59,21 +59,36 @@
     };
     if (token) headers['Authorization'] = 'Bearer ' + token;
 
-    const res = await fetch(path, { cache: 'no-store', ...options, headers });
+    // Default 10s timeout to prevent UI hangs during heavy backend load
+    const timeoutMs = options.timeout || 10000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const signal = options.signal || controller.signal;
 
-    if (res.status === 401) {
-      clearAuth();
-      window.location.href = '/login';
-      throw new Error('Session expired');
+    try {
+      const res = await fetch(path, { cache: 'no-store', ...options, headers, signal });
+      clearTimeout(timer);
+
+      if (res.status === 401) {
+        clearAuth();
+        window.location.href = '/login';
+        throw new Error('Session expired');
+      }
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.error || data.message || `HTTP ${res.status}`);
+      }
+
+      return data;
+    } catch (err) {
+      clearTimeout(timer);
+      if (err.name === 'AbortError') {
+        throw new Error(`Request timed out after ${timeoutMs / 1000}s`);
+      }
+      throw err;
     }
-
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      throw new Error(data.error || data.message || `HTTP ${res.status}`);
-    }
-
-    return data;
   };
 
   /* ── Logout ─────────────────────────────────────────────── */

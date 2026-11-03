@@ -2798,14 +2798,16 @@ def get_dashboard_counts(project_id=None):
     if not conn: return default_res
     try:
         with conn.cursor() as cur:
-            # Throttled server status check & alert rotation (run at most once every 60 seconds to avoid DB lock contention)
+            # Throttled server status check (run at most once every 60 seconds)
             global _last_dash_maintenance_time
             now_ts = time.time()
             if '_last_dash_maintenance_time' not in globals() or (now_ts - _last_dash_maintenance_time > 60):
                 _last_dash_maintenance_time = now_ts
-                cur.execute("UPDATE servers SET status = 'offline' WHERE (last_seen < NOW() - INTERVAL '3 minutes' OR last_seen IS NULL) AND status = 'online' AND is_maintenance IS NOT TRUE;")
-                cur.execute("DELETE FROM alerts WHERE created_at < NOW() - INTERVAL '7 days';")
-                conn.commit()
+                try:
+                    cur.execute("UPDATE servers SET status = 'offline' WHERE (last_seen < NOW() - INTERVAL '3 minutes' OR last_seen IS NULL) AND status = 'online' AND is_maintenance IS NOT TRUE;")
+                    conn.commit()
+                except Exception:
+                    pass
             
             sql_clause, params = _build_pid_filter("project_id", project_id)
             p_where = ("WHERE " + sql_clause[5:]) if sql_clause else ""

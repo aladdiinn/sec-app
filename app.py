@@ -469,6 +469,20 @@ import database as db
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("security_monitor.app")
 
+class UvicornTelemetryFilter(logging.Filter):
+    """Suppresses high-frequency 200/429 access logs from collector endpoints to avoid stdout CPU saturation."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "/api/app/events" in msg or "/api/app/heartbeat" in msg:
+            if any(code in msg for code in (" 200 ", " 201 ", " 202 ", " 429 ", " 503 ")):
+                return False
+        return True
+
+try:
+    logging.getLogger("uvicorn.access").addFilter(UvicornTelemetryFilter())
+except Exception:
+    pass
+
 def run_s3_archiver_loop():
     """Background thread to archive old logs to S3 every 5 minutes."""
     import database as __db
@@ -698,10 +712,24 @@ app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifesp
 MAX_COMPRESSED_INVENTORY_BYTES = 2 * 1024 * 1024      # 2 MB
 MAX_DECOMPRESSED_INVENTORY_BYTES = 10 * 1024 * 1024  # 10 MB
 
-_quarantined_agent_ips = {}
-_agent_ip_failures = {}
+MAX_CONCURRENT_EVENT_INGESTIONS = 4
+_active_event_ingestion_count = 0
+_concurrency_lock = threading.Lock()
+_rate_limit_buckets = {}  # ip -> list of timestamps
+_quarantined_agent_ips = {}  # ip -> unban_timestamp
+_agent_ip_failures = {}  # ip -> list of failure timestamps
+_last_throttled_log = {}  # (ip, reason) -> timestamp
 
 class RawAgentFloodMiddleware:
+    """
+    Pure Raw ASGI Rate Limiter & Concurrency Load Shedder (Zero AnyIO memory streams).
+    - Capped to MAX_CONCURRENT_EVENT_INGESTIONS (4) concurrent DB transactions on /api/app/events.
+    - Excess load shed immediately with HTTP 503 and Retry-After: 3.
+    - O(1) in-memory rate limiting: max 10 requests / 5s per IP. Exceeding triggers HTTP 429 and Retry-After: 30.
+    - Quarantines malicious / unauthorized agent floods (HTTP 401 repeated failures) with cooldown.
+    - Drops payload > 2MB with HTTP 413.
+    - Throttled logging: at most 1 warning line per agent per minute to prevent stdout CPU saturation.
+    """
     def __init__(self, app):
         self.app = app
 
@@ -712,23 +740,104 @@ class RawAgentFloodMiddleware:
                 client = scope.get("client")
                 client_ip = client[0] if client else "127.0.0.1"
                 now = time.time()
+
+                # 1. Check if IP is under quarantine cooldown (e.g. repeated 401s or rate abuse)
                 unban = _quarantined_agent_ips.get(client_ip, 0.0)
                 if now < unban:
-                    # Fast 429 response via raw ASGI with 0% CPU and zero tasks
-                    resp_body = b'{"status":"error","reason":"Rate limited. Rapid 401 unauthorized flood detected. Cooldown 15s."}'
+                    retry_sec = max(1, int(unban - now))
+                    log_key = (client_ip, "quarantine")
+                    if now - _last_throttled_log.get(log_key, 0.0) > 60:
+                        _last_throttled_log[log_key] = now
+                        logger.warning(f"[SHIELD] Dropping rapid flood from quarantined agent {client_ip}. {retry_sec}s cooldown remaining.")
+
+                    resp_body = f'{{"status":"error","code":429,"reason":"Rate limited. Agent quarantined.","retry_after":{retry_sec}}}'.encode("ascii")
                     await send({
                         "type": "http.response.start",
                         "status": 429,
                         "headers": [
                             (b"content-type", b"application/json"),
                             (b"content-length", str(len(resp_body)).encode("ascii")),
+                            (b"retry-after", str(retry_sec).encode("ascii")),
                         ]
                     })
+                    await send({"type": "http.response.body", "body": resp_body, "more_body": False})
+                    return
+
+                # 2. O(1) sliding window rate limiter: max 10 requests per 5s per IP
+                bucket = _rate_limit_buckets.setdefault(client_ip, [])
+                bucket = [t for t in bucket if now - t < 5.0]
+                bucket.append(now)
+                _rate_limit_buckets[client_ip] = bucket
+
+                if len(bucket) > 10:
+                    _quarantined_agent_ips[client_ip] = now + 30.0
+                    log_key = (client_ip, "rate_limit")
+                    if now - _last_throttled_log.get(log_key, 0.0) > 60:
+                        _last_throttled_log[log_key] = now
+                        logger.warning(f"[RATE-LIMIT] Agent {client_ip} exceeded threshold (>10 reqs/5s). Applying 30s cooldown.")
+
+                    resp_body = b'{"status":"error","code":429,"reason":"Rate limited. Exceeded 10 requests per 5s.","retry_after":30}'
                     await send({
-                        "type": "http.response.body",
-                        "body": resp_body,
-                        "more_body": False
+                        "type": "http.response.start",
+                        "status": 429,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(resp_body)).encode("ascii")),
+                            (b"retry-after", b"30"),
+                        ]
                     })
+                    await send({"type": "http.response.body", "body": resp_body, "more_body": False})
+                    return
+
+                # 3. Payload size guard
+                for h_k, h_v in scope.get("headers", []):
+                    if h_k.lower() == b"content-length":
+                        try:
+                            if int(h_v) > 2 * 1024 * 1024:
+                                resp_body = b'{"status":"error","code":413,"reason":"Payload Too Large. Max 2MB."}'
+                                await send({
+                                    "type": "http.response.start",
+                                    "status": 413,
+                                    "headers": [
+                                        (b"content-type", b"application/json"),
+                                        (b"content-length", str(len(resp_body)).encode("ascii")),
+                                    ]
+                                })
+                                await send({"type": "http.response.body", "body": resp_body, "more_body": False})
+                                return
+                        except ValueError:
+                            pass
+
+                # 4. Concurrency cap & load shedding on /api/app/events (Requirement 11)
+                if path == "/api/app/events":
+                    global _active_event_ingestion_count
+                    with _concurrency_lock:
+                        if _active_event_ingestion_count >= MAX_CONCURRENT_EVENT_INGESTIONS:
+                            log_key = ("server", "shed_load")
+                            if now - _last_throttled_log.get(log_key, 0.0) > 60:
+                                _last_throttled_log[log_key] = now
+                                logger.warning(f"[LOAD-SHED] Ingestion queue saturated ({_active_event_ingestion_count} active). Shedding excess event POST with 503.")
+
+                            resp_body = b'{"status":"error","code":503,"reason":"Ingestion queue saturated. Shedding load.","retry_after":3}'
+                            await send({
+                                "type": "http.response.start",
+                                "status": 503,
+                                "headers": [
+                                    (b"content-type", b"application/json"),
+                                    (b"content-length", str(len(resp_body)).encode("ascii")),
+                                    (b"retry-after", b"3"),
+                                ]
+                            })
+                            await send({"type": "http.response.body", "body": resp_body, "more_body": False})
+                            return
+
+                        _active_event_ingestion_count += 1
+
+                    try:
+                        await self.app(scope, receive, send)
+                    finally:
+                        with _concurrency_lock:
+                            _active_event_ingestion_count = max(0, _active_event_ingestion_count - 1)
                     return
 
         await self.app(scope, receive, send)
@@ -7890,7 +7999,8 @@ _last_rejected_audit = {}  # (ip, token) -> float
 
 def get_cached_component_by_token(token: str, client_ip: str):
     """
-    Validates enrollment token with high-performance in-memory caching and 401 dampening.
+    Validates enrollment token with constant-time comparison, high-performance in-memory caching,
+    and 401 dampening (Requirement 8).
     Prevents misconfigured agent loops from exhausting PostgreSQL connection pools.
     """
     if not token:
@@ -7904,14 +8014,15 @@ def get_cached_component_by_token(token: str, client_ip: str):
         else:
             del _rejected_token_cache[token]
 
-    # 2. Fast valid cache check
+    # 2. Fast valid cache check with constant-time token comparison
     if token in _token_cache:
         cached = _token_cache[token]
         if now < cached["expires"]:
-            comp = cached["comp"]
-            if comp.get("status") not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
-                return None, "Component pending administrator approval"
-            return comp, None
+            if hmac.compare_digest(cached.get("token", token), token):
+                comp = cached["comp"]
+                if comp.get("status") not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
+                    return None, "Component pending administrator approval"
+                return comp, None
         else:
             del _token_cache[token]
 
@@ -7922,13 +8033,13 @@ def get_cached_component_by_token(token: str, client_ip: str):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, application_id, status FROM application_components
+                SELECT id, application_id, status, enrollment_token FROM application_components
                 WHERE enrollment_token = %s
                 LIMIT 1;
             """, (token,))
             comp = cur.fetchone()
-            if not comp:
-                _rejected_token_cache[token] = now + 15.0
+            if not comp or not hmac.compare_digest(comp["enrollment_token"], token):
+                _rejected_token_cache[token] = now + 60.0
                 audit_key = (client_ip, token)
                 if now - _last_rejected_audit.get(audit_key, 0.0) > 60:
                     _last_rejected_audit[audit_key] = now
@@ -7940,12 +8051,13 @@ def get_cached_component_by_token(token: str, client_ip: str):
 
             comp_dict = dict(comp)
             if comp_dict["status"] not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
-                _rejected_token_cache[token] = now + 10.0
+                _rejected_token_cache[token] = now + 30.0
                 return None, "Component pending administrator approval"
 
             _token_cache[token] = {
                 "comp": comp_dict,
-                "expires": now + 60.0
+                "token": token,
+                "expires": now + 120.0
             }
             return comp_dict, None
     finally:
@@ -8289,7 +8401,7 @@ def is_noise_tomcat_access_log(raw_line: str) -> bool:
 
 @app.post("/api/app/events")
 def api_app_events(request: Request, payload: dict = Body(...)):
-    """Ingests, parses, normalizes and correlates telemetry events from collectors."""
+    """Ingests, parses, normalizes and correlates telemetry events in high-performance batches (Requirements 9 & 10)."""
     token = (request.headers.get("X-Enrollment-Token") or payload.get("token") or "").strip()
     app_id = payload.get("app_id")
     node_name = payload.get("node_name", "")
@@ -8298,6 +8410,10 @@ def api_app_events(request: Request, payload: dict = Body(...)):
 
     if not events:
         return {"status": "success", "ingested": 0}
+
+    # Requirement 9: Max batch size validation
+    if len(events) > 500:
+        return JSONResponse(status_code=413, content={"status": "error", "reason": "Batch exceeds maximum limit of 500 events"})
 
     client_ip = request.client.host if request.client else "127.0.0.1"
 
@@ -8310,441 +8426,332 @@ def api_app_events(request: Request, payload: dict = Body(...)):
         fails.append(now)
         _agent_ip_failures[client_ip] = fails
         if len(fails) >= 5:
-            _quarantined_agent_ips[client_ip] = now + 15.0
-            logger.warning(f"[SHIELD] Quarantined agent flood from {client_ip} for 15s")
-        return JSONResponse(status_code=401, content={"status": "error", "reason": err})
+            _quarantined_agent_ips[client_ip] = now + 60.0
+            log_key = (client_ip, "quarantine_401")
+            if now - _last_throttled_log.get(log_key, 0.0) > 60:
+                _last_throttled_log[log_key] = now
+                logger.warning(f"[SHIELD] Quarantined repeated 401 agent flood from {client_ip} for 60s")
+        return JSONResponse(status_code=401, headers={"Retry-After": "60"}, content={"status": "error", "reason": err})
 
     comp_id = comp["id"]
     actual_app_id = comp["application_id"]
 
     conn = db.get_db_connection()
     if not conn:
-        return {"status": "error", "reason": "database unavailable"}
+        return JSONResponse(status_code=503, headers={"Retry-After": "3"}, content={"status": "error", "reason": "database unavailable"})
 
-    ingested_count = 0
     highest_severity = "info"
+    now_dt = datetime.now(timezone.utc)
+
+    # In-memory batch parsing & grouping (Requirement 9 & 10)
+    bulk_events = []
+    security_incidents_to_process = []
+
+    for ev in events:
+        raw_line = ev.get("line", "").strip()
+        if not raw_line:
+            continue
+
+        source_type = ev.get("source", role)
+
+        # 1. PostgreSQL log evaluation
+        if source_type in ("postgres", "database") or role == "database":
+            ev_type, sev, rule_title, mitre_tag, db_user, db_name, db_lvl = evaluate_postgres_security_event(raw_line)
+            if sev == "info" and any(k in raw_line.lower() for k in ["checkpoint starting", "checkpoint complete", "connection authorized"]):
+                continue
+
+            bulk_events.append((
+                now_dt, actual_app_id, comp_id, node_name, source_type, ev_type,
+                None, db_user, None, None, None, 0, sev, psycopg2.extras.Json(ev),
+                db_user, db_name, raw_line[:500]
+            ))
+            if sev in ("medium", "high", "critical"):
+                security_incidents_to_process.append({
+                    "type": "db",
+                    "sev": sev,
+                    "rule_title": rule_title,
+                    "mitre_tag": mitre_tag,
+                    "attacker_key": f"db_user:{db_user or 'unknown'}",
+                    "user": db_user,
+                    "ip": None,
+                    "summary": f"{rule_title or ev_type} on {db_name or 'postgres'}",
+                    "raw_line": raw_line
+                })
+                if sev == "critical": highest_severity = "critical"
+                elif sev == "high" and highest_severity != "critical": highest_severity = "high"
+            continue
+
+        # 2. Tomcat Access Log
+        m = TOMCAT_ACCESS_RE.match(raw_line)
+        if m:
+            if is_noise_tomcat_access_log(raw_line):
+                continue
+            c_ip = m.group("ip").split(",")[0].strip()
+            user = m.group("user")
+            method = m.group("method")
+            raw_path = m.group("path")
+
+            m_ip = re.search(r'(?:\?|&)(?:client_ip|test_ip|source_ip|attacker_ip)=([0-9\.]+)', raw_path, re.IGNORECASE)
+            if m_ip:
+                c_ip = m_ip.group(1)
+            status_code = int(m.group("status"))
+            bytes_sent = int(m.group("bytes")) if m.group("bytes").isdigit() else 0
+
+            if user == "-" or not user:
+                m_u = re.search(r'''(?:\?|&)(?:user(?:name|_name|id|_id)?|usr|uname|login(?:id|_id)?|account|email|emp(?:id|_id)?|u)=([^& \t\r\n\'\"]+)''', raw_path, re.IGNORECASE)
+                if m_u:
+                    user = urllib.parse.unquote(m_u.group(1))
+
+            if user and user != "-" and len(user) >= 4 and len(user) % 4 == 0 and re.match(r'^[A-Za-z0-9+/]+={0,2}$', user):
+                try:
+                    dec_u = base64.b64decode(user).decode('utf-8', errors='ignore').strip()
+                    if dec_u.isprintable() and len(dec_u) >= 2 and all(32 <= ord(c) < 127 for c in dec_u):
+                        user = dec_u
+                except Exception:
+                    pass
+
+            sanitized_path = redact_sensitive_params(raw_path)
+            ev_type, sev, rule_title, mitre_tag = evaluate_web_security_event(
+                method, raw_path, status_code, user, c_ip, raw_line=raw_line
+            )
+
+            clean_path = raw_path.split("?")[0].lower()
+            if STATIC_EXT_RE.search(clean_path):
+                continue
+            if is_path_suppressed(actual_app_id, raw_path):
+                continue
+            if "pagecontext.request.contextpath" in raw_path.lower():
+                continue
+
+            if sev == "info" and ev_type in ("HTTP_ACCESS", "HTTP_REQUEST"):
+                has_user = bool(user and user not in ("-", "Anonymous", "null", "None"))
+                is_error_probe = bool(status_code and status_code >= 400)
+                if not has_user and not is_error_probe:
+                    continue
+
+            user_val = user if user != "-" else None
+            bulk_events.append((
+                now_dt, actual_app_id, comp_id, node_name, source_type, ev_type,
+                c_ip, user_val, method, sanitized_path, status_code, bytes_sent, sev, psycopg2.extras.Json(ev),
+                None, None, None
+            ))
+
+            if sev in ("medium", "high", "critical"):
+                security_incidents_to_process.append({
+                    "type": "web",
+                    "sev": sev,
+                    "rule_title": rule_title,
+                    "mitre_tag": mitre_tag,
+                    "attacker_key": f"ip:{c_ip}",
+                    "user": user_val,
+                    "ip": c_ip,
+                    "summary": f"{method} {raw_path} -> HTTP {status_code}",
+                    "raw_line": raw_line,
+                    "event_type": ev_type,
+                    "raw_path": raw_path
+                })
+                if sev == "critical": highest_severity = "critical"
+                elif sev == "high" and highest_severity != "critical": highest_severity = "high"
+            continue
+
+        # 3. Application stdout / catalina.out
+        cat_lower = raw_line.lower()
+        if any(k in cat_lower for k in [
+            "info [main]", "info [catalina", "server startup in", 
+            "deploying web application", "deployment of web application",
+            "at org.apache.catalina", "at org.apache.coyote", "at org.apache.tomcat",
+            "jar was scanned for tlds", "sessionlistener", "cookie processor"
+        ]):
+            continue
+
+        ev_type = "APP_LOG"
+        sev = "info"
+        rule_title = None
+        mitre_tag = None
+        cat_user = None
+        cat_ip = None
+        url_path = None
+        status_code = None
+
+        if any(k in cat_lower for k in ("auth_failure", "authentication failed", "invalid password", "bad credentials", "login failed")):
+            ev_type = "AUTH_FAILURE"
+            sev = "medium"
+            rule_title = "Failed User Authentication"
+            mitre_tag = "T1110 - Brute Force"
+            url_path = "/login.jsp"
+            status_code = 401
+            m_u = re.search(r'''user:?\s*['"]?([^\s'",]+)['"]?''', raw_line, re.IGNORECASE)
+            if m_u:
+                cat_user = m_u.group(1).strip()
+                rule_title = f"Failed User Authentication ({cat_user})"
+            m_ip = re.search(r'(?:from\s+ip:?|ip:?)\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', raw_line, re.IGNORECASE)
+            if m_ip:
+                cat_ip = m_ip.group(1).strip()
+        elif any(k in cat_lower for k in ("login successful", "successful login", "logged in", "user logged in", "session created for")):
+            ev_type = "USER_LOGIN"
+            sev = "info"
+            rule_title = "User Authentication Successful"
+            m_u = re.search(r"""(?:user|for user|username):?\s*['"]?([a-zA-Z0-9_\-\.\@]+)['"]?""", raw_line, re.IGNORECASE)
+            if m_u:
+                cat_user = m_u.group(1).strip()
+                rule_title = f"User Login ({cat_user})"
+            m_ip = re.search(r'(?:from\s+ip:?|ip:?)\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', raw_line, re.IGNORECASE)
+            if m_ip:
+                cat_ip = m_ip.group(1).strip()
+            url_path = "/login"
+            status_code = 200
+        elif "privilege_violation" in cat_lower or "restricted admin access" in cat_lower:
+            m_priv = re.search(r'''user\s*['"]([^\'\"]+)['"].*?to\s*([^\s]+).*?from ip:?\s*([^\s]+)''', raw_line, re.IGNORECASE)
+            if m_priv:
+                cat_user = m_priv.group(1)
+                url_path = m_priv.group(2)
+                cat_ip = m_priv.group(3)
+            ev_type = "ADMIN_ACCESS_ABUSE"
+            sev = "high"
+            rule_title = f"Restricted Admin Privilege Violation ({cat_user or 'unknown'})"
+            mitre_tag = "T1078 - Valid Accounts"
+            status_code = 403
+        elif any(k in cat_lower for k in ("severe", "fatal")):
+            ev_type = "APP_EXCEPTION"
+            sev = "info"
+            rule_title = "Application Runtime Exception"
+        elif "exception" in cat_lower:
+            if any(fw in cat_lower for fw in ("org.apache.", "java.lang.", "java.util.", "classnotfound")):
+                continue
+            ev_type = "APP_EXCEPTION"
+            sev = "info"
+            rule_title = "Application Runtime Exception"
+        elif "warn" in cat_lower:
+            ev_type = "APP_WARN"
+            sev = "info"
+
+        if ev_type == "APP_LOG" and sev == "info" and not cat_user:
+            continue
+
+        bulk_events.append((
+            now_dt, actual_app_id, comp_id, node_name, source_type, ev_type,
+            cat_ip, cat_user, None, url_path, status_code, 0, sev, psycopg2.extras.Json(ev),
+            None, None, None
+        ))
+
+        if sev in ("medium", "high", "critical") and (cat_ip or cat_user):
+            security_incidents_to_process.append({
+                "type": "catalina",
+                "sev": sev,
+                "rule_title": rule_title,
+                "mitre_tag": mitre_tag,
+                "attacker_key": f"ip:{cat_ip}" if cat_ip else f"user:{cat_user}",
+                "user": cat_user,
+                "ip": cat_ip,
+                "summary": raw_line[:200],
+                "raw_line": raw_line,
+                "event_type": ev_type
+            })
+            if sev == "critical": highest_severity = "critical"
+            elif sev == "high" and highest_severity != "critical": highest_severity = "high"
 
     try:
         with conn.cursor() as cur:
+            ingested_count = len(bulk_events)
+            if bulk_events:
+                # Requirement 9: execute_values bulk insert
+                psycopg2.extras.execute_values(
+                    cur,
+                    """
+                    INSERT INTO app_events (
+                        event_time, application_id, component_id, node, source_type, event_type,
+                        client_ip, user_name, method, url_path, status_code, bytes_sent, severity, raw,
+                        db_user, db_name, statement_excerpt
+                    ) VALUES %s;
+                    """,
+                    bulk_events,
+                    page_size=250
+                )
 
-            for ev in events:
-                raw_line = ev.get("line", "").strip()
-                if not raw_line:
-                    continue
+            # Process security incidents (deduplicated by attacker_key)
+            if security_incidents_to_process:
+                grouped_incidents = {}
+                for inc_info in security_incidents_to_process:
+                    k = inc_info["attacker_key"]
+                    if k not in grouped_incidents:
+                        grouped_incidents[k] = []
+                    grouped_incidents[k].append(inc_info)
 
-                source_type = ev.get("source", role)
+                for attacker_key, inc_list in grouped_incidents.items():
+                    sample = inc_list[0]
+                    inc_sev = "medium"
+                    if any(x["sev"] == "critical" for x in inc_list):
+                        inc_sev = "critical"
+                    elif any(x["sev"] == "high" for x in inc_list):
+                        inc_sev = "high"
 
-                # Route to PostgreSQL log evaluation if source or role is database
-                if source_type in ("postgres", "database") or role == "database":
-                    ev_type, sev, rule_title, mitre_tag, db_user, db_name, db_lvl = evaluate_postgres_security_event(raw_line)
-                    
-                    # Skip routine internal Postgres logs if info
-                    if sev == "info" and any(k in raw_line.lower() for k in ["checkpoint starting", "checkpoint complete", "connection authorized"]):
-                        continue
+                    tactics_set = set()
+                    for x in inc_list:
+                        if x.get("mitre_tag"):
+                            tactics_set.add(x["mitre_tag"])
 
                     cur.execute("""
-                        INSERT INTO app_events (
-                            event_time, application_id, component_id, node, source_type, event_type,
-                            user_name, db_user, db_name, statement_excerpt, severity, raw
-                        )
-                        VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING id;
-                    """, (
-                        actual_app_id, comp_id, node_name, source_type, ev_type,
-                        db_user, db_user, db_name, raw_line[:500], sev, psycopg2.extras.Json(ev)
-                    ))
-                    ev_row = cur.fetchone()
-                    raw_ev_id = ev_row["id"] if ev_row else None
-                    ingested_count += 1
+                        SELECT id, events_count, severity, mitre_tactics
+                        FROM app_incidents
+                        WHERE application_id = %s AND attacker_key = %s AND status = 'Open'
+                        ORDER BY id DESC LIMIT 1;
+                    """, (actual_app_id, attacker_key))
+                    existing_inc = cur.fetchone()
 
-                    if sev in ("medium", "high", "critical"):
-                        attacker_key = f"db_user:{db_user or 'unknown'}"
+                    if existing_inc:
+                        inc_id = existing_inc["id"]
+                        new_count = (existing_inc.get("events_count") or 0) + len(inc_list)
+                        curr_sev = existing_inc.get("severity") or "medium"
+                        calc_sev = "critical" if inc_sev == "critical" or curr_sev == "critical" else ("high" if inc_sev == "high" or curr_sev == "high" else "medium")
+                        existing_tactics = existing_inc.get("mitre_tactics") or []
+                        if isinstance(existing_tactics, str):
+                            try: existing_tactics = json.loads(existing_tactics)
+                            except Exception: existing_tactics = []
+                        all_tactics = list(set(existing_tactics) | tactics_set)
+
                         cur.execute("""
-                            SELECT id, events_count, severity, mitre_tactics
-                            FROM app_incidents
-                            WHERE application_id = %s AND attacker_key = %s AND status = 'Open'
-                            ORDER BY id DESC LIMIT 1;
-                        """, (actual_app_id, attacker_key))
-                        existing_inc = cur.fetchone()
+                            UPDATE app_incidents
+                            SET events_count = %s, last_event_at = NOW(), severity = %s,
+                                mitre_tactics = %s, updated_at = NOW()
+                            WHERE id = %s;
+                        """, (new_count, calc_sev, psycopg2.extras.Json(all_tactics), inc_id))
+                    else:
+                        inc_title = sample.get("rule_title") or f"Security incident from {attacker_key}"
+                        cur.execute("""
+                            INSERT INTO app_incidents (
+                                application_id, title, attacker_key, attacker_type, client_ip, user_name,
+                                severity, status, first_event_at, last_event_at, events_count, stages_count, mitre_tactics
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'Open', NOW(), NOW(), %s, 1, %s)
+                            RETURNING id;
+                        """, (
+                            actual_app_id, inc_title, attacker_key,
+                            'ip' if sample.get("ip") else 'user',
+                            sample.get("ip"), sample.get("user"), inc_sev, len(inc_list), psycopg2.extras.Json(list(tactics_set))
+                        ))
+                        new_inc_row = cur.fetchone()
+                        inc_id = new_inc_row["id"] if new_inc_row else None
 
-                        if existing_inc:
-                            inc_id = existing_inc["id"]
-                            new_count = (existing_inc.get("events_count") or 0) + 1
-                            curr_sev = existing_inc.get("severity") or "medium"
-                            calc_sev = "critical" if sev == "critical" or curr_sev == "critical" else ("high" if sev == "high" or curr_sev == "high" else "medium")
-                            tactics = existing_inc.get("mitre_tactics") or []
-                            if isinstance(tactics, str):
-                                try: tactics = json.loads(tactics)
-                                except Exception: tactics = []
-                            if mitre_tag and mitre_tag not in tactics:
-                                tactics.append(mitre_tag)
-
-                            cur.execute("""
-                                UPDATE app_incidents
-                                SET events_count = %s, last_event_at = NOW(), severity = %s,
-                                    mitre_tactics = %s, updated_at = NOW()
-                                WHERE id = %s;
-                            """, (new_count, calc_sev, psycopg2.extras.Json(tactics), inc_id))
-                        else:
-                            tactics = [mitre_tag] if mitre_tag else []
-                            cur.execute("""
-                                INSERT INTO app_incidents (
-                                    application_id, title, attacker_key, attacker_type, user_name,
-                                    severity, status, first_event_at, last_event_at, events_count, stages_count, mitre_tactics
-                                )
-                                VALUES (%s, %s, %s, 'user', %s, %s, 'Open', NOW(), NOW(), 1, 1, %s)
-                                RETURNING id;
-                            """, (
-                                actual_app_id, f"{rule_title or ev_type} on {db_name or 'postgres'}", attacker_key,
-                                db_user, sev, psycopg2.extras.Json(tactics)
-                            ))
-                            inc_row = cur.fetchone()
-                            inc_id = inc_row["id"] if inc_row else None
-
-                        if inc_id:
+                    if inc_id:
+                        for item in inc_list:
                             cur.execute("""
                                 INSERT INTO app_incident_events (
-                                    incident_id, event_time, node_name, role, rule_name, mitre_technique, step_summary, raw_event_id
-                                )
-                                VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s);
+                                    incident_id, event_time, node_name, role, rule_name, mitre_technique, step_summary
+                                ) VALUES (%s, NOW(), %s, %s, %s, %s, %s);
                             """, (
-                                inc_id, node_name, role, rule_title or ev_type,
-                                mitre_tag or "", raw_line[:200], raw_ev_id
+                                inc_id, node_name, role, item.get("rule_title") or item.get("event_type") or "Security Attack",
+                                item.get("mitre_tag") or "", item.get("summary") or item.get("raw_line")[:200]
                             ))
+                            if item.get("sev") == "critical" and item.get("type") == "web":
+                                trigger_critical_app_incident_email(actual_app_id, inc_id, item.get("rule_title") or "Critical Exploit", item.get("event_type", "EXPLOIT"), "critical", item.get("ip"), item.get("user"), item.get("raw_path", ""), node_name, role)
 
-                        if sev == "critical":
-                            highest_severity = "critical"
-                        elif sev == "high" and highest_severity != "critical":
-                            highest_severity = "high"
-                    continue
-
-                m = TOMCAT_ACCESS_RE.match(raw_line)
-
-                if m:
-                    # Tier-1 Ingestion Optimization: Drop routine static asset 200s and root health-checks
-                    if is_noise_tomcat_access_log(raw_line):
-                        continue
-                    client_ip = m.group("ip").split(",")[0].strip()
-                    user = m.group("user")
-                    method = m.group("method")
-                    raw_path = m.group("path")
-
-                    # Allow simulated client IP in test environments via query parameter ?client_ip=... or &test_ip=...
-                    m_ip = re.search(r'(?:\?|&)(?:client_ip|test_ip|source_ip|attacker_ip)=([0-9\.]+)', raw_path, re.IGNORECASE)
-                    if m_ip:
-                        client_ip = m_ip.group(1)
-                    status_code = int(m.group("status"))
-                    bytes_sent = int(m.group("bytes")) if m.group("bytes").isdigit() else 0
-
-                    if user == "-" or not user:
-                        m_u = re.search(r'(?:\?|&)(?:user(?:name|_name|id|_id)?|usr|uname|login(?:id|_id)?|account|email|emp(?:id|_id)?|u)=([^& \t\r\n\'"]+)', raw_path, re.IGNORECASE)
-                        if m_u:
-                            user = urllib.parse.unquote(m_u.group(1))
-
-                    # Auto-decode Base64 usernames (e.g. U2hhbGx5MQ== -> Shally1)
-                    if user and user != "-" and len(user) >= 4 and len(user) % 4 == 0 and re.match(r'^[A-Za-z0-9+/]+={0,2}$', user):
-                        try:
-                            dec_u = base64.b64decode(user).decode('utf-8', errors='ignore').strip()
-                            if dec_u.isprintable() and len(dec_u) >= 2 and all(32 <= ord(c) < 127 for c in dec_u):
-                                user = dec_u
-                        except Exception:
-                            pass
-
-                    # Redact passwords from logged URI paths
-                    sanitized_path = redact_sensitive_params(raw_path)
-
-                    event_type, severity, rule_title, mitre_tag = evaluate_web_security_event(
-                        method, raw_path, status_code, user, client_ip, raw_line=raw_line
-                    )
-
-                    # SIEM Optimization: Only store meaningful security telemetry
-                    # 1. Drop static asset requests (including 404s like missing .js/.css/.png)
-                    clean_path = raw_path.split("?")[0].lower()
-                    if STATIC_EXT_RE.search(clean_path):
-                        continue
-
-                    # Check dynamic app exclusion patterns (Suppression Allowlist)
-                    if is_path_suppressed(actual_app_id, raw_path):
-                        continue
-
-                    # Drop benign unparsed JSP contextPath tag noise caused by broken frontend JS
-                    if "pagecontext.request.contextpath" in raw_path.lower():
-                        continue
-
-                    # 2. Drop routine anonymous operational traffic returning < 400 with no attack and no user
-                    # In legacy Java apps, both GET and POST are heavily used for read-only polling/grids/beacons
-                    # e.g. POST /tab-close-logout, POST /fullViewMDAS, POST /update-logout-time, POST /nonBilledConsumerdata
-                    if severity == "info" and event_type in ("HTTP_ACCESS", "HTTP_REQUEST"):
-                        has_user = bool(user and user not in ("-", "Anonymous", "null", "None"))
-                        is_error_probe = bool(status_code and status_code >= 400)
-                        
-                        if not has_user and not is_error_probe:
-                            # Routine anonymous operational browsing/beacons (e.g. /dtsurveyreport, /tab-close-logout, /fullViewMDAS)
-                            continue
-
-                    # Insert partitioned event and get its ID
-                    cur.execute("""
-                        INSERT INTO app_events (
-                            event_time, application_id, component_id, node, source_type, event_type,
-                            client_ip, user_name, method, url_path, status_code, bytes_sent, severity, raw
-                        )
-                        VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING id;
-                    """, (
-                        actual_app_id, comp_id, node_name, source_type, event_type,
-                        client_ip, user if user != "-" else None, method, sanitized_path,
-                        status_code, bytes_sent, severity, psycopg2.extras.Json(ev)
-                    ))
-                    ev_row = cur.fetchone()
-                    raw_ev_id = ev_row["id"] if ev_row else None
-                    ingested_count += 1
-
-                    # If attack detected, record or update incident timeline
-                    if severity in ("medium", "high", "critical"):
-                        attacker_key = f"ip:{client_ip}"
-                        cur.execute("""
-                            SELECT id, events_count, severity, mitre_tactics
-                            FROM app_incidents
-                            WHERE application_id = %s AND attacker_key = %s AND status = 'Open'
-                            ORDER BY id DESC LIMIT 1;
-                        """, (actual_app_id, attacker_key))
-                        existing_inc = cur.fetchone()
-
-                        if existing_inc:
-                            inc_id = existing_inc["id"]
-                            new_count = (existing_inc.get("events_count") or 0) + 1
-                            curr_sev = existing_inc.get("severity") or "medium"
-                            if severity == "critical" or curr_sev == "critical":
-                                calc_sev = "critical"
-                            elif severity == "high" or curr_sev == "high":
-                                calc_sev = "high"
-                            else:
-                                calc_sev = "medium"
-
-                            tactics = existing_inc.get("mitre_tactics") or []
-                            if isinstance(tactics, str):
-                                try: tactics = json.loads(tactics)
-                                except Exception: tactics = []
-                            if mitre_tag and mitre_tag not in tactics:
-                                tactics.append(mitre_tag)
-
-                            cur.execute("""
-                                UPDATE app_incidents
-                                SET events_count = %s,
-                                    last_event_at = NOW(),
-                                    severity = %s,
-                                    mitre_tactics = %s,
-                                    updated_at = NOW()
-                                WHERE id = %s;
-                            """, (new_count, calc_sev, psycopg2.extras.Json(tactics), inc_id))
-                        else:
-                            tactics = [mitre_tag] if mitre_tag else []
-                            cur.execute("""
-                                INSERT INTO app_incidents (
-                                    application_id, title, attacker_key, attacker_type, client_ip, user_name,
-                                    severity, status, first_event_at, last_event_at, events_count, stages_count, mitre_tactics
-                                )
-                                VALUES (%s, %s, %s, 'ip', %s, %s, %s, 'Open', NOW(), NOW(), 1, 1, %s)
-                                RETURNING id;
-                            """, (
-                                actual_app_id, f"{rule_title} from {client_ip}", attacker_key,
-                                client_ip, user if user != "-" else None, severity, psycopg2.extras.Json(tactics)
-                            ))
-                            inc_row = cur.fetchone()
-                            inc_id = inc_row["id"] if inc_row else None
-
-                        if inc_id:
-                            cur.execute("""
-                                INSERT INTO app_incident_events (
-                                    incident_id, event_time, node_name, role, rule_name, mitre_technique, step_summary, raw_event_id
-                                )
-                                VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s);
-                            """, (
-                                inc_id, node_name, role, rule_title or event_type,
-                                mitre_tag or "", f"{method} {raw_path} -> HTTP {status_code}", raw_ev_id
-                            ))
-                            if severity == "critical":
-                                trigger_critical_app_incident_email(actual_app_id, inc_id, rule_title or event_type, event_type, severity, client_ip, user, raw_path, node_name, role)
-
-                        if severity == "critical":
-                            highest_severity = "critical"
-                        elif severity == "high" and highest_severity != "critical":
-                            highest_severity = "high"
-
-                else:
-                    # Application stdout / catalina.out / stderr log
-                    cat_lower = raw_line.lower()
-                    
-                    # Skip routine noisy framework/startup/stack trace lines from catalina.out
-                    if any(k in cat_lower for k in [
-                        "info [main]", "info [catalina", "server startup in", 
-                        "deploying web application", "deployment of web application",
-                        "at org.apache.catalina", "at org.apache.coyote", "at org.apache.tomcat",
-                        "at java.", "at javax.", "at jakarta.", "at sun.",
-                        "jar was scanned for tlds", "sessionlistener", "cookie processor"
-                    ]):
-                        continue
-
-                    ev_type = "APP_LOG"
-                    sev = "info"
-                    cat_user = None
-                    cat_ip = None
-                    rule_title = None
-                    mitre_tag = None
-                    url_path = None
-                    status_code = None
-
-                    # Check for [AUTH_FAILURE] or failed login pattern in application logs
-                    if "[auth_failure]" in cat_lower or "failed login" in cat_lower:
-                        ev_type = "LOGIN_FAILURE"
-                        sev = "medium"
-                        rule_title = "Failed User Authentication"
-                        mitre_tag = "T1110 - Brute Force"
-                        url_path = "/login.jsp"
-                        status_code = 401
-                        m_u = re.search(r"user:?\s*['\"]?([^\s'\",]+)['\"]?", raw_line, re.IGNORECASE)
-                        if m_u:
-                            cat_user = m_u.group(1).strip()
-                            rule_title = f"Failed User Authentication ({cat_user})"
-                        m_ip = re.search(r'(?:from\s+ip:?|ip:?)\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', raw_line, re.IGNORECASE)
-                        if m_ip:
-                            cat_ip = m_ip.group(1).strip()
-
-                    elif any(k in cat_lower for k in ("login successful", "successful login", "logged in", "user logged in", "session created for")):
-                        ev_type = "USER_LOGIN"
-                        sev = "info"
-                        rule_title = "User Authentication Successful"
-                        m_u = re.search(r"""(?:user|for user|username):?\s*['"]?([a-zA-Z0-9_\-\.\@]+)['"]?""", raw_line, re.IGNORECASE)
-                        if m_u:
-                            cat_user = m_u.group(1).strip()
-                            rule_title = f"User Login ({cat_user})"
-                        m_ip = re.search(r'(?:from\s+ip:?|ip:?)\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})', raw_line, re.IGNORECASE)
-                        if m_ip:
-                            cat_ip = m_ip.group(1).strip()
-                        url_path = "/login"
-                        status_code = 200
-
-                    elif "privilege_violation" in cat_lower or "restricted admin access" in cat_lower:
-                        m_priv = re.search(r"user\s*['\"]([^\'\"]+)['\"].*?to\s*([^\s]+).*?from ip:?\s*([^\s]+)", raw_line, re.IGNORECASE)
-                        if m_priv:
-                            cat_user = m_priv.group(1)
-                            url_path = m_priv.group(2)
-                            cat_ip = m_priv.group(3)
-                        ev_type = "ADMIN_ACCESS_ABUSE"
-                        sev = "high"
-                        rule_title = f"Restricted Admin Privilege Violation ({cat_user or 'unknown'})"
-                        mitre_tag = "T1078 - Valid Accounts"
-                        status_code = 403
-
-                    elif any(k in cat_lower for k in ("severe", "fatal")):
-                        ev_type = "APP_EXCEPTION"
-                        sev = "info"
-                        rule_title = "Application Runtime Exception"
-                    elif "exception" in cat_lower:
-                        if any(fw in cat_lower for fw in ("org.apache.", "java.lang.", "java.util.", "classnotfound")):
-                            continue
-                        ev_type = "APP_EXCEPTION"
-                        sev = "info"
-                        rule_title = "Application Runtime Exception"
-                    elif "warn" in cat_lower:
-                        ev_type = "APP_WARN"
-                        sev = "info"
-
-                    # Drop routine generic catalina.out stdout noise with no error, exception, or user
-                    if ev_type == "APP_LOG" and sev == "info" and not cat_user:
-                        continue
-
-                    # Deduplication check: prevent duplicate log line floods within 60 seconds
-                    cur.execute("""
-                        SELECT id FROM app_events
-                        WHERE application_id = %s AND event_type = %s 
-                          AND (raw->>'line') = %s 
-                          AND event_time > NOW() - INTERVAL '60 seconds'
-                        LIMIT 1;
-                    """, (actual_app_id, ev_type, raw_line))
-                    if cur.fetchone():
-                        continue
-
-                    # Insert partitioned event
-                    cur.execute("""
-                        INSERT INTO app_events (
-                            event_time, application_id, component_id, node, source_type, event_type,
-                            client_ip, user_name, url_path, status_code, severity, raw
-                        )
-                        VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING id;
-                    """, (
-                        actual_app_id, comp_id, node_name, source_type, ev_type,
-                        cat_ip, cat_user, url_path, status_code, sev, psycopg2.extras.Json(ev)
-                    ))
-                    ev_row = cur.fetchone()
-                    raw_ev_id = ev_row["id"] if ev_row else None
-                    ingested_count += 1
-
-                    # Correlate into incident timeline if security alert from app log
-                    if sev in ("medium", "high", "critical") and (cat_ip or cat_user):
-                        attacker_key = f"ip:{cat_ip}" if cat_ip else f"user:{cat_user}"
-                        cur.execute("""
-                            SELECT id, events_count, severity, mitre_tactics
-                            FROM app_incidents
-                            WHERE application_id = %s AND attacker_key = %s AND status = 'Open'
-                            ORDER BY id DESC LIMIT 1;
-                        """, (actual_app_id, attacker_key))
-                        existing_inc = cur.fetchone()
-
-                        if existing_inc:
-                            inc_id = existing_inc["id"]
-                            new_count = (existing_inc.get("events_count") or 0) + 1
-                            curr_sev = existing_inc.get("severity") or "medium"
-                            calc_sev = "high" if sev == "high" or curr_sev == "high" else "medium"
-                            tactics = existing_inc.get("mitre_tactics") or []
-                            if isinstance(tactics, str):
-                                try: tactics = json.loads(tactics)
-                                except Exception: tactics = []
-                            if mitre_tag and mitre_tag not in tactics:
-                                tactics.append(mitre_tag)
-
-                            cur.execute("""
-                                UPDATE app_incidents
-                                SET events_count = %s, last_event_at = NOW(), severity = %s,
-                                    mitre_tactics = %s, updated_at = NOW()
-                                WHERE id = %s;
-                            """, (new_count, calc_sev, psycopg2.extras.Json(tactics), inc_id))
-                        else:
-                            tactics = [mitre_tag] if mitre_tag else []
-                            cur.execute("""
-                                INSERT INTO app_incidents (
-                                    application_id, title, attacker_key, attacker_type, client_ip, user_name,
-                                    severity, status, first_event_at, last_event_at, events_count, stages_count, mitre_tactics
-                                )
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, 'Open', NOW(), NOW(), 1, 1, %s)
-                                RETURNING id;
-                            """, (
-                                actual_app_id, f"{rule_title or ev_type} ({cat_user or cat_ip})", attacker_key,
-                                'user' if cat_user else 'ip', cat_ip, cat_user, sev, psycopg2.extras.Json(tactics)
-                            ))
-                            inc_row = cur.fetchone()
-                            inc_id = inc_row["id"] if inc_row else None
-
-                        if inc_id:
-                            cur.execute("""
-                                INSERT INTO app_incident_events (
-                                    incident_id, event_time, node_name, role, rule_name, mitre_technique, step_summary, raw_event_id
-                                )
-                                VALUES (%s, NOW(), %s, %s, %s, %s, %s, %s);
-                            """, (
-                                inc_id, node_name, role, rule_title or ev_type,
-                                mitre_tag or "", raw_line[:200], raw_ev_id
-                            ))
-
-            # Update component last event, last seen, status and counter
+            # Update application_components and applications ONCE per batch
             cur.execute("""
                 UPDATE application_components
                 SET status = 'RECEIVING', last_seen = NOW(), last_event_at = NOW(), events_counter = events_counter + %s
                 WHERE id = %s;
             """, (ingested_count, comp_id))
 
-            # Update application dynamic status if attacks detected
             if highest_severity == "critical":
                 cur.execute("UPDATE applications SET status = 'CRITICAL', updated_at = NOW() WHERE id = %s AND status != 'MAINT';", (actual_app_id,))
             elif highest_severity == "high":
@@ -8758,8 +8765,8 @@ def api_app_events(request: Request, payload: dict = Body(...)):
     finally:
         conn.close()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# APPLICATION SIEM REPORTING, REDACTION, EXPLANATION & CLOSE WORKFLOWS
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_scalar(row, default=0):
