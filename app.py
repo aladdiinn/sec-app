@@ -8306,6 +8306,13 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
     if any(k in p_lower for k in ("downloadbill", "billdownload", "getbill", "downloadinvoice", "viewreceipt", "billreceipt")) and status in (401, 403):
         return "FORBIDDEN_DOCUMENT_ACCESS", "medium", "Direct Bill / Document Access Denied (HTTP 403)", "T1213 - Data from Information Repositories"
 
+    # 6c. Disallowed HTTP Method / Verb Tampering Probe (e.g. DELETE, PUT, TRACE on login or web pages)
+    if (method or "").upper() in ("DELETE", "PUT", "TRACE", "CONNECT"):
+        if status in (401, 403, 405):
+            return "HTTP_VERB_TAMPERING", "medium", f"Disallowed HTTP {method.upper()} Method Blocked (HTTP {status})", "T1190 - Exploit Public-Facing Application"
+        elif status in (200, 201, 204):
+            return "UNAUTHORIZED_METHOD_EXEC", "high", f"Unexpected HTTP {method.upper()} Method Allowed (HTTP {status})", "T1190 - Exploit Public-Facing Application"
+
     # 7. Authentication Failure / Brute Force
     if any(k in p_lower for k in ("login", "auth", "signin")) and status in (401, 403):
         if any(k in p_lower for k in ("downloadbill", "quickpay", "billdownload", "verifybill")):
@@ -8915,6 +8922,14 @@ def explainItem(item_type: str, item: dict) -> dict:
             why = "Flagged due to injected JavaScript tags or event handlers ('<script>', 'onerror='). Corresponds to MITRE ATT&CK T1059.007."
             impact = "Medium: Potential client-side session hijacking or defacement of victim user browsers."
             recommendation = "Implement context-aware HTML output encoding and strict Content Security Policy (CSP)."
+        elif ev_type in ("FORBIDDEN_DOCUMENT_ACCESS",):
+            why = "Flagged because an unauthenticated or unauthorized client attempted to access bill/invoice download endpoints directly and was rejected (HTTP 403). Corresponds to MITRE ATT&CK T1213 (Data from Information Repositories)."
+            impact = "Medium: Potential IDOR or unauthorized attempt to retrieve customer billing documents without proper session verification."
+            recommendation = "Ensure bill download endpoints enforce strict session authentication and OTP verification before serving PDFs."
+        elif ev_type in ("HTTP_VERB_TAMPERING", "DISALLOWED_HTTP_METHOD", "UNAUTHORIZED_METHOD_EXEC"):
+            why = f"Flagged because an abnormal HTTP verb was sent to an application endpoint and blocked (HTTP {item.get('status_code') or 403}). Corresponds to MITRE ATT&CK T1190 (Exploit Public-Facing Application)."
+            impact = "Medium: Potential automated vulnerability scanning (e.g. Burp Suite, OWASP ZAP) or HTTP verb tampering probe."
+            recommendation = "Verify if security scanners or testing scripts are running from this IP. Ensure web server (Tomcat/Nginx) restricts unused HTTP methods."
         elif ev_type in ("LOGIN_FAILURE", "AUTH_FAILURE"):
             why = "Flagged due to failed authentication response (HTTP 401/403) targeting login or credential endpoints. Corresponds to MITRE ATT&CK T1110 (Brute Force)."
             impact = "Medium: Unauthorized actor attempting credential guessing or credential stuffing."
