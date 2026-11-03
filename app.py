@@ -8010,10 +8010,22 @@ def is_path_suppressed(app_id: int, path: str) -> bool:
 _scraping_tracker = {}
 _scraping_lock = threading.Lock()
 
-def check_mass_scraping_detection(ip: str, user: str, path: str) -> bool:
+def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "GET") -> bool:
     """Detects rapid sequential ID / record enumeration (e.g. ?acc_no=1001, 1002, 1003...) across a 30s window."""
+    # 1. Scraping and IDOR enumeration are strictly GET requests querying data
+    if (method or "").upper() != "GET":
+        return False
+
+    # 2. Whitelist internal node daemons and localhost (e.g. internal smart meter services on 10.0.0.27, 10.40.60.49, 127.0.0.1)
+    if ip.startswith("127.") or ip == "localhost" or ip in ("10.0.0.27", "10.40.60.49"):
+        return False
+
+    # 3. Whitelist internal bsmartApi operational background endpoints (smart grid relay/meter daemons)
+    if "/bsmartapi/" in path.lower():
+        return False
+
     now = time.time()
-    m = re.search(r'(?:acc_no|consumer_id|consumer|id|account|meter|record|emp_id|user_id|mrd)=([0-9a-zA-Z_-]+)', path, re.I)
+    m = re.search(r'(?:\?|&)(?:acc_no|consumer_id|meter_no|record_id|emp_id|user_id|account_no|consumer)=([0-9a-zA-Z_-]+)', path, re.I)
     if not m:
         return False
     val = m.group(1)
@@ -8073,7 +8085,7 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
         return "API_SCRAPING", "high", "Automated Python / Bot Script Access", "T1114 - Email/Data Collection"
 
     # 9. Mass Parameter Enumeration / IDOR Data Scraping (e.g. rapid sequential consumer IDs)
-    if check_mass_scraping_detection(ip, user, path):
+    if check_mass_scraping_detection(ip, user, path, method=method):
         return "DATA_HARVESTING", "high", "Mass Record Enumeration / IDOR Scraping Attempt", "T1005 - Data from Local System"
 
     return "HTTP_ACCESS", "info", None, None
