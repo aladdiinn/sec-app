@@ -718,6 +718,42 @@ class GzipDecompressionMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(GzipDecompressionMiddleware)
 
+# Agent Flood & 401 DDoS Protection Middleware (Early-Drop Shield)
+_quarantined_agent_ips = {}
+_agent_ip_failures = {}
+
+class AgentFloodProtectionMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if path in ("/api/app/events", "/api/app/heartbeat"):
+            client_ip = request.client.host if request.client else "127.0.0.1"
+            now = time.time()
+            unban = _quarantined_agent_ips.get(client_ip, 0.0)
+            if now < unban:
+                # Fast early drop: 0% CPU, no body deserialization, no database queries
+                return Response(
+                    content=b'{"status":"error","reason":"Rate limited. Rapid 401 unauthorized flood detected. Cooldown 15s."}',
+                    status_code=429,
+                    media_type="application/json"
+                )
+
+            response = await call_next(request)
+
+            if response.status_code == 401:
+                fails = _agent_ip_failures.setdefault(client_ip, [])
+                fails = [t for t in fails if now - t < 5.0]
+                fails.append(now)
+                _agent_ip_failures[client_ip] = fails
+                if len(fails) >= 5:
+                    _quarantined_agent_ips[client_ip] = now + 15.0
+                    logger.warning(f"[SHIELD] Quarantined agent flood from {client_ip} for 15s (Too many 401s)")
+
+            return response
+
+        return await call_next(request)
+
+app.add_middleware(AgentFloodProtectionMiddleware)
+
 # Secret Key from Environment Variable
 SECRET_KEY = os.getenv("SECRET_KEY", "ec2-security-monitor-production-secret-key-2026")
 SECURE_COOKIES = os.getenv("SECURE_COOKIES", "false").lower() == "true"
