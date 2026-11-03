@@ -472,9 +472,19 @@ logger = logging.getLogger("security_monitor.app")
 class UvicornTelemetryFilter(logging.Filter):
     """Suppresses high-frequency 200/429 access logs from collector endpoints to avoid stdout CPU saturation."""
     def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if hasattr(record, "args") and isinstance(record.args, tuple) and len(record.args) >= 5:
+                endpoint = str(record.args[2])
+                status_code = record.args[4]
+                if "/api/app/events" in endpoint or "/api/app/heartbeat" in endpoint:
+                    if status_code in (200, 201, 202, 429, 503):
+                        return False
+        except Exception:
+            pass
+
         msg = record.getMessage()
         if "/api/app/events" in msg or "/api/app/heartbeat" in msg:
-            if any(code in msg for code in (" 200 ", " 201 ", " 202 ", " 429 ", " 503 ")):
+            if any(code in msg for code in (" 200", " 201", " 202", " 429", " 503")):
                 return False
         return True
 
@@ -1508,11 +1518,22 @@ async def vulnerabilities_page(request: Request):
 # REST API ENDPOINTS (Expected by UI & test_prod.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
+_servers_cache = {}
+
 @app.get("/api/servers")
 def api_get_servers(request: Request):
-    pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
+    pid = get_effective_project_id(request)
+    now = time.time()
+    cache_key = str(pid)
+    entry = _servers_cache.get(cache_key)
+    if entry and (now - entry[0] < 3.0):
+        return entry[1]
+
+    servers = db.get_servers(project_id=pid)
     counts = db.get_server_counts()
-    return {"servers": servers, "counts": counts}
+    res = {"servers": servers, "counts": counts}
+    _servers_cache[cache_key] = (now, res)
+    return res
 
 @app.get("/api/counts")
 @app.get("/api/servers/stats")
@@ -6327,10 +6348,21 @@ async def api_generate_report(request: Request):
     return JSONResponse(status_code=400, content={"ok": False})
 
 
-# Dashboard
+# Dashboard with 3-second in-memory response cache
+_dashboard_counts_cache = {}
+
 @app.get("/api/dashboard/counts")
 def api_dashboard_counts_new(request: Request):
-    return db.get_dashboard_counts(project_id=get_effective_project_id(request))
+    pid = get_effective_project_id(request)
+    now = time.time()
+    cache_key = str(pid)
+    entry = _dashboard_counts_cache.get(cache_key)
+    if entry and (now - entry[0] < 3.0):
+        return entry[1]
+
+    data = db.get_dashboard_counts(project_id=pid)
+    _dashboard_counts_cache[cache_key] = (now, data)
+    return data
 
 @app.get("/api/dashboard/live-activity")
 def api_dashboard_live_activity(request: Request):
@@ -7730,13 +7762,22 @@ async def api_detections_summary(request: Request):
 # APPLICATION SIEM API ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
 
+_apps_cache = {}
+
 @app.get("/api/apps")
 def api_get_apps(request: Request, status: Optional[str] = None):
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
     pid = get_effective_project_id(request)
+    now = time.time()
+    cache_key = (str(pid), str(status))
+    entry = _apps_cache.get(cache_key)
+    if entry and (now - entry[0] < 3.0):
+        return entry[1]
+
     apps = db.get_applications(project_id=pid, status_filter=status)
+    _apps_cache[cache_key] = (now, apps)
     return apps
 
 @app.post("/api/apps")

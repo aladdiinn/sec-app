@@ -1093,7 +1093,10 @@ let globalServersList = [];
 let globalAppsList = [];
 let activeModalServerId = null;
 
+let _isDashboardLoading = false;
 async function loadDashboardData() {
+    if (_isDashboardLoading) return;
+    _isDashboardLoading = true;
     try {
         // Parallelize fetching counts, servers, and apps with client-side timeout protection (Requirement 14)
         const [countsResult, serversResult, appsResult] = await Promise.allSettled([
@@ -1159,10 +1162,12 @@ async function loadDashboardData() {
                 <div style="grid-column:1/-1; padding:60px 20px; text-align:center; background:rgba(239,68,68,0.05); border:1px solid rgba(239,68,68,0.25); border-radius:12px; margin:20px 0;">
                     <div style="font-size:32px; margin-bottom:12px;">⚠️</div>
                     <div style="font-size:16px; font-weight:700; color:var(--red); margin-bottom:6px;">CONNECTION TIMEOUT / HIGH LOAD</div>
-                    <div style="font-size:13px; color:var(--text3); max-width:520px; margin:0 auto 16px;">Dashboard request timed out. Retrying automatically in 5s.</div>
+                    <div style="font-size:13px; color:var(--text3); max-width:520px; margin:0 auto 16px;">Dashboard request timed out. Retrying automatically in 10s.</div>
                     <button class="btn btn-sm btn-outline-cyan" onclick="loadDashboardData()" style="padding:6px 18px; font-size:12px; cursor:pointer;">🔄 Retry Now</button>
                 </div>`;
         }
+    } finally {
+        _isDashboardLoading = false;
     }
 }
 
@@ -3276,7 +3281,7 @@ async function saveServerNetwork(e) {
 
 window.addEventListener('DOMContentLoaded', () => {
     loadDashboardData();
-    setInterval(loadDashboardData, 5000);
+    setInterval(loadDashboardData, 10000);
 });
 </script>
 {% endblock %}

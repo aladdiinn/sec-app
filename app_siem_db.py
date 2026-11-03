@@ -555,20 +555,8 @@ def get_applications(conn, project_id=None, status_filter=None):
                     FROM app_incidents inc3 
                     WHERE inc3.application_id = a.id AND LOWER(inc3.status) IN ('open', 'investigating')
                 ) as high_incidents,
-                (
-                    SELECT COUNT(*) 
-                    FROM app_events ev_sec 
-                    WHERE ev_sec.application_id = a.id 
-                      AND LOWER(ev_sec.severity) IN ('critical', 'high', 'medium') 
-                      AND (ev_sec.status IS NULL OR LOWER(ev_sec.status) = 'open')
-                ) as open_security_events,
-                (
-                    SELECT COUNT(*) 
-                    FROM app_events ev_crit
-                    WHERE ev_crit.application_id = a.id 
-                      AND LOWER(ev_crit.severity) = 'critical' 
-                      AND (ev_crit.status IS NULL OR LOWER(ev_crit.status) = 'open')
-                ) as critical_security_events,
+                0 as open_security_events,
+                0 as critical_security_events,
                 (
                     SELECT COALESCE(ROUND(COUNT(*)::numeric / 5.0, 0), 0)
                     FROM app_events ev

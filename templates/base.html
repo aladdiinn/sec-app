@@ -571,11 +571,14 @@
             window.dispatchEvent(new CustomEvent('bsmart-theme-changed', { detail: { theme: next } }));
         }
 
-                async function updateAlertsBadge() {
+                let _isUpdatingAlertsBadge = false;
+        async function updateAlertsBadge() {
+            if (_isUpdatingAlertsBadge) return;
             const badge = document.getElementById('sb-alerts-badge');
             if (!badge) return;
+            _isUpdatingAlertsBadge = true;
             try {
-                const res = await apiFetch('/api/dashboard/counts');
+                const res = await apiFetch('/api/dashboard/counts', { timeout: 5000 });
                 const cnt = res ? (res.unresolved_alerts ?? 0) : 0;
                 if (cnt > 0) {
                     badge.innerText = cnt > 99 ? '99+' : cnt;
@@ -584,13 +587,19 @@
                     badge.style.display = 'none';
                 }
             } catch (e) {}
+            finally {
+                _isUpdatingAlertsBadge = false;
+            }
         }
 
+        let _isUpdatingApprovalsBadge = false;
         async function updatePendingApprovalsBadge() {
+            if (_isUpdatingApprovalsBadge) return;
             const badge = document.getElementById('pending-approvals-badge');
             if (!badge) return;
+            _isUpdatingApprovalsBadge = true;
             try {
-                const res = await apiFetch('/api/approvals/count');
+                const res = await apiFetch('/api/approvals/count', { timeout: 5000 });
                 if (res && res.count > 0) {
                     badge.innerText = res.count;
                     badge.style.display = 'inline-block';
@@ -601,12 +610,15 @@
                     badge.style.display = 'none';
                 }
             } catch (e) {}
+            finally {
+                _isUpdatingApprovalsBadge = false;
+            }
         }
         document.addEventListener('DOMContentLoaded', () => {
             updatePendingApprovalsBadge();
             updateAlertsBadge();
-            setInterval(updateAlertsBadge, 4000);
-            setInterval(updatePendingApprovalsBadge, 4000);
+            setInterval(updateAlertsBadge, 15000);
+            setInterval(updatePendingApprovalsBadge, 20000);
             
             // Fetch version
             apiFetch('/api/version').then(res => {
