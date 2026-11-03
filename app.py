@@ -8302,8 +8302,14 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
         elif status in (401, 403) or (user and user != "-" and user.lower() != "admin"):
             return "ADMIN_ACCESS_ABUSE", "high", "Restricted Admin Function Access Abuse Attempt", "T1078 - Valid Accounts"
 
+    # 6b. Direct Object / Document Access Denial (e.g. downloadBill, invoice, receipt, before login)
+    if any(k in p_lower for k in ("downloadbill", "billdownload", "getbill", "downloadinvoice", "viewreceipt", "billreceipt")) and status in (401, 403):
+        return "FORBIDDEN_DOCUMENT_ACCESS", "medium", "Direct Bill / Document Access Denied (HTTP 403)", "T1213 - Data from Information Repositories"
+
     # 7. Authentication Failure / Brute Force
     if any(k in p_lower for k in ("login", "auth", "signin")) and status in (401, 403):
+        if any(k in p_lower for k in ("downloadbill", "quickpay", "billdownload", "verifybill")):
+            return "FORBIDDEN_DOCUMENT_ACCESS", "medium", "Direct Bill / Document Access Denied (HTTP 403)", "T1213 - Data from Information Repositories"
         return "LOGIN_FAILURE", "medium", "Failed User Authentication (HTTP 401)", "T1110 - Brute Force"
 
     # 8. Expression Language / SSTI Injection Probes (e.g. ${class, ${loader, #{...})
