@@ -3,7 +3,7 @@
 # EMBEDDED REAL-TIME HOST SECURITY WATCHER + FIM (FILE INTEGRITY MONITORING)
 # Continuously monitors SSH logs, shell commands, process execution, and FIM
 # ══════════════════════════════════════════════════════════════════════════════
-import time, subprocess, glob, threading, os, re, socket, json, urllib.parse
+import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac
 import psycopg2, psycopg2.extras
 from dotenv import load_dotenv
 load_dotenv()
@@ -769,21 +769,21 @@ class RawAgentFloodMiddleware:
                 bucket.append(now)
                 _rate_limit_buckets[client_ip] = bucket
 
-                if len(bucket) > 10:
-                    _quarantined_agent_ips[client_ip] = now + 30.0
+                if len(bucket) > 25:
+                    _quarantined_agent_ips[client_ip] = now + 15.0
                     log_key = (client_ip, "rate_limit")
                     if now - _last_throttled_log.get(log_key, 0.0) > 60:
                         _last_throttled_log[log_key] = now
-                        logger.warning(f"[RATE-LIMIT] Agent {client_ip} exceeded threshold (>10 reqs/5s). Applying 30s cooldown.")
+                        logger.warning(f"[RATE-LIMIT] Agent {client_ip} exceeded threshold (>25 reqs/5s). Applying 15s cooldown.")
 
-                    resp_body = b'{"status":"error","code":429,"reason":"Rate limited. Exceeded 10 requests per 5s.","retry_after":30}'
+                    resp_body = b'{"status":"error","code":429,"reason":"Rate limited. Exceeded 25 requests per 5s. Back off.","retry_after":15}'
                     await send({
                         "type": "http.response.start",
                         "status": 429,
                         "headers": [
                             (b"content-type", b"application/json"),
                             (b"content-length", str(len(resp_body)).encode("ascii")),
-                            (b"retry-after", b"30"),
+                            (b"retry-after", b"15"),
                         ]
                     })
                     await send({"type": "http.response.body", "body": resp_body, "more_body": False})
@@ -8018,7 +8018,7 @@ def get_cached_component_by_token(token: str, client_ip: str):
     if token in _token_cache:
         cached = _token_cache[token]
         if now < cached["expires"]:
-            if hmac.compare_digest(cached.get("token", token), token):
+            if hmac.compare_digest(cached.get("token") or token, token):
                 comp = cached["comp"]
                 if comp.get("status") not in ('APPROVED', 'RECEIVING', 'SILENT', 'AWAITING FIRST EVENT'):
                     return None, "Component pending administrator approval"
@@ -8038,7 +8038,7 @@ def get_cached_component_by_token(token: str, client_ip: str):
                 LIMIT 1;
             """, (token,))
             comp = cur.fetchone()
-            if not comp or not hmac.compare_digest(comp["enrollment_token"], token):
+            if not comp or not hmac.compare_digest(comp.get("enrollment_token") or "", token or ""):
                 _rejected_token_cache[token] = now + 60.0
                 audit_key = (client_ip, token)
                 if now - _last_rejected_audit.get(audit_key, 0.0) > 60:
