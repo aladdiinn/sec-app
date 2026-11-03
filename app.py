@@ -694,65 +694,46 @@ AGENT_VERSION = "1.6.2"
 _inventory_scan_queue = set()  # server_ids queued for on-demand inventory scan
 app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifespan)
 
-# Gzip Request Decompression Middleware for Agent Inventory Payloads
+# Pure Raw ASGI Middlewares (Zero AnyIO streams, no BaseHTTPMiddleware CancelledError bugs)
 MAX_COMPRESSED_INVENTORY_BYTES = 2 * 1024 * 1024      # 2 MB
 MAX_DECOMPRESSED_INVENTORY_BYTES = 10 * 1024 * 1024  # 10 MB
 
-class GzipDecompressionMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        encoding = request.headers.get("content-encoding", "").lower()
-        if encoding == "gzip":
-            body = await request.body()
-            if len(body) > MAX_COMPRESSED_INVENTORY_BYTES:
-                return JSONResponse(status_code=413, content={"detail": "Compressed payload exceeds 2MB limit"})
-            try:
-                decompressed = gzip.decompress(body)
-                if len(decompressed) > MAX_DECOMPRESSED_INVENTORY_BYTES:
-                    return JSONResponse(status_code=413, content={"detail": "Decompressed payload exceeds 10MB limit"})
-                request._body = decompressed
-            except gzip.BadGzipFile:
-                return JSONResponse(status_code=400, content={"detail": "Invalid gzip data"})
-            except Exception as e:
-                return JSONResponse(status_code=400, content={"detail": f"Decompression error: {str(e)}"})
-        return await call_next(request)
-
-app.add_middleware(GzipDecompressionMiddleware)
-
-# Agent Flood & 401 DDoS Protection Middleware (Early-Drop Shield)
 _quarantined_agent_ips = {}
 _agent_ip_failures = {}
 
-class AgentFloodProtectionMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        path = request.url.path
-        if path in ("/api/app/events", "/api/app/heartbeat"):
-            client_ip = request.client.host if request.client else "127.0.0.1"
-            now = time.time()
-            unban = _quarantined_agent_ips.get(client_ip, 0.0)
-            if now < unban:
-                # Fast early drop: 0% CPU, no body deserialization, no database queries
-                return Response(
-                    content=b'{"status":"error","reason":"Rate limited. Rapid 401 unauthorized flood detected. Cooldown 15s."}',
-                    status_code=429,
-                    media_type="application/json"
-                )
+class RawAgentFloodMiddleware:
+    def __init__(self, app):
+        self.app = app
 
-            response = await call_next(request)
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            path = scope.get("path", "")
+            if path in ("/api/app/events", "/api/app/heartbeat"):
+                client = scope.get("client")
+                client_ip = client[0] if client else "127.0.0.1"
+                now = time.time()
+                unban = _quarantined_agent_ips.get(client_ip, 0.0)
+                if now < unban:
+                    # Fast 429 response via raw ASGI with 0% CPU and zero tasks
+                    resp_body = b'{"status":"error","reason":"Rate limited. Rapid 401 unauthorized flood detected. Cooldown 15s."}'
+                    await send({
+                        "type": "http.response.start",
+                        "status": 429,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(resp_body)).encode("ascii")),
+                        ]
+                    })
+                    await send({
+                        "type": "http.response.body",
+                        "body": resp_body,
+                        "more_body": False
+                    })
+                    return
 
-            if response.status_code == 401:
-                fails = _agent_ip_failures.setdefault(client_ip, [])
-                fails = [t for t in fails if now - t < 5.0]
-                fails.append(now)
-                _agent_ip_failures[client_ip] = fails
-                if len(fails) >= 5:
-                    _quarantined_agent_ips[client_ip] = now + 15.0
-                    logger.warning(f"[SHIELD] Quarantined agent flood from {client_ip} for 15s (Too many 401s)")
+        await self.app(scope, receive, send)
 
-            return response
-
-        return await call_next(request)
-
-app.add_middleware(AgentFloodProtectionMiddleware)
+app.add_middleware(RawAgentFloodMiddleware)
 
 # Secret Key from Environment Variable
 SECRET_KEY = os.getenv("SECRET_KEY", "ec2-security-monitor-production-secret-key-2026")
@@ -8323,6 +8304,14 @@ def api_app_events(request: Request, payload: dict = Body(...)):
     # Fast in-memory token validation: rejects 401s in 0.001ms with zero DB connections
     comp, err = get_cached_component_by_token(token, client_ip)
     if err:
+        now = time.time()
+        fails = _agent_ip_failures.setdefault(client_ip, [])
+        fails = [t for t in fails if now - t < 5.0]
+        fails.append(now)
+        _agent_ip_failures[client_ip] = fails
+        if len(fails) >= 5:
+            _quarantined_agent_ips[client_ip] = now + 15.0
+            logger.warning(f"[SHIELD] Quarantined agent flood from {client_ip} for 15s")
         return JSONResponse(status_code=401, content={"status": "error", "reason": err})
 
     comp_id = comp["id"]
