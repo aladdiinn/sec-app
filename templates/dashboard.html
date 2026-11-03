@@ -1376,7 +1376,7 @@ function renderServicesGrid() {
             const aid = a.id;
             const name = a.name || 'Unnamed Application';
             const url = a.primary_url || '';
-            const openInc = Number(a.open_incidents || 0);
+            const openInc = Number(a.open_incidents || a.open_security_events || 0);
             const critInc = Number(a.critical_incidents || 0);
             const evMin = Number(a.events_per_min || 0);
             const compRatio = a.components_ratio || '1/1';
@@ -1391,7 +1391,7 @@ function renderServicesGrid() {
             if (item.computedStatus === 'CRITICAL') {
                 secBadge = `<span class="sec-pill-reboot" style="background:rgba(239,68,68,0.2); color:#ff5a5f; border:1px solid #ff5a5f; font-weight:700;">CRITICAL THREAT</span> <span class="sec-cve-counts"><span class="sec-cve-c">${openInc} INCIDENT${openInc>1?'S':''}</span></span>`;
             } else if (item.computedStatus === 'TROUBLE') {
-                secBadge = `<span class="sec-pill-update" style="background:rgba(245,158,11,0.2); color:#f59e0b; border:1px solid #f59e0b; font-weight:700;">SUSPICIOUS ANOMALY</span>`;
+                secBadge = `<span class="sec-pill-update" style="background:rgba(245,158,11,0.2); color:#f59e0b; border:1px solid #f59e0b; font-weight:700;">SUSPICIOUS ANOMALY</span> <span class="sec-cve-counts"><span class="sec-cve-h">${openInc} THREAT${openInc>1?'S':''}</span></span>`;
             } else {
                 secBadge = `<span class="sec-pill-clean" style="font-weight:600;">Threat Protected</span>`;
             }
@@ -1403,9 +1403,9 @@ function renderServicesGrid() {
             } else if (item.computedStatus === 'MAINT') {
                 alertBox = `<div class="service-alert-box sab-trouble"><strong>MAINTENANCE</strong> Maintenance Mode Active</div>`;
             } else if (item.computedStatus === 'CRITICAL') {
-                alertBox = `<div class="service-alert-box" style="background:rgba(239,68,68,0.15); color:var(--red); border:1px solid rgba(239,68,68,0.4);"><strong>CRITICAL</strong> ${openInc} Open Incident(s) | Threat Detected</div>`;
+                alertBox = `<div class="service-alert-box" style="background:rgba(239,68,68,0.15); color:var(--red); border:1px solid rgba(239,68,68,0.4);"><strong>CRITICAL</strong> ${openInc} Open Threat(s) | Threat Detected</div>`;
             } else if (item.computedStatus === 'TROUBLE') {
-                alertBox = `<div class="service-alert-box sab-trouble"><strong>TROUBLE</strong> ${escapeHtml(a.telemetry_banner || 'Application anomaly detected')}</div>`;
+                alertBox = `<div class="service-alert-box sab-trouble"><strong>TROUBLE</strong> ${escapeHtml(a.telemetry_banner || `${openInc} Security Threat(s) Detected`)}</div>`;
             } else {
                 if (!a.last_event_at) {
                     alertBox = `<div class="service-alert-box" style="background:rgba(148,163,184,0.1); color:var(--text3); border:1px solid var(--border);"><strong>AWAITING FIRST EVENT</strong> Enrolled forwarder awaiting log traffic</div>`;

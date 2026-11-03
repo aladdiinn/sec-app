@@ -529,18 +529,25 @@ def get_applications(conn, project_id=None, status_filter=None):
                 (
                     SELECT COUNT(*) 
                     FROM app_incidents inc 
-                    WHERE inc.application_id = a.id AND inc.status IN ('Open', 'Investigating')
+                    WHERE inc.application_id = a.id AND LOWER(inc.status) IN ('open', 'investigating')
                 ) as open_incidents,
                 (
-                    SELECT COUNT(*) FILTER (WHERE inc2.severity = 'critical')
+                    SELECT COUNT(*) FILTER (WHERE LOWER(inc2.severity) = 'critical')
                     FROM app_incidents inc2 
-                    WHERE inc2.application_id = a.id AND inc2.status IN ('Open', 'Investigating')
+                    WHERE inc2.application_id = a.id AND LOWER(inc2.status) IN ('open', 'investigating')
                 ) as critical_incidents,
                 (
-                    SELECT COUNT(*) FILTER (WHERE inc3.severity = 'high')
+                    SELECT COUNT(*) FILTER (WHERE LOWER(inc3.severity) = 'high')
                     FROM app_incidents inc3 
-                    WHERE inc3.application_id = a.id AND inc3.status IN ('Open', 'Investigating')
+                    WHERE inc3.application_id = a.id AND LOWER(inc3.status) IN ('open', 'investigating')
                 ) as high_incidents,
+                (
+                    SELECT COUNT(*) 
+                    FROM app_events ev_sec 
+                    WHERE ev_sec.application_id = a.id 
+                      AND LOWER(ev_sec.severity) IN ('critical', 'high', 'medium') 
+                      AND (ev_sec.status IS NULL OR LOWER(ev_sec.status) = 'open')
+                ) as open_security_events,
                 (
                     SELECT COALESCE(ROUND(COUNT(*)::numeric / 5.0, 0), 0)
                     FROM app_events ev
@@ -565,6 +572,10 @@ def get_applications(conn, project_id=None, status_filter=None):
             crit_inc = item.get("critical_incidents", 0)
             high_inc = item.get("high_incidents", 0)
             open_inc = int(item.get("open_incidents", 0))
+            open_sec_ev = int(item.get("open_security_events", 0) or 0)
+            item["open_security_events"] = open_sec_ev
+            effective_threat_count = max(open_inc, open_sec_ev)
+            item["open_threats_count"] = effective_threat_count
             last_ev = item.get("last_event_at")
             
             # Format last event time strictly from real events
@@ -600,11 +611,11 @@ def get_applications(conn, project_id=None, status_filter=None):
                 status_color = "r"
                 status_desc = f"{crit_inc} Open critical incident{'s' if crit_inc>1 else ''}"
                 telemetry_banner = f"CRITICAL {open_inc} Open Incident(s) | Threat Detected"
-            elif high_inc > 0:
+            elif high_inc > 0 or open_inc > 0 or open_sec_ev > 0:
                 dyn_status = "TROUBLE"
                 status_color = "a"
-                status_desc = f"{high_inc} Open high incident{'s' if high_inc>1 else ''}"
-                telemetry_banner = "TROUBLE Application anomaly detected"
+                status_desc = f"{effective_threat_count} Open Threat{'s' if effective_threat_count>1 else ''}"
+                telemetry_banner = f"TROUBLE Security Threat / Traversal Attack Detected"
             elif not last_ev:
                 # App has never sent an event: Awaiting first event in grey, UP state
                 dyn_status = "UP"

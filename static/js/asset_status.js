@@ -41,11 +41,12 @@ function getUnifiedAssetStatus(item) {
         }
     }
 
-    // 3. CRITICAL: at least 1 open Critical-severity alert/incident
+    // 3. CRITICAL: at least 1 open Critical-severity alert/incident or critical event
     if (item._type === 'app') {
         const a = item.raw || item;
         const critInc = Number(a.critical_incidents || 0);
-        if (critInc > 0 || (a.computed_status === 'CRITICAL' && Number(a.open_incidents || 0) > 0)) {
+        const critEv = Number(a.critical_events || 0);
+        if (critInc > 0 || critEv > 0 || (a.computed_status === 'CRITICAL' && (Number(a.open_incidents || 0) > 0 || Number(a.open_security_events || 0) > 0))) {
             return 'CRITICAL';
         }
     } else {
@@ -56,11 +57,12 @@ function getUnifiedAssetStatus(item) {
         }
     }
 
-    // 4. TROUBLE: no Critical, but High/Medium alerts, resource threshold breach (>85%), or stale telemetry
+    // 4. TROUBLE: no Critical, but High/Medium alerts, open security events, resource threshold breach (>85%), or stale telemetry
     if (item._type === 'app') {
         const a = item.raw || item;
         const openInc = Number(a.open_incidents || 0);
         const highInc = Number(a.high_incidents || 0);
+        const openSecEv = Number(a.open_security_events || 0);
         const repComp = a.reporting_components ?? 0;
         const totalComp = a.total_components ?? (a.components ? a.components.length : 0);
         
@@ -73,7 +75,7 @@ function getUnifiedAssetStatus(item) {
             }
         }
         
-        if (openInc > 0 || highInc > 0 || isStale || (totalComp > 0 && repComp < totalComp) || a.computed_status === 'TROUBLE') {
+        if (openInc > 0 || highInc > 0 || openSecEv > 0 || isStale || (totalComp > 0 && repComp < totalComp) || a.computed_status === 'TROUBLE') {
             return 'TROUBLE';
         }
     } else {
