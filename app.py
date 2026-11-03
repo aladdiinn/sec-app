@@ -9331,18 +9331,30 @@ def api_get_app_users(
 
                 item["recent_path"] = redact_sensitive_params(item.get("recent_path") or "")
 
+                # Intelligent Identity & Client Attribution
+                is_private_ip = cip.startswith("10.") or cip.startswith("192.168.") or cip.startswith("172.")
+                is_internal_node = cip in node_ips or cip.startswith("127.") or cip in ("10.0.0.27", "localhost")
+                is_meter_iot = any(k in raw_path for k in ["/bsmartapi", "/relay", "/meter", "/dcu", "/hes", "/dlms"])
+                is_api_endpoint = any(k in raw_path for k in ["/api/", "/rest/", "/v1/", "/v2/", "/graphql", "/services/"])
+
                 if uname and uname not in ("-", "Anonymous", "null", "None"):
                     item["client_category"] = "user"
                     item["display_role"] = f"👤 {uname}"
-                elif cip in node_ips or cip.startswith("127.") or cip in ("10.0.0.27", "localhost") or cip.startswith("10."):
+                elif is_internal_node:
                     item["client_category"] = "internal"
                     item["display_role"] = "⚙️ Internal Daemon / Node Service"
-                elif any(k in raw_path for k in ["/api", "/bsmartapi", "/ws", ".do"]) or item.get("total_requests", 0) > 50:
-                    item["client_category"] = "api"
+                elif is_meter_iot:
+                    item["client_category"] = "iot_dcu"
                     item["display_role"] = "🤖 Automated API Client (IoT / DCU)"
+                elif is_private_ip:
+                    item["client_category"] = "gateway"
+                    item["display_role"] = "⚙️ Internal Gateway / Reverse Proxy"
+                elif is_api_endpoint:
+                    item["client_category"] = "api"
+                    item["display_role"] = "⚡ Mobile / Web API Client"
                 else:
                     item["client_category"] = "guest"
-                    item["display_role"] = "🌐 Web Visitor (Unauthenticated)"
+                    item["display_role"] = "🌐 Web Visitor (Consumer Portal)"
 
                 # Deduplicate merged base64 vs plaintext identities
                 ident_key = item["identifier"]

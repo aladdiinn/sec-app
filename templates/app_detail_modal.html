@@ -1080,10 +1080,14 @@ async function loadAppUsers(appId) {
                             userBadge = `<b style="color:var(--cyan); font-family:var(--font-mono), monospace">👤 ${escapeHtml(u.user_name || u.identifier)}</b>`;
                         } else if (u.client_category === 'internal') {
                             userBadge = `<span style="color:#38BDF8; font-weight:600; font-size:11px">⚙️ Internal Daemon / Node Service</span>`;
-                        } else if (u.client_category === 'api') {
+                        } else if (u.client_category === 'gateway') {
+                            userBadge = `<span style="color:#60A5FA; font-weight:600; font-size:11px">⚙️ Internal Gateway / Proxy</span>`;
+                        } else if (u.client_category === 'iot_dcu') {
                             userBadge = `<span style="color:#FBBF24; font-weight:600; font-size:11px">🤖 Automated API Client (IoT / DCU)</span>`;
+                        } else if (u.client_category === 'api') {
+                            userBadge = `<span style="color:#A78BFA; font-weight:600; font-size:11px">⚡ Mobile / Web API Client</span>`;
                         } else {
-                            userBadge = `<span style="color:var(--text3); font-size:11px; font-style:italic">🌐 Web Visitor (Unauthenticated)</span>`;
+                            userBadge = `<span style="color:var(--text3); font-size:11px; font-style:italic">🌐 Web Visitor (Consumer Portal)</span>`;
                         }
 
                         const safeRecentPath = redactClientParams(u.recent_path || '');
