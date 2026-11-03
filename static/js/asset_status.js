@@ -10,22 +10,7 @@
 function getUnifiedAssetStatus(item) {
     if (!item) return 'UP';
 
-    // 1. MAINT: asset in maintenance window
-    if (item._type === 'app') {
-        const a = item.raw || item;
-        const settings = a.settings || {};
-        if (settings.maintenance_mode || a.status === 'MAINT' || a.computed_status === 'MAINT') {
-            return 'MAINT';
-        }
-    } else {
-        const s = item.raw || item;
-        const st = (s.status || 'online').toLowerCase();
-        if (s.is_maintenance || st === 'maintenance' || st === 'isolated') {
-            return 'MAINT';
-        }
-    }
-
-    // 2. DOWN: agent/heartbeat lost or probe failing
+    // 1. DOWN: agent/heartbeat lost or probe failing
     if (item._type === 'app') {
         const a = item.raw || item;
         const totalComp = a.total_components ?? (a.components ? a.components.length : 0);
@@ -77,6 +62,21 @@ function getUnifiedAssetStatus(item) {
         
         if (openInc > 0 || highInc > 0 || openSecEv > 0 || isStale || (totalComp > 0 && repComp < totalComp) || a.computed_status === 'TROUBLE') {
             return 'TROUBLE';
+        }
+    }
+
+    // 4b. MAINT: scheduled maintenance window (only if no active critical/trouble threat)
+    if (item._type === 'app') {
+        const a = item.raw || item;
+        const settings = a.settings || {};
+        if (settings.maintenance_mode || a.status === 'MAINT' || a.computed_status === 'MAINT') {
+            return 'MAINT';
+        }
+    } else {
+        const s = item.raw || item;
+        const st = (s.status || 'online').toLowerCase();
+        if (s.is_maintenance || st === 'maintenance' || st === 'isolated') {
+            return 'MAINT';
         }
     } else {
         const s = item.raw || item;

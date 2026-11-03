@@ -396,6 +396,20 @@ def init_app_siem_schema(conn):
             except Exception:
                 pass
 
+            # Reset unintended maintenance mode on applications so they alert and appear properly
+        try:
+            cur.execute("""
+                UPDATE applications 
+                SET status = 'ACTIVE', 
+                    settings = CASE 
+                        WHEN settings ? 'maintenance_mode' THEN settings - 'maintenance_mode' 
+                        ELSE settings 
+                    END
+                WHERE status = 'MAINT' OR (settings ? 'maintenance_mode' AND (settings->>'maintenance_mode')::boolean = TRUE);
+            """)
+        except Exception:
+            pass
+
     logger.info("Application SIEM database schema initialized successfully.")
     return True
 
@@ -601,12 +615,7 @@ def get_applications(conn, project_id=None, status_filter=None):
             settings = item.get("settings") or {}
             is_maint = settings.get("maintenance_mode", False) or item.get("status") == "MAINT"
 
-            if is_maint:
-                dyn_status = "MAINT"
-                status_color = "b"
-                status_desc = "Maintenance mode active"
-                telemetry_banner = "MAINTENANCE Scheduled Maintenance Window"
-            elif crit_inc > 0:
+            if crit_inc > 0:
                 dyn_status = "CRITICAL"
                 status_color = "r"
                 status_desc = f"{crit_inc} Open critical incident{'s' if crit_inc>1 else ''}"
@@ -616,6 +625,11 @@ def get_applications(conn, project_id=None, status_filter=None):
                 status_color = "a"
                 status_desc = f"{effective_threat_count} Open Threat{'s' if effective_threat_count>1 else ''}"
                 telemetry_banner = f"TROUBLE Security Threat / Traversal Attack Detected"
+            elif is_maint:
+                dyn_status = "MAINT"
+                status_color = "b"
+                status_desc = "Maintenance mode active"
+                telemetry_banner = "MAINTENANCE Scheduled Maintenance Window"
             elif not last_ev:
                 # App has never sent an event: Awaiting first event in grey, UP state
                 dyn_status = "UP"
