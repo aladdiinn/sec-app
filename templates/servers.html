@@ -659,23 +659,17 @@ function formatLocal(dateStr) {
                 const disk = s.disk_percent || 0;
                 const alertCount = s.alert_count || 0;
                 
-                const hasAppComp = Boolean(s.app_components && s.app_components.length > 0);
                 const isDb = hostname.toLowerCase().includes('db') || (s.os_info||'').toLowerCase().includes('postgres') || (s.os_info||'').toLowerCase().includes('mysql');
-                const isApp = hasAppComp || hostname.toLowerCase().includes('app') || hostname.toLowerCase().includes('web') || (s.os_info||'').toLowerCase().includes('tomcat');
+                const isWin = (s.os_info||'').toLowerCase().includes('windows');
                 
                 let rawBadge = '<span class="service-type-badge st-server">LINUX SERVER</span>';
                 let nodeIcon = renderAssetChassisIcon('#0284c7');
-                if (hasAppComp) {
-                    const firstApp = s.app_components[0];
-                    const appRole = (firstApp.role || 'WEB').toUpperCase();
-                    rawBadge = `<span class="service-type-badge st-app" title="${escapeHtml(firstApp.app_name || 'App')}">${escapeHtml(appRole)} APP NODE</span>`;
-                    nodeIcon = renderAppNodeAwsIcon('#00E5FF');
-                } else if (isDb) {
+                if (isDb) {
                     rawBadge = '<span class="service-type-badge st-database">DATABASE</span>';
                     nodeIcon = renderDatabaseIcon('#a855f7');
-                } else if (isApp) {
-                    rawBadge = '<span class="service-type-badge st-app">WEB APP NODE</span>';
-                    nodeIcon = renderAppNodeAwsIcon('#00E5FF');
+                } else if (isWin) {
+                    rawBadge = '<span class="service-type-badge st-server">WINDOWS SERVER</span>';
+                    nodeIcon = renderAssetChassisIcon('#0284c7');
                 }
                 const typeBadge = `<div style="text-align:right">${rawBadge}<div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${s.agent_version || '1.5'}</div></div>`;
                 
@@ -1008,16 +1002,10 @@ function formatLocal(dateStr) {
                 b.innerText = status.toUpperCase();
                 b.style.background = status === 'online' ? 'var(--green)' : status === 'maintenance' ? 'var(--amber)' : 'var(--red)';
             }
-            const mHasApp = Boolean(srv.app_components && srv.app_components.length > 0);
-            const mIsDb = name.toLowerCase().includes('db') || (srv.os_info||'').toLowerCase().includes('postgres');
-            const mIsApp = mHasApp || name.toLowerCase().includes('app') || name.toLowerCase().includes('web') || (srv.os_info||'').toLowerCase().includes('tomcat');
+            const mIsDb = name.toLowerCase().includes('db') || (srv.os_info||'').toLowerCase().includes('postgres') || (srv.os_info||'').toLowerCase().includes('mysql');
             const mIconBox = document.getElementById('i3-srv-icon');
             if (mIconBox) {
-                if (mHasApp || mIsApp) {
-                    mIconBox.innerHTML = renderAppNodeAwsIcon('#00E5FF');
-                    mIconBox.style.background = 'rgba(0, 229, 255, 0.15)';
-                    mIconBox.style.borderColor = 'rgba(0, 229, 255, 0.3)';
-                } else if (mIsDb) {
+                if (mIsDb) {
                     mIconBox.innerHTML = renderDatabaseIcon('#a855f7');
                     mIconBox.style.background = 'rgba(168, 85, 247, 0.15)';
                     mIconBox.style.borderColor = 'rgba(168, 85, 247, 0.3)';
