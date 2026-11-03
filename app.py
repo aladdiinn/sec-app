@@ -8006,7 +8006,29 @@ def is_path_suppressed(app_id: int, path: str) -> bool:
             return True
     return False
 
-def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str):
+# In-memory sliding tracker for mass parameter enumeration (IDOR / Scraping detection)
+_scraping_tracker = {}
+_scraping_lock = threading.Lock()
+
+def check_mass_scraping_detection(ip: str, user: str, path: str) -> bool:
+    """Detects rapid sequential ID / record enumeration (e.g. ?acc_no=1001, 1002, 1003...) across a 30s window."""
+    now = time.time()
+    m = re.search(r'(?:acc_no|consumer_id|consumer|id|account|meter|record|emp_id|user_id|mrd)=([0-9a-zA-Z_-]+)', path, re.I)
+    if not m:
+        return False
+    val = m.group(1)
+    key = (ip, user or '-')
+    with _scraping_lock:
+        history = _scraping_tracker.setdefault(key, [])
+        history = [(t, v) for (t, v) in history if now - t < 30]
+        history.append((now, val))
+        _scraping_tracker[key] = history
+        distinct_vals = set(v for (t, v) in history)
+        if len(distinct_vals) >= 5:
+            return True
+    return False
+
+def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str, raw_line: str = ""):
     """Real-time heuristics detecting web attacks from parsed access logs with full URL-decode support."""
     p_unquoted = urllib.parse.unquote(path).lower()
     p_lower = path.lower() + " " + p_unquoted
@@ -8044,6 +8066,15 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
             pass
         else:
             return "SSTI_PROBE", "medium", "Expression Language / Template Injection Probe", "T1190 - Exploit Public-Facing Application"
+
+    # 8. Automated Script User-Agent or Bot Access (e.g. Python requests, urllib, Scrapy, Aiohttp)
+    full_line = (raw_line or "").lower()
+    if re.search(r'(python-requests|python-urllib|aiohttp|scrapy|httpclient|libwww-perl)', full_line) or re.search(r'(python-requests|python-urllib)', p_lower):
+        return "API_SCRAPING", "high", "Automated Python / Bot Script Access", "T1114 - Email/Data Collection"
+
+    # 9. Mass Parameter Enumeration / IDOR Data Scraping (e.g. rapid sequential consumer IDs)
+    if check_mass_scraping_detection(ip, user, path):
+        return "DATA_HARVESTING", "high", "Mass Record Enumeration / IDOR Scraping Attempt", "T1005 - Data from Local System"
 
     return "HTTP_ACCESS", "info", None, None
 
@@ -8327,7 +8358,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     sanitized_path = redact_sensitive_params(raw_path)
 
                     event_type, severity, rule_title, mitre_tag = evaluate_web_security_event(
-                        method, raw_path, status_code, user, client_ip
+                        method, raw_path, status_code, user, client_ip, raw_line=raw_line
                     )
 
                     # SIEM Optimization: Only store meaningful security telemetry
