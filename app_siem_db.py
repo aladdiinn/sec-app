@@ -563,6 +563,13 @@ def get_applications(conn, project_id=None, status_filter=None):
                       AND (ev_sec.status IS NULL OR LOWER(ev_sec.status) = 'open')
                 ) as open_security_events,
                 (
+                    SELECT COUNT(*) 
+                    FROM app_events ev_crit
+                    WHERE ev_crit.application_id = a.id 
+                      AND LOWER(ev_crit.severity) = 'critical' 
+                      AND (ev_crit.status IS NULL OR LOWER(ev_crit.status) = 'open')
+                ) as critical_security_events,
+                (
                     SELECT COALESCE(ROUND(COUNT(*)::numeric / 5.0, 0), 0)
                     FROM app_events ev
                     WHERE ev.application_id = a.id AND ev.event_time >= NOW() - INTERVAL '5 minutes'
@@ -615,11 +622,12 @@ def get_applications(conn, project_id=None, status_filter=None):
             settings = item.get("settings") or {}
             is_maint = settings.get("maintenance_mode", False) or item.get("status") == "MAINT"
 
-            if crit_inc > 0:
+            crit_sec = int(item.get("critical_security_events", 0) or 0)
+            if crit_inc > 0 or crit_sec > 0:
                 dyn_status = "CRITICAL"
                 status_color = "r"
-                status_desc = f"{crit_inc} Open critical incident{'s' if crit_inc>1 else ''}"
-                telemetry_banner = f"CRITICAL {open_inc} Open Incident(s) | Threat Detected"
+                status_desc = f"{max(crit_inc, crit_sec)} Open critical incident{'s' if max(crit_inc, crit_sec)>1 else ''}"
+                telemetry_banner = f"CRITICAL {max(crit_inc, crit_sec)} Threat(s) | Breach / Exploit Confirmed"
             elif high_inc > 0 or open_inc > 0 or open_sec_ev > 0:
                 dyn_status = "TROUBLE"
                 status_color = "a"

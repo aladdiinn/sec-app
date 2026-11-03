@@ -8060,31 +8060,44 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
 
     # 4. Path Traversal / LFI
     if "../" in p_lower or "..%2f" in p_lower or "/etc/passwd" in p_lower or "win.ini" in p_lower:
-        return "PATH_TRAVERSAL", "high", "Directory / Path Traversal Attack", "T1083 - File and Directory Discovery"
+        if status in (200, 206):
+            return "PATH_TRAVERSAL_BREACH", "critical", "Path Traversal Confirmed File Leak (HTTP 200)", "T1083 - File and Directory Discovery"
+        return "PATH_TRAVERSAL", "high", "Directory / Path Traversal Attack Attempt", "T1083 - File and Directory Discovery"
 
-    # 5. Admin Path Abuse / Privilege Violation
+    # 5. Web Shell / Command Injection
+    if re.search(r'(cmd\.jsp|shell\.jsp|root\.jsp|chopper\.jsp|eval\(|/bin/sh|/bin/bash|;\s*whoami|;\s*id\b|\|\s*whoami)', p_lower):
+        if status in (200, 201, 204):
+            return "RCE_WEBSHELL_EXEC", "critical", "Web Shell / Command Execution Succeeded (HTTP 200)", "T1505.003 - Web Shell"
+        else:
+            return "RCE_WEBSHELL_PROBE", "critical", "Web Shell / Command Execution Probe", "T1505.003 - Web Shell"
+
+    # 6. Admin Path Abuse / Privilege Violation
     if "/admin" in p_lower:
-        if status in (401, 403) or (user and user != "-" and user.lower() != "admin"):
-            return "ADMIN_ACCESS_ABUSE", "high", "Restricted Admin Function Access Abuse", "T1078 - Valid Accounts"
+        if status in (200, 201, 204) and (not user or user == "-" or user.lower() != "admin"):
+            return "UNAUTHORIZED_ADMIN_ACCESS", "critical", "Unauthorized Admin Access Confirmed (HTTP 200)", "T1078 - Valid Accounts"
+        elif status in (401, 403) or (user and user != "-" and user.lower() != "admin"):
+            return "ADMIN_ACCESS_ABUSE", "high", "Restricted Admin Function Access Abuse Attempt", "T1078 - Valid Accounts"
 
-    # 6. Authentication Failure / Brute Force
+    # 7. Authentication Failure / Brute Force
     if any(k in p_lower for k in ("login", "auth", "signin")) and status in (401, 403):
         return "LOGIN_FAILURE", "medium", "Failed User Authentication (HTTP 401)", "T1110 - Brute Force"
 
-    # 7. Expression Language / SSTI Injection Probes (e.g. ${class, ${loader, #{...})
+    # 8. Expression Language / SSTI Injection Probes (e.g. ${class, ${loader, #{...})
     if re.search(r'(\$\{|\%24\%7b|\#\{|\%23\%7b)(pagecontext|class|loader|application|session|param|request)', p_lower):
         if "pagecontext.request.contextpath" in p_lower:
             # Benign client-side unparsed JSP tag bug, not an attacker probe
             pass
         else:
+            if status in (200, 201):
+                return "SSTI_EXPLOIT", "critical", "Expression Language / SSTI Exploit Confirmed (HTTP 200)", "T1190 - Exploit Public-Facing Application"
             return "SSTI_PROBE", "medium", "Expression Language / Template Injection Probe", "T1190 - Exploit Public-Facing Application"
 
-    # 8. Automated Script User-Agent or Bot Access (e.g. Python requests, urllib, Scrapy, Aiohttp)
+    # 9. Automated Script User-Agent or Bot Access (e.g. Python requests, urllib, Scrapy, Aiohttp)
     full_line = (raw_line or "").lower()
     if re.search(r'(python-requests|python-urllib|aiohttp|scrapy|httpclient|libwww-perl)', full_line) or re.search(r'(python-requests|python-urllib)', p_lower):
         return "API_SCRAPING", "high", "Automated Python / Bot Script Access", "T1114 - Email/Data Collection"
 
-    # 9. Mass Parameter Enumeration / IDOR Data Scraping (e.g. rapid sequential consumer IDs)
+    # 10. Mass Parameter Enumeration / IDOR Data Scraping (e.g. rapid sequential consumer IDs)
     if check_mass_scraping_detection(ip, user, path, method=method):
         if status in (200, 201, 204):
             return "DATA_EXFILTRATION", "critical", "Active Mass Data Exfiltration Confirmed (HTTP 200)", "T1005 - Data from Local System"
