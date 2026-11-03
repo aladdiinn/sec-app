@@ -8249,7 +8249,7 @@ def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "
         return False
 
     now = time.time()
-    m = re.search(r'(?:\?|&)(?:acc_no|consumer_id|meter_no|record_id|emp_id|user_id|account_no|consumer)=([0-9a-zA-Z_-]+)', path, re.I)
+    m = re.search(r'(?:\?|&)(?:acc_?no|account_?no|account_?num(?:ber)?|k_?no|k_?num(?:ber)?|consumer_?(?:id|no)?|meter_?(?:no|id)?|record_?id|emp_?(?:id|no)?|user_?(?:id|name)?|ca_?no)=([0-9a-zA-Z_-]+)', path, re.I)
     if not m:
         return False
     val = m.group(1)
