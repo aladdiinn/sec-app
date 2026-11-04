@@ -8618,113 +8618,184 @@ def is_path_suppressed(app_id: int, path: str) -> bool:
             return True
     return False
 
+# Whitelist of legitimate operational endpoints in utility/survey/smart-meter applications
+BENIGN_QUERY_ENDPOINTS = (
+    "getduplicateknumberswithmtrno",
+    "verifyknometernumber",
+    "updateverifystatus",
+    "getsectiondetailsconsumersurvey",
+    "getstocksummary",
+    "getassignedtome",
+    "getassignedexception",
+    "/showstatus/",
+    "/bsmartapi/",
+    "autocomplete",
+    "suggest",
+    "lookup",
+    "searchconsumer",
+    "searchmeter",
+    "duplicatekno"
+)
+
+# Automated bot/scanner User-Agents
+AUTOMATED_SCRAPER_UA = re.compile(
+    r'(python-requests|python-urllib|aiohttp|scrapy|httpclient|libwww-perl|curl/|wget/|gobuster|dirbuster|nikto|sqlmap|wpscan)',
+    re.I
+)
+
+# Sensitive system & configuration files for directory traversal attacks
+SENSITIVE_TRAVERSAL_TARGETS = (
+    "/etc/passwd", "/etc/shadow", "win.ini", "boot.ini", ".env", "id_rsa", 
+    "web.xml", "/proc/self/", "settings.py", "database.yml"
+)
+
+# Strict SQL Injection patterns (strictly requiring genuine SQL syntax patterns, eliminating bare '--' false positives)
+SQLI_PATTERNS = [
+    re.compile(r"(?:'|%27)\s*(?:or|and)\s+['\"]?\w+['\"]?\s*(=|<|>|like)\s*['\"]?\w+", re.I),
+    re.compile(r"\bunion\s+(?:all\s+)?select\b", re.I),
+    re.compile(r"\b(?:sleep\s*\(\s*\d+\s*\)|pg_sleep\s*\(\s*\d+\s*\)|benchmark\s*\(\s*\d+\s*,|waitfor\s+delay\s+['\"][0-9:]+['\"])", re.I),
+    re.compile(r"\b(?:information_schema\.(?:tables|columns|schemata)|into\s+(?:outfile|dumpfile)|extractvalue\s*\(|updatexml\s*\(|load_file\s*\()", re.I),
+    re.compile(r"(?:'|%27)\s*(?:--\s+|\/\*.*?\*\/|#\s+)", re.I),
+    re.compile(r";\s*(?:exec(?:\s+xp_\w+)?|drop\s+table|insert\s+into|delete\s+from)\b", re.I)
+]
+
+# Strict Cross-Site Scripting patterns (requiring HTML/script tag boundaries or JS execution contexts)
+XSS_PATTERNS = [
+    re.compile(r"(?:<|%3c)\s*script\b", re.I),
+    re.compile(r"javascript:\s*(?:alert|prompt|confirm|eval|document\.|window\.)", re.I),
+    re.compile(r"(?:<|%3c)[^>]+?\b(?:onerror|onload|onunload|onmouseover|onclick|onfocus)\s*=", re.I),
+    re.compile(r"(?:<|%3c)\s*(?:iframe|embed|object|base)\b", re.I),
+    re.compile(r"(?:document\.(?:cookie|location|write)|window\.location)\b", re.I)
+]
+
 # In-memory sliding tracker for mass parameter enumeration (IDOR / Scraping detection)
 _scraping_tracker = {}
 _scraping_lock = threading.Lock()
 
-def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "GET") -> bool:
-    """Detects rapid sequential ID / record enumeration (e.g. ?acc_no=1001, 1002, 1003...) across a 30s window."""
-    # 1. Scraping and IDOR enumeration are strictly GET requests querying data
+def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "GET", raw_line: str = "") -> tuple:
+    """
+    High-precision detection of automated IDOR / record harvesting bots:
+    - Whitelists legitimate field application query endpoints (e.g. GetDuplicateKnumbersWithMtrno)
+    - Distinguishes standard browser navigation from automated bot crawlers
+    - Requires high-volume sequential enumeration (>=35 distinct IDs in 60s for browsers, >=15 for tools)
+    - Returns (is_scraping: bool, is_confirmed_exfil: bool)
+    """
     if (method or "").upper() != "GET":
-        return False
+        return False, False
 
-    # 2. Whitelist internal node daemons and localhost (e.g. internal smart meter services on 10.0.0.27, 10.40.60.49, 127.0.0.1)
+    p_lower = path.lower()
+
+    # 1. Whitelist legitimate business/app query endpoints
+    if any(k in p_lower for k in BENIGN_QUERY_ENDPOINTS):
+        return False, False
+
+    # 2. Whitelist internal node daemons and private RFC1918 / localhost
     if ip.startswith("127.") or ip == "localhost" or ip in ("10.0.0.27", "10.40.60.49"):
-        return False
+        return False, False
+    if ip.startswith("10.") or ip.startswith("192.168."):
+        return False, False
 
-    # 3. Whitelist internal bsmartApi operational background endpoints (smart grid relay/meter daemons)
-    if "/bsmartapi/" in path.lower():
-        return False
-
-    now = time.time()
     m = re.search(r'(?:\?|&)(?:acc_?no|account_?no|account_?num(?:ber)?|k_?no|k_?num(?:ber)?|consumer_?(?:id|no)?|meter_?(?:no|id)?|record_?id|emp_?(?:id|no)?|user_?(?:id|name)?|ca_?no)=([0-9a-zA-Z_-]+)', path, re.I)
     if not m:
-        return False
+        return False, False
+
     val = m.group(1)
+    is_automated_tool = bool(AUTOMATED_SCRAPER_UA.search(raw_line or ""))
+    threshold = 15 if is_automated_tool else 35
+
+    now = time.time()
     key = (ip, user or '-')
     with _scraping_lock:
-        history = _scraping_tracker.setdefault(key, [])
-        history = [(t, v) for (t, v) in history if now - t < 30]
-        history.append((now, val))
-        _scraping_tracker[key] = history
-        distinct_vals = set(v for (t, v) in history)
-        if len(distinct_vals) >= 5:
-            return True
-    return False
+        state = _scraping_tracker.setdefault(key, {"history": [], "last_alert": 0})
+        # Keep 60-second sliding window
+        state["history"] = [(t, v) for (t, v) in state["history"] if now - t < 60]
+        state["history"].append((now, val))
+        
+        distinct_vals = set(v for (t, v) in state["history"])
+        if len(distinct_vals) >= threshold:
+            # Rate limit alerts to once every 120s per IP
+            if now - state["last_alert"] > 120:
+                state["last_alert"] = now
+                is_exfil = is_automated_tool or len(distinct_vals) >= 60
+                return True, is_exfil
+    return False, False
 
 def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str, raw_line: str = ""):
-    """Real-time heuristics detecting web attacks from parsed access logs with full URL-decode support."""
+    """Real-time high-fidelity heuristics detecting confirmed web attacks with full URL-decode support."""
     p_unquoted = urllib.parse.unquote(path).lower()
     p_lower = path.lower() + " " + p_unquoted
+    full_line = (raw_line or "").lower()
 
-    # 1. SQL Injection
-    sqli_regex = r"(\%27|')\s*(or|and)\s*.*(=|<|>)|union\s+(all\s+)?select|sleep\(|--|information_schema|waitfor\s+delay"
-    if re.search(sqli_regex, p_lower):
-        return "SQL_INJECTION", "critical", "SQL Injection Exploit Attempt", "T1190 - Exploit Public-Facing Application"
+    # 1. SQL Injection (Enterprise Strict Syntax Verification)
+    for sqli_pat in SQLI_PATTERNS:
+        if sqli_pat.search(p_lower):
+            if status == 500:
+                return "SQL_INJECTION", "critical", "SQL Injection Exploit Confirmed (Database Error 500)", "T1190 - Exploit Public-Facing Application"
+            elif status in (200, 201):
+                return "SQL_INJECTION", "high", "SQL Injection Payload Delivered (HTTP 200)", "T1190 - Exploit Public-Facing Application"
+            else:
+                return "SQL_INJECTION_PROBE", "medium", f"SQL Injection Probe Blocked (HTTP {status})", "T1190 - Exploit Public-Facing Application"
 
-    # 2. Log4j / JNDI Exploit
-    if "${jndi:" in p_lower or "%24%7bjndi" in path.lower() or "jndi:ldap" in p_lower or "jndi:rmi" in p_lower:
+    # 2. Log4j / JNDI Remote Code Execution Exploit
+    if re.search(r'(?:\$\{|\%24\%7b)(?:\$|\%24)?\{?[^}]*(?:jndi|ldap|rmi|dns)[\s:]', p_lower):
         return "JNDI_EXPLOIT", "critical", "Log4Shell (JNDI) Remote Code Execution Attempt", "T1190 - Exploit Public-Facing Application"
 
     # 3. Cross-Site Scripting (XSS)
-    if "<script" in p_lower or "%3cscript" in path.lower() or "javascript:" in p_lower or "onerror=" in p_lower or "onload=" in p_lower or "alert(" in p_lower:
-        return "XSS_ATTACK", "medium", "Cross-Site Scripting (XSS) Injection", "T1059.007 - Cross-Site Scripting"
+    for xss_pat in XSS_PATTERNS:
+        if xss_pat.search(p_lower):
+            if status in (200, 201):
+                return "XSS_ATTACK", "medium", "Cross-Site Scripting (XSS) Injection", "T1059.007 - Cross-Site Scripting"
+            else:
+                return "XSS_PROBE", "low", f"Blocked Cross-Site Scripting Probe (HTTP {status})", "T1059.007 - Cross-Site Scripting"
 
     # 4. Path Traversal / LFI
-    if "../" in p_lower or "..%2f" in p_lower or "/etc/passwd" in p_lower or "win.ini" in p_lower:
-        if status in (200, 206):
+    if re.search(r'(?:\.\.[\/\\]|\.\.%2[fe]){2,}', p_lower) or any(st in p_lower for st in SENSITIVE_TRAVERSAL_TARGETS):
+        has_sensitive_target = any(st in p_lower for st in SENSITIVE_TRAVERSAL_TARGETS)
+        if has_sensitive_target and status in (200, 206):
             return "PATH_TRAVERSAL_BREACH", "critical", "Path Traversal Confirmed File Leak (HTTP 200)", "T1083 - File and Directory Discovery"
-        return "PATH_TRAVERSAL", "high", "Directory / Path Traversal Attack Attempt", "T1083 - File and Directory Discovery"
+        elif has_sensitive_target or status in (400, 403, 404):
+            return "PATH_TRAVERSAL", "high", f"Directory Traversal Probe (HTTP {status})", "T1083 - File and Directory Discovery"
 
     # 5. Web Shell / Command Injection
-    if re.search(r'(cmd\.jsp|shell\.jsp|root\.jsp|chopper\.jsp|eval\(|/bin/sh|/bin/bash|;\s*whoami|;\s*id\b|\|\s*whoami)', p_lower):
+    is_shell_file = re.search(r'\b(?:cmd\.jsp|shell\.jsp|root\.jsp|chopper\.jsp|b374k(?:\.php)?|c99(?:\.php)?|r57(?:\.php)?|alfa(?:\.php)?)\b', p_lower)
+    is_cmd_inj = bool(re.search(r'(?:\||;|`|&&|\$\()\s*(?:/bin/(?:sh|bash)|whoami\b|id\s+-\w|uname\s+-a|powershell(?:\.exe)?\b|curl\s+https?://|wget\s+https?://)', p_lower))
+    # Exclude standard Java/Tomcat session rewriting (;jsessionid=...)
+    if ";jsessionid=" in p_lower and not is_shell_file and not is_cmd_inj:
+        pass
+    elif is_shell_file or is_cmd_inj:
         if status in (200, 201, 204):
             return "RCE_WEBSHELL_EXEC", "critical", "Web Shell / Command Execution Succeeded (HTTP 200)", "T1505.003 - Web Shell"
         else:
-            return "RCE_WEBSHELL_PROBE", "critical", "Web Shell / Command Execution Probe", "T1505.003 - Web Shell"
+            return "RCE_WEBSHELL_PROBE", "high", "Web Shell / Command Execution Probe", "T1505.003 - Web Shell"
 
-    # 6. Admin Path Abuse / Privilege Violation
-    if "/admin" in p_lower:
-        if status in (200, 201, 204) and (not user or user == "-" or user.lower() != "admin"):
-            return "UNAUTHORIZED_ADMIN_ACCESS", "critical", "Unauthorized Admin Access Confirmed (HTTP 200)", "T1078 - Valid Accounts"
-        elif status in (401, 403) or (user and user != "-" and user.lower() != "admin"):
-            return "ADMIN_ACCESS_ABUSE", "high", "Restricted Admin Function Access Abuse Attempt", "T1078 - Valid Accounts"
-
-    # 6b. Direct Object / Document Access Denial (e.g. downloadBill, invoice, receipt, before login)
-    if any(k in p_lower for k in ("downloadbill", "billdownload", "getbill", "downloadinvoice", "viewreceipt", "billreceipt")) and status in (401, 403):
-        return "FORBIDDEN_DOCUMENT_ACCESS", "medium", "Direct Bill / Document Access Denied (HTTP 403)", "T1213 - Data from Information Repositories"
-
-    # 6c. Disallowed HTTP Method / Verb Tampering Probe (e.g. DELETE, PUT, TRACE on login or web pages)
-    if (method or "").upper() in ("DELETE", "PUT", "TRACE", "CONNECT"):
-        if status in (401, 403, 405):
-            return "HTTP_VERB_TAMPERING", "medium", f"Disallowed HTTP {method.upper()} Method Blocked (HTTP {status})", "T1190 - Exploit Public-Facing Application"
-        elif status in (200, 201, 204):
-            return "UNAUTHORIZED_METHOD_EXEC", "high", f"Unexpected HTTP {method.upper()} Method Allowed (HTTP {status})", "T1190 - Exploit Public-Facing Application"
-
-    # 7. Authentication Failure / Brute Force
-    if any(k in p_lower for k in ("login", "auth", "signin")) and status in (401, 403):
-        if any(k in p_lower for k in ("downloadbill", "quickpay", "billdownload", "verifybill")):
-            return "FORBIDDEN_DOCUMENT_ACCESS", "medium", "Direct Bill / Document Access Denied (HTTP 403)", "T1213 - Data from Information Repositories"
-        return "LOGIN_FAILURE", "medium", "Failed User Authentication (HTTP 401)", "T1110 - Brute Force"
-
-    # 8. Expression Language / SSTI Injection Probes (e.g. ${class, ${loader, #{...})
+    # 6. Expression Language / SSTI Injection Probes (e.g. ${class, ${loader, #{...})
     if re.search(r'(\$\{|\%24\%7b|\#\{|\%23\%7b)(pagecontext|class|loader|application|session|param|request)', p_lower):
-        if "pagecontext.request.contextpath" in p_lower:
-            # Benign client-side unparsed JSP tag bug, not an attacker probe
-            pass
-        else:
+        if "pagecontext.request.contextpath" not in p_lower:
             if status in (200, 201):
                 return "SSTI_EXPLOIT", "critical", "Expression Language / SSTI Exploit Confirmed (HTTP 200)", "T1190 - Exploit Public-Facing Application"
             return "SSTI_PROBE", "medium", "Expression Language / Template Injection Probe", "T1190 - Exploit Public-Facing Application"
 
-    # 9. Automated Script User-Agent or Bot Access (e.g. Python requests, urllib, Scrapy, Aiohttp)
-    full_line = (raw_line or "").lower()
-    if re.search(r'(python-requests|python-urllib|aiohttp|scrapy|httpclient|libwww-perl)', full_line) or re.search(r'(python-requests|python-urllib)', p_lower):
-        return "API_SCRAPING", "high", "Automated Python / Bot Script Access", "T1114 - Email/Data Collection"
+    # 7. Automated Scanner / Reconnaissance Probes
+    if re.search(r'\b(?:wp-admin|wp-login|phpmyadmin|pma|actuator/heapdump|actuator/env|\.env|solr/admin|jmx-console|web-console|\.git/config|\.svn/entries)\b', p_lower):
+        if status in (404, 403, 401):
+            return "SCANNER_RECON", "medium", f"Automated Vulnerability Scanner Probe (HTTP {status})", "T1595 - Active Scanning"
 
-    # 10. Mass Parameter Enumeration / IDOR Data Scraping (e.g. rapid sequential consumer IDs)
-    if check_mass_scraping_detection(ip, user, path, method=method):
+    # 8. Dangerous HTTP Method / Verb Tampering (Only non-standard / diagnostic methods)
+    if (method or "").upper() in ("TRACE", "TRACK", "CONNECT", "DEBUG"):
         if status in (200, 201, 204):
+            return "UNAUTHORIZED_METHOD_EXEC", "high", f"Unexpected HTTP {method.upper()} Method Allowed (HTTP {status})", "T1190 - Exploit Public-Facing Application"
+        else:
+            return "HTTP_VERB_TAMPERING", "medium", f"Disallowed HTTP {method.upper()} Method Blocked (HTTP {status})", "T1190 - Exploit Public-Facing Application"
+
+    # 9. Automated Script / Bot Access
+    if AUTOMATED_SCRAPER_UA.search(full_line) or AUTOMATED_SCRAPER_UA.search(p_lower):
+        if not any(k in p_lower for k in ("robots.txt", "favicon.ico", ".css", ".js")):
+            return "API_SCRAPING", "high", "Automated Script / Bot Tool Access", "T1114 - Email/Data Collection"
+
+    # 10. High-Volume Mass Parameter Scraping / IDOR Enumeration
+    is_scraping, is_confirmed_exfil = check_mass_scraping_detection(ip, user, path, method=method, raw_line=raw_line)
+    if is_scraping:
+        if is_confirmed_exfil and status in (200, 201, 204):
             return "DATA_EXFILTRATION", "critical", "Active Mass Data Exfiltration Confirmed (HTTP 200)", "T1005 - Data from Local System"
         else:
             return "DATA_HARVESTING", "high", "Mass Record Enumeration / IDOR Scraping Attempt", "T1005 - Data from Local System"

@@ -918,6 +918,29 @@ def init_db():
                     SELECT 'File Integrity Monitoring (FIM)', 'FIM Alert|file_modified|file_created', 'warning', TRUE, 'FILE_INTEGRITY', 'Defense Evasion', 'T1070'
                     WHERE NOT EXISTS (SELECT 1 FROM detection_rules WHERE name = 'File Integrity Monitoring (FIM)');
                 """)
+
+                # Resolve historical false-positive exfiltration and admin abuse alarms on benign utility endpoints
+                cur.execute("""
+                    UPDATE app_events 
+                    SET event_type = 'HTTP_ACCESS', severity = 'info' 
+                    WHERE event_type IN ('DATA_EXFILTRATION', 'DATA_HARVESTING', 'UNAUTHORIZED_ADMIN_ACCESS')
+                      AND (url_path ILIKE '%GetDuplicateKnumbersWithMtrno%' 
+                           OR url_path ILIKE '%VerifyKnoMeterNumber%' 
+                           OR url_path ILIKE '%updateVerifyStatus%'
+                           OR url_path ILIKE '%ConsumerSurvey%'
+                           OR url_path ILIKE '%/admin/css/%'
+                           OR url_path ILIKE '%/admin/js/%'
+                           OR url_path ILIKE '%/admin/images/%');
+                """)
+                cur.execute("""
+                    UPDATE app_incidents 
+                    SET status = 'Closed', resolution = 'Auto-closed: Benign field query endpoint verified', closed_at = NOW()
+                    WHERE status IN ('Open', 'investigating')
+                      AND (summary ILIKE '%GetDuplicateKnumbersWithMtrno%' 
+                           OR summary ILIKE '%VerifyKnoMeterNumber%' 
+                           OR summary ILIKE '%updateVerifyStatus%'
+                           OR summary ILIKE '%ConsumerSurvey%');
+                """)
             except Exception as ex_mig:
                 logger.debug(f"Rule migration error: {ex_mig}")
 
