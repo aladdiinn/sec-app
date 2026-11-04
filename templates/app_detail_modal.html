@@ -1105,7 +1105,8 @@ async function loadAppUsers(appId) {
                                 <input type="checkbox" class="users-row-cb" data-id="${rowKey}" ${isSelected ? 'checked' : ''} onchange="toggleRowSelect('users', '${escapeHtml(rowKey)}', this.checked)">
                             </td>
                             <td style="padding:8px 12px; font-family:var(--font-mono), monospace; font-weight:700; color:var(--text)">
-                                <div>${escapeHtml(u.identifier)}</div>
+                                <div>${escapeHtml(u.identifier)} ${u.geo_flag ? `<span style="font-size:12px; vertical-align:middle" title="${escapeHtml(u.geo_badge || '')}">${escapeHtml(u.geo_flag)}</span>` : ''}</div>
+                                ${u.geo_city ? `<div style="font-size:10px; color:var(--text3); font-weight:normal">${escapeHtml(u.geo_city)}</div>` : ''}
                                 ${pathSnippet}
                             </td>
                             <td style="padding:8px 12px">${userBadge}</td>

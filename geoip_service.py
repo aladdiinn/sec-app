@@ -254,3 +254,19 @@ def get_ip_location(ip_str: str) -> Dict[str, Any]:
             _GEOIP_CACHE[clean_ip] = res
 
     return res
+
+def ensure_database_downloaded_async():
+    """Starts a non-blocking background thread to download GeoLite2-City.mmdb if missing."""
+    reader = _get_mmdb_reader()
+    if reader is not None:
+        return
+    def _run_dl():
+        try:
+            import download_geoip_db
+            download_geoip_db.download_geoip_db()
+            global _MMDB_READER
+            _get_mmdb_reader()
+        except Exception as e:
+            pass
+    t = threading.Thread(target=_run_dl, daemon=True)
+    t.start()

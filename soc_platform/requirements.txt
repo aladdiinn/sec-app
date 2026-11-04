@@ -9,3 +9,5 @@ python-dotenv>=1.0.1
 redis>=5.0.4
 pika>=1.3.2
 opensearch-py>=2.6.0
+
+maxminddb>=2.6.0

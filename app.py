@@ -5,6 +5,7 @@
 # ══════════════════════════════════════════════════════════════════════════════
 import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac
 import geoip_service
+geoip_service.ensure_database_downloaded_async()
 import psycopg2, psycopg2.extras
 from dotenv import load_dotenv
 load_dotenv()
@@ -9531,6 +9532,12 @@ def api_get_app_users(
                         pass
 
                 item["recent_path"] = redact_sensitive_params(item.get("recent_path") or "")
+                if cip:
+                    geo = geoip_service.get_ip_location(cip)
+                    item["geo_flag"] = geo.get("flag", "🌐")
+                    item["geo_city"] = geo.get("city", "")
+                    item["geo_country"] = geo.get("country", "")
+                    item["geo_badge"] = geo.get("display_badge", "")
 
                 # Intelligent Identity & Client Attribution
                 is_private_ip = cip.startswith("10.") or cip.startswith("192.168.") or cip.startswith("172.")
