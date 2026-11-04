@@ -1464,6 +1464,13 @@ async def rules_page(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     return render_template(request, "rules.html", {"rules": RULES_DB})
 
+@app.get("/threat-map", response_class=HTMLResponse)
+async def threat_map_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return render_template(request, "threat_map.html", {"active": "threat-map"})
+
 @app.get("/activity", response_class=HTMLResponse)
 @app.get("/events", response_class=HTMLResponse)
 async def events_page(request: Request):
