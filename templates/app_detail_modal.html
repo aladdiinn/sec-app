@@ -836,7 +836,8 @@ async function loadAppEvents(appId, silent = false) {
                             </td>
                             <td style="padding:8px 12px; color:var(--text2)">${escapeHtml(ev.source_type || '')} (${escapeHtml(ev.node || '')})</td>
                             <td style="padding:8px 12px; font-family:var(--font-mono), monospace; color:var(--cyan)">
-                                <div>${escapeHtml(ev.client_ip || '-')}</div>
+                                <div>${escapeHtml(ev.client_ip || '-')} ${ev.geo_flag ? `<span style="font-size:12px; vertical-align:middle" title="${escapeHtml(ev.geo_badge || '')}">${escapeHtml(ev.geo_flag)}</span>` : ''}</div>
+                                ${ev.geo_city ? `<div style="font-size:10px; color:var(--text3); font-weight:normal">${escapeHtml(ev.geo_city)}</div>` : ''}
                                 ${ev.user_name && ev.user_name !== '-' && ev.user_name !== 'Anonymous' ? `<div style="font-size:10.5px; color:#F59E0B; font-weight:700; margin-top:2px">👤 ${escapeHtml(ev.user_name)}</div>` : ''}
                             </td>
                             <td style="padding:8px 12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(safePath)}">
@@ -1413,7 +1414,7 @@ async function generateSelectedReport(tab) {
                         <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px 12px; font-size:11.5px; margin-bottom:10px">
                             <div style="font-weight:bold; color:#475569; margin-bottom:4px">Source & Telemetry Context:</div>
                             <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-family:monospace; color:#0f172a">
-                                <div>Client IP: <b>${escapeHtml(exp.source_details?.client_ip || '-')}</b></div>
+                                <div>Client IP: <b>${escapeHtml(exp.source_details?.client_ip || '-')}</b> ${exp.source_details?.location ? `<span style="font-size:10.5px; margin-left:4px; color:#475569; background:#e2e8f0; padding:1px 5px; border-radius:4px; font-weight:normal">${escapeHtml(exp.source_details.location)}</span>` : ''}</div>
                                 <div>User Account: <b>${escapeHtml(exp.source_details?.user || 'Anonymous')}</b></div>
                                 <div>Path: <b>${escapeHtml(exp.source_details?.path || '-')}</b></div>
                                 <div>HTTP Status: <b>${exp.source_details?.status_code || '-'}</b></div>

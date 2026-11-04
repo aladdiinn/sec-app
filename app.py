@@ -4,6 +4,7 @@
 # Continuously monitors SSH logs, shell commands, process execution, and FIM
 # ══════════════════════════════════════════════════════════════════════════════
 import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac
+import geoip_service
 import psycopg2, psycopg2.extras
 from dotenv import load_dotenv
 load_dotenv()
@@ -1552,19 +1553,66 @@ async def api_get_counts(request: Request):
 
 @app.get("/api/dashboard/geoip")
 async def api_get_geoip(request: Request):
-    pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
+    pid = get_effective_project_id(request)
+    servers = db.get_servers(project_id=pid)
     points = []
+    seen_ips = set()
+
     for s in servers:
-        points.append({
-            "ip": s.get("ip", "172.31.2.38"),
-            "lat": 37.7749,
-            "lon": -122.4194,
-            "city": "San Francisco",
-            "country": "United States",
-            "severity": s.get("severity", "info")
-        })
+        ip = (s.get("ip") or "").strip()
+        if ip and ip not in seen_ips:
+            seen_ips.add(ip)
+            geo = geoip_service.get_ip_location(ip)
+            lat = geo.get("lat") or 19.0760
+            lon = geo.get("lon") or 72.8777
+            points.append({
+                "ip": ip,
+                "lat": lat,
+                "lon": lon,
+                "city": geo.get("city") or s.get("hostname", "Node"),
+                "country": geo.get("country") or "India",
+                "flag": geo.get("flag", "⚙️"),
+                "severity": s.get("severity", "info"),
+                "type": "server"
+            })
+
+    try:
+        conn = db.get_db_connection()
+        if conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT ON (client_ip) client_ip, severity, event_type, node
+                    FROM app_events
+                    WHERE client_ip IS NOT NULL AND client_ip != '' AND client_ip NOT IN ('-', 'unknown')
+                    ORDER BY client_ip, event_time DESC
+                    LIMIT 25;
+                """)
+                rows = cur.fetchall()
+                for r in rows:
+                    c_ip = r["client_ip"]
+                    if c_ip in seen_ips:
+                        continue
+                    seen_ips.add(c_ip)
+                    geo = geoip_service.get_ip_location(c_ip)
+                    lat = geo.get("lat")
+                    lon = geo.get("lon")
+                    if lat is not None and lon is not None:
+                        points.append({
+                            "ip": c_ip,
+                            "lat": lat,
+                            "lon": lon,
+                            "city": geo.get("city") or "Attacker",
+                            "country": geo.get("country") or "Unknown",
+                            "flag": geo.get("flag", "🌐"),
+                            "severity": r.get("severity") or "high",
+                            "type": "threat"
+                        })
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Error querying geoip points: {e}")
+
     if not points:
-        points.append({"ip": "172.31.2.38", "lat": 37.7749, "lon": -122.4194, "city": "San Francisco", "country": "US", "severity": "info"})
+        points.append({"ip": "13.232.88.40", "lat": 19.0760, "lon": 72.8777, "city": "Mumbai", "country": "India", "flag": "🇮🇳", "severity": "info", "type": "server"})
     return points
 
 @app.get("/api/events")
@@ -8902,7 +8950,9 @@ def explainItem(item_type: str, item: dict) -> dict:
         closed_note = item.get("closed_note") or "None"
         event_time = str(item.get("event_time") or "N/A")
 
-        plain = f"Client IP {client_ip} performed an HTTP {method} request to '{path}', returning status {status}."
+        geo = geoip_service.get_ip_location(client_ip)
+        geo_badge = f" ({geo['display_badge']})" if geo.get("display_badge") else ""
+        plain = f"Client IP {client_ip}{geo_badge} performed an HTTP {method} request to '{path}', returning status {status}."
         if user_name and user_name not in ("-", "Anonymous"):
             plain += f" Associated with authenticated user '{user_name}'."
 
@@ -8954,11 +9004,18 @@ def explainItem(item_type: str, item: dict) -> dict:
             "severity_impact": f"Severity: {severity.upper()} | {impact}",
             "source_details": {
                 "client_ip": client_ip,
+                "location": geo.get("display_badge") or geo.get("country") or "Unknown",
+                "country": geo.get("country"),
+                "flag": geo.get("flag", "🌐"),
+                "city": geo.get("city"),
+                "region": geo.get("region"),
+                "isp": geo.get("isp"),
                 "user": user_name or "Anonymous",
                 "path": path,
                 "status_code": status,
                 "node": node,
-                "event_time": event_time
+                "event_time": event_time,
+                "geo": geo
             },
             "source_telemetry": f"Source Node: {node} | Client IP: {client_ip} | User: {user_name or 'Unauthenticated'} | Path: {path} | Status: {status} | Time: {event_time}",
             "recommended_action": recommendation,
@@ -9171,6 +9228,13 @@ def api_get_app_events(
                 for r in cur.fetchall():
                     d = dict(r)
                     d["url_path"] = redact_sensitive_params(d.get("url_path") or "")
+                    c_ip = d.get("client_ip")
+                    if c_ip:
+                        geo = geoip_service.get_ip_location(c_ip)
+                        d["geo_flag"] = geo.get("flag", "🌐")
+                        d["geo_city"] = geo.get("city", "")
+                        d["geo_country"] = geo.get("country", "")
+                        d["geo_badge"] = geo.get("display_badge", "")
                     items.append(d)
 
                 return {"items": items, "total_count": total_count, "showing_count": len(items), "timeframe_label": tf_label}

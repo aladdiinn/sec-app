@@ -432,7 +432,12 @@ class HeartbeatWorker(threading.Thread):
                     if res.get("latest_version") and res.get("latest_version") > COLLECTOR_VERSION:
                         check_and_apply_auto_update()
                 elif res.get("code") == 401:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Heartbeat unauthorized (401). Check enrollment token in collector.env.")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] [WARN] Heartbeat unauthorized (401). Pausing heartbeat for 300s.")
+                    for _ in range(600):
+                        if self.stop_event.is_set():
+                            break
+                        time.sleep(0.5)
+                    continue
             except Exception as e:
                 print(f"[WARN] Heartbeat exception: {e}")
 
@@ -461,6 +466,23 @@ def run_collector():
 
     session = PersistentSession(CONFIG["SOC_URL"])
     stop_event = threading.Event()
+
+    import signal
+    def handle_signal(sig, frame):
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] [SHUTDOWN] Signal {sig} received. Terminating collector cleanly...")
+        stop_event.set()
+        try:
+            if session._conn:
+                session._conn.close()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGTERM, handle_signal)
+        signal.signal(signal.SIGINT, handle_signal)
+    except Exception:
+        pass
     tailers = {}
     stats = {"dropped_events": 0, "buffered_events": 0}
 
