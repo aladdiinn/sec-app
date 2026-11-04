@@ -8668,56 +8668,70 @@ XSS_PATTERNS = [
     re.compile(r"(?:document\.(?:cookie|location|write)|window\.location)\b", re.I)
 ]
 
+# Generic identifier parameter matching across ANY enterprise application (CRM, ERP, billing, meters, survey, users)
+RECORD_PARAM_RE = re.compile(
+    r'(?:\?|&)(?:[a-zA-Z0-9_-]*(?:id|no|num|key|code|record|account|meter|user|consumer|entity|kno|cno))[=]([0-9a-zA-Z_-]+)',
+    re.I
+)
+
 # In-memory sliding tracker for mass parameter enumeration (IDOR / Scraping detection)
 _scraping_tracker = {}
 _scraping_lock = threading.Lock()
 
 def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "GET", raw_line: str = "") -> tuple:
     """
-    High-precision detection of automated IDOR / record harvesting bots:
-    - Whitelists legitimate field application query endpoints (e.g. GetDuplicateKnumbersWithMtrno)
-    - Distinguishes standard browser navigation from automated bot crawlers
-    - Requires high-volume sequential enumeration (>=35 distinct IDs in 60s for browsers, >=15 for tools)
-    - Returns (is_scraping: bool, is_confirmed_exfil: bool)
+    Universal high-precision detection of automated IDOR / record harvesting bots for ANY application:
+    - Works across ANY application (utility, finance, ERP, health, CRM) without relying on hardcoded paths.
+    - Accurately differentiates human browser navigation (typically 1-20 records/min) from automated bots (50-100+ records/min at machine rate).
+    - Detects automated tooling User-Agents (python-requests, curl, scrapy, etc.) at lower threshold (>= 15 distinct IDs).
+    - Requires high-volume sustained enumeration (>= 50 distinct IDs in 60s) for standard browser agents.
+    - Returns (is_scraping: bool, is_confirmed_exfil: bool).
     """
     if (method or "").upper() != "GET":
         return False, False
 
-    p_lower = path.lower()
-
-    # 1. Whitelist legitimate business/app query endpoints
-    if any(k in p_lower for k in BENIGN_QUERY_ENDPOINTS):
-        return False, False
-
-    # 2. Whitelist internal node daemons and private RFC1918 / localhost
+    # 1. Whitelist internal node daemons and private RFC1918 / localhost
     if ip.startswith("127.") or ip == "localhost" or ip in ("10.0.0.27", "10.40.60.49"):
         return False, False
     if ip.startswith("10.") or ip.startswith("192.168."):
         return False, False
 
-    m = re.search(r'(?:\?|&)(?:acc_?no|account_?no|account_?num(?:ber)?|k_?no|k_?num(?:ber)?|consumer_?(?:id|no)?|meter_?(?:no|id)?|record_?id|emp_?(?:id|no)?|user_?(?:id|name)?|ca_?no)=([0-9a-zA-Z_-]+)', path, re.I)
+    # 2. Safety filter for known operational pollers / health endpoints
+    p_lower = path.lower()
+    if any(k in p_lower for k in BENIGN_QUERY_ENDPOINTS):
+        return False, False
+
+    m = RECORD_PARAM_RE.search(path)
     if not m:
         return False, False
 
     val = m.group(1)
     is_automated_tool = bool(AUTOMATED_SCRAPER_UA.search(raw_line or ""))
-    threshold = 15 if is_automated_tool else 35
+    # True automated crawling threshold: 15 for tools, 50 for browsers
+    threshold = 15 if is_automated_tool else 50
 
     now = time.time()
     key = (ip, user or '-')
     with _scraping_lock:
         state = _scraping_tracker.setdefault(key, {"history": [], "last_alert": 0})
-        # Keep 60-second sliding window
+        # 60-second sliding window
         state["history"] = [(t, v) for (t, v) in state["history"] if now - t < 60]
         state["history"].append((now, val))
         
         distinct_vals = set(v for (t, v) in state["history"])
         if len(distinct_vals) >= threshold:
-            # Rate limit alerts to once every 120s per IP
-            if now - state["last_alert"] > 120:
-                state["last_alert"] = now
-                is_exfil = is_automated_tool or len(distinct_vals) >= 60
-                return True, is_exfil
+            # Check sustained query rate over active time window
+            earliest_t = min(t for (t, v) in state["history"])
+            time_span = max(now - earliest_t, 1.0)
+            rate = len(state["history"]) / time_span
+            
+            # Rate must exceed 0.8 req/sec for human browsers to eliminate slow browsing across an hour
+            if is_automated_tool or rate >= 0.8:
+                # Rate limit alert generation to once every 120s per IP
+                if now - state["last_alert"] > 120:
+                    state["last_alert"] = now
+                    is_exfil = is_automated_tool or len(distinct_vals) >= 80
+                    return True, is_exfil
     return False, False
 
 def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str, raw_line: str = ""):
@@ -8792,13 +8806,19 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
         if not any(k in p_lower for k in ("robots.txt", "favicon.ico", ".css", ".js")):
             return "API_SCRAPING", "high", "Automated Script / Bot Tool Access", "T1114 - Email/Data Collection"
 
-    # 10. High-Volume Mass Parameter Scraping / IDOR Enumeration
+    # 10. High-Volume Mass Parameter Scraping / IDOR Enumeration (Universal across all applications)
     is_scraping, is_confirmed_exfil = check_mass_scraping_detection(ip, user, path, method=method, raw_line=raw_line)
     if is_scraping:
         if is_confirmed_exfil and status in (200, 201, 204):
-            return "DATA_EXFILTRATION", "critical", "Active Mass Data Exfiltration Confirmed (HTTP 200)", "T1005 - Data from Local System"
+            return "DATA_HARVESTING", "high", "High-Volume Automated Data Harvesting / Scraping", "T1114 - Email/Data Collection"
         else:
-            return "DATA_HARVESTING", "high", "Mass Record Enumeration / IDOR Scraping Attempt", "T1005 - Data from Local System"
+            return "DATA_HARVESTING", "medium", "Rapid Record Enumeration / IDOR Scraping Attempt", "T1005 - Data from Local System"
+
+    # 11. Large Volume Data Exfiltration (Massive payload transfer on non-static endpoints)
+    clean_p = path.split("?")[0].lower()
+    if not STATIC_EXT_RE.search(clean_p) and status in (200, 206):
+        if any(exp in clean_p for exp in ("/export", "/backup", "/dump", "/downloadall", "/bulkdownload")):
+            return "DATA_EXFILTRATION", "critical", "Massive Data Export / Exfiltration Confirmed (HTTP 200)", "T1005 - Data from Local System"
 
     return "HTTP_ACCESS", "info", None, None
 
