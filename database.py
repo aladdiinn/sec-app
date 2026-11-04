@@ -765,6 +765,25 @@ def init_db():
                 except: pass
             try: cur.execute("""
                 ALTER TABLE alerts ALTER COLUMN score DROP NOT NULL;
+                for col, ctype in [
+                    ("evidence_data", "JSONB DEFAULT '{}'::jsonb"),
+                    ("confidence", "VARCHAR(16) DEFAULT 'MEDIUM'"),
+                    ("verdict", "VARCHAR(32) DEFAULT 'unreviewed'"),
+                    ("verdict_reason", "TEXT"),
+                    ("verdict_by", "VARCHAR(100)"),
+                    ("verdict_at", "TIMESTAMPTZ")
+                ]:
+                    try: cur.execute(f"ALTER TABLE alerts ADD COLUMN IF NOT EXISTS {col} {ctype};")
+                    except Exception: pass
+                
+                for col, ctype in [
+                    ("is_shadow", "BOOLEAN DEFAULT FALSE"),
+                    ("shadow_until", "TIMESTAMPTZ"),
+                    ("status", "VARCHAR(32) DEFAULT 'healthy'"),
+                    ("required_fields", "JSONB DEFAULT '[]'::jsonb")
+                ]:
+                    try: cur.execute(f"ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS {col} {ctype};")
+                    except Exception: pass
                 ALTER TABLE alerts ALTER COLUMN score SET DEFAULT 0;
                 ALTER TABLE alerts ALTER COLUMN auto_promoted DROP NOT NULL;
                 ALTER TABLE alerts ALTER COLUMN auto_promoted SET DEFAULT FALSE;
@@ -2201,6 +2220,7 @@ def get_incidents(status=None, severity=None, limit=100, project_id=None):
                                CASE WHEN a.is_resolved THEN 'resolved' ELSE 'open' END as status,
                                'Unassigned' as assigned_to, a.server_id,
                                COALESCE(s.hostname, 'ip-172-31-4-83') as hostname,
+                               a.evidence_data, a.confidence, a.verdict,
                                a.created_at, a.created_at as updated_at
                         FROM alerts a
                         LEFT JOIN servers s ON a.server_id = s.id
@@ -5127,3 +5147,191 @@ def delete_application_component(app_id, comp_id):
         return app_siem_db.delete_application_component(conn, app_id, comp_id)
     finally:
         conn.close()
+
+# ── SIEM Detection Accuracy & Self-Correction Helpers ─────────────────────────
+def record_rule_verdict(target_type: str, target_id: int, verdict: str, reason: str, rule_name: str, analyst_user: str = "soc_analyst"):
+    """Record analyst verdict (true_positive / false_positive) and calculate self-tuning precision."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            # 1. Insert into rule_feedback
+            cur.execute("""
+                INSERT INTO rule_feedback (rule_name, target_type, target_id, verdict, reason, analyst_user, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW());
+            """, (rule_name, target_type, target_id, verdict, reason, analyst_user))
+
+            # 2. Update target row
+            if target_type == "incident":
+                if verdict == "false_positive":
+                    cur.execute("""
+                        UPDATE app_incidents
+                        SET verdict = %s, verdict_reason = %s, verdict_by = %s, verdict_at = NOW(),
+                            status = 'Closed', resolution = %s, closed_at = NOW(), closed_by = %s
+                        WHERE id = %s;
+                    """, (verdict, reason, analyst_user, f"Closed as False Positive: {reason}", analyst_user, target_id))
+                else:
+                    cur.execute("""
+                        UPDATE app_incidents
+                        SET verdict = %s, verdict_reason = %s, verdict_by = %s, verdict_at = NOW()
+                        WHERE id = %s;
+                    """, (verdict, reason, analyst_user, target_id))
+            elif target_type == "alert":
+                if verdict == "false_positive":
+                    cur.execute("""
+                        UPDATE alerts
+                        SET verdict = %s, verdict_reason = %s, verdict_by = %s, verdict_at = NOW(),
+                            is_resolved = TRUE, resolved_at = NOW()
+                        WHERE id = %s;
+                    """, (verdict, reason, analyst_user, target_id))
+                else:
+                    cur.execute("""
+                        UPDATE alerts
+                        SET verdict = %s, verdict_reason = %s, verdict_by = %s, verdict_at = NOW()
+                        WHERE id = %s;
+                    """, (verdict, reason, analyst_user, target_id))
+
+            # 3. Self-Correction: Compute FP rate over last 50 reviews for this rule
+            cur.execute("""
+                SELECT verdict, COUNT(*) as cnt
+                FROM (
+                    SELECT verdict FROM rule_feedback
+                    WHERE rule_name = %s
+                    ORDER BY id DESC LIMIT 50
+                ) sub
+                GROUP BY verdict;
+            """, (rule_name,))
+            rows = cur.fetchall()
+            tp = 0
+            fp = 0
+            for r in rows:
+                if (r.get("verdict") if isinstance(r, dict) else r[0]) == "true_positive":
+                    tp = r.get("cnt") if isinstance(r, dict) else r[1]
+                elif (r.get("verdict") if isinstance(r, dict) else r[0]) == "false_positive":
+                    fp = r.get("cnt") if isinstance(r, dict) else r[1]
+
+            total_rev = tp + fp
+            if total_rev >= 5 and (fp / total_rev) > 0.30:
+                # Auto-cap severity at LOW and mark rule as needs_tuning
+                cur.execute("""
+                    UPDATE detection_rules
+                    SET status = 'needs_tuning', severity = 'warning'
+                    WHERE name = %s;
+                """, (rule_name,))
+
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error recording rule verdict: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_rule_accuracy_metrics():
+    """Return precision and review counts per detection rule."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    dr.id, dr.name, dr.severity, dr.enabled, dr.event_type, dr.mitre_technique,
+                    COALESCE(dr.status, 'healthy') as status,
+                    COALESCE(dr.is_shadow, FALSE) as is_shadow,
+                    (SELECT COUNT(*) FROM rule_feedback rf WHERE rf.rule_name = dr.name AND rf.verdict = 'true_positive') as tp_count,
+                    (SELECT COUNT(*) FROM rule_feedback rf WHERE rf.rule_name = dr.name AND rf.verdict = 'false_positive') as fp_count,
+                    (SELECT COUNT(*) FROM alerts a WHERE a.title = dr.name AND (a.is_resolved IS NOT TRUE)) as active_alerts
+                FROM detection_rules dr
+                ORDER BY dr.id ASC;
+            """)
+            rules = cur.fetchall()
+            out = []
+            for r in rules:
+                rd = dict(r)
+                tp = rd.get("tp_count") or 0
+                fp = rd.get("fp_count") or 0
+                total = tp + fp
+                rd["precision_pct"] = round((tp / total * 100), 1) if total > 0 else 100.0
+                rd["reviewed_count"] = total
+                if total >= 5 and (fp / total) > 0.30:
+                    rd["status"] = "needs_tuning"
+                elif rd.get("is_shadow"):
+                    rd["status"] = "shadow"
+                out.append(rd)
+            return out
+    except Exception as e:
+        logger.error(f"Error in get_rule_accuracy_metrics: {e}")
+        return []
+    finally:
+        conn.close()
+
+def toggle_rule_shadow_mode(rule_id: int):
+    """Toggle a rule into 7-day shadow mode."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE detection_rules
+                SET is_shadow = NOT COALESCE(is_shadow, FALSE),
+                    shadow_until = CASE WHEN COALESCE(is_shadow, FALSE) THEN NULL ELSE NOW() + INTERVAL '7 days' END,
+                    status = CASE WHEN COALESCE(is_shadow, FALSE) THEN 'healthy' ELSE 'shadow' END
+                WHERE id = %s RETURNING is_shadow;
+            """, (rule_id,))
+            res = cur.fetchone()
+            conn.commit()
+            return {"ok": True, "is_shadow": res["is_shadow"] if isinstance(res, dict) else res[0]}
+    except Exception as e:
+        logger.error(f"Error toggling shadow mode: {e}")
+        return {"ok": False, "message": str(e)}
+    finally:
+        conn.close()
+
+def get_app_allowlists(application_id: int):
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM app_detection_allowlists WHERE application_id = %s ORDER BY id DESC;", (application_id,))
+            return cur.fetchall() or []
+    except Exception as e:
+        return []
+    finally:
+        conn.close()
+
+def add_app_allowlist(application_id: int, pattern_type: str, pattern_value: str, owner: str, reason: str, expires_days: int = 90):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO app_detection_allowlists (application_id, pattern_type, pattern_value, owner, reason, expires_at, created_at)
+                VALUES (%s, %s, %s, %s, %s, NOW() + (%s || ' days')::INTERVAL, NOW()) RETURNING id;
+            """, (application_id, pattern_type, pattern_value, owner, reason, str(expires_days)))
+            rid = cur.fetchone()["id"]
+            conn.commit()
+            return rid
+    except Exception as e:
+        logger.error(f"Error adding allowlist: {e}")
+        return None
+    finally:
+        conn.close()
+
+def is_request_allowlisted(application_id: int, path: str, client_ip: str, user: str = None) -> bool:
+    """Check if request matches an active per-application allowlist rule."""
+    if not application_id: return False
+    allowlists = get_app_allowlists(application_id)
+    if not allowlists: return False
+
+    for al in allowlists:
+        ptype = al.get("pattern_type")
+        pval = al.get("pattern_value", "")
+        if ptype == "path_regex":
+            try:
+                if re.search(pval, path, re.IGNORECASE): return True
+            except: pass
+        elif ptype == "ip_subnet":
+            if pval and pval in client_ip: return True
+        elif ptype == "user_name":
+            if user and pval.lower() == user.lower(): return True
+    return False

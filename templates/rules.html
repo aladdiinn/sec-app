@@ -59,6 +59,67 @@
         </div>
     </div>
     <div class="det-cat-grid" id="det-categories-grid"></div>
+
+    <!-- Detection Accuracy & Self-Correction Engine -->
+    <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <div>
+                <h3 style="margin:0; font-size: 16px; color: #f8fafc; font-family: var(--font-sans); font-weight: 700;">
+                    🎯 Detection Quality & Accuracy Metrics (Self-Tuning Engine)
+                </h3>
+                <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">
+                    Tracks True Positive vs False Positive feedback from SOC analysts. Rules with FP &gt; 30% are automatically auto-tuned and severity-capped.
+                </div>
+            </div>
+            <div style="display: flex; gap: 12px; align-items: center;">
+                <span class="badge" style="background: rgba(34,197,94,0.15); color: var(--green); font-size: 11px; padding: 4px 10px; border: 1px solid rgba(34,197,94,0.3);">
+                    Auto-Tuning Active
+                </span>
+                <button onclick="loadAccuracyMetrics()" class="btn btn-sm btn-glass" style="font-size:11px; padding:4px 10px;">
+                    ↻ Refresh Metrics
+                </button>
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px;">
+            <div class="stat-box" style="padding: 12px;">
+                <div class="stat-box-val" id="metric-avg-precision" style="color:var(--green); font-size: 22px;">--%</div>
+                <div class="stat-box-label">AVG PRECISION RATE</div>
+            </div>
+            <div class="stat-box" style="padding: 12px;">
+                <div class="stat-box-val" id="metric-total-reviewed" style="color:var(--cyan); font-size: 22px;">0</div>
+                <div class="stat-box-label">ANALYST REVIEWS (TP+FP)</div>
+            </div>
+            <div class="stat-box" style="padding: 12px;">
+                <div class="stat-box-val" id="metric-false-positives" style="color:#ef4444; font-size: 22px;">0</div>
+                <div class="stat-box-label">FALSE POSITIVES CLOSED</div>
+            </div>
+            <div class="stat-box" style="padding: 12px;">
+                <div class="stat-box-val" id="metric-shadow-count" style="color:#f59e0b; font-size: 22px;">0</div>
+                <div class="stat-box-label">RULES IN SHADOW MODE</div>
+            </div>
+        </div>
+
+        <div style="background: #0f172a; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px; overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 12px;">
+                <thead>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color:#94a3b8; font-size: 11px; text-transform: uppercase;">
+                        <th style="padding: 8px;">Detection Rule</th>
+                        <th style="padding: 8px;">Severity</th>
+                        <th style="padding: 8px;">Status</th>
+                        <th style="padding: 8px;">True Positives</th>
+                        <th style="padding: 8px;">False Positives</th>
+                        <th style="padding: 8px;">Precision Rate</th>
+                        <th style="padding: 8px; text-align: right;">Quality Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="metrics-tbody">
+                    <tr><td colspan="7" style="text-align:center; padding:20px; color:#64748b;">Loading detection accuracy metrics...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
       <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
             <h3 style="margin:0; font-size: 16px; color: #f8fafc; font-family: var(--font-sans); font-weight: 700;">Alert Suppressions (Allowlist)</h3>
@@ -342,9 +403,94 @@ async function deleteSuppression(id) {
 
 // Hook into loadData
 const _origLoadData = loadData;
+
+async function loadAccuracyMetrics() {
+    try {
+        const metrics = await apiFetch('/api/detection/rules/metrics');
+        const tbody = document.getElementById('metrics-tbody');
+        if (!tbody || !Array.isArray(metrics)) return;
+
+        let totalTP = 0, totalFP = 0, shadowCount = 0;
+
+        if (metrics.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px; color:#64748b;">No rule metrics tracked yet. Detections will appear as alerts are processed.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = metrics.map(r => {
+            const tp = r.tp_count || 0;
+            const fp = r.fp_count || 0;
+            const total = tp + fp;
+            totalTP += tp;
+            totalFP += fp;
+            if (r.is_shadow) shadowCount++;
+
+            const prec = r.precision_pct !== undefined ? r.precision_pct : (total > 0 ? ((tp / total) * 100).toFixed(1) : 100);
+            let precColor = 'var(--green)';
+            if (prec < 70) precColor = '#ef4444';
+            else if (prec < 90) precColor = '#f59e0b';
+
+            const isCapped = fp > 0 && (fp / total > 0.3);
+            const statusBadge = r.is_shadow 
+                ? '<span class="badge" style="background:rgba(245,158,11,0.15); color:#f59e0b; font-size:10px;">7-DAY SHADOW</span>'
+                : (isCapped 
+                    ? '<span class="badge" style="background:rgba(239,68,68,0.15); color:#ef4444; font-size:10px;">AUTO-CAPPED (FP &gt; 30%)</span>'
+                    : '<span class="badge" style="background:rgba(34,197,94,0.15); color:var(--green); font-size:10px;">HEALTHY</span>');
+
+            return `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                    <td style="padding: 8px; font-weight:600; color:#f8fafc;">
+                        ${r.name || 'Detection Rule'}
+                        ${r.mitre_technique ? `<div style="font-size:10px; color:#64748b; font-family:monospace;">${r.mitre_technique}</div>` : ''}
+                    </td>
+                    <td style="padding: 8px;">
+                        <span class="det-rule-sev sev-${(r.severity || 'warning').toLowerCase()}">${(r.severity || 'warning').toUpperCase()}</span>
+                    </td>
+                    <td style="padding: 8px;">${statusBadge}</td>
+                    <td style="padding: 8px; color:var(--green); font-weight:700;">${tp}</td>
+                    <td style="padding: 8px; color:#ef4444; font-weight:700;">${fp}</td>
+                    <td style="padding: 8px; font-weight:700; color:${precColor};">
+                        ${prec}%
+                        <div style="width:60px; height:4px; background:rgba(255,255,255,0.1); border-radius:2px; margin-top:3px; overflow:hidden;">
+                            <div style="width:${prec}%; height:100%; background:${precColor};"></div>
+                        </div>
+                    </td>
+                    <td style="padding: 8px; text-align: right;">
+                        <button onclick="toggleRuleShadow(${r.id})" class="btn btn-sm btn-glass" style="font-size:10px; padding:3px 8px; color:${r.is_shadow ? 'var(--cyan)' : 'var(--amber)'};">
+                            ${r.is_shadow ? '✓ Exit Shadow' : '👻 7-Day Shadow'}
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        const totalReviewed = totalTP + totalFP;
+        const avgPrec = totalReviewed > 0 ? ((totalTP / totalReviewed) * 100).toFixed(1) : '100.0';
+        document.getElementById('metric-avg-precision').innerText = `${avgPrec}%`;
+        document.getElementById('metric-total-reviewed').innerText = totalReviewed;
+        document.getElementById('metric-false-positives').innerText = totalFP;
+        document.getElementById('metric-shadow-count').innerText = shadowCount;
+
+    } catch(e) {
+        console.error('Failed to load detection accuracy metrics', e);
+    }
+}
+
+async function toggleRuleShadow(ruleId) {
+    if (!window.isAdmin()) { showToast('Access Denied: Admin privileges required.', 'error'); return; }
+    try {
+        const res = await apiFetch(`/api/detection/rules/${ruleId}/shadow`, { method: 'POST' });
+        showToast(res.is_shadow ? 'Rule placed into 7-day shadow mode (silent evaluation)' : 'Rule returned to active enforcement', 'info');
+        loadAccuracyMetrics();
+    } catch(e) {
+        showToast('Failed to toggle shadow mode: ' + e.message, 'error');
+    }
+}
+
 window.loadData = async function() {
     await _origLoadData();
     loadSuppressions();
+    loadAccuracyMetrics();
 };
 
 </script>

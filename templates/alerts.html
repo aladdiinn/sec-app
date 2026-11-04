@@ -124,6 +124,9 @@
                     status: a.is_resolved ? 'resolved' : 'open',
                     assigned_to: 'Unassigned',
                     hostname: a.hostname || 'ec2-server',
+                    evidence_data: a.evidence_data,
+                    confidence: a.confidence,
+                    verdict: a.verdict,
                     created_at: a.created_at
                 }));
             }
@@ -137,18 +140,46 @@
                 const isCrit = (inc.severity || '').toLowerCase() === 'critical';
                 const sColor = isCrit ? 'var(--red)' : (inc.severity === 'warning' ? 'var(--amber)' : 'var(--cyan)');
                 const st = inc.status || 'open';
+
+                let ev = inc.evidence_data;
+                if (typeof ev === 'string') {
+                    try { ev = JSON.parse(ev); } catch(e) { ev = null; }
+                }
+
+                const confBadge = inc.confidence ? `<span class="badge" style="font-size:10px; background:${inc.confidence === 'HIGH' ? 'rgba(239,68,68,0.15); color:var(--red)' : (inc.confidence === 'MEDIUM' ? 'rgba(245,158,11,0.15); color:var(--amber)' : 'rgba(56,189,248,0.15); color:var(--cyan)')}">Conf: ${inc.confidence}</span>` : '';
+                
+                const verdictBadge = inc.verdict === 'true_positive' 
+                    ? `<span class="badge" style="background:rgba(34,197,94,0.15); color:var(--green); font-size:10px">✓ True Positive</span>`
+                    : (inc.verdict === 'false_positive' ? `<span class="badge" style="background:rgba(239,68,68,0.15); color:var(--red); font-size:10px">✕ False Positive</span>` : '');
+
+                const evBox = (ev && Object.keys(ev).length > 0) ? `
+                    <div style="background:rgba(15,23,42,0.8); border:1px solid rgba(255,255,255,0.08); border-left:3px solid var(--cyan); border-radius:4px; padding:10px 14px; margin:12px 0 8px 0; font-size:12px">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
+                            <span style="font-weight:700; color:var(--cyan); letter-spacing:0.5px; font-size:11px">EVIDENCE & CORROBORATING SIGNALS</span>
+                            ${ev.network_zone ? `<span style="font-size:11px; color:var(--text3)">Zone: <b style="color:${ev.network_zone === 'INTERNAL' ? 'var(--green)' : 'var(--red)'}">${ev.network_zone}</b></span>` : ''}
+                        </div>
+                        <div style="color:var(--text); margin-bottom:4px"><b>Why it fired:</b> ${ev.why_it_fired || inc.description || inc.title}</div>
+                        ${ev.false_positive_indicators ? `<div style="font-size:11.5px; color:var(--amber); margin-top:4px"><b>Potential False Positive:</b> ${ev.false_positive_indicators}</div>` : ''}
+                        ${ev.recommended_action ? `<div style="font-size:11.5px; color:var(--text2); margin-top:3px"><b>Recommended Action:</b> ${ev.recommended_action}</div>` : ''}
+                    </div>` : '';
+
+                const safeTitle = (inc.title || '').replace(/'/g, "\\'");
+
                 return `
                 <div class="fade-in" id="inc-card-${inc.id}" style="background:var(--bg2); border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid ${sColor}; border-radius: 6px; padding: 16px 20px; margin-bottom: 12px; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; box-shadow: 0 4px 6px rgba(0,0,0,0.2)">
                     <div style="flex:1; min-width:280px">
                         <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
                             ${severityBadge(inc.severity)}
                             ${statusBadge(st)}
+                            ${confBadge}
+                            ${verdictBadge}
                             <span style="font-size:11px; color:var(--text3); font-family:var(--mono)">#INC-${inc.id}</span>
                             <span style="font-size:11px; color:var(--text3); font-family:var(--mono); margin-left:auto">${inc.created_at ? new Date(inc.created_at).toLocaleString() : 'recently'}</span>
                         </div>
                         <h3 style="font-size:15px; margin:0 0 8px 0; color:var(--text); font-weight:600">${inc.title || 'Security Incident'}</h3>
-                        <p style="margin:0 0 12px 0; font-size:13px; color:var(--text2); line-height:1.5">${inc.description || 'No description provided'}</p>
-                        <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:12px; color:var(--text2)">
+                        <p style="margin:0 0 8px 0; font-size:13px; color:var(--text2); line-height:1.5">${inc.description || 'No description provided'}</p>
+                        ${evBox}
+                        <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:12px; color:var(--text2); margin-top:8px">
                             <span>Assigned: <strong style="color:var(--text)">${inc.assigned_to || 'Unassigned'}</strong></span>
                             <span>Target: <strong style="color:var(--text)">${inc.hostname || 'Unknown'}</strong></span>
                         </div>
@@ -156,7 +187,9 @@
 
                     <!-- Status Triage & Actions -->
                     <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end">
-                        <div style="display:flex; gap:6px">
+                        <div style="display:flex; gap:6px; align-items:center">
+                            <button class="btn btn-glass" onclick="submitVerdict('incident', ${inc.id}, 'true_positive', '${safeTitle}')" style="font-size:11px; padding:5px 9px; color:var(--cyan)" title="Confirm True Positive">✓ True</button>
+                            <button class="btn btn-glass" onclick="promptFalsePositive('incident', ${inc.id}, '${safeTitle}')" style="font-size:11px; padding:5px 9px; color:var(--red)" title="Mark as False Positive">✕ False Pos</button>
                             <select style="background:var(--bg3); color:var(--text); border:1px solid rgba(255,255,255,0.1); padding:6px 10px; font-size:12px; border-radius:4px; outline:none" onchange="updateIncidentStatus(${inc.id}, this.value)">
                                 <option value="open" ${st === 'open' ? 'selected' : ''}>Open</option>
                                 <option value="investigating" ${st === 'investigating' ? 'selected' : ''}>Investigating</option>
@@ -244,6 +277,31 @@
         } catch (e) {
             showToast('Failed to delete incident: ' + e.message, 'error');
         }
+    }
+
+        async function submitVerdict(targetType, targetId, verdict, ruleName, reason = '') {
+        try {
+            await apiFetch('/api/detection/verdict', {
+                method: 'POST',
+                body: JSON.stringify({
+                    target_type: targetType,
+                    target_id: targetId,
+                    verdict: verdict,
+                    rule_name: ruleName,
+                    reason: reason || (verdict === 'true_positive' ? 'Confirmed by analyst' : 'Marked false positive')
+                })
+            });
+            showToast(verdict === 'true_positive' ? 'Confirmed True Positive' : 'Marked False Positive & Auto-Closed', 'success');
+            loadIncidents();
+        } catch (e) {
+            showToast('Failed to record verdict: ' + e.message, 'error');
+        }
+    }
+
+    function promptFalsePositive(targetType, targetId, ruleName) {
+        const reason = prompt('Reason for marking False Positive (e.g. internal batch job, test script, utility route):');
+        if (reason === null) return;
+        submitVerdict(targetType, targetId, 'false_positive', ruleName, reason.trim());
     }
 
     async function cleanFalsePositives() {

@@ -8734,103 +8734,233 @@ def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "
                     return True, is_exfil
     return False, False
 
+# Sliding window tracker for 404/403 scanner probes to eliminate single-probe incidents
+_scanner_probe_tracker = {}
+_scanner_probe_lock = threading.Lock()
+
+def is_ip_internal(ip_str: str) -> bool:
+    if not ip_str or ip_str in ("127.0.0.1", "localhost", "::1"):
+        return True
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip_str)
+        return addr.is_private or addr.is_loopback
+    except Exception:
+        return False
+
 def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str, raw_line: str = "", bytes_sent: int = 0):
-    """Real-time high-fidelity heuristics detecting confirmed web attacks with full URL-decode support."""
-    p_unquoted = urllib.parse.unquote(path).lower()
-    p_lower = path.lower() + " " + p_unquoted
+    """
+    Real-time high-fidelity heuristics detecting confirmed web attacks with structured URL parsing,
+    multi-signal corroboration, internal/external context, and complete evidence generation.
+    Returns: (event_type, severity, rule_title, mitre_tag, evidence_dict)
+    """
+    method_upper = (method or "GET").upper()
+    parsed = urllib.parse.urlsplit(path)
+    clean_p = parsed.path.lower()
+    query_unquoted = urllib.parse.unquote(parsed.query).lower()
+    full_target_lower = clean_p + ("?" + query_unquoted if query_unquoted else "")
     full_line = (raw_line or "").lower()
+    is_internal = is_ip_internal(ip)
+    network_zone = "INTERNAL" if is_internal else "EXTERNAL"
+
+    # Default evidence template
+    def make_evidence(rule_id, rule_name, conf, why, signals, fp_indicators, action):
+        return {
+            "rule_id": rule_id,
+            "rule_name": rule_name,
+            "rule_version": "2.2",
+            "confidence": conf,
+            "why_it_fired": why,
+            "matched_fields": {
+                "method": method_upper,
+                "path": parsed.path,
+                "status_code": status,
+                "source_ip": ip,
+                "network_zone": network_zone,
+                "bytes_sent": bytes_sent
+            },
+            "signals": signals,
+            "false_positive_indicators": fp_indicators,
+            "recommended_action": action
+        }
 
     # 1. SQL Injection (Enterprise Strict Syntax Verification)
     for sqli_pat in SQLI_PATTERNS:
-        if sqli_pat.search(p_lower):
+        if sqli_pat.search(full_target_lower):
+            has_db_err = any(e in full_line for e in ("syntax error", "psycopg2", "org.postgresql", "sqlexception", "ora-", "mysql_error"))
+            
             if status == 500:
-                return "SQL_INJECTION", "critical", "SQL Injection Exploit Confirmed (Database Error 500)", "T1190 - Exploit Public-Facing Application"
+                if has_db_err:
+                    sev = "critical"
+                    conf = "HIGH"
+                    why = "SQL injection payload triggered confirmed database execution failure (HTTP 500 with DB syntax error)."
+                    sig = ["SQL injection syntax matched", "HTTP 500 status code", "Database error keyword in logs"]
+                else:
+                    sev = "medium"
+                    conf = "MEDIUM"
+                    why = "SQL injection payload triggered HTTP 500 server error (unconfirmed DB execution)."
+                    sig = ["SQL injection syntax matched", "HTTP 500 status code"]
+                return "SQL_INJECTION", sev, "SQL Injection Attempt", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "SQL Injection Exploit", conf, why, sig, "Application runtime NullPointerException unrelated to database.", "Inspect application exception logs.")
             elif status in (200, 201):
-                return "SQL_INJECTION", "high", "SQL Injection Payload Delivered (HTTP 200)", "T1190 - Exploit Public-Facing Application"
+                sev = "low"
+                conf = "LOW"
+                why = f"SQL syntax payload sent to endpoint returning HTTP {status} (single request unconfirmed execution)."
+                sig = ["SQL syntax in query parameter", f"HTTP {status} response"]
+                return "SQL_INJECTION_PROBE", sev, "SQL Injection Probe (HTTP 200)", "T1190 - Exploit Public-Facing Application", make_evidence("W02", "SQL Injection Probe", conf, why, sig, "Benign search term or text containing SQL keywords.", "Monitor IP for repeated injection variants.")
             else:
-                return "SQL_INJECTION_PROBE", "medium", f"SQL Injection Probe Blocked (HTTP {status})", "T1190 - Exploit Public-Facing Application"
+                sev = "low"
+                conf = "LOW"
+                why = f"Blocked SQL injection attempt rejected with HTTP {status}."
+                sig = ["SQL syntax in query parameter", f"Blocked with HTTP {status}"]
+                return "SQL_INJECTION_PROBE", sev, f"Blocked SQL Injection Probe (HTTP {status})", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "Blocked SQL Injection", conf, why, sig, "Security filter correctly dropped request.", "No action needed; safely rejected.")
 
     # 2. Log4j / JNDI Remote Code Execution Exploit
-    if re.search(r'(?:\$\{|\%24\%7b)(?:\$|\%24)?\{?[^}]*(?:jndi|ldap|rmi|dns)[\s:]', p_lower):
-        return "JNDI_EXPLOIT", "critical", "Log4Shell (JNDI) Remote Code Execution Attempt", "T1190 - Exploit Public-Facing Application"
+    if re.search(r'(?:\$\{|\%24\%7b)(?:\$|\%24)?\{?[^}]*(?:jndi|ldap|rmi|dns)[\s:]', full_target_lower):
+        if status in (200, 201):
+            sev = "high"
+            conf = "HIGH"
+            why = "JNDI lookup pattern delivered and accepted with HTTP 200."
+            sig = ["JNDI / Log4Shell pattern matched", "HTTP 200 response"]
+        else:
+            sev = "low"
+            conf = "LOW"
+            why = f"Log4j probe blocked/not found (HTTP {status})."
+            sig = ["JNDI pattern in URL", f"HTTP {status} response"]
+        return "JNDI_EXPLOIT", sev, f"Log4Shell (JNDI) Probe (HTTP {status})", "T1190 - Exploit Public-Facing Application", make_evidence("W03", "Log4Shell JNDI Exploit", conf, why, sig, "Internet bot spray against non-Java or patched service.", "Ensure Log4j is >= 2.17.1.")
 
     # 3. Cross-Site Scripting (XSS)
     for xss_pat in XSS_PATTERNS:
-        if xss_pat.search(p_lower):
+        if xss_pat.search(full_target_lower):
             if status in (200, 201):
-                return "XSS_ATTACK", "medium", "Cross-Site Scripting (XSS) Injection", "T1059.007 - Cross-Site Scripting"
+                sev = "medium" if not is_internal else "low"
+                conf = "MEDIUM"
+                why = f"Cross-Site Scripting syntax delivered to endpoint returning HTTP {status}."
+                sig = ["HTML/Script tag syntax", f"HTTP {status} response", f"Network zone: {network_zone}"]
             else:
-                return "XSS_PROBE", "low", f"Blocked Cross-Site Scripting Probe (HTTP {status})", "T1059.007 - Cross-Site Scripting"
+                sev = "low"
+                conf = "LOW"
+                why = f"Blocked Cross-Site Scripting probe (HTTP {status})."
+                sig = ["XSS syntax matched", f"HTTP {status} response"]
+            return "XSS_ATTACK", sev, "Cross-Site Scripting (XSS) Injection", "T1059.007 - Cross-Site Scripting", make_evidence("W04", "Cross-Site Scripting", conf, why, sig, "Parameter safely JSON-encoded in API response.", "Verify output encoding in rendered response.")
 
     # 4. Path Traversal / LFI
-    if re.search(r'(?:\.\.[\/\\]|\.\.%2[fe]){2,}', p_lower) or any(st in p_lower for st in SENSITIVE_TRAVERSAL_TARGETS):
-        has_sensitive_target = any(st in p_lower for st in SENSITIVE_TRAVERSAL_TARGETS)
+    if re.search(r'(?:\.\.[\/\]|\.\.%2[fe]){2,}', full_target_lower) or any(st in full_target_lower for st in SENSITIVE_TRAVERSAL_TARGETS):
+        has_sensitive_target = any(st in full_target_lower for st in SENSITIVE_TRAVERSAL_TARGETS)
         if has_sensitive_target and status in (200, 206):
-            return "PATH_TRAVERSAL_BREACH", "critical", "Path Traversal Confirmed File Leak (HTTP 200)", "T1083 - File and Directory Discovery"
-        elif has_sensitive_target or status in (400, 403, 404):
-            return "PATH_TRAVERSAL", "high", f"Directory Traversal Probe (HTTP {status})", "T1083 - File and Directory Discovery"
+            sev = "high"
+            conf = "HIGH"
+            why = f"Path traversal directed at sensitive OS target '{has_sensitive_target}' returned HTTP {status}."
+            sig = ["Path traversal syntax `../`", "Sensitive target file matched", f"HTTP {status}"]
+            return "PATH_TRAVERSAL_BREACH", sev, "Path Traversal File Access (HTTP 200)", "T1083 - File and Directory Discovery", make_evidence("W05", "Path Traversal Breach", conf, why, sig, "Static documentation containing reference to sensitive filenames.", "Inspect web response payload.")
+        else:
+            sev = "low"
+            conf = "LOW"
+            why = f"Path traversal attempt rejected with HTTP {status}."
+            sig = ["Path traversal syntax `../`", f"HTTP {status} rejection"]
+            return "PATH_TRAVERSAL", sev, f"Directory Traversal Probe (HTTP {status})", "T1083 - File and Directory Discovery", make_evidence("W06", "Directory Traversal Probe", conf, why, sig, "Relative CSS/JS path resolution by client browser.", "Safely rejected with error status.")
 
     # 5. Web Shell / Command Injection
-    is_shell_file = re.search(r'\b(?:cmd\.jsp|shell\.jsp|root\.jsp|chopper\.jsp|b374k(?:\.php)?|c99(?:\.php)?|r57(?:\.php)?|alfa(?:\.php)?)\b', p_lower)
-    is_cmd_inj = bool(re.search(r'(?:\||;|`|&&|\$\()\s*(?:/bin/(?:sh|bash)|whoami\b|id\s+-\w|uname\s+-a|powershell(?:\.exe)?\b|curl\s+https?://|wget\s+https?://)', p_lower))
-    # Exclude standard Java/Tomcat session rewriting (;jsessionid=...)
-    if ";jsessionid=" in p_lower and not is_shell_file and not is_cmd_inj:
+    is_shell_file = re.search(r'(?:cmd\.jsp|shell\.jsp|root\.jsp|chopper\.jsp|b374k(?:\.php)?|c99(?:\.php)?|r57(?:\.php)?|alfa(?:\.php)?)', full_target_lower)
+    is_cmd_inj = bool(re.search(r'(?:\||;|`|&&|\$\()\s*(?:/bin/(?:sh|bash)|whoami|id\s+-\w|uname\s+-a|powershell(?:\.exe)?|curl\s+https?://|wget\s+https?://)', full_target_lower))
+    if ";jsessionid=" in full_target_lower and not is_shell_file and not is_cmd_inj:
         pass
     elif is_shell_file or is_cmd_inj:
         if status in (200, 201, 204):
-            return "RCE_WEBSHELL_EXEC", "critical", "Web Shell / Command Execution Succeeded (HTTP 200)", "T1505.003 - Web Shell"
+            sev = "high"
+            conf = "HIGH"
+            why = "Web shell filename or command injection syntax accepted with HTTP 200."
+            sig = ["Web shell or command syntax", f"HTTP {status}"]
+            return "RCE_WEBSHELL_EXEC", sev, "Web Shell Access Attempt (HTTP 200)", "T1505.003 - Web Shell", make_evidence("W07", "Web Shell Access", conf, why, sig, "Application endpoint accidentally sharing name with common webshell.", "Verify filesystem for unexpected JSP/PHP files.")
         else:
-            return "RCE_WEBSHELL_PROBE", "high", "Web Shell / Command Execution Probe", "T1505.003 - Web Shell"
+            sev = "low"
+            conf = "LOW"
+            why = f"Web shell request blocked or file not found (HTTP {status})."
+            sig = ["Web shell probe", f"HTTP {status}"]
+            return "RCE_WEBSHELL_PROBE", sev, "Web Shell Probe Blocked", "T1505.003 - Web Shell", make_evidence("W08", "Web Shell Probe", conf, why, sig, "Automated internet scanner checking for preexisting webshells.", "Safely blocked with 404.")
 
-    # 6. Expression Language / SSTI Injection Probes (e.g. ${class, ${loader, #{...})
-    if re.search(r'(\$\{|\%24\%7b|\#\{|\%23\%7b)(pagecontext|class|loader|application|session|param|request)', p_lower):
-        if "pagecontext.request.contextpath" not in p_lower:
+    # 6. Expression Language / SSTI Injection Probes
+    if re.search(r'(\$\{|\%24\%7b|\#\{|\%23\%7b)(pagecontext|class|loader|application|session|param|request)', full_target_lower):
+        if "pagecontext.request.contextpath" not in full_target_lower:
             if status in (200, 201):
-                return "SSTI_EXPLOIT", "critical", "Expression Language / SSTI Exploit Confirmed (HTTP 200)", "T1190 - Exploit Public-Facing Application"
-            return "SSTI_PROBE", "medium", "Expression Language / Template Injection Probe", "T1190 - Exploit Public-Facing Application"
+                sev = "medium"
+                conf = "MEDIUM"
+                why = "Expression language probe delivered with HTTP 200."
+                sig = ["Expression language syntax", f"HTTP {status}"]
+            else:
+                sev = "low"
+                conf = "LOW"
+                why = f"Expression language probe rejected with HTTP {status}."
+                sig = ["Expression language syntax", f"HTTP {status}"]
+            return "SSTI_PROBE", sev, "Expression Language / Template Injection Probe", "T1190 - Exploit Public-Facing Application", make_evidence("W09", "Expression Language Probe", conf, why, sig, "JSP expression evaluation inside harmless view tag.", "Review JSP expression handling.")
 
-    # 7. Automated Scanner / Reconnaissance Probes
-    if re.search(r'\b(?:wp-admin|wp-login|phpmyadmin|pma|actuator/heapdump|actuator/env|\.env|solr/admin|jmx-console|web-console|\.git/config|\.svn/entries)\b', p_lower):
+    # 7. Automated Scanner / Reconnaissance Probes (Aggregated over sliding window)
+    if re.search(r'(?:wp-admin|wp-login|phpmyadmin|pma|actuator/heapdump|actuator/env|\.env|solr/admin|jmx-console|web-console|\.git/config|\.svn/entries)', clean_p):
         if status in (404, 403, 401):
-            return "SCANNER_RECON", "medium", f"Automated Vulnerability Scanner Probe (HTTP {status})", "T1595 - Active Scanning"
+            now_t = time.time()
+            with _scanner_probe_lock:
+                probe_list = _scanner_probe_tracker.setdefault(ip, [])
+                probe_list = [t for t in probe_list if now_t - t < 60.0]
+                probe_list.append(now_t)
+                _scanner_probe_tracker[ip] = probe_list
+                count = len(probe_list)
 
-    # 8. Dangerous HTTP Method / Verb Tampering (Only non-standard / diagnostic methods)
-    if (method or "").upper() in ("TRACE", "TRACK", "CONNECT", "DEBUG"):
+            if count < 5:
+                # Single or low-frequency probe: log as INFO, never create incident
+                return "SCANNER_PROBE", "info", f"Scanner Probe (HTTP {status})", "T1595 - Active Scanning", make_evidence("W10", "Scanner Probe", "LOW", f"Single probe to {clean_p} safely returned HTTP {status}.", [f"Probe path {clean_p}", f"HTTP {status}", f"Count: {count}/5"], "Harmless automated internet noise.", "No action needed.")
+            else:
+                # High-frequency cluster (>= 5 in 60s): create LOW alert
+                return "SCANNER_RECON", "low", f"Automated Vulnerability Scanner Probe Cluster ({count} probes)", "T1595 - Active Scanning", make_evidence("W10", "Automated Scanner Probe Cluster", "MEDIUM", f"Aggregated {count} scanner probes in 60s safely rejected with HTTP {status}.", [f"Count: {count} >= 5 threshold", "Reconnaissance targets", f"Network zone: {network_zone}"], "External bot reconnaissance or internal vulnerability scan.", "Consider IP block on edge firewall if volume increases.")
+
+    # 8. Dangerous HTTP Method / Verb Tampering
+    if method_upper in ("TRACE", "TRACK", "CONNECT", "DEBUG"):
         if status in (200, 201, 204):
-            return "UNAUTHORIZED_METHOD_EXEC", "high", f"Unexpected HTTP {method.upper()} Method Allowed (HTTP {status})", "T1190 - Exploit Public-Facing Application"
+            sev = "medium"
+            conf = "MEDIUM"
+            why = f"Diagnostic HTTP {method_upper} method enabled and returned HTTP {status}."
+            sig = [f"Method {method_upper}", f"HTTP {status}"]
+            return "UNAUTHORIZED_METHOD_EXEC", sev, f"HTTP {method_upper} Method Permitted", "T1190 - Exploit Public-Facing Application", make_evidence("W11", "HTTP Method Permitted", conf, why, sig, "Reverse proxy returning static 200 without reflecting headers.", "Disable TRACE/DEBUG on web server.")
         else:
-            return "HTTP_VERB_TAMPERING", "medium", f"Disallowed HTTP {method.upper()} Method Blocked (HTTP {status})", "T1190 - Exploit Public-Facing Application"
+            return "HTTP_VERB_TAMPERING", "info", f"Disallowed HTTP {method_upper} Blocked", "T1190 - Exploit Public-Facing Application", make_evidence("W11", "HTTP Method Blocked", "LOW", f"Non-standard method {method_upper} blocked with HTTP {status}.", [f"Method {method_upper}", f"HTTP {status}"], "Web server correctly rejected non-standard verb.", "No action needed.")
 
-    # 9. Automated Script / Bot Access
-    if AUTOMATED_SCRAPER_UA.search(full_line) or AUTOMATED_SCRAPER_UA.search(p_lower):
-        if not any(k in p_lower for k in ("robots.txt", "favicon.ico", ".css", ".js")):
-            return "API_SCRAPING", "high", "Automated Script / Bot Tool Access", "T1114 - Email/Data Collection"
+    # 9. Automated Script / Bot Tool Access
+    if AUTOMATED_SCRAPER_UA.search(full_line) or AUTOMATED_SCRAPER_UA.search(clean_p):
+        if not any(k in clean_p for k in ("robots.txt", "favicon.ico", ".css", ".js")):
+            if is_internal:
+                return "HTTP_ACCESS", "info", None, None, {}
+            else:
+                return "API_SCRAPING", "low", "Automated Script / Bot Tool Access", "T1114 - Email/Data Collection", make_evidence("W12", "Automated Tool Access", "LOW", f"Request with automated script User-Agent from {ip}.", ["Scraper User-Agent signature", f"External IP: {ip}"], "Legitimate external API integration partner or developer script.", "Verify client IP ownership.")
 
-    # 10. High-Volume Mass Parameter Scraping / IDOR Enumeration (Universal across all applications)
-    is_scraping, is_confirmed_exfil = check_mass_scraping_detection(ip, user, path, method=method, raw_line=raw_line)
+    # 10. High-Volume Mass Parameter Scraping / IDOR Enumeration
+    is_scraping, is_confirmed_exfil = check_mass_scraping_detection(ip, user, path, method=method_upper, raw_line=raw_line)
     if is_scraping:
-        if is_confirmed_exfil and status in (200, 201, 204):
-            return "DATA_HARVESTING", "high", "High-Volume Automated Data Harvesting / Scraping", "T1114 - Email/Data Collection"
-        else:
-            return "DATA_HARVESTING", "medium", "Rapid Record Enumeration / IDOR Scraping Attempt", "T1005 - Data from Local System"
+        sev = "high" if not is_internal else "medium"
+        conf = "HIGH" if is_confirmed_exfil else "MEDIUM"
+        why = f"High-volume rapid enumeration across parameter identifiers from {ip} ({network_zone})."
+        sig = ["Rapid distinct parameter ID enumeration", f"Confirmed transfer: {is_confirmed_exfil}", f"Network zone: {network_zone}"]
+        return "DATA_HARVESTING", sev, "High-Volume Automated Data Harvesting / Scraping", "T1114 - Email/Data Collection", make_evidence("W13", "Mass Data Harvesting", conf, why, sig, "Authorized business batch data sync or pagination.", "Review querying user account and volume.")
 
     # 11. Large Volume Data Exfiltration / Database Dump File Exposure
-    clean_p = path.split("?")[0].lower()
     if not STATIC_EXT_RE.search(clean_p) and status in (200, 206):
-        # Confirmed database dump / backup archive file exposure (.sql, .dump, .bak, etc.)
-        is_db_dump_file = bool(re.search(r'\.(?:sql(?:\.gz|\.bz2|\.zip)?|dump|dmp|bak)$', clean_p))
-        # Dedicated raw database dump endpoints (word boundary match, not camelCase business methods)
+        # Confirmed database dump / backup archive file exposure (.sql, .dump, .bak, .tar.gz, etc.)
+        is_db_dump_file = bool(re.search(r'(?:^|/)[^/]*(?:db|database|dump|backup)[^/]*\.(?:sql(?:\.gz|\.bz2|\.zip)?|dump(?:\.tar|\.gz)?|dmp|bak|tar\.gz|tgz|7z|zip)$', clean_p)) or bool(re.search(r'\.(?:sql(?:\.gz|\.bz2|\.zip)?|dump|dmp|bak)$', clean_p))
         is_dump_endpoint = bool(re.search(r'(?:^|/)(?:db_dump|pg_dump|mysqldump|full_backup)(?:/|$)', clean_p))
-        # Confirmed massive exfiltration: Requires >= 15 MB payload transfer on export endpoints
         is_massive_export = (bytes_sent >= 15 * 1024 * 1024) and bool(re.search(r'(?:^|/)(?:export|bulk_download|download_all)(?:/|$)', clean_p))
 
         if is_db_dump_file or is_dump_endpoint:
-            return "DATA_EXFILTRATION", "critical", "Database Dump / Backup Archive Exposure (HTTP 200)", "T1005 - Data from Local System"
+            sev = "critical" if not is_internal else "high"
+            conf = "HIGH"
+            why = f"Database dump archive '{clean_p}' downloaded via HTTP {status} from {network_zone} IP {ip}."
+            sig = ["Database dump file extension or endpoint matched", f"HTTP {status} successful response", f"Network zone: {network_zone}"]
+            return "DATA_EXFILTRATION", sev, "Database Dump / Backup Archive Exposure (HTTP 200)", "T1005 - Data from Local System", make_evidence("W14", "Database Dump File Exposure", conf, why, sig, "Authorized DBA offsite backup download.", "Verify administrator identity and authorization.")
         elif is_massive_export:
             mb_size = max(1, bytes_sent // (1024 * 1024))
-            return "DATA_EXFILTRATION", "critical", f"Massive Data Exfiltration Confirmed ({mb_size}MB Payload HTTP 200)", "T1005 - Data from Local System"
+            sev = "critical" if not is_internal else "high"
+            conf = "HIGH"
+            why = f"Large volume data export ({mb_size} MB) downloaded from {network_zone} IP {ip}."
+            sig = [f"Measured bytes_sent: {mb_size} MB >= 15 MB threshold", f"HTTP {status}", f"Network zone: {network_zone}"]
+            return "DATA_EXFILTRATION", sev, f"Massive Data Exfiltration Confirmed ({mb_size}MB Payload HTTP 200)", "T1005 - Data from Local System", make_evidence("W14", "Massive Data Exfiltration", conf, why, sig, "Scheduled monthly business report export.", "Verify if user was authorized to perform bulk export.")
 
-    return "HTTP_ACCESS", "info", None, None
+    return "HTTP_ACCESS", "info", None, None, {}
 
 POSTGRES_LOG_RE = re.compile(
     r'^(?P<time>[0-9\-]+ [0-9:\.]+ (?:UTC|[A-Z]+))\s+\[(?P<pid>\d+)\]\s+(?:(?P<user>[^@\s]+)@(?P<db>[^\s]+)\s+)?(?P<level>[A-Z]+):\s+(?P<msg>.+)$'
@@ -9054,9 +9184,21 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     pass
 
             sanitized_path = redact_sensitive_params(raw_path)
-            ev_type, sev, rule_title, mitre_tag = evaluate_web_security_event(
+            eval_res = evaluate_web_security_event(
                 method, raw_path, status_code, user, c_ip, raw_line=raw_line, bytes_sent=bytes_sent
             )
+            if len(eval_res) == 5:
+                ev_type, sev, rule_title, mitre_tag, evidence_dict = eval_res
+            else:
+                ev_type, sev, rule_title, mitre_tag = eval_res
+                evidence_dict = {}
+
+            # Check per-application allowlists before creating security alerts
+            if db.is_request_allowlisted(actual_app_id, raw_path, c_ip, user):
+                ev_type = "ALLOWLIST_HIT"
+                sev = "info"
+                evidence_dict["why_it_fired"] = "Matched active per-application allowlist"
+
 
             clean_path = raw_path.split("?")[0].lower()
             if STATIC_EXT_RE.search(clean_path):
@@ -9088,10 +9230,12 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     "attacker_key": f"ip:{c_ip}",
                     "user": user_val,
                     "ip": c_ip,
-                    "summary": f"{method} {raw_path} -> HTTP {status_code}",
+                    "summary": evidence_dict.get("why_it_fired") or f"{method} {raw_path} -> HTTP {status_code}",
                     "raw_line": raw_line,
                     "event_type": ev_type,
-                    "raw_path": raw_path
+                    "raw_path": raw_path,
+                    "evidence": evidence_dict,
+                    "confidence": evidence_dict.get("confidence", "MEDIUM")
                 })
                 if sev == "critical": highest_severity = "critical"
                 elif sev == "high" and highest_severity != "critical": highest_severity = "high"
@@ -10687,3 +10831,49 @@ def api_approve_app_component(request: Request, app_id: int, comp_id: int):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
+
+
+# ── Accuracy & Quality Controls Endpoints ─────────────────────────────────────
+@app.post("/api/detection/verdict")
+async def api_record_detection_verdict(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    target_type = data.get("target_type", "incident")
+    target_id = data.get("target_id")
+    verdict = data.get("verdict")
+    reason = (data.get("reason") or "Analyst feedback").strip()
+    rule_name = data.get("rule_name", "Unknown Rule")
+    analyst_user = "soc_analyst"
+    if hasattr(request, "session"):
+        analyst_user = request.session.get("username", "soc_analyst")
+
+    if not target_id or verdict not in ("true_positive", "false_positive"):
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Invalid target_id or verdict"})
+
+    res = db.record_rule_verdict(target_type, target_id, verdict, reason, rule_name, analyst_user)
+    return {"ok": bool(res), "result": res}
+
+@app.get("/api/detection/rules/metrics")
+async def api_get_rule_metrics():
+    return db.get_rule_accuracy_metrics()
+
+@app.post("/api/detection/rules/{id}/shadow")
+async def api_toggle_rule_shadow(id: int):
+    return db.toggle_rule_shadow_mode(id)
+
+@app.get("/api/apps/{app_id}/allowlists")
+async def api_get_app_allowlists(app_id: int):
+    return db.get_app_allowlists(app_id)
+
+@app.post("/api/apps/{app_id}/allowlists")
+async def api_add_app_allowlist(app_id: int, request: Request):
+    data = await request.json()
+    ptype = data.get("pattern_type", "path_regex")
+    pval = data.get("pattern_value", "")
+    owner = data.get("owner", "Admin")
+    reason = data.get("reason", "")
+    days = int(data.get("expires_days", 90))
+    rid = db.add_app_allowlist(app_id, ptype, pval, owner, reason, days)
+    return {"ok": bool(rid), "id": rid}

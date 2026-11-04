@@ -165,7 +165,13 @@ def init_app_siem_schema(conn):
             ("status", "VARCHAR(50) DEFAULT 'open'"),
             ("closed_by", "VARCHAR(100)"),
             ("closed_at", "TIMESTAMPTZ"),
-            ("closed_note", "TEXT")
+            ("closed_note", "TEXT"),
+            ("evidence_data", "JSONB DEFAULT '{}'::jsonb"),
+            ("confidence", "VARCHAR(16) DEFAULT 'MEDIUM'"),
+            ("verdict", "VARCHAR(32) DEFAULT 'unreviewed'"),
+            ("verdict_reason", "TEXT"),
+            ("verdict_by", "VARCHAR(100)"),
+            ("verdict_at", "TIMESTAMPTZ")
         ]:
             try:
                 cur.execute(f"ALTER TABLE app_events ADD COLUMN IF NOT EXISTS {col} {col_type};")
@@ -410,7 +416,36 @@ def init_app_siem_schema(conn):
         except Exception:
             pass
 
+        # 6. app_detection_allowlists & rule_feedback
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_detection_allowlists (
+                    id SERIAL PRIMARY KEY,
+                    application_id INTEGER REFERENCES applications(id) ON DELETE CASCADE,
+                    pattern_type VARCHAR(50) NOT NULL,
+                    pattern_value TEXT NOT NULL,
+                    owner VARCHAR(100),
+                    reason TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS rule_feedback (
+                    id SERIAL PRIMARY KEY,
+                    rule_name VARCHAR(255) NOT NULL,
+                    target_type VARCHAR(32) NOT NULL,
+                    target_id INTEGER NOT NULL,
+                    verdict VARCHAR(32) NOT NULL,
+                    reason TEXT NOT NULL,
+                    analyst_user VARCHAR(100) NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """)
+            conn.commit()
+        except Exception:
+            conn.rollback()
     logger.info("Application SIEM database schema initialized successfully.")
+    
+
     return True
 
 
