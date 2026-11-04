@@ -181,8 +181,8 @@
 
             <!-- Tabs: [ Assets ] [ App Nodes ] -->
             <div style="display:flex; gap:8px; margin-bottom:8px">
-                <button type="button" id="create-tab-assets" class="member-tab-btn active" onclick="switchCreateTab('assets')">🖥️ Assets</button>
-                <button type="button" id="create-tab-apps" class="member-tab-btn" onclick="switchCreateTab('apps')">📱 App Nodes</button>
+                <button type="button" id="create-tab-assets" class="member-tab-btn active" onclick="switchCreateTab('assets')">Assets</button>
+                <button type="button" id="create-tab-apps" class="member-tab-btn" onclick="switchCreateTab('apps')">App Nodes</button>
             </div>
 
             <!-- Search + Select All -->
@@ -220,10 +220,10 @@
     <!-- Tabs: [ Assets ] [ App Nodes ] -->
     <div style="display:flex; gap:8px; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:8px">
         <button type="button" id="member-tab-assets-btn" class="member-tab-btn active" onclick="switchManageMemberTab('assets')">
-            🖥️ Assets (<span id="manage-assets-count-badge">0</span>)
+            Assets (<span id="manage-assets-count-badge">0</span>)
         </button>
         <button type="button" id="member-tab-apps-btn" class="member-tab-btn" onclick="switchManageMemberTab('apps')">
-            📱 App Nodes (<span id="manage-apps-count-badge">0</span>)
+            App Nodes (<span id="manage-apps-count-badge">0</span>)
         </button>
     </div>
 
@@ -361,10 +361,10 @@ function renderProjectCard(p) {
         adminControlsBottom = `
         <div style="display:flex; gap:8px; flex-wrap:wrap">
             <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:6px 8px; border-color:var(--cyan); color:var(--cyan)" onclick="event.stopPropagation(); openManageMembersModal(${id}, '${safeNameJs}')">
-                ⚙ ASSETS
+                ASSETS
             </button>
             <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:6px 8px; border-color:var(--amber); color:var(--amber)" onclick="event.stopPropagation(); openManageGroupsModal(${id}, '${safeNameJs}')">
-                👥 GROUPS
+                GROUPS
             </button>
         </div>
         `;

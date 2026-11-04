@@ -2583,12 +2583,7 @@ def get_projects(allowed_project_ids=None):
                     p["assigned_apps"] = []
                 p["app_count"] = len(p["assigned_apps"])
 
-                name_lower = (p.get("name") or "").lower()
-                if "apdcl" in name_lower or "power" in name_lower: p["icon"] = "🏭"
-                elif "pgvcl" in name_lower or "grid" in name_lower: p["icon"] = "⚡"
-                elif "aws" in name_lower or "cloud" in name_lower: p["icon"] = "☁"
-                elif "nagaland" in name_lower: p["icon"] = "🗄"
-                else: p["icon"] = "🏢"
+                p["icon"] = ""
                 p["critical_count"] = p.get("critical_count", 0)
                 p["warning_count"] = p.get("warning_count", 0)
                 p["total_alerts"] = p.get("total_alerts", 0)

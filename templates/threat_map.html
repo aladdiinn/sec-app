@@ -47,6 +47,9 @@
     border: 1px solid rgba(255,255,255,0.08);
     z-index: 1;
 }
+#threat-map-canvas .leaflet-tile {
+    filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+}
 .threat-feed-card {
     background: #0f172a;
     border: 1px solid rgba(255,255,255,0.08);
@@ -158,10 +161,10 @@ function initThreatMap() {
         attributionControl: false
     }).setView([22.5, 78.9], 5);
 
-    // CartoDB Dark Matter tile layer
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 18,
-        subdomains: 'abcd'
+    // OpenStreetMap dark cyber tile layer (100% free, no API key required, zero watermarks)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        subdomains: ['a', 'b', 'c']
     }).addTo(threatMap);
 
     threatMarkersLayer = L.layerGroup().addTo(threatMap);
