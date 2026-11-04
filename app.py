@@ -8734,7 +8734,7 @@ def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "
                     return True, is_exfil
     return False, False
 
-def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str, raw_line: str = ""):
+def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str, raw_line: str = "", bytes_sent: int = 0):
     """Real-time high-fidelity heuristics detecting confirmed web attacks with full URL-decode support."""
     p_unquoted = urllib.parse.unquote(path).lower()
     p_lower = path.lower() + " " + p_unquoted
@@ -8814,11 +8814,21 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
         else:
             return "DATA_HARVESTING", "medium", "Rapid Record Enumeration / IDOR Scraping Attempt", "T1005 - Data from Local System"
 
-    # 11. Large Volume Data Exfiltration (Massive payload transfer on non-static endpoints)
+    # 11. Large Volume Data Exfiltration / Database Dump File Exposure
     clean_p = path.split("?")[0].lower()
     if not STATIC_EXT_RE.search(clean_p) and status in (200, 206):
-        if any(exp in clean_p for exp in ("/export", "/backup", "/dump", "/downloadall", "/bulkdownload")):
-            return "DATA_EXFILTRATION", "critical", "Massive Data Export / Exfiltration Confirmed (HTTP 200)", "T1005 - Data from Local System"
+        # Confirmed database dump / backup archive file exposure (.sql, .dump, .bak, etc.)
+        is_db_dump_file = bool(re.search(r'\.(?:sql(?:\.gz|\.bz2|\.zip)?|dump|dmp|bak)$', clean_p))
+        # Dedicated raw database dump endpoints (word boundary match, not camelCase business methods)
+        is_dump_endpoint = bool(re.search(r'(?:^|/)(?:db_dump|pg_dump|mysqldump|full_backup)(?:/|$)', clean_p))
+        # Confirmed massive exfiltration: Requires >= 15 MB payload transfer on export endpoints
+        is_massive_export = (bytes_sent >= 15 * 1024 * 1024) and bool(re.search(r'(?:^|/)(?:export|bulk_download|download_all)(?:/|$)', clean_p))
+
+        if is_db_dump_file or is_dump_endpoint:
+            return "DATA_EXFILTRATION", "critical", "Database Dump / Backup Archive Exposure (HTTP 200)", "T1005 - Data from Local System"
+        elif is_massive_export:
+            mb_size = max(1, bytes_sent // (1024 * 1024))
+            return "DATA_EXFILTRATION", "critical", f"Massive Data Exfiltration Confirmed ({mb_size}MB Payload HTTP 200)", "T1005 - Data from Local System"
 
     return "HTTP_ACCESS", "info", None, None
 
@@ -9045,7 +9055,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
 
             sanitized_path = redact_sensitive_params(raw_path)
             ev_type, sev, rule_title, mitre_tag = evaluate_web_security_event(
-                method, raw_path, status_code, user, c_ip, raw_line=raw_line
+                method, raw_path, status_code, user, c_ip, raw_line=raw_line, bytes_sent=bytes_sent
             )
 
             clean_path = raw_path.split("?")[0].lower()

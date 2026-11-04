@@ -930,7 +930,9 @@ def init_db():
                            OR url_path ILIKE '%ConsumerSurvey%'
                            OR url_path ILIKE '%/admin/css/%'
                            OR url_path ILIKE '%/admin/js/%'
-                           OR url_path ILIKE '%/admin/images/%');
+                           OR url_path ILIKE '%/admin/images/%'
+                           OR url_path ILIKE '%backupForPureSwapping%'
+                           OR url_path ILIKE '%backupForDataCorrection%');
                 """)
                 cur.execute("""
                     UPDATE app_incidents 
@@ -939,7 +941,9 @@ def init_db():
                       AND (summary ILIKE '%GetDuplicateKnumbersWithMtrno%' 
                            OR summary ILIKE '%VerifyKnoMeterNumber%' 
                            OR summary ILIKE '%updateVerifyStatus%'
-                           OR summary ILIKE '%ConsumerSurvey%');
+                           OR summary ILIKE '%ConsumerSurvey%'
+                           OR summary ILIKE '%backupForPureSwapping%'
+                           OR summary ILIKE '%backupForDataCorrection%');
                 """)
             except Exception as ex_mig:
                 logger.debug(f"Rule migration error: {ex_mig}")
