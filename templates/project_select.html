@@ -6,48 +6,57 @@
 
 {% block extra_css %}
 <style>
-.controls-row{display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap}
-.search-wrap{position:relative;flex:1;max-width:360px}
-.search-wrap svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--text3)}
-.search-input{width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);font-family:'Inter',sans-serif;font-size:12px;padding:9px 12px 9px 36px;border-radius:4px;outline:none;transition:border-color .2s;letter-spacing:.5px}
-.search-input:focus{border-color:var(--cyan)}
-.search-input::placeholder{color:var(--text3)}
-.sort-select{background:var(--bg2);border:1px solid var(--border);color:var(--text2);font-family:'Inter',sans-serif;font-size:11px;padding:9px 14px;border-radius:4px;outline:none;cursor:pointer;letter-spacing:.5px}
+/* Controls row matching Select Project page spec */
+.controls-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+}
+.search-wrap {
+    position: relative;
+    flex: 1;
+    max-width: 360px;
+}
+.search-wrap svg {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
+    color: var(--text-sub);
+}
+.search-input {
+    width: 100%;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    padding: 9px 12px 9px 36px;
+    border-radius: 4px;
+    outline: none;
+    transition: border-color .2s;
+    letter-spacing: .5px;
+}
+.search-input:focus { border-color: var(--cyan); }
+.search-input::placeholder { color: var(--text-sub); }
+.sort-select {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    padding: 9px 14px;
+    border-radius: 4px;
+    outline: none;
+    cursor: pointer;
+    letter-spacing: .5px;
+}
 
-.project-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px}
-.project-card{background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden;transition:all .2s;cursor:pointer;position:relative;display:flex;flex-direction:column;justify-content:space-between}
-.project-card:hover{border-color:var(--cyan);transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,0.4)}
-.project-card.has-critical{border-color:rgba(255,59,92,0.35)}
-.project-card.has-critical:hover{border-color:var(--red)}
-.project-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--cyan),transparent)}
-.project-card.has-critical::before{background:linear-gradient(90deg,var(--red),transparent)}
-
-.card-header{padding:16px 18px 12px;display:flex;align-items:flex-start;justify-content:space-between}
-.card-icon-wrap{width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,var(--bg3),var(--bg));border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;margin-right:12px}
-.card-title-wrap{flex:1}
-.card-title{font-family:var(--font-sans);font-size:14px;font-weight:700;letter-spacing:0.5px;color:var(--text);margin-bottom:4px}
-.card-desc{font-size:10px;color:var(--text3);letter-spacing:.5px;line-height:1.4;height:28px;overflow:hidden}
-.card-status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
-.dot-ok{background:var(--green);box-shadow:0 0 6px rgba(16,185,129,0.4)}
-.dot-warn{background:var(--amber);box-shadow:0 0 6px rgba(245,158,11,0.4)}
-.dot-crit{background:var(--red);box-shadow:0 0 6px rgba(255,59,92,0.4)}
-
-.card-metrics{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:rgba(0,0,0,0.15)}
-.card-metric{padding:10px 8px;border-right:1px solid var(--border);text-align:center}
-.card-metric:last-child{border-right:none}
-.metric-val{font-family:var(--font-sans);font-size:16px;font-weight:800;color:var(--text);line-height:1;margin-bottom:4px}
-.metric-val.crit{color:var(--red)}
-.metric-val.warn{color:var(--amber)}
-.metric-val.ok{color:var(--green)}
-.metric-label{font-size:8px;color:var(--text3);letter-spacing:0.8px;text-transform:uppercase}
-
-.card-alert-bar{padding:7px 16px;background:rgba(255, 59, 92,0.06);border-bottom:1px solid rgba(255, 59, 92,0.15);display:flex;align-items:center;gap:8px;font-size:10px;color:var(--red)}
-.alert-dot{width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0;animation:blink 1.5s infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-
-.card-footer{padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
-.card-meta{font-size:10px;color:var(--text3);letter-spacing:.5px}
-
+/* Identical grid and card style matching projects.html */
 .member-tab-btn {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--border);
@@ -58,6 +67,11 @@
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
+    font-family: var(--font-sans);
+}
+.member-tab-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
 }
 .member-tab-btn.active {
     background: rgba(6, 182, 212, 0.15);
@@ -96,20 +110,20 @@
 .status-trouble { background: var(--amber); box-shadow: 0 0 6px rgba(245, 158, 11, 0.4); }
 .status-offline { background: #64748b; }
 
-.create-card{background:var(--bg2);border:1px dashed var(--border);border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;cursor:pointer;transition:all .2s;min-height:180px}
-.create-card:hover{border-color:var(--cyan);background:#0f1a2a}
-.create-icon{font-size:28px;color:var(--text3);margin-bottom:12px;transition:color .2s}
-.create-card:hover .create-icon{color:var(--cyan)}
-.create-label{font-family:var(--font-sans);font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text3);text-transform:uppercase;transition:color .2s}
-.create-card:hover .create-label{color:var(--cyan)}
-
-.empty-state{grid-column:1/-1;text-align:center;padding:60px;color:var(--text3);font-size:12px;letter-spacing:2px;text-transform:uppercase}
+.empty-state {
+    grid-column: 1/-1;
+    text-align: center;
+    padding: 60px;
+    color: var(--text-sub);
+    font-size: 12px;
+    letter-spacing: 1px;
+}
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="fade-in">
-    <!-- Controls -->
+    <!-- Controls Header -->
     <div class="controls-row">
         <div class="search-wrap">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -118,17 +132,82 @@
         <select class="sort-select" id="sortSelect" onchange="sortProjects()">
             <option value="name">Sort by Name</option>
             <option value="servers">Sort by Assets</option>
-            <option value="alerts">Sort by Alerts</option>
+            <option value="apps">Sort by App Nodes</option>
+            <option value="groups">Sort by Groups</option>
         </select>
     </div>
 
-    <!-- Project Grid -->
-    <div class="project-grid" id="projectGrid">
-        <!-- Injected dynamically -->
+    <!-- Project Grid (Identical 3-column responsive layout to projects.html) -->
+    <div id="projects-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:20px">
+        <!-- Injected dynamically using the shared card component -->
     </div>
 </div>
 
-<!-- ── MANAGE PROJECT MEMBERS MODAL ── -->
+<!-- ── EDIT PROJECT MODAL (REUSED FROM PROJECTS PAGE) ── -->
+<div id="create-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:620px; max-width:94vw; box-shadow:0 25px 70px rgba(0,0,0,0.9); border:1px solid var(--border)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px">
+        <h3 class="card-title" id="create-modal-title" style="font-size:17px; font-weight:700; color:var(--cyan); letter-spacing:0.5px">EDIT PROJECT</h3>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeCreateModal()">✕</button>
+    </div>
+    
+    <form id="create-form" onsubmit="submitProjectForm(event)">
+        <div style="margin-bottom:14px">
+            <label class="stat-label" style="display:block; margin-bottom:5px">PROJECT NAME <span style="color:var(--red)">*</span></label>
+            <input id="name" type="text" class="glass" style="width:100%; padding:9px 12px; border-radius:4px; color:var(--text); outline:none" required>
+        </div>
+
+        <div style="margin-bottom:14px">
+            <label class="stat-label" style="display:block; margin-bottom:5px">DESCRIPTION</label>
+            <textarea id="description" class="glass" style="width:100%; padding:9px 12px; height:54px; border-radius:4px; color:var(--text); outline:none; resize:none"></textarea>
+        </div>
+
+        <!-- VPN Subnet Tracking -->
+        <div style="margin-bottom:16px; padding:10px 12px; border:1px dashed rgba(6, 182, 212, 0.4); border-radius:6px; background:rgba(6, 182, 212, 0.05)">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:6px">
+                <input type="checkbox" id="vpnTrackingEnabled" onchange="document.getElementById('vpnSubnetContainer').style.display = this.checked ? 'block' : 'none'" style="accent-color:var(--cyan); width:14px; height:14px">
+                <span class="stat-label" style="color:var(--cyan); font-size:11px">ENABLE VPN SUBNET TRACKING (OUT-OF-SUBNET ALERTS)</span>
+            </label>
+            <div id="vpnSubnetContainer" style="display:none; margin-top:6px">
+                <input id="vpnSubnets" type="text" class="glass" placeholder="e.g. 10.5.0.0/24, 192.168.1.0/24" style="width:100%; padding:7px 10px; font-size:11px; border-radius:4px; color:var(--text); outline:none">
+            </div>
+        </div>
+
+        <!-- Member Selection (Assets & App Nodes) -->
+        <div style="margin-bottom:20px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                <label class="stat-label" style="color:var(--cyan)">ASSIGN PROJECT MEMBERS</label>
+                <span class="text-meta" id="create-selection-summary" style="font-size:11px">Selected: 0 assets, 0 app nodes</span>
+            </div>
+
+            <!-- Tabs: [ Assets ] [ App Nodes ] -->
+            <div style="display:flex; gap:8px; margin-bottom:8px">
+                <button type="button" id="create-tab-assets" class="member-tab-btn active" onclick="switchCreateTab('assets')">🖥️ Assets</button>
+                <button type="button" id="create-tab-apps" class="member-tab-btn" onclick="switchCreateTab('apps')">📱 App Nodes</button>
+            </div>
+
+            <!-- Search + Select All -->
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:10px">
+                <input type="text" id="create-search-input" class="glass" placeholder="Filter by name, IP, URL..." oninput="filterCreateMembers()" style="flex:1; padding:7px 10px; font-size:11px; border-radius:4px; color:var(--text)">
+                <div style="font-size:10px; display:flex; gap:10px; flex-shrink:0">
+                    <a href="javascript:void(0)" onclick="selectAllCreateMembers(true)" style="color:var(--cyan); text-decoration:none">Select All</a>
+                    <a href="javascript:void(0)" onclick="selectAllCreateMembers(false)" style="color:var(--text-sub); text-decoration:none">Clear</a>
+                </div>
+            </div>
+
+            <!-- Members List -->
+            <div id="create-members-list" style="max-height:170px; overflow-y:auto; background:rgba(8,12,24,0.85); border:1px solid var(--border); border-radius:6px; padding:8px; display:flex; flex-direction:column; gap:5px">
+                <!-- Injected dynamically -->
+            </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:12px">
+            <button type="button" class="btn btn-glass" onclick="closeCreateModal()">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="btn-submit">Save Project</button>
+        </div>
+    </form>
+</div>
+
+<!-- ── MANAGE PROJECT MEMBERS MODAL (IDENTICAL TO PROJECTS PAGE) ── -->
 <div id="manage-members-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:640px; max-width:94vw; box-shadow:0 25px 70px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
         <div>
@@ -138,6 +217,7 @@
         <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeManageMembersModal()">✕</button>
     </div>
 
+    <!-- Tabs: [ Assets ] [ App Nodes ] -->
     <div style="display:flex; gap:8px; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:8px">
         <button type="button" id="member-tab-assets-btn" class="member-tab-btn active" onclick="switchManageMemberTab('assets')">
             🖥️ Assets (<span id="manage-assets-count-badge">0</span>)
@@ -147,16 +227,19 @@
         </button>
     </div>
 
+    <!-- Search + Select All -->
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:12px">
-        <input type="text" id="manage-member-search" class="glass" placeholder="Search by name, IP, URL..." oninput="renderManageMembersList()" style="flex:1; padding:8px 12px; font-size:11px; border-radius:4px; color:var(--text)">
+        <input type="text" id="manage-member-search" class="glass" placeholder="Search by name, IP, URL..." oninput="filterManageMembers()" style="flex:1; padding:8px 12px; font-size:11px; border-radius:4px; color:var(--text)">
         <div style="font-size:10px; display:flex; gap:12px; flex-shrink:0">
             <a href="javascript:void(0)" onclick="selectAllManageMembers(true)" style="color:var(--cyan); text-decoration:none; font-weight:600">Select All</a>
             <a href="javascript:void(0)" onclick="selectAllManageMembers(false)" style="color:var(--text-sub); text-decoration:none">Clear All</a>
         </div>
     </div>
 
+    <!-- Member List -->
     <div id="manage-members-list" style="max-height:250px; overflow-y:auto; background:rgba(8,12,24,0.85); border:1px solid var(--border); border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:6px; margin-bottom:20px"></div>
 
+    <!-- Footer -->
     <div style="display:flex; justify-content:space-between; align-items:center">
         <span class="text-meta" id="manage-selected-count" style="font-weight:600; color:var(--text)">0 assets, 0 app nodes selected</span>
         <div style="display:flex; gap:10px">
@@ -187,31 +270,6 @@
             Delete Project
         </button>
     </div>
-</div>
-
-<!-- ── EDIT PROJECT MODAL ── -->
-<div id="edit-project-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:580px; max-width:94vw; box-shadow:0 25px 70px rgba(0,0,0,0.9); border:1px solid var(--border)">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
-        <h3 class="card-title" id="edit-modal-title" style="font-size:17px; font-weight:700; color:var(--cyan); letter-spacing:0.5px">EDIT PROJECT</h3>
-        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeEditModal()">✕</button>
-    </div>
-    
-    <form id="edit-form" onsubmit="submitEditProjectForm(event)">
-        <div style="margin-bottom:14px">
-            <label class="stat-label" style="display:block; margin-bottom:5px">PROJECT NAME <span style="color:var(--red)">*</span></label>
-            <input id="edit-name" type="text" class="glass" style="width:100%; padding:9px 12px; border-radius:4px; color:var(--text); outline:none" required>
-        </div>
-
-        <div style="margin-bottom:16px">
-            <label class="stat-label" style="display:block; margin-bottom:5px">DESCRIPTION</label>
-            <textarea id="edit-description" class="glass" style="width:100%; padding:9px 12px; height:60px; border-radius:4px; color:var(--text); outline:none; resize:none"></textarea>
-        </div>
-
-        <div style="display:flex; justify-content:flex-end; gap:12px">
-            <button type="button" class="btn btn-glass" onclick="closeEditModal()">Cancel</button>
-            <button type="submit" class="btn btn-primary" id="btn-edit-submit">Update Project</button>
-        </div>
-    </form>
 </div>
 
 <!-- ── MANAGE GROUPS MODAL ── -->
@@ -245,7 +303,13 @@ let filteredProjects = [...currentProjects];
 let allServersList = [];
 let allAppsList = [];
 
-// Member modal state
+// Edit modal state
+let isEditingProjectId = null;
+let activeCreateTab = 'assets';
+let createSelectedServerIds = new Set();
+let createSelectedAppIds = new Set();
+
+// Manage members modal state
 let activeManagingProjectId = null;
 let activeManagingProjectName = '';
 let activeManageTab = 'assets';
@@ -256,9 +320,6 @@ let manageSelectedAppIds = new Set();
 let pendingDeleteProjectId = null;
 let pendingDeleteProjectName = '';
 
-// Edit modal state
-let activeEditingProjectId = null;
-
 // Groups modal state
 let activeManagingGroupsProjectId = null;
 
@@ -267,134 +328,96 @@ function escapeHtml(str) {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
-/* ── Render Projects Grid ────────────────────────────────── */
-function renderProjects(){
-  const grid = document.getElementById('projectGrid');
-  grid.innerHTML = '';
-
-  if(filteredProjects.length === 0){
-    grid.innerHTML = '<div class="empty-state">No projects found</div>';
-    return;
-  }
-
-  filteredProjects.forEach(p => {
-    const hasCrit = (p.critical_count || 0) > 0;
-    const statusCls = hasCrit ? 'dot-crit' : (p.warning_count || 0) > 0 ? 'dot-warn' : 'dot-ok';
-    const statusText = hasCrit ? 'CRITICAL' : (p.warning_count || 0) > 0 ? 'WARNING' : 'SECURE';
-
-    const card = document.createElement('div');
-    card.className = 'project-card' + (hasCrit ? ' has-critical' : '');
-    card.id = `proj-card-${p.id}`;
-    card.dataset.id = p.id;
-    card.dataset.name = (p.name || '').toLowerCase();
-    card.title = `Click to enter ${p.name || 'Project'}`;
-    card.onclick = (e) => enterProject(p.id, p.name, e);
-
+/* ── EXACT REUSED CARD COMPONENT FROM PROJECTS / WORKSPACES PAGE ── */
+function renderProjectCard(p) {
+    const id = p.id;
+    const name = (p.name || 'Unnamed Project').replace(/"/g, '&quot;');
     const safeNameJs = String(p.name || '').replace(/'/g, "\\'");
+    const desc = p.description || 'No description provided';
+    const serverCount = p.server_count || 0;
+    const appCount = p.app_count || 0;
+    const groupCount = (p.assigned_groups || []).length;
+    const userCount = p.user_count || 0;
 
-    let adminControlsHeader = '';
-    let adminControlsFooter = '';
+    let adminControlsTop = '';
+    let adminControlsBottom = '';
 
     if (IS_ADMIN) {
-        adminControlsHeader = `
-        <div style="display:flex; gap:4px; margin-left:8px" onclick="event.stopPropagation()">
-            <button onclick="event.stopPropagation(); openEditModal(${p.id}, '${safeNameJs}')"
+        adminControlsTop = `
+        <div>
+            <button onclick="event.stopPropagation(); openEditModal(${id})"
                 title="Edit project"
-                style="background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.4); color:var(--cyan); border-radius:4px; padding:3px 7px; cursor:pointer; font-size:10px; font-family:var(--mono)">
+                style="background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.4); color:var(--cyan); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono); margin-right:4px">
                 EDIT
             </button>
-            <button onclick="event.stopPropagation(); requestDeleteProject(${p.id}, '${safeNameJs}')"
+            <button onclick="event.stopPropagation(); requestDeleteProject(${id}, '${safeNameJs}')"
                 title="Delete project"
-                style="background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:4px; padding:3px 7px; cursor:pointer; font-size:10px; font-family:var(--mono)">
+                style="background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono);">
                 DEL
             </button>
         </div>
         `;
 
-        adminControlsFooter = `
-        <div style="display:flex; gap:6px; margin-top:8px; width:100%" onclick="event.stopPropagation()">
-            <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:5px 8px; border-color:var(--cyan); color:var(--cyan)" onclick="event.stopPropagation(); openManageMembersModal(${p.id}, '${safeNameJs}')">
+        adminControlsBottom = `
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:6px 8px; border-color:var(--cyan); color:var(--cyan)" onclick="event.stopPropagation(); openManageMembersModal(${id}, '${safeNameJs}')">
                 ⚙ ASSETS
             </button>
-            <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:5px 8px; border-color:var(--amber); color:var(--amber)" onclick="event.stopPropagation(); openManageGroupsModal(${p.id}, '${safeNameJs}')">
+            <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:6px 8px; border-color:var(--amber); color:var(--amber)" onclick="event.stopPropagation(); openManageGroupsModal(${id}, '${safeNameJs}')">
                 👥 GROUPS
             </button>
         </div>
         `;
     }
 
-    card.innerHTML = `
-      <div class="card-header">
-        <div style="display:flex; align-items:flex-start; flex:1">
-          <div class="card-icon-wrap">${p.icon || '🏢'}</div>
-          <div class="card-title-wrap">
-            <div class="card-title">${escapeHtml(p.name)}</div>
-            <div class="card-desc">${escapeHtml(p.description || 'Enterprise Infrastructure Project')}</div>
-          </div>
+    return `
+    <div class="card glass glass-hover fade-in" id="proj-${id}" onclick="enterProjectView(${id})" title="Click to enter ${name}" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:20px; cursor:pointer;">
+        <div>
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
+                <h3 class="card-title" style="font-size:16px; font-family:var(--font-sans); font-weight:700; color:var(--cyan); letter-spacing:0.5px">${escapeHtml(p.name)}</h3>
+                ${adminControlsTop}
+            </div>
+            <p class="text-meta" style="margin-bottom:14px; line-height:1.5; height:36px; overflow:hidden">${escapeHtml(desc)}</p>
         </div>
-        <div style="display:flex; align-items:center">
-          <div class="card-status-dot ${statusCls}" title="${statusText}"></div>
-          ${adminControlsHeader}
-        </div>
-      </div>
 
-      <div class="card-metrics">
-        <div class="card-metric">
-          <div class="metric-val">${p.server_count || 0}</div>
-          <div class="metric-label">Servers</div>
-        </div>
-        <div class="card-metric">
-          <div class="metric-val">${p.app_count || 0}</div>
-          <div class="metric-label">App Nodes</div>
-        </div>
-        <div class="card-metric">
-          <div class="metric-val ${(p.critical_count || 0) > 0 ? 'crit' : 'ok'}">${p.critical_count || 0}</div>
-          <div class="metric-label">Critical</div>
-        </div>
-        <div class="card-metric">
-          <div class="metric-val ${(p.total_alerts || 0) > 0 ? 'warn' : 'ok'}">${p.total_alerts || 0}</div>
-          <div class="metric-label">Alerts</div>
-        </div>
-      </div>
+        <div>
+            <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:8px; margin-bottom:6px">
+                <span class="text-meta">SERVERS ASSIGNED</span>
+                <div style="display:flex; gap:6px">
+                    <span class="badge ${serverCount > 0 ? 'badge-info' : 'badge-secondary'}">${serverCount} assets</span>
+                    <span class="badge ${appCount > 0 ? 'badge-success' : 'badge-secondary'}">${appCount} app nodes</span>
+                </div>
+            </div>
 
-      ${hasCrit ? `
-      <div class="card-alert-bar">
-        <div class="alert-dot"></div>
-        ${p.critical_count} critical server${p.critical_count>1?'s':''} need attention
-      </div>` : ''}
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px">
+                <span class="text-meta">GROUPS & USERS</span>
+                <span class="badge badge-purple" style="font-size:10px">${groupCount} groups (${userCount} users)</span>
+            </div>
 
-      <div class="card-footer">
-        <div class="card-meta">Last activity: ${p.last_activity || 'Active'}</div>
-        ${adminControlsFooter}
-      </div>
+            ${adminControlsBottom}
+        </div>
+    </div>
     `;
-    grid.appendChild(card);
-  });
-
-  if (IS_ADMIN) {
-      const createCard = document.createElement('div');
-      createCard.className = 'create-card';
-      createCard.onclick = () => window.location.href = '/projects';
-      createCard.innerHTML = `
-        <div class="create-icon">+</div>
-        <div class="create-label">Create New Project</div>
-      `;
-      grid.appendChild(createCard);
-  }
 }
 
-/* ── Enter Project View ──────────────────────────────────── */
-async function enterProject(projectId, projectName, e) {
-    if (e && e.target && (e.target.tagName === 'BUTTON' || e.target.closest('button'))) {
+function renderProjects() {
+    const grid = document.getElementById('projects-grid');
+    if (!filteredProjects || filteredProjects.length === 0) {
+        grid.innerHTML = '<div class="empty-state">No matching projects found</div>';
         return;
     }
+    grid.innerHTML = filteredProjects.map(p => renderProjectCard(p)).join('');
+}
+
+/* ── Enter project view mode (clicking card body) ────────── */
+async function enterProjectView(projectId) {
     try {
-        const card = document.getElementById(`proj-card-${projectId}`);
+        const card = document.getElementById(`proj-${projectId}`);
         if (card) {
             card.style.opacity = '0.6';
             card.style.pointerEvents = 'none';
         }
-        if (typeof showToast === 'function') showToast(`Entering ${projectName}...`, 'info');
+        if (typeof showToast === 'function') showToast('Entering project...', 'info');
         const res = await apiFetch(`/api/projects/select/${projectId}`, { method: 'POST' });
         if (res.ok) {
             window.location.href = res.redirect || '/dashboard';
@@ -410,25 +433,34 @@ async function enterProject(projectId, projectName, e) {
     }
 }
 
-/* ── Filter & Sort ────────────────────────────────────────── */
-function filterProjects(){
-  const q = document.getElementById('searchInput').value.toLowerCase().trim();
-  filteredProjects = currentProjects.filter(p =>
-    (p.name || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)
-  );
-  sortProjects(false);
+/* ── Search and Filter Controls ──────────────────────────── */
+function filterProjects() {
+    const q = document.getElementById('searchInput').value.toLowerCase().trim();
+    filteredProjects = currentProjects.filter(p =>
+        (p.name || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)
+    );
+    sortProjects(false);
 }
 
-function sortProjects(doFilter=true){
-  if(doFilter) filteredProjects = [...currentProjects];
-  const by = document.getElementById('sortSelect').value;
-  filteredProjects.sort((a,b) => {
-    if(by==='name') return (a.name||'').localeCompare(b.name||'', undefined, {sensitivity:'base'});
-    if(by==='servers') return (b.server_count||0) - (a.server_count||0);
-    if(by==='alerts') return (b.total_alerts||0) - (a.total_alerts||0);
-    return 0;
-  });
-  renderProjects();
+function sortProjects(doFilter = true) {
+    if (doFilter) filterProjects();
+    const by = document.getElementById('sortSelect').value;
+    filteredProjects.sort((a,b) => {
+        if (by === 'name') return (a.name || '').localeCompare(b.name || '', undefined, {sensitivity:'base'});
+        if (by === 'servers') return (b.server_count || 0) - (a.server_count || 0);
+        if (by === 'apps') return (b.app_count || 0) - (a.app_count || 0);
+        if (by === 'groups') return ((b.assigned_groups || []).length) - ((a.assigned_groups || []).length);
+        return 0;
+    });
+    renderProjects();
+}
+
+/* ── Refresh Data from backend ───────────────────────────── */
+async function refreshProjectsData() {
+    try {
+        currentProjects = await apiFetch('/api/projects');
+        filterProjects();
+    } catch (e) {}
 }
 
 /* ── Delete Project with Modal ────────────────────────────── */
@@ -474,13 +506,12 @@ async function executeDeleteProject() {
         showToast(res.message || `Project '${pname}' deleted successfully`, 'success');
         closeDeleteConfirmModal();
         
-        // Remove card from DOM immediately without manual reload
-        const cardEl = document.getElementById(`proj-card-${pid}`);
+        const cardEl = document.getElementById(`proj-${pid}`);
         if (cardEl) cardEl.remove();
 
-        // Refresh project list
         currentProjects = currentProjects.filter(p => p.id !== pid);
         filteredProjects = filteredProjects.filter(p => p.id !== pid);
+        renderProjects();
     } catch (err) {
         showToast(err.message || 'Delete failed', 'error');
     } finally {
@@ -489,48 +520,225 @@ async function executeDeleteProject() {
     }
 }
 
-/* ── Edit Project Modal ───────────────────────────────────── */
-function openEditModal(projectId, projectName) {
-    activeEditingProjectId = projectId;
+/* ── Edit Project Modal (with complete Member list loading) ── */
+async function openEditModal(projectId) {
     const proj = currentProjects.find(p => p.id === projectId);
-    document.getElementById('edit-modal-title').textContent = `EDIT PROJECT: ${projectName}`;
-    document.getElementById('edit-name').value = proj ? (proj.name || '') : projectName;
-    document.getElementById('edit-description').value = proj ? (proj.description || '') : '';
-    document.getElementById('edit-project-modal').style.display = 'block';
+    if (!proj) return;
+
+    isEditingProjectId = projectId;
+    document.getElementById('create-modal-title').textContent = `EDIT PROJECT: ${proj.name}`;
+    document.getElementById('create-form').reset();
+    document.getElementById('name').value = proj.name || '';
+    document.getElementById('description').value = proj.description || '';
+
+    const vpnTrack = document.getElementById('vpnTrackingEnabled');
+    const vpnSubnet = document.getElementById('vpnSubnets');
+    if (proj.vpn_tracking_enabled) {
+        vpnTrack.checked = true;
+        document.getElementById('vpnSubnetContainer').style.display = 'block';
+        vpnSubnet.value = proj.vpn_subnet || '';
+    } else {
+        vpnTrack.checked = false;
+        document.getElementById('vpnSubnetContainer').style.display = 'none';
+        vpnSubnet.value = '';
+    }
+
+    createSelectedServerIds = new Set((proj.assigned_servers || []).map(s => s.id));
+    createSelectedAppIds = new Set((proj.assigned_apps || []).map(a => a.id));
+    activeCreateTab = 'assets';
+
+    document.getElementById('create-modal').style.display = 'block';
+    await loadCreateMembersData(projectId);
 }
 
-function closeEditModal() {
-    document.getElementById('edit-project-modal').style.display = 'none';
-    activeEditingProjectId = null;
-}
-
-async function submitEditProjectForm(e) {
-    e.preventDefault();
-    if (!activeEditingProjectId) return;
-    const btn = document.getElementById('btn-edit-submit');
-    if (btn.disabled) return;
-    btn.disabled = true;
-    btn.innerText = 'Updating...';
-
-    const name = document.getElementById('edit-name').value.trim();
-    const desc = document.getElementById('edit-description').value.trim();
+async function loadCreateMembersData(projectId = null) {
+    switchCreateTab('assets');
+    const listEl = document.getElementById('create-members-list');
+    listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">Loading member inventory...</div>';
 
     try {
-        const res = await apiFetch(`/api/projects/${activeEditingProjectId}`, {
-            method: 'PUT',
-            body: JSON.stringify({ name: name, description: desc })
-        });
-        showToast(res.message || 'Project updated successfully', 'success');
-        closeEditModal();
+        if (projectId) {
+            const res = await apiFetch(`/api/projects/${projectId}/members`);
+            allServersList = res.servers || [];
+            allAppsList = res.apps || [];
+            res.servers.filter(s => s.assigned).forEach(s => createSelectedServerIds.add(s.id));
+            res.apps.filter(a => a.assigned).forEach(a => createSelectedAppIds.add(a.id));
+        } else {
+            let servers = await apiFetch('/api/servers');
+            if (!Array.isArray(servers)) servers = servers.servers || [];
+            allServersList = servers;
 
-        // Refresh projects from backend
-        currentProjects = await apiFetch('/api/projects');
-        filterProjects();
+            let apps = await apiFetch('/api/apps?all=true&status=all_including_pending');
+            if (!Array.isArray(apps)) apps = apps.applications || apps.apps || [];
+            allAppsList = apps;
+        }
+
+        allServersList.sort((a,b) => (a.hostname || a.name || '').localeCompare(b.hostname || b.name || '', undefined, {sensitivity:'base'}));
+        allAppsList.sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {sensitivity:'base'}));
+
+        renderCreateMembersList();
+    } catch (e) {
+        listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--red); font-size:11px">Failed to load member records</div>';
+    }
+}
+
+function switchCreateTab(tab) {
+    activeCreateTab = tab;
+    document.getElementById('create-tab-assets').classList.toggle('active', tab === 'assets');
+    document.getElementById('create-tab-apps').classList.toggle('active', tab === 'apps');
+    document.getElementById('create-search-input').value = '';
+    renderCreateMembersList();
+}
+
+function renderCreateMembersList() {
+    const listEl = document.getElementById('create-members-list');
+    const query = (document.getElementById('create-search-input').value || '').toLowerCase().trim();
+
+    if (activeCreateTab === 'assets') {
+        const filtered = allServersList.filter(s => {
+            const name = (s.hostname || s.name || '').toLowerCase();
+            const ip = (s.ip_address || s.ip || '').toLowerCase();
+            return name.includes(query) || ip.includes(query);
+        });
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">No matching assets found</div>';
+            updateCreateSelectionSummary();
+            return;
+        }
+
+        listEl.innerHTML = filtered.map(s => {
+            const isChecked = createSelectedServerIds.has(s.id);
+            const statusClass = (s.status === 'online' || s.status === 'up') ? 'status-online' : ((s.severity === 'critical') ? 'status-critical' : 'status-offline');
+            return `
+            <label class="member-row ${isChecked ? 'is-selected' : ''}">
+                <div style="display:flex; align-items:center; gap:8px">
+                    <input type="checkbox" class="create-chk-item" value="${s.id}" data-type="server" ${isChecked ? 'checked' : ''} onchange="toggleCreateMemberCheck(this, 'server', ${s.id})" style="accent-color:var(--cyan); width:14px; height:14px">
+                    <span class="status-indicator ${statusClass}"></span>
+                    <span style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(s.hostname || s.name)}</span>
+                    <span style="font-size:10px; color:var(--text-sub)">(${escapeHtml(s.ip_address || s.ip || 'No IP')})</span>
+                </div>
+                <span class="badge badge-secondary" style="font-size:8.5px">SERVER</span>
+            </label>
+            `;
+        }).join('');
+    } else {
+        const filtered = allAppsList.filter(a => {
+            const name = (a.name || '').toLowerCase();
+            const url = (a.primary_url || '').toLowerCase();
+            return name.includes(query) || url.includes(query);
+        });
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">No matching app nodes found</div>';
+            updateCreateSelectionSummary();
+            return;
+        }
+
+        listEl.innerHTML = filtered.map(a => {
+            const isChecked = createSelectedAppIds.has(a.id);
+            const st = (a.status || '').toUpperCase();
+            const statusClass = (st === 'NORMAL' || st === 'UP') ? 'status-online' : ((st === 'CRITICAL' || st === 'DOWN') ? 'status-critical' : 'status-trouble');
+            return `
+            <label class="member-row ${isChecked ? 'is-selected' : ''}">
+                <div style="display:flex; align-items:center; gap:8px">
+                    <input type="checkbox" class="create-chk-item" value="${a.id}" data-type="app" ${isChecked ? 'checked' : ''} onchange="toggleCreateMemberCheck(this, 'app', ${a.id})" style="accent-color:var(--cyan); width:14px; height:14px">
+                    <span class="status-indicator ${statusClass}"></span>
+                    <span style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(a.name)}</span>
+                    <span style="font-size:10px; color:var(--text-sub)">(${escapeHtml(a.primary_url || 'No URL')})</span>
+                </div>
+                <span class="badge badge-secondary" style="font-size:8.5px">APP NODE</span>
+            </label>
+            `;
+        }).join('');
+    }
+
+    updateCreateSelectionSummary();
+}
+
+function filterCreateMembers() {
+    renderCreateMembersList();
+}
+
+function toggleCreateMemberCheck(checkbox, type, id) {
+    const isChecked = checkbox.checked;
+    if (type === 'server') {
+        if (isChecked) createSelectedServerIds.add(id);
+        else createSelectedServerIds.delete(id);
+    } else {
+        if (isChecked) createSelectedAppIds.add(id);
+        else createSelectedAppIds.delete(id);
+    }
+    const row = checkbox.closest('.member-row');
+    if (row) row.classList.toggle('is-selected', isChecked);
+    updateCreateSelectionSummary();
+}
+
+function selectAllCreateMembers(check) {
+    const visibleCheckboxes = document.querySelectorAll('.create-chk-item');
+    visibleCheckboxes.forEach(cb => {
+        const id = parseInt(cb.value);
+        const type = cb.dataset.type;
+        cb.checked = check;
+        if (type === 'server') {
+            if (check) createSelectedServerIds.add(id);
+            else createSelectedServerIds.delete(id);
+        } else {
+            if (check) createSelectedAppIds.add(id);
+            else createSelectedAppIds.delete(id);
+        }
+        const row = cb.closest('.member-row');
+        if (row) row.classList.toggle('is-selected', check);
+    });
+    updateCreateSelectionSummary();
+}
+
+function updateCreateSelectionSummary() {
+    const serverCnt = createSelectedServerIds.size;
+    const appCnt = createSelectedAppIds.size;
+    document.getElementById('create-selection-summary').textContent = `Selected: ${serverCnt} asset${serverCnt !== 1 ? 's' : ''}, ${appCnt} app node${appCnt !== 1 ? 's' : ''}`;
+}
+
+function closeCreateModal() {
+    document.getElementById('create-modal').style.display = 'none';
+    isEditingProjectId = null;
+}
+
+async function submitProjectForm(e) {
+    e.preventDefault();
+    if (!isEditingProjectId) return;
+    const btn = document.getElementById('btn-submit');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.innerText = 'Saving...';
+
+    const name = document.getElementById('name').value.trim();
+    if (!name) {
+        showToast('Project name is required', 'error');
+        btn.disabled = false;
+        btn.innerText = 'Save Project';
+        return;
+    }
+
+    const payload = {
+        name: name,
+        description: document.getElementById('description').value.trim(),
+        vpn_tracking_enabled: document.getElementById('vpnTrackingEnabled').checked,
+        vpn_subnet: document.getElementById('vpnSubnets').value.trim(),
+        server_ids: Array.from(createSelectedServerIds),
+        app_ids: Array.from(createSelectedAppIds)
+    };
+
+    try {
+        const res = await apiFetch(`/api/projects/${isEditingProjectId}`, { method: 'PUT', body: JSON.stringify(payload) });
+        showToast(res.message || 'Project updated successfully', 'success');
+        closeCreateModal();
+        await refreshProjectsData();
     } catch (err) {
-        showToast(err.message || 'Update failed', 'error');
+        showToast(err.message || 'Failed to save project', 'error');
     } finally {
         btn.disabled = false;
-        btn.innerText = 'Update Project';
+        btn.innerText = 'Save Project';
     }
 }
 
@@ -670,6 +878,10 @@ function renderManageMembersList() {
     updateManageSelectionCounter();
 }
 
+function filterManageMembers() {
+    renderManageMembersList();
+}
+
 function toggleManageMemberCheck(checkbox, type, id) {
     const isChecked = checkbox.checked;
     const name = checkbox.dataset.name;
@@ -692,7 +904,6 @@ function toggleManageMemberCheck(checkbox, type, id) {
 
     const row = checkbox.closest('.member-row');
     if (row) row.classList.toggle('is-selected', isChecked);
-
     updateManageSelectionCounter();
 }
 
@@ -743,9 +954,7 @@ async function saveProjectMembers() {
         });
         showToast(res.message || 'Project members updated successfully', 'success');
         closeManageMembersModal();
-        
-        currentProjects = await apiFetch('/api/projects');
-        filterProjects();
+        await refreshProjectsData();
     } catch (err) {
         showToast(err.message || 'Failed to update members', 'error');
     } finally {
@@ -812,8 +1021,7 @@ async function saveProjectGroups() {
         });
         showToast('Project group access updated successfully', 'success');
         closeManageGroupsModal();
-        currentProjects = await apiFetch('/api/projects');
-        filterProjects();
+        await refreshProjectsData();
     } catch(e) {
         showToast(e.message || 'Failed to update project groups', 'error');
     } finally {
@@ -822,7 +1030,7 @@ async function saveProjectGroups() {
     }
 }
 
-// Initial render
+// Initial render using shared card component
 renderProjects();
 </script>
 {% endblock %}

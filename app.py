@@ -8149,11 +8149,15 @@ async def api_detections_summary(request: Request):
 _apps_cache = {}
 
 @app.get("/api/apps")
+@app.get("/api/applications")
 def api_get_apps(request: Request, status: Optional[str] = None):
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    pid = get_effective_project_id(request)
+    if request.query_params.get("all") == "true" or status in ("all_including_pending", "all"):
+        pid = None
+    else:
+        pid = get_effective_project_id(request)
     now = time.time()
     cache_key = (str(pid), str(status))
     entry = _apps_cache.get(cache_key)

@@ -911,26 +911,33 @@ async function openEditModal(projectId) {
     activeCreateTab = 'assets';
 
     document.getElementById('create-modal').style.display = 'block';
-    loadCreateMembersData();
+    loadCreateMembersData(projectId);
 }
 
-async function loadCreateMembersData() {
+async function loadCreateMembersData(projectId = null) {
     switchCreateTab('assets');
     const listEl = document.getElementById('create-members-list');
     listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">Loading member inventory...</div>';
 
     try {
-        let servers = await apiFetch('/api/servers');
-        if (!Array.isArray(servers)) servers = servers.servers || [];
-        allServersList = servers;
-        allServersList.sort((a,b) => (a.hostname || a.name || '').localeCompare(b.hostname || b.name || '', undefined, {sensitivity:'base'}));
+        if (projectId) {
+            const res = await apiFetch(`/api/projects/${projectId}/members`);
+            allServersList = res.servers || [];
+            allAppsList = res.apps || [];
+            // Sync current assignments
+            res.servers.filter(s => s.assigned).forEach(s => createSelectedServerIds.add(s.id));
+            res.apps.filter(a => a.assigned).forEach(a => createSelectedAppIds.add(a.id));
+        } else {
+            let servers = await apiFetch('/api/servers');
+            if (!Array.isArray(servers)) servers = servers.servers || [];
+            allServersList = servers;
 
-        let apps = [];
-        try {
-            apps = await apiFetch('/api/applications');
-            if (!Array.isArray(apps)) apps = apps.applications || [];
-        } catch(e) {}
-        allAppsList = apps;
+            let apps = await apiFetch('/api/apps?all=true&status=all_including_pending');
+            if (!Array.isArray(apps)) apps = apps.applications || apps.apps || [];
+            allAppsList = apps;
+        }
+
+        allServersList.sort((a,b) => (a.hostname || a.name || '').localeCompare(b.hostname || b.name || '', undefined, {sensitivity:'base'}));
         allAppsList.sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {sensitivity:'base'}));
 
         renderCreateMembersList();
