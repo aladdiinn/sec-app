@@ -3702,9 +3702,15 @@ async def api_resolve_all_server_alerts(server_id: int, request: Request):
 
 @app.get("/api/notifications")
 def api_get_notifications():
-    alerts = db.get_alerts()
+    all_alerts = db.get_alerts()
+    # Filter for active/unresolved alerts so bell matches project card and sidebar badge
+    alerts = [a for a in all_alerts if not a.get("is_resolved")]
+    for a in alerts:
+        if not a.get("message"):
+            a["message"] = f"[{a.get('severity', 'info').upper()}] {a.get('rule_title') or a.get('title') or a.get('event_type') or 'Security Alert'}"
+        if not a.get("case_id"):
+            a["case_id"] = a.get("id")
     return {"notifications": alerts, "unseen_count": len(alerts)}
-
 
 
 @app.post("/api/projects/select/{project_id}")
@@ -3729,6 +3735,12 @@ async def api_get_projects(request: Request):
     pid = get_effective_project_id(request)
     return db.get_projects(allowed_project_ids=pid)
 
+@app.get("/api/projects/{project_id}/summary")
+@app.get("/api/projects/{project_id}/counts")
+async def api_get_project_summary(project_id: int):
+    counts = db.get_project_member_counts(project_id)
+    return {"ok": True, **counts}
+
 @app.post("/api/projects")
 async def api_create_project(request: Request):
     if not is_admin_user(request):
@@ -3737,32 +3749,63 @@ async def api_create_project(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    name = body.get("name", "New Project")
-    desc = body.get("description", "")
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Project name is required."})
+    desc = (body.get("description") or "").strip()
     server_ids = body.get("server_ids", [])
+    app_ids = body.get("app_ids", [])
     vpn_tracking = bool(body.get("vpn_tracking_enabled", False))
-    vpn_subnet = body.get("vpn_subnet", "")
+    vpn_subnet = (body.get("vpn_subnet") or "").strip()
     
     conn = db.get_db_connection()
-    if conn:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("INSERT INTO projects (name, description, vpn_tracking_enabled, vpn_subnet) VALUES (%s, %s, %s, %s) RETURNING id;", (name, desc, vpn_tracking, vpn_subnet))
-                    row = cur.fetchone()
-                    pid = row["id"] if isinstance(row, dict) else row[0]
-                    if server_ids and isinstance(server_ids, list):
-                        for sid in server_ids:
-                            try:
-                                cur.execute("UPDATE servers SET project_id = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = %s;", (pid, vpn_tracking, vpn_subnet, int(sid)))
-                            except Exception:
-                                pass
-                    if hasattr(conn, 'commit'):
-                        conn.commit()
-                    return {"ok": True, "id": pid, "message": "Project created"}
-        finally:
-            conn.close()
-    return JSONResponse(status_code=400, content={"ok": False, "message": "Failed to create project"})
+    if not conn:
+        return JSONResponse(status_code=500, content={"ok": False, "message": "Database connection unavailable."})
+    
+    try:
+        if hasattr(conn, 'autocommit'):
+            conn.autocommit = False
+        with conn.cursor() as cur:
+            # Case-insensitive trimmed uniqueness check
+            cur.execute("SELECT id FROM projects WHERE LOWER(TRIM(name)) = LOWER(TRIM(%s));", (name,))
+            if cur.fetchone():
+                return JSONResponse(status_code=400, content={"ok": False, "message": f"A project named '{name}' already exists."})
+
+            cur.execute("INSERT INTO projects (name, description, vpn_tracking_enabled, vpn_subnet, created_at) VALUES (%s, %s, %s, %s, NOW()) RETURNING id;", (name, desc, vpn_tracking, vpn_subnet))
+            row = cur.fetchone()
+            pid = row["id"] if isinstance(row, dict) else row[0]
+            
+            # Assign initial assets (servers)
+            if server_ids and isinstance(server_ids, list):
+                for sid in server_ids:
+                    try:
+                        cur.execute("UPDATE servers SET project_id = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = %s;", (pid, vpn_tracking, vpn_subnet, int(sid)))
+                    except Exception:
+                        pass
+                        
+            # Assign initial app nodes
+            if app_ids and isinstance(app_ids, list):
+                for aid in app_ids:
+                    try:
+                        cur.execute("UPDATE applications SET project_id = %s WHERE id = %s;", (pid, int(aid)))
+                        cur.execute("INSERT INTO project_apps (project_id, application_id) VALUES (%s, %s) ON CONFLICT DO NOTHING;", (pid, int(aid)))
+                    except Exception:
+                        pass
+
+            if hasattr(conn, 'commit'):
+                conn.commit()
+
+            uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+            db.log_audit(uname, "CREATE_PROJECT", "project", pid, f"Created project '{name}' with {len(server_ids)} assets, {len(app_ids)} app nodes")
+            return {"ok": True, "id": pid, "message": f"Project '{name}' created successfully"}
+    except Exception as e:
+        if hasattr(conn, 'rollback'):
+            try: conn.rollback()
+            except Exception: pass
+        logger.error(f"Error in api_create_project: {e}")
+        return JSONResponse(status_code=400, content={"ok": False, "message": str(e)})
+    finally:
+        conn.close()
 
 @app.get("/api/projects/{project_id}/assets")
 async def api_get_project_assets(project_id: int):
@@ -3770,6 +3813,171 @@ async def api_get_project_assets(project_id: int):
     for s in all_servers:
         s["assigned"] = (s.get("project_id") == project_id)
     return {"servers": all_servers}
+
+@app.get("/api/projects/{project_id}/members")
+async def api_get_project_members(project_id: int):
+    all_servers = db.get_servers()
+    projects = db.get_projects()
+    proj_map = {p["id"]: p.get("name") for p in projects}
+
+    for s in all_servers:
+        s["assigned"] = (s.get("project_id") == project_id)
+        other_pid = s.get("project_id")
+        s["project_name"] = proj_map.get(other_pid, "") if (other_pid and other_pid != project_id) else ""
+
+    all_apps = []
+    try:
+        all_apps = db.get_applications(status_filter='all_including_pending')
+    except Exception:
+        pass
+    for a in all_apps:
+        a["assigned"] = (a.get("project_id") == project_id)
+        other_pid = a.get("project_id")
+        a["project_name"] = proj_map.get(other_pid, "") if (other_pid and other_pid != project_id) else ""
+
+    all_servers.sort(key=lambda x: (x.get("hostname") or x.get("name") or "").lower())
+    all_apps.sort(key=lambda x: (x.get("name") or "").lower())
+
+    return {
+        "ok": True,
+        "servers": all_servers,
+        "apps": all_apps
+    }
+
+@app.post("/api/projects/{project_id}/members")
+@app.post("/api/projects/{project_id}/assign-members")
+async def api_save_project_members(project_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    
+    server_ids = [int(x) for x in body.get("server_ids", [])]
+    app_ids = [int(x) for x in body.get("app_ids", [])]
+
+    conn = db.get_db_connection()
+    if not conn:
+        return JSONResponse(status_code=500, content={"ok": False, "message": "Database connection unavailable."})
+    
+    try:
+        if hasattr(conn, 'autocommit'):
+            conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute("SELECT name, vpn_tracking_enabled, vpn_subnet FROM projects WHERE id = %s;", (project_id,))
+            p_row = cur.fetchone()
+            if not p_row:
+                return JSONResponse(status_code=404, content={"ok": False, "message": f"Project #{project_id} not found."})
+            pname = p_row["name"] if isinstance(p_row, dict) else p_row[0]
+            p_track = p_row.get("vpn_tracking_enabled", False) if isinstance(p_row, dict) else False
+            p_subnet = p_row.get("vpn_subnet", "") if isinstance(p_row, dict) else ""
+
+            # Fetch currently assigned servers & apps to compute delta
+            cur.execute("SELECT id FROM servers WHERE project_id = %s;", (project_id,))
+            cur_server_ids = set([r["id"] if isinstance(r, dict) else r[0] for r in cur.fetchall()])
+            
+            cur_app_ids = set()
+            try:
+                cur.execute("SELECT id FROM applications WHERE project_id = %s;", (project_id,))
+                cur_app_ids = set([r["id"] if isinstance(r, dict) else r[0] for r in cur.fetchall()])
+            except Exception:
+                pass
+
+            new_server_ids = set(server_ids)
+            new_app_ids = set(app_ids)
+
+            servers_to_add = new_server_ids - cur_server_ids
+            servers_to_remove = cur_server_ids - new_server_ids
+
+            apps_to_add = new_app_ids - cur_app_ids
+            apps_to_remove = cur_app_ids - new_app_ids
+
+            if servers_to_remove:
+                cur.execute("UPDATE servers SET project_id = NULL WHERE project_id = %s AND id = ANY(%s);", (project_id, list(servers_to_remove)))
+            
+            if servers_to_add:
+                cur.execute("UPDATE servers SET project_id = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = ANY(%s);", (project_id, p_track, p_subnet, list(servers_to_add)))
+
+            if apps_to_remove:
+                try:
+                    cur.execute("UPDATE applications SET project_id = NULL WHERE project_id = %s AND id = ANY(%s);", (project_id, list(apps_to_remove)))
+                    cur.execute("DELETE FROM project_apps WHERE project_id = %s AND application_id = ANY(%s);", (project_id, list(apps_to_remove)))
+                except Exception:
+                    pass
+
+            if apps_to_add:
+                try:
+                    cur.execute("UPDATE applications SET project_id = %s WHERE id = ANY(%s);", (project_id, list(apps_to_add)))
+                    for aid in apps_to_add:
+                        cur.execute("INSERT INTO project_apps (project_id, application_id) VALUES (%s, %s) ON CONFLICT DO NOTHING;", (project_id, aid))
+                except Exception:
+                    pass
+
+            conn.commit()
+
+            added_count = len(servers_to_add) + len(apps_to_add)
+            removed_count = len(servers_to_remove) + len(apps_to_remove)
+
+            uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+            db.log_audit(uname, "ASSIGN_PROJECT_MEMBERS", "project", project_id, f"Project '{pname}': Added {added_count}, removed {removed_count} members")
+
+            return {
+                "ok": True,
+                "added": added_count,
+                "removed": removed_count,
+                "message": f"Added {added_count}, removed {removed_count}"
+            }
+    except Exception as e:
+        if hasattr(conn, 'rollback'):
+            try: conn.rollback()
+            except Exception: pass
+        logger.error(f"Error in api_save_project_members: {e}")
+        return JSONResponse(status_code=400, content={"ok": False, "message": str(e)})
+    finally:
+        conn.close()
+
+@app.delete("/api/projects/{project_id}/members/{member_type}/{member_id}")
+async def api_quick_remove_project_member(project_id: int, member_type: str, member_id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
+    
+    conn = db.get_db_connection()
+    if not conn:
+        return JSONResponse(status_code=500, content={"ok": False, "message": "Database connection unavailable."})
+    
+    m_type = member_type.lower()
+    uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+    
+    try:
+        if hasattr(conn, 'autocommit'):
+            conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute("SELECT name FROM projects WHERE id = %s;", (project_id,))
+            p_row = cur.fetchone()
+            pname = (p_row["name"] if isinstance(p_row, dict) else p_row[0]) if p_row else f"#{project_id}"
+
+            if m_type in ('server', 'asset', 'server_id'):
+                cur.execute("UPDATE servers SET project_id = NULL WHERE id = %s AND project_id = %s;", (member_id, project_id))
+            elif m_type in ('app', 'app_node', 'application'):
+                cur.execute("UPDATE applications SET project_id = NULL WHERE id = %s AND project_id = %s;", (member_id, project_id))
+                try:
+                    cur.execute("DELETE FROM project_apps WHERE project_id = %s AND application_id = %s;", (project_id, member_id))
+                except Exception:
+                    pass
+            else:
+                return JSONResponse(status_code=400, content={"ok": False, "message": f"Invalid member type: {member_type}"})
+
+            conn.commit()
+            db.log_audit(uname, "REMOVE_PROJECT_MEMBER", "project", project_id, f"Unassigned {m_type} #{member_id} from project '{pname}'")
+            return {"ok": True, "message": f"Member unassigned from project '{pname}'"}
+    except Exception as e:
+        if hasattr(conn, 'rollback'):
+            try: conn.rollback()
+            except Exception: pass
+        return JSONResponse(status_code=400, content={"ok": False, "message": str(e)})
+    finally:
+        conn.close()
 
 @app.post("/api/projects/{project_id}/assets")
 @app.post("/api/projects/{project_id}/assign-servers")
@@ -3863,22 +4071,59 @@ async def api_update_project(project_id: int, request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    name = body.get("name")
-    desc = body.get("description")
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Project name is required."})
+    desc = (body.get("description") or "").strip()
     vpn_tracking = bool(body.get("vpn_tracking_enabled", False))
-    vpn_subnet = body.get("vpn_subnet", "")
+    vpn_subnet = (body.get("vpn_subnet") or "").strip()
+    server_ids = body.get("server_ids")
+    app_ids = body.get("app_ids")
+
     conn = db.get_db_connection()
-    if conn:
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("UPDATE projects SET name = %s, description = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = %s;", (name, desc, vpn_tracking, vpn_subnet, project_id))
-                    if hasattr(conn, 'commit'):
-                        conn.commit()
-                    return {"ok": True, "message": "Project updated"}
-        finally:
-            conn.close()
-    return JSONResponse(status_code=400, content={"ok": False, "message": "Update failed"})
+    if not conn:
+        return JSONResponse(status_code=500, content={"ok": False, "message": "Database connection unavailable."})
+    
+    try:
+        if hasattr(conn, 'autocommit'):
+            conn.autocommit = False
+        with conn.cursor() as cur:
+            # Case-insensitive uniqueness check excluding current project
+            cur.execute("SELECT id FROM projects WHERE LOWER(TRIM(name)) = LOWER(TRIM(%s)) AND id != %s;", (name, project_id))
+            if cur.fetchone():
+                return JSONResponse(status_code=400, content={"ok": False, "message": f"A project named '{name}' already exists."})
+
+            cur.execute("UPDATE projects SET name = %s, description = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = %s;", (name, desc, vpn_tracking, vpn_subnet, project_id))
+            
+            if server_ids is not None and isinstance(server_ids, list):
+                int_sids = [int(x) for x in server_ids]
+                cur.execute("UPDATE servers SET project_id = NULL WHERE project_id = %s AND NOT (id = ANY(%s));", (project_id, int_sids if int_sids else [-1]))
+                if int_sids:
+                    cur.execute("UPDATE servers SET project_id = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = ANY(%s);", (project_id, vpn_tracking, vpn_subnet, int_sids))
+
+            if app_ids is not None and isinstance(app_ids, list):
+                int_aids = [int(x) for x in app_ids]
+                cur.execute("UPDATE applications SET project_id = NULL WHERE project_id = %s AND NOT (id = ANY(%s));", (project_id, int_aids if int_aids else [-1]))
+                cur.execute("DELETE FROM project_apps WHERE project_id = %s AND NOT (application_id = ANY(%s));", (project_id, int_aids if int_aids else [-1]))
+                if int_aids:
+                    cur.execute("UPDATE applications SET project_id = %s WHERE id = ANY(%s);", (project_id, int_aids))
+                    for aid in int_aids:
+                        cur.execute("INSERT INTO project_apps (project_id, application_id) VALUES (%s, %s) ON CONFLICT DO NOTHING;", (project_id, aid))
+
+            if hasattr(conn, 'commit'):
+                conn.commit()
+            
+            uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+            db.log_audit(uname, "UPDATE_PROJECT", "project", project_id, f"Updated project '{name}'")
+            return {"ok": True, "message": f"Project '{name}' updated successfully"}
+    except Exception as e:
+        if hasattr(conn, 'rollback'):
+            try: conn.rollback()
+            except Exception: pass
+        logger.error(f"Error in api_update_project: {e}")
+        return JSONResponse(status_code=400, content={"ok": False, "message": str(e)})
+    finally:
+        conn.close()
 
 @app.post("/api/servers/{server_id}/network")
 async def api_update_server_network(server_id: int, request: Request):
@@ -3907,9 +4152,92 @@ async def api_update_server_network(server_id: int, request: Request):
 async def api_delete_project(project_id: int, request: Request):
     if not is_admin_user(request):
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
-    if db.delete_project(project_id):
-        return {"ok": True, "message": "Project deleted"}
-    return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
+    
+    project = db.get_project_by_id(project_id)
+    pname = project.get("name") if project else f"Project #{project_id}"
+
+    ok, msg = db.delete_project(project_id)
+    if ok:
+        uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+        db.log_audit(uname, "DELETE_PROJECT", "project", project_id, f"Deleted project '{pname}' (#{project_id})")
+        return {"ok": True, "message": f"Project '{pname}' deleted successfully"}
+    return JSONResponse(status_code=400, content={"ok": False, "message": msg or "Delete failed"})
+
+@app.get("/api/projects/duplicates")
+async def api_get_project_duplicates(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied."})
+    
+    all_projects = db.get_projects()
+    groups_by_name = {}
+    for p in all_projects:
+        norm_name = (p.get("name") or "").strip().lower()
+        if norm_name not in groups_by_name:
+            groups_by_name[norm_name] = []
+        groups_by_name[norm_name].append(p)
+    
+    duplicates = []
+    for norm_name, plist in groups_by_name.items():
+        if len(plist) > 1:
+            # Sort: keeper with assets first, then lowest ID
+            plist.sort(key=lambda x: (
+                0 if ((x.get("server_count", 0) + x.get("app_count", 0)) > 0) else 1,
+                x.get("id", 0)
+            ))
+            keep_project = plist[0]
+            other_projects = plist[1:]
+            empty_ids = [p["id"] for p in other_projects if (p.get("server_count", 0) == 0 and p.get("app_count", 0) == 0)]
+            duplicates.append({
+                "name": keep_project.get("name"),
+                "total_count": len(plist),
+                "keep_id": keep_project.get("id"),
+                "keep_server_count": keep_project.get("server_count", 0),
+                "keep_app_count": keep_project.get("app_count", 0),
+                "empty_ids": empty_ids,
+                "all_projects": plist
+            })
+    
+    return {
+        "ok": True,
+        "has_duplicates": len(duplicates) > 0,
+        "duplicates": duplicates
+    }
+
+@app.post("/api/projects/cleanup-duplicates")
+async def api_cleanup_duplicates(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied."})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    
+    project_ids = body.get("project_ids", [])
+    if not project_ids or not isinstance(project_ids, list):
+        return JSONResponse(status_code=400, content={"ok": False, "message": "No project IDs specified."})
+
+    deleted = []
+    failed = []
+    uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+    
+    for pid in project_ids:
+        try:
+            ok, msg = db.delete_project(int(pid))
+            if ok:
+                deleted.append(pid)
+                db.log_audit(uname, "CLEANUP_DUPLICATE_PROJECT", "project", int(pid), f"Bulk-deleted empty duplicate project #{pid}")
+            else:
+                failed.append({"id": pid, "error": msg})
+        except Exception as e:
+            failed.append({"id": pid, "error": str(e)})
+
+    return {
+        "ok": True,
+        "deleted_count": len(deleted),
+        "deleted_ids": deleted,
+        "failed": failed,
+        "message": f"Successfully deleted {len(deleted)} duplicate projects" + (f" ({len(failed)} failed)" if failed else "")
+    }
 
 
 # User & Group Management API Endpoints

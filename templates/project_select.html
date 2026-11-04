@@ -6,7 +6,6 @@
 
 {% block extra_css %}
 <style>
-/* ── EXACT MATCH TO USER DESIGN SPEC & SCREENSHOT ── */
 .controls-row{display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap}
 .search-wrap{position:relative;flex:1;max-width:360px}
 .search-wrap svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--text3)}
@@ -15,45 +14,87 @@
 .search-input::placeholder{color:var(--text3)}
 .sort-select{background:var(--bg2);border:1px solid var(--border);color:var(--text2);font-family:'Inter',sans-serif;font-size:11px;padding:9px 14px;border-radius:4px;outline:none;cursor:pointer;letter-spacing:.5px}
 
-.project-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
-.project-card{background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden;transition:all .2s;cursor:pointer;position:relative}
+.project-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px}
+.project-card{background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden;transition:all .2s;cursor:pointer;position:relative;display:flex;flex-direction:column;justify-content:space-between}
 .project-card:hover{border-color:var(--cyan);transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,0.4)}
-.project-card.has-critical{border-color:var(--red)40}
+.project-card.has-critical{border-color:rgba(255,59,92,0.35)}
 .project-card.has-critical:hover{border-color:var(--red)}
 .project-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--cyan),transparent)}
 .project-card.has-critical::before{background:linear-gradient(90deg,var(--red),transparent)}
 
 .card-header{padding:16px 18px 12px;display:flex;align-items:flex-start;justify-content:space-between}
-.card-icon-wrap{width:40px;height:40px;border-radius:8px;background:linear-gradient(135deg,var(--bg3),var(--bg));border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;margin-right:12px}
+.card-icon-wrap{width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,var(--bg3),var(--bg));border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;margin-right:12px}
 .card-title-wrap{flex:1}
-.card-title{font-family:var(--font-sans);font-size:13px;font-weight:700;letter-spacing:0.5px;color:var(--text);margin-bottom:4px}
-.card-desc{font-size:10px;color:var(--text3);letter-spacing:.5px;line-height:1.5}
+.card-title{font-family:var(--font-sans);font-size:14px;font-weight:700;letter-spacing:0.5px;color:var(--text);margin-bottom:4px}
+.card-desc{font-size:10px;color:var(--text3);letter-spacing:.5px;line-height:1.4;height:28px;overflow:hidden}
 .card-status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
-.dot-ok{background:var(--green);box-shadow:0 0 6px var(--green)66}
-.dot-warn{background:var(--amber);box-shadow:0 0 6px var(--amber)66}
-.dot-crit{background:var(--red);box-shadow:0 0 6px var(--red)66}
+.dot-ok{background:var(--green);box-shadow:0 0 6px rgba(16,185,129,0.4)}
+.dot-warn{background:var(--amber);box-shadow:0 0 6px rgba(245,158,11,0.4)}
+.dot-crit{background:var(--red);box-shadow:0 0 6px rgba(255,59,92,0.4)}
 
-.card-metrics{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
-.card-metric{padding:12px 14px;border-right:1px solid var(--border);text-align:center}
+.card-metrics{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:rgba(0,0,0,0.15)}
+.card-metric{padding:10px 8px;border-right:1px solid var(--border);text-align:center}
 .card-metric:last-child{border-right:none}
-.metric-val{font-family:var(--font-sans);font-size:20px;font-weight:800;color:var(--text);line-height:1;margin-bottom:4px}
+.metric-val{font-family:var(--font-sans);font-size:16px;font-weight:800;color:var(--text);line-height:1;margin-bottom:4px}
 .metric-val.crit{color:var(--red)}
 .metric-val.warn{color:var(--amber)}
 .metric-val.ok{color:var(--green)}
-.metric-label{font-size:8px;color:var(--text3);letter-spacing:1px;text-transform:uppercase}
+.metric-label{font-size:8px;color:var(--text3);letter-spacing:0.8px;text-transform:uppercase}
 
-.card-alert-bar{padding:8px 18px;background:rgba(255, 51, 102,0.06);border-bottom:1px solid rgba(255, 51, 102,0.15);display:flex;align-items:center;gap:8px;font-size:10px;color:var(--red)}
+.card-alert-bar{padding:7px 16px;background:rgba(255, 59, 92,0.06);border-bottom:1px solid rgba(255, 59, 92,0.15);display:flex;align-items:center;gap:8px;font-size:10px;color:var(--red)}
 .alert-dot{width:6px;height:6px;border-radius:50%;background:var(--red);flex-shrink:0;animation:blink 1.5s infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 
-.card-footer{padding:14px 18px;display:flex;align-items:center;justify-content:space-between}
+.card-footer{padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
 .card-meta{font-size:10px;color:var(--text3);letter-spacing:.5px}
-.enter-btn{display:flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--cyan);color:var(--cyan);font-family:var(--font-sans);font-size:10px;font-weight:700;letter-spacing:1px;padding:7px 16px;border-radius:3px;cursor:pointer;transition:all .2s;text-transform:uppercase}
-.enter-btn:hover{background:rgba(0,212,255,0.1);border-color:var(--cyan);box-shadow:0 0 12px rgba(0,212,255,0.15)}
-.enter-btn svg{width:12px;height:12px;transition:transform .2s}
-.enter-btn:hover svg{transform:translateX(3px)}
-.project-card.has-critical .enter-btn{border-color:var(--red)60;color:var(--red)}
-.project-card.has-critical .enter-btn:hover{background:rgba(255, 51, 102,0.1);border-color:var(--red);box-shadow:0 0 12px rgba(255, 51, 102,0.15)}
+
+.member-tab-btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    color: var(--text-sub);
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.member-tab-btn.active {
+    background: rgba(6, 182, 212, 0.15);
+    border-color: var(--cyan);
+    color: var(--cyan);
+}
+.member-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.02);
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border: 1px solid transparent;
+}
+.member-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+.member-row.is-selected {
+    background: rgba(6, 182, 212, 0.08);
+    border-color: rgba(6, 182, 212, 0.25);
+}
+.status-indicator {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+.status-online { background: var(--green); box-shadow: 0 0 6px rgba(16, 185, 129, 0.4); }
+.status-critical { background: var(--red); box-shadow: 0 0 6px rgba(255, 59, 92, 0.4); }
+.status-trouble { background: var(--amber); box-shadow: 0 0 6px rgba(245, 158, 11, 0.4); }
+.status-offline { background: #64748b; }
 
 .create-card{background:var(--bg2);border:1px dashed var(--border);border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;cursor:pointer;transition:all .2s;min-height:180px}
 .create-card:hover{border-color:var(--cyan);background:#0f1a2a}
@@ -76,7 +117,7 @@
         </div>
         <select class="sort-select" id="sortSelect" onchange="sortProjects()">
             <option value="name">Sort by Name</option>
-            <option value="servers">Sort by Servers</option>
+            <option value="servers">Sort by Assets</option>
             <option value="alerts">Sort by Alerts</option>
         </select>
     </div>
@@ -86,13 +127,147 @@
         <!-- Injected dynamically -->
     </div>
 </div>
+
+<!-- ── MANAGE PROJECT MEMBERS MODAL ── -->
+<div id="manage-members-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:640px; max-width:94vw; box-shadow:0 25px 70px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
+        <div>
+            <h3 class="card-title" style="font-size:16px; font-weight:700; color:var(--cyan); letter-spacing:0.5px" id="manage-modal-title">MANAGE PROJECT MEMBERS</h3>
+            <p class="text-sub" style="font-size:11px; margin-top:2px">Select servers and applications to assign to this project</p>
+        </div>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeManageMembersModal()">✕</button>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:8px">
+        <button type="button" id="member-tab-assets-btn" class="member-tab-btn active" onclick="switchManageMemberTab('assets')">
+            🖥️ Assets (<span id="manage-assets-count-badge">0</span>)
+        </button>
+        <button type="button" id="member-tab-apps-btn" class="member-tab-btn" onclick="switchManageMemberTab('apps')">
+            📱 App Nodes (<span id="manage-apps-count-badge">0</span>)
+        </button>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:12px">
+        <input type="text" id="manage-member-search" class="glass" placeholder="Search by name, IP, URL..." oninput="renderManageMembersList()" style="flex:1; padding:8px 12px; font-size:11px; border-radius:4px; color:var(--text)">
+        <div style="font-size:10px; display:flex; gap:12px; flex-shrink:0">
+            <a href="javascript:void(0)" onclick="selectAllManageMembers(true)" style="color:var(--cyan); text-decoration:none; font-weight:600">Select All</a>
+            <a href="javascript:void(0)" onclick="selectAllManageMembers(false)" style="color:var(--text-sub); text-decoration:none">Clear All</a>
+        </div>
+    </div>
+
+    <div id="manage-members-list" style="max-height:250px; overflow-y:auto; background:rgba(8,12,24,0.85); border:1px solid var(--border); border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:6px; margin-bottom:20px"></div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center">
+        <span class="text-meta" id="manage-selected-count" style="font-weight:600; color:var(--text)">0 assets, 0 app nodes selected</span>
+        <div style="display:flex; gap:10px">
+            <button class="btn btn-glass" onclick="closeManageMembersModal()">Cancel</button>
+            <button class="btn btn-primary" id="btn-save-members" onclick="saveProjectMembers()">Save Assignments</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── DELETE CONFIRMATION MODAL ── -->
+<div id="delete-confirm-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 30px; z-index:1100; border-radius:var(--radius-lg, 8px); width:480px; max-width:92vw; box-shadow:0 25px 70px rgba(0,0,0,0.9); border:1px solid var(--red)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
+        <h3 class="card-title" style="font-size:16px; color:var(--red); font-weight:700; display:flex; align-items:center; gap:8px">
+            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            CONFIRM PROJECT DELETION
+        </h3>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeDeleteConfirmModal()">✕</button>
+    </div>
+    <p style="font-size:13px; color:var(--text); line-height:1.6; margin-bottom:16px" id="delete-confirm-text">
+        Checking linked assets, apps, and groups...
+    </p>
+    <div style="background:rgba(255,59,92,0.08); border:1px solid rgba(255,59,92,0.25); border-radius:6px; padding:12px; margin-bottom:24px; font-size:11px; color:var(--text-sub)">
+        ℹ️ <strong>Safety Guarantee:</strong> Assets and app nodes are <strong>NOT</strong> deleted; they are only unassigned. Existing alerts and incidents keep all historical data.
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:12px">
+        <button class="btn btn-glass" onclick="closeDeleteConfirmModal()">Cancel</button>
+        <button class="btn" id="btn-confirm-delete" onclick="executeDeleteProject()" style="background:var(--red); color:#fff; font-weight:700; border:none; padding:8px 18px; border-radius:4px; cursor:pointer">
+            Delete Project
+        </button>
+    </div>
+</div>
+
+<!-- ── EDIT PROJECT MODAL ── -->
+<div id="edit-project-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:580px; max-width:94vw; box-shadow:0 25px 70px rgba(0,0,0,0.9); border:1px solid var(--border)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <h3 class="card-title" id="edit-modal-title" style="font-size:17px; font-weight:700; color:var(--cyan); letter-spacing:0.5px">EDIT PROJECT</h3>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeEditModal()">✕</button>
+    </div>
+    
+    <form id="edit-form" onsubmit="submitEditProjectForm(event)">
+        <div style="margin-bottom:14px">
+            <label class="stat-label" style="display:block; margin-bottom:5px">PROJECT NAME <span style="color:var(--red)">*</span></label>
+            <input id="edit-name" type="text" class="glass" style="width:100%; padding:9px 12px; border-radius:4px; color:var(--text); outline:none" required>
+        </div>
+
+        <div style="margin-bottom:16px">
+            <label class="stat-label" style="display:block; margin-bottom:5px">DESCRIPTION</label>
+            <textarea id="edit-description" class="glass" style="width:100%; padding:9px 12px; height:60px; border-radius:4px; color:var(--text); outline:none; resize:none"></textarea>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:12px">
+            <button type="button" class="btn btn-glass" onclick="closeEditModal()">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="btn-edit-submit">Update Project</button>
+        </div>
+    </form>
+</div>
+
+<!-- ── MANAGE GROUPS MODAL ── -->
+<div id="manage-groups-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px; z-index:1000; border-radius:var(--radius-lg, 8px); width:540px; max-width:92vw; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--amber)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <div>
+            <h3 class="card-title" style="font-size:16px; font-family:var(--font-sans); font-weight:700; color:var(--amber); letter-spacing:0.5px" id="manage-groups-title">MANAGE GROUPS & USER ACCESS</h3>
+            <p class="text-sub" style="font-size:11px; margin-top:2px">Check Project Groups to grant project access to their members</p>
+        </div>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeManageGroupsModal()">✕</button>
+    </div>
+
+    <div id="manage-groups-list" style="max-height:220px; overflow-y:auto; background:rgba(8,12,24,0.8); border:1px solid var(--border); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px; margin-bottom:20px"></div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center">
+        <a href="/user-management" style="font-size:11px; color:var(--cyan); text-decoration:none">+ Create / Edit Groups in User Mgmt</a>
+        <div style="display:flex; gap:10px">
+            <button class="btn btn-glass" onclick="closeManageGroupsModal()">Cancel</button>
+            <button class="btn btn-primary" id="btn-save-groups" onclick="saveProjectGroups()">Save Group Access</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-const PROJECTS = {{ projects | tojson }};
-let filteredProjects = [...PROJECTS];
+const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+let currentProjects = {{ projects | tojson }};
+let filteredProjects = [...currentProjects];
 
+let allServersList = [];
+let allAppsList = [];
+
+// Member modal state
+let activeManagingProjectId = null;
+let activeManagingProjectName = '';
+let activeManageTab = 'assets';
+let manageSelectedServerIds = new Set();
+let manageSelectedAppIds = new Set();
+
+// Delete modal state
+let pendingDeleteProjectId = null;
+let pendingDeleteProjectName = '';
+
+// Edit modal state
+let activeEditingProjectId = null;
+
+// Groups modal state
+let activeManagingGroupsProjectId = null;
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+/* ── Render Projects Grid ────────────────────────────────── */
 function renderProjects(){
   const grid = document.getElementById('projectGrid');
   grid.innerHTML = '';
@@ -109,25 +284,68 @@ function renderProjects(){
 
     const card = document.createElement('div');
     card.className = 'project-card' + (hasCrit ? ' has-critical' : '');
+    card.id = `proj-card-${p.id}`;
     card.dataset.id = p.id;
     card.dataset.name = (p.name || '').toLowerCase();
     card.title = `Click to enter ${p.name || 'Project'}`;
     card.onclick = (e) => enterProject(p.id, p.name, e);
 
+    const safeNameJs = String(p.name || '').replace(/'/g, "\\'");
+
+    let adminControlsHeader = '';
+    let adminControlsFooter = '';
+
+    if (IS_ADMIN) {
+        adminControlsHeader = `
+        <div style="display:flex; gap:4px; margin-left:8px" onclick="event.stopPropagation()">
+            <button onclick="event.stopPropagation(); openEditModal(${p.id}, '${safeNameJs}')"
+                title="Edit project"
+                style="background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.4); color:var(--cyan); border-radius:4px; padding:3px 7px; cursor:pointer; font-size:10px; font-family:var(--mono)">
+                EDIT
+            </button>
+            <button onclick="event.stopPropagation(); requestDeleteProject(${p.id}, '${safeNameJs}')"
+                title="Delete project"
+                style="background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:4px; padding:3px 7px; cursor:pointer; font-size:10px; font-family:var(--mono)">
+                DEL
+            </button>
+        </div>
+        `;
+
+        adminControlsFooter = `
+        <div style="display:flex; gap:6px; margin-top:8px; width:100%" onclick="event.stopPropagation()">
+            <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:5px 8px; border-color:var(--cyan); color:var(--cyan)" onclick="event.stopPropagation(); openManageMembersModal(${p.id}, '${safeNameJs}')">
+                ⚙ ASSETS
+            </button>
+            <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:5px 8px; border-color:var(--amber); color:var(--amber)" onclick="event.stopPropagation(); openManageGroupsModal(${p.id}, '${safeNameJs}')">
+                👥 GROUPS
+            </button>
+        </div>
+        `;
+    }
+
     card.innerHTML = `
       <div class="card-header">
-        <div class="card-icon-wrap">${p.icon || '🏢'}</div>
-        <div class="card-title-wrap">
-          <div class="card-title">${p.name}</div>
-          <div class="card-desc">${p.description || 'Enterprise Infrastructure Project'}</div>
+        <div style="display:flex; align-items:flex-start; flex:1">
+          <div class="card-icon-wrap">${p.icon || '🏢'}</div>
+          <div class="card-title-wrap">
+            <div class="card-title">${escapeHtml(p.name)}</div>
+            <div class="card-desc">${escapeHtml(p.description || 'Enterprise Infrastructure Project')}</div>
+          </div>
         </div>
-        <div class="card-status-dot ${statusCls}" title="${statusText}"></div>
+        <div style="display:flex; align-items:center">
+          <div class="card-status-dot ${statusCls}" title="${statusText}"></div>
+          ${adminControlsHeader}
+        </div>
       </div>
 
       <div class="card-metrics">
         <div class="card-metric">
           <div class="metric-val">${p.server_count || 0}</div>
           <div class="metric-label">Servers</div>
+        </div>
+        <div class="card-metric">
+          <div class="metric-val">${p.app_count || 0}</div>
+          <div class="metric-label">App Nodes</div>
         </div>
         <div class="card-metric">
           <div class="metric-val ${(p.critical_count || 0) > 0 ? 'crit' : 'ok'}">${p.critical_count || 0}</div>
@@ -147,34 +365,65 @@ function renderProjects(){
 
       <div class="card-footer">
         <div class="card-meta">Last activity: ${p.last_activity || 'Active'}</div>
+        ${adminControlsFooter}
       </div>
     `;
     grid.appendChild(card);
   });
 
-  const createCard = document.createElement('div');
-  createCard.className = 'create-card';
-  createCard.onclick = () => window.location.href = '/projects';
-  createCard.innerHTML = `
-    <div class="create-icon">+</div>
-    <div class="create-label">Create New Project</div>
-  `;
-  grid.appendChild(createCard);
+  if (IS_ADMIN) {
+      const createCard = document.createElement('div');
+      createCard.className = 'create-card';
+      createCard.onclick = () => window.location.href = '/projects';
+      createCard.innerHTML = `
+        <div class="create-icon">+</div>
+        <div class="create-label">Create New Project</div>
+      `;
+      grid.appendChild(createCard);
+  }
 }
 
+/* ── Enter Project View ──────────────────────────────────── */
+async function enterProject(projectId, projectName, e) {
+    if (e && e.target && (e.target.tagName === 'BUTTON' || e.target.closest('button'))) {
+        return;
+    }
+    try {
+        const card = document.getElementById(`proj-card-${projectId}`);
+        if (card) {
+            card.style.opacity = '0.6';
+            card.style.pointerEvents = 'none';
+        }
+        if (typeof showToast === 'function') showToast(`Entering ${projectName}...`, 'info');
+        const res = await apiFetch(`/api/projects/select/${projectId}`, { method: 'POST' });
+        if (res.ok) {
+            window.location.href = res.redirect || '/dashboard';
+        } else {
+            if (card) {
+                card.style.opacity = '1';
+                card.style.pointerEvents = 'auto';
+            }
+            if (typeof showToast === 'function') showToast('Failed to enter project', 'error');
+        }
+    } catch(err) {
+        window.location.href = `/dashboard?project_id=${projectId}`;
+    }
+}
+
+/* ── Filter & Sort ────────────────────────────────────────── */
 function filterProjects(){
   const q = document.getElementById('searchInput').value.toLowerCase().trim();
-  filteredProjects = PROJECTS.filter(p =>
+  filteredProjects = currentProjects.filter(p =>
     (p.name || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)
   );
   sortProjects(false);
 }
 
 function sortProjects(doFilter=true){
-  if(doFilter) filteredProjects = [...PROJECTS];
+  if(doFilter) filteredProjects = [...currentProjects];
   const by = document.getElementById('sortSelect').value;
   filteredProjects.sort((a,b) => {
-    if(by==='name') return (a.name||'').localeCompare(b.name||'');
+    if(by==='name') return (a.name||'').localeCompare(b.name||'', undefined, {sensitivity:'base'});
     if(by==='servers') return (b.server_count||0) - (a.server_count||0);
     if(by==='alerts') return (b.total_alerts||0) - (a.total_alerts||0);
     return 0;
@@ -182,6 +431,398 @@ function sortProjects(doFilter=true){
   renderProjects();
 }
 
+/* ── Delete Project with Modal ────────────────────────────── */
+async function requestDeleteProject(id, name) {
+    pendingDeleteProjectId = id;
+    pendingDeleteProjectName = name;
+    
+    const textEl = document.getElementById('delete-confirm-text');
+    textEl.innerHTML = `Fetching project statistics for <strong>${escapeHtml(name)}</strong>...`;
+    document.getElementById('delete-confirm-modal').style.display = 'block';
+
+    try {
+        const res = await apiFetch(`/api/projects/${id}/summary`);
+        const assets = res.assets || 0;
+        const apps = res.app_nodes || 0;
+        const groups = res.groups || 0;
+        textEl.innerHTML = `Are you sure you want to delete project <strong>${escapeHtml(name)}</strong>?<br><br>
+        This project has <strong>${assets} assets</strong>, <strong>${apps} app nodes</strong>, and <strong>${groups} groups</strong>.<br>
+        Assets and app nodes are <strong>NOT</strong> deleted; they are only unassigned.`;
+    } catch (e) {
+        textEl.innerHTML = `Are you sure you want to delete project <strong>${escapeHtml(name)}</strong>?<br><br>
+        Assets and app nodes are <strong>NOT</strong> deleted; they are only unassigned.`;
+    }
+}
+
+function closeDeleteConfirmModal() {
+    document.getElementById('delete-confirm-modal').style.display = 'none';
+    pendingDeleteProjectId = null;
+    pendingDeleteProjectName = '';
+}
+
+async function executeDeleteProject() {
+    if (!pendingDeleteProjectId) return;
+    const btn = document.getElementById('btn-confirm-delete');
+    btn.disabled = true;
+    btn.innerText = 'Deleting...';
+
+    const pid = pendingDeleteProjectId;
+    const pname = pendingDeleteProjectName;
+
+    try {
+        const res = await apiFetch(`/api/projects/${pid}`, { method: 'DELETE' });
+        showToast(res.message || `Project '${pname}' deleted successfully`, 'success');
+        closeDeleteConfirmModal();
+        
+        // Remove card from DOM immediately without manual reload
+        const cardEl = document.getElementById(`proj-card-${pid}`);
+        if (cardEl) cardEl.remove();
+
+        // Refresh project list
+        currentProjects = currentProjects.filter(p => p.id !== pid);
+        filteredProjects = filteredProjects.filter(p => p.id !== pid);
+    } catch (err) {
+        showToast(err.message || 'Delete failed', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Delete Project';
+    }
+}
+
+/* ── Edit Project Modal ───────────────────────────────────── */
+function openEditModal(projectId, projectName) {
+    activeEditingProjectId = projectId;
+    const proj = currentProjects.find(p => p.id === projectId);
+    document.getElementById('edit-modal-title').textContent = `EDIT PROJECT: ${projectName}`;
+    document.getElementById('edit-name').value = proj ? (proj.name || '') : projectName;
+    document.getElementById('edit-description').value = proj ? (proj.description || '') : '';
+    document.getElementById('edit-project-modal').style.display = 'block';
+}
+
+function closeEditModal() {
+    document.getElementById('edit-project-modal').style.display = 'none';
+    activeEditingProjectId = null;
+}
+
+async function submitEditProjectForm(e) {
+    e.preventDefault();
+    if (!activeEditingProjectId) return;
+    const btn = document.getElementById('btn-edit-submit');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.innerText = 'Updating...';
+
+    const name = document.getElementById('edit-name').value.trim();
+    const desc = document.getElementById('edit-description').value.trim();
+
+    try {
+        const res = await apiFetch(`/api/projects/${activeEditingProjectId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ name: name, description: desc })
+        });
+        showToast(res.message || 'Project updated successfully', 'success');
+        closeEditModal();
+
+        // Refresh projects from backend
+        currentProjects = await apiFetch('/api/projects');
+        filterProjects();
+    } catch (err) {
+        showToast(err.message || 'Update failed', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Update Project';
+    }
+}
+
+/* ── Manage Project Members Modal ─────────────────────────── */
+async function openManageMembersModal(projectId, projectName) {
+    activeManagingProjectId = projectId;
+    activeManagingProjectName = projectName;
+    activeManageTab = 'assets';
+
+    document.getElementById('manage-modal-title').textContent = `MANAGE PROJECT MEMBERS: ${projectName.toUpperCase()}`;
+    document.getElementById('manage-members-modal').style.display = 'block';
+    
+    switchManageMemberTab('assets');
+    const listEl = document.getElementById('manage-members-list');
+    listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">Loading member data...</div>';
+
+    try {
+        const res = await apiFetch(`/api/projects/${projectId}/members`);
+        allServersList = res.servers || [];
+        allAppsList = res.apps || [];
+
+        manageSelectedServerIds = new Set(allServersList.filter(s => s.assigned).map(s => s.id));
+        manageSelectedAppIds = new Set(allAppsList.filter(a => a.assigned).map(a => a.id));
+
+        document.getElementById('manage-assets-count-badge').textContent = allServersList.length;
+        document.getElementById('manage-apps-count-badge').textContent = allAppsList.length;
+
+        renderManageMembersList();
+    } catch (e) {
+        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--red); font-size:11px">Failed to load member records</div>';
+    }
+}
+
+function switchManageMemberTab(tab) {
+    activeManageTab = tab;
+    document.getElementById('member-tab-assets-btn').classList.toggle('active', tab === 'assets');
+    document.getElementById('member-tab-apps-btn').classList.toggle('active', tab === 'apps');
+    document.getElementById('manage-member-search').value = '';
+    renderManageMembersList();
+}
+
+function renderManageMembersList() {
+    const listEl = document.getElementById('manage-members-list');
+    const query = (document.getElementById('manage-member-search').value || '').toLowerCase().trim();
+
+    if (activeManageTab === 'assets') {
+        const filtered = allServersList.filter(s => {
+            const name = (s.hostname || s.name || '').toLowerCase();
+            const ip = (s.ip_address || s.ip || '').toLowerCase();
+            return name.includes(query) || ip.includes(query);
+        });
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">No matching assets found</div>';
+            updateManageSelectionCounter();
+            return;
+        }
+
+        listEl.innerHTML = filtered.map(s => {
+            const isChecked = manageSelectedServerIds.has(s.id);
+            const otherProject = s.project_name;
+            let badgeHtml = '';
+            if (isChecked) {
+                badgeHtml = '<span class="badge badge-success" style="font-size:9px">ASSIGNED</span>';
+            } else if (otherProject) {
+                badgeHtml = `<span class="badge badge-info" style="font-size:9px">Also in: ${escapeHtml(otherProject)}</span>`;
+            } else {
+                badgeHtml = '<span class="badge badge-secondary" style="font-size:9px">UNASSIGNED</span>';
+            }
+
+            const statusClass = (s.status === 'online' || s.status === 'up') ? 'status-online' : ((s.severity === 'critical') ? 'status-critical' : 'status-offline');
+
+            return `
+            <label class="member-row ${isChecked ? 'is-selected' : ''}">
+                <div style="display:flex; align-items:center; gap:10px">
+                    <input type="checkbox" class="manage-chk-item" value="${s.id}" data-type="server" data-name="${escapeHtml(s.hostname || s.name)}" data-other="${escapeHtml(otherProject)}" ${isChecked ? 'checked' : ''} onchange="toggleManageMemberCheck(this, 'server', ${s.id})" style="accent-color:var(--cyan); width:14px; height:14px">
+                    <span class="status-indicator ${statusClass}" title="${s.status || 'unknown'}"></span>
+                    <div>
+                        <span style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(s.hostname || s.name)}</span>
+                        <span style="font-size:10px; color:var(--text-sub); margin-left:6px">${escapeHtml(s.ip_address || s.ip || 'No IP')}</span>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px">
+                    <span class="badge badge-secondary" style="font-size:8.5px">SERVER</span>
+                    ${badgeHtml}
+                </div>
+            </label>
+            `;
+        }).join('');
+    } else {
+        const filtered = allAppsList.filter(a => {
+            const name = (a.name || '').toLowerCase();
+            const url = (a.primary_url || '').toLowerCase();
+            return name.includes(query) || url.includes(query);
+        });
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">No matching app nodes found</div>';
+            updateManageSelectionCounter();
+            return;
+        }
+
+        listEl.innerHTML = filtered.map(a => {
+            const isChecked = manageSelectedAppIds.has(a.id);
+            const otherProject = a.project_name;
+            let badgeHtml = '';
+            if (isChecked) {
+                badgeHtml = '<span class="badge badge-success" style="font-size:9px">ASSIGNED</span>';
+            } else if (otherProject) {
+                badgeHtml = `<span class="badge badge-info" style="font-size:9px">Also in: ${escapeHtml(otherProject)}</span>`;
+            } else {
+                badgeHtml = '<span class="badge badge-secondary" style="font-size:9px">UNASSIGNED</span>';
+            }
+
+            const st = (a.status || '').toUpperCase();
+            const statusClass = (st === 'NORMAL' || st === 'UP') ? 'status-online' : ((st === 'CRITICAL' || st === 'DOWN') ? 'status-critical' : 'status-trouble');
+
+            return `
+            <label class="member-row ${isChecked ? 'is-selected' : ''}">
+                <div style="display:flex; align-items:center; gap:10px">
+                    <input type="checkbox" class="manage-chk-item" value="${a.id}" data-type="app" data-name="${escapeHtml(a.name)}" data-other="${escapeHtml(otherProject)}" ${isChecked ? 'checked' : ''} onchange="toggleManageMemberCheck(this, 'app', ${a.id})" style="accent-color:var(--cyan); width:14px; height:14px">
+                    <span class="status-indicator ${statusClass}" title="${a.status || 'unknown'}"></span>
+                    <div>
+                        <span style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(a.name)}</span>
+                        <span style="font-size:10px; color:var(--text-sub); margin-left:6px">${escapeHtml(a.primary_url || 'No URL')}</span>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px">
+                    <span class="badge badge-secondary" style="font-size:8.5px">APP NODE</span>
+                    ${badgeHtml}
+                </div>
+            </label>
+            `;
+        }).join('');
+    }
+
+    updateManageSelectionCounter();
+}
+
+function toggleManageMemberCheck(checkbox, type, id) {
+    const isChecked = checkbox.checked;
+    const name = checkbox.dataset.name;
+    const otherProject = checkbox.dataset.other;
+
+    if (isChecked && otherProject && otherProject !== activeManagingProjectName) {
+        if (!confirm(`'${name}' is currently assigned to project '${otherProject}'. Move it to '${activeManagingProjectName}'?`)) {
+            checkbox.checked = false;
+            return;
+        }
+    }
+
+    if (type === 'server') {
+        if (isChecked) manageSelectedServerIds.add(id);
+        else manageSelectedServerIds.delete(id);
+    } else {
+        if (isChecked) manageSelectedAppIds.add(id);
+        else manageSelectedAppIds.delete(id);
+    }
+
+    const row = checkbox.closest('.member-row');
+    if (row) row.classList.toggle('is-selected', isChecked);
+
+    updateManageSelectionCounter();
+}
+
+function selectAllManageMembers(check) {
+    const visibleCheckboxes = document.querySelectorAll('.manage-chk-item');
+    visibleCheckboxes.forEach(cb => {
+        const id = parseInt(cb.value);
+        const type = cb.dataset.type;
+        cb.checked = check;
+        if (type === 'server') {
+            if (check) manageSelectedServerIds.add(id);
+            else manageSelectedServerIds.delete(id);
+        } else {
+            if (check) manageSelectedAppIds.add(id);
+            else manageSelectedAppIds.delete(id);
+        }
+        const row = cb.closest('.member-row');
+        if (row) row.classList.toggle('is-selected', check);
+    });
+    updateManageSelectionCounter();
+}
+
+function updateManageSelectionCounter() {
+    const serverCnt = manageSelectedServerIds.size;
+    const appCnt = manageSelectedAppIds.size;
+    document.getElementById('manage-selected-count').textContent = `${serverCnt} asset${serverCnt !== 1 ? 's' : ''}, ${appCnt} app node${appCnt !== 1 ? 's' : ''} selected`;
+}
+
+function closeManageMembersModal() {
+    document.getElementById('manage-members-modal').style.display = 'none';
+    activeManagingProjectId = null;
+    activeManagingProjectName = '';
+}
+
+async function saveProjectMembers() {
+    if (!activeManagingProjectId) return;
+    const btn = document.getElementById('btn-save-members');
+    btn.disabled = true;
+    btn.innerText = 'Saving...';
+
+    try {
+        const res = await apiFetch(`/api/projects/${activeManagingProjectId}/members`, {
+            method: 'POST',
+            body: JSON.stringify({
+                server_ids: Array.from(manageSelectedServerIds),
+                app_ids: Array.from(manageSelectedAppIds)
+            })
+        });
+        showToast(res.message || 'Project members updated successfully', 'success');
+        closeManageMembersModal();
+        
+        currentProjects = await apiFetch('/api/projects');
+        filterProjects();
+    } catch (err) {
+        showToast(err.message || 'Failed to update members', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Save Assignments';
+    }
+}
+
+/* ── Manage Groups Modal ─────────────────────────────────── */
+async function openManageGroupsModal(projectId, projectName) {
+    activeManagingGroupsProjectId = projectId;
+    document.getElementById('manage-groups-title').textContent = `MANAGE GROUPS: ${projectName.toUpperCase()}`;
+    document.getElementById('manage-groups-modal').style.display = 'block';
+    
+    const listEl = document.getElementById('manage-groups-list');
+    listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">Loading groups...</div>';
+
+    try {
+        const res = await apiFetch(`/api/projects/${projectId}/groups`);
+        const groups = res.groups || [];
+        if (groups.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">No Project Groups created yet. <a href="/user-management" style="color:var(--cyan)">Create one in User Mgmt</a></div>';
+            return;
+        }
+        listEl.innerHTML = groups.map(g => {
+            const isChecked = g.assigned ? 'checked' : '';
+            return `
+            <label style="display:flex; align-items:center; justify-content:space-between; font-size:12px; cursor:pointer; padding:8px 10px; border-radius:4px; background:rgba(255,255,255,0.02)" class="glass-hover">
+                <div style="display:flex; align-items:center; gap:10px">
+                    <input type="checkbox" class="manage-group-chk" value="${g.id}" ${isChecked} style="accent-color:var(--amber); width:15px; height:15px">
+                    <div>
+                        <div style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(g.name)}</div>
+                        <div style="font-size:10px; color:var(--text-sub)">${g.member_count || 0} members linked</div>
+                    </div>
+                </div>
+                <span class="badge ${g.assigned ? 'badge-warning' : 'badge-secondary'}" style="font-size:9px">
+                    ${g.assigned ? 'LINKED' : 'UNLINKED'}
+                </span>
+            </label>
+            `;
+        }).join('');
+    } catch (e) {
+        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--red); font-size:11px">Failed to load project groups</div>';
+    }
+}
+
+function closeManageGroupsModal() {
+    document.getElementById('manage-groups-modal').style.display = 'none';
+    activeManagingGroupsProjectId = null;
+}
+
+async function saveProjectGroups() {
+    if (!activeManagingGroupsProjectId) return;
+    const btn = document.getElementById('btn-save-groups');
+    btn.disabled = true;
+    btn.innerText = 'Saving...';
+
+    const selectedIds = Array.from(document.querySelectorAll('.manage-group-chk:checked')).map(c => parseInt(c.value));
+
+    try {
+        await apiFetch(`/api/projects/${activeManagingGroupsProjectId}/groups`, {
+            method: 'POST',
+            body: JSON.stringify({ group_ids: selectedIds })
+        });
+        showToast('Project group access updated successfully', 'success');
+        closeManageGroupsModal();
+        currentProjects = await apiFetch('/api/projects');
+        filterProjects();
+    } catch(e) {
+        showToast(e.message || 'Failed to update project groups', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Save Group Access';
+    }
+}
+
+// Initial render
 renderProjects();
 </script>
 {% endblock %}

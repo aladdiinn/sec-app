@@ -1,3 +1,18 @@
+
+class ProjectOpResult:
+    """Result object representing success or failure of a project operation."""
+    def __init__(self, ok: bool, message: str):
+        self.ok = ok
+        self.message = message
+    def __bool__(self):
+        return bool(self.ok)
+    def __iter__(self):
+        return iter((self.ok, self.message))
+    def __getitem__(self, index):
+        return (self.ok, self.message)[index]
+    def __repr__(self):
+        return f"ProjectOpResult(ok={self.ok}, message='{self.message}')"
+
 import os
 import re
 import random
@@ -2485,15 +2500,15 @@ def get_projects(allowed_project_ids=None):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT p.id, p.name, p.description, p.created_at,
+                SELECT p.id, p.name, p.description, p.created_at, p.vpn_tracking_enabled, p.vpn_subnet,
                        COUNT(DISTINCT s.id) as server_count,
-                       COUNT(DISTINCT CASE WHEN s.severity = 'critical' OR a.severity = 'critical' THEN s.id END) as critical_count,
-                       COUNT(DISTINCT CASE WHEN a.severity = 'warning' AND (a.is_resolved IS NOT TRUE) THEN a.id END) as warning_count,
-                       COUNT(DISTINCT a.id) as total_alerts
+                       COUNT(DISTINCT CASE WHEN s.severity = 'critical' OR (a.severity = 'critical' AND a.is_resolved IS NOT TRUE) THEN s.id END) as critical_count,
+                       COUNT(DISTINCT CASE WHEN (a.severity = 'warning' OR a.severity = 'high') AND (a.is_resolved IS NOT TRUE) THEN a.id END) as warning_count,
+                       COUNT(DISTINCT CASE WHEN a.is_resolved IS NOT TRUE THEN a.id END) as total_alerts
                 FROM projects p
                 LEFT JOIN servers s ON s.project_id = p.id
                 LEFT JOIN alerts a ON a.server_id = s.id
-                GROUP BY p.id, p.name, p.description, p.created_at
+                GROUP BY p.id, p.name, p.description, p.created_at, p.vpn_tracking_enabled, p.vpn_subnet
                 ORDER BY p.id ASC;
             """)
             projects = cur.fetchall() or []
@@ -2522,13 +2537,35 @@ def get_projects(allowed_project_ids=None):
                 p["assigned_users"] = cur.fetchall() or []
                 p["user_count"] = len(p["assigned_users"])
 
+                # Fetch assigned servers details for cards & quick remove
+                cur.execute("""
+                    SELECT id, name, hostname, ip, ip_address, status, severity
+                    FROM servers
+                    WHERE project_id = %s
+                    ORDER BY LOWER(COALESCE(hostname, name)) ASC;
+                """, (pid,))
+                p["assigned_servers"] = cur.fetchall() or []
+                p["server_count"] = len(p["assigned_servers"])
+
+                # Fetch assigned applications details for cards & quick remove
+                try:
+                    cur.execute("""
+                        SELECT id, name, primary_url, status, environment
+                        FROM applications
+                        WHERE project_id = %s
+                        ORDER BY LOWER(name) ASC;
+                    """, (pid,))
+                    p["assigned_apps"] = cur.fetchall() or []
+                except Exception:
+                    p["assigned_apps"] = []
+                p["app_count"] = len(p["assigned_apps"])
+
                 name_lower = (p.get("name") or "").lower()
                 if "apdcl" in name_lower or "power" in name_lower: p["icon"] = "🏭"
                 elif "pgvcl" in name_lower or "grid" in name_lower: p["icon"] = "⚡"
                 elif "aws" in name_lower or "cloud" in name_lower: p["icon"] = "☁"
                 elif "nagaland" in name_lower: p["icon"] = "🗄"
                 else: p["icon"] = "🏢"
-                p["server_count"] = p.get("server_count", 0)
                 p["critical_count"] = p.get("critical_count", 0)
                 p["warning_count"] = p.get("warning_count", 0)
                 p["total_alerts"] = p.get("total_alerts", 0)
@@ -3571,39 +3608,102 @@ def update_server(server_id: int, **kwargs):
 
 def delete_project(project_id: int):
     conn = get_db_connection()
-    if not conn: return False
+    if not conn:
+        return ProjectOpResult(False, "Database connection unavailable")
     try:
         if hasattr(conn, 'autocommit'):
             conn.autocommit = False
         with conn.cursor() as cur:
-            # Unassign all servers from this project
+            # Verify project exists
+            cur.execute("SELECT id, name FROM projects WHERE id = %s;", (project_id,))
+            p_row = cur.fetchone()
+            if not p_row:
+                return ProjectOpResult(False, f"Project #{project_id} not found")
+            p_name = p_row["name"] if isinstance(p_row, dict) else p_row[1]
+
+            # 1. Unassign all servers from this project
             try:
                 cur.execute("UPDATE servers SET project_id = NULL WHERE project_id = %s;", (project_id,))
+            except Exception as e_srv:
+                logger.warning(f"Error unassigning servers in project {project_id}: {e_srv}")
+
+            # 2. Unassign all applications from this project
+            try:
+                cur.execute("UPDATE applications SET project_id = NULL WHERE project_id = %s;", (project_id,))
+            except Exception as e_app:
+                logger.warning(f"Error unassigning applications in project {project_id}: {e_app}")
+
+            # 3. Clean up link tables safely with savepoint rollbacks
+            for tbl in ["project_apps", "group_projects"]:
+                try:
+                    cur.execute(f"SAVEPOINT sp_{tbl};")
+                    cur.execute(f"DELETE FROM {tbl} WHERE project_id = %s;", (project_id,))
+                    cur.execute(f"RELEASE SAVEPOINT sp_{tbl};")
+                except Exception as e_link:
+                    try: cur.execute(f"ROLLBACK TO SAVEPOINT sp_{tbl};")
+                    except Exception: pass
+                    logger.warning(f"Error cleaning {tbl} in project {project_id}: {e_link}")
+
+            # 4. Optional legacy project tables if present
+            for tbl in ["project_endpoints", "project_dashboard", "project_alerts", "project_logs"]:
+                try:
+                    cur.execute(f"SAVEPOINT sp_{tbl};")
+                    cur.execute(f"DELETE FROM {tbl} WHERE project_id = %s;", (project_id,))
+                    cur.execute(f"RELEASE SAVEPOINT sp_{tbl};")
+                except Exception:
+                    try: cur.execute(f"ROLLBACK TO SAVEPOINT sp_{tbl};")
+                    except Exception: pass
+
+            # 5. Delete project record
+            cur.execute("DELETE FROM projects WHERE id = %s;", (project_id,))
+            if cur.rowcount == 0:
+                if hasattr(conn, 'rollback'): conn.rollback()
+                return ProjectOpResult(False, f"Project #{project_id} could not be deleted")
+
+            if hasattr(conn, 'commit'):
+                conn.commit()
+            return ProjectOpResult(True, f"Project '{p_name}' deleted successfully")
+    except Exception as e:
+        if hasattr(conn, 'rollback'):
+            try: conn.rollback()
+            except Exception: pass
+        err_msg = str(e)
+        logger.error(f"Error in delete_project({project_id}): {err_msg}")
+        return ProjectOpResult(False, err_msg)
+    finally:
+        conn.close()
+
+def get_project_member_counts(project_id: int):
+    conn = get_db_connection()
+    if not conn:
+        return {"assets": 0, "app_nodes": 0, "groups": 0, "name": ""}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT name FROM projects WHERE id = %s;", (project_id,))
+            p = cur.fetchone()
+            name = (p["name"] if isinstance(p, dict) else p[0]) if p else ""
+
+            cur.execute("SELECT COUNT(*) as cnt FROM servers WHERE project_id = %s;", (project_id,))
+            assets = (cur.fetchone() or {}).get("cnt", 0)
+
+            app_nodes = 0
+            try:
+                cur.execute("SELECT COUNT(*) as cnt FROM applications WHERE project_id = %s;", (project_id,))
+                app_nodes = (cur.fetchone() or {}).get("cnt", 0)
             except Exception:
                 pass
 
-            # Cascade clean up all project child tables
-            tables = ["project_endpoints", "project_dashboard", "project_alerts", "project_logs"]
-            for table in tables:
-                try:
-                    cur.execute(f"SAVEPOINT sp_{table};")
-                    cur.execute(f"DELETE FROM {table} WHERE project_id = %s;", (project_id,))
-                    cur.execute(f"RELEASE SAVEPOINT sp_{table};")
-                except Exception:
-                    try:
-                        cur.execute(f"DELETE FROM {table} WHERE project_id = %s;", (project_id,))
-                    except Exception:
-                        pass
+            groups = 0
+            try:
+                cur.execute("SELECT COUNT(*) as cnt FROM group_projects WHERE project_id = %s;", (project_id,))
+                groups = (cur.fetchone() or {}).get("cnt", 0)
+            except Exception:
+                pass
 
-            cur.execute("DELETE FROM projects WHERE id = %s;", (project_id,))
-
-            if hasattr(conn, 'commit'):
-                try: conn.commit()
-                except Exception: pass
-        return True
+            return {"assets": assets, "app_nodes": app_nodes, "groups": groups, "name": name}
     except Exception as e:
-        logger.error(f"Error in delete_project: {e}")
-        return False
+        logger.error(f"Error in get_project_member_counts: {e}")
+        return {"assets": 0, "app_nodes": 0, "groups": 0, "name": ""}
     finally:
         conn.close()
 

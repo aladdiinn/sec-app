@@ -3,12 +3,113 @@
 {% block page_title %}Projects{% endblock %}
 {% block page_sub %}Logical groupings of infrastructure and monitoring{% endblock %}
 
+{% block extra_css %}
+<style>
+.member-tab-btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    color: var(--text-sub);
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: var(--font-sans);
+}
+.member-tab-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
+}
+.member-tab-btn.active {
+    background: rgba(6, 182, 212, 0.15);
+    border-color: var(--cyan);
+    color: var(--cyan);
+}
+.member-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.02);
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border: 1px solid transparent;
+}
+.member-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+.member-row.is-selected {
+    background: rgba(6, 182, 212, 0.08);
+    border-color: rgba(6, 182, 212, 0.25);
+}
+.status-indicator {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+.status-online { background: var(--green); box-shadow: 0 0 6px rgba(16, 185, 129, 0.4); }
+.status-critical { background: var(--red); box-shadow: 0 0 6px rgba(255, 59, 92, 0.4); }
+.status-trouble { background: var(--amber); box-shadow: 0 0 6px rgba(245, 158, 11, 0.4); }
+.status-offline { background: #64748b; }
+
+.member-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 9.5px;
+    font-family: var(--mono);
+    color: var(--text);
+    margin: 2px;
+}
+.member-chip-remove {
+    background: none;
+    border: none;
+    color: var(--text-sub);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 11px;
+    line-height: 1;
+    border-radius: 2px;
+    transition: color 0.15s;
+}
+.member-chip-remove:hover {
+    color: var(--red);
+    background: rgba(255, 59, 92, 0.15);
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="fade-in">
+    <!-- Duplicate Warning Banner -->
+    <div id="duplicate-warning-banner" class="glass" style="display:none; margin-bottom:20px; padding:14px 20px; border-left:4px solid var(--amber); background:rgba(245,158,11,0.08); border-radius:6px; align-items:center; justify-content:space-between">
+        <div style="display:flex; align-items:center; gap:12px">
+            <span style="font-size:20px">⚠️</span>
+            <div>
+                <div style="font-weight:700; color:var(--amber); font-size:13px" id="dup-banner-title">Duplicate Projects Detected</div>
+                <div style="font-size:11px; color:var(--text-sub)" id="dup-banner-sub">Multiple empty duplicate copies exist for HP-1. Keep the active one and clean up the rest.</div>
+            </div>
+        </div>
+        <button class="btn btn-glass" onclick="openDuplicateCleanupModal()" style="border-color:var(--amber); color:var(--amber); font-size:11px; font-weight:700">
+            Review & Clean Up Duplicates
+        </button>
+    </div>
+
+    <!-- Header Actions -->
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px">
         <div>
             <h2 class="card-title" style="font-size:20px; font-family:var(--font-sans); font-weight:700; letter-spacing:0.5px">PROJECTS / WORKSPACES</h2>
-            <p class="text-sub" style="margin-top:4px">Assign assets to projects for focused SOC view mode monitoring</p>
+            <p class="text-sub" style="margin-top:4px">Assign assets and app nodes to projects for focused SOC view mode monitoring</p>
         </div>
         <button class="btn btn-primary" onclick="openCreateModal()" style="display:flex; align-items:center; gap:8px">
             <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -16,95 +117,170 @@
         </button>
     </div>
 
+    <!-- Projects Grid -->
     <div id="projects-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:20px">
         <!-- Projects loaded here -->
     </div>
 </div>
 
-<!-- ── CREATE PROJECT MODAL ── -->
-<div id="create-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:520px; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--border)">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
-        <h3 class="card-title" style="font-size:18px; font-family:var(--font-sans); font-weight:700; color:var(--cyan); letter-spacing:0.5px">CREATE NEW PROJECT</h3>
+<!-- ── CREATE / EDIT PROJECT MODAL ── -->
+<div id="create-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:620px; max-width:94vw; box-shadow:0 25px 70px rgba(0,0,0,0.9); border:1px solid var(--border)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px">
+        <h3 class="card-title" id="create-modal-title" style="font-size:17px; font-weight:700; color:var(--cyan); letter-spacing:0.5px">CREATE NEW PROJECT</h3>
         <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeCreateModal()">✕</button>
     </div>
     
-    <form id="create-form" onsubmit="submitForm(event)">
-        <div style="margin-bottom:16px">
-            <label class="stat-label" style="display:block; margin-bottom:6px">PROJECT NAME</label>
-            <input id="name" type="text" class="glass" placeholder="e.g. APDCL MDM Infrastructure" style="width:100%; padding:10px 14px; border-radius:4px; color:var(--text); outline:none" required>
+    <form id="create-form" onsubmit="submitProjectForm(event)">
+        <div style="margin-bottom:14px">
+            <label class="stat-label" style="display:block; margin-bottom:5px">PROJECT NAME <span style="color:var(--red)">*</span></label>
+            <input id="name" type="text" class="glass" placeholder="e.g. APDCL MDM Infrastructure" style="width:100%; padding:9px 12px; border-radius:4px; color:var(--text); outline:none" required>
         </div>
 
-        <div style="margin-bottom:20px">
-            <label class="stat-label" style="display:block; margin-bottom:6px">DESCRIPTION</label>
-            <textarea id="description" class="glass" placeholder="Brief explanation of project scope..." style="width:100%; padding:10px 14px; height:70px; border-radius:4px; color:var(--text); outline:none; resize:none"></textarea>
+        <div style="margin-bottom:14px">
+            <label class="stat-label" style="display:block; margin-bottom:5px">DESCRIPTION</label>
+            <textarea id="description" class="glass" placeholder="Brief explanation of project scope..." style="width:100%; padding:9px 12px; height:54px; border-radius:4px; color:var(--text); outline:none; resize:none"></textarea>
         </div>
 
-        <!-- Phase 4: VPN Subnet Tracking -->
-        <div style="margin-bottom:24px; padding:12px; border:1px dashed rgba(6, 182, 212, 0.4); border-radius:6px; background:rgba(6, 182, 212, 0.05)">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:10px">
+        <!-- VPN Subnet Tracking -->
+        <div style="margin-bottom:16px; padding:10px 12px; border:1px dashed rgba(6, 182, 212, 0.4); border-radius:6px; background:rgba(6, 182, 212, 0.05)">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:6px">
                 <input type="checkbox" id="vpnTrackingEnabled" onchange="document.getElementById('vpnSubnetContainer').style.display = this.checked ? 'block' : 'none'" style="accent-color:var(--cyan); width:14px; height:14px">
                 <span class="stat-label" style="color:var(--cyan); font-size:11px">ENABLE VPN SUBNET TRACKING (OUT-OF-SUBNET ALERTS)</span>
             </label>
-            <div id="vpnSubnetContainer" style="display:none">
-                <label class="text-meta" style="display:block; margin-bottom:6px">Authorized VPN Subnets (CIDR, comma-separated)</label>
-                <input id="vpnSubnets" type="text" class="glass" placeholder="e.g. 10.5.0.0/24, 192.168.1.0/24" style="width:100%; padding:8px 12px; font-size:12px; border-radius:4px; color:var(--text); outline:none">
+            <div id="vpnSubnetContainer" style="display:none; margin-top:6px">
+                <input id="vpnSubnets" type="text" class="glass" placeholder="e.g. 10.5.0.0/24, 192.168.1.0/24" style="width:100%; padding:7px 10px; font-size:11px; border-radius:4px; color:var(--text); outline:none">
             </div>
         </div>
 
-        <!-- Asset Selection Section -->
-        <div style="margin-bottom:24px">
+        <!-- Reusable Member Selection Component -->
+        <div style="margin-bottom:20px">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-                <label class="stat-label" style="color:var(--cyan)">ASSIGN INITIAL ASSETS (OPTIONAL)</label>
-                <div style="font-size:10px; display:flex; gap:10px">
-                    <a href="javascript:void(0)" onclick="selectAllCreateAssets(true)" style="color:var(--cyan); text-decoration:none">Select All</a>
-                    <a href="javascript:void(0)" onclick="selectAllCreateAssets(false)" style="color:var(--text-sub); text-decoration:none">Clear</a>
+                <label class="stat-label" style="color:var(--cyan)">ASSIGN INITIAL MEMBERS (OPTIONAL)</label>
+                <span class="text-meta" id="create-selection-summary" style="font-size:11px">Selected: 0 assets, 0 app nodes</span>
+            </div>
+
+            <!-- Tabs: [ Assets ] [ App Nodes ] -->
+            <div style="display:flex; gap:8px; margin-bottom:8px">
+                <button type="button" id="create-tab-assets" class="member-tab-btn active" onclick="switchCreateTab('assets')">🖥️ Assets</button>
+                <button type="button" id="create-tab-apps" class="member-tab-btn" onclick="switchCreateTab('apps')">📱 App Nodes</button>
+            </div>
+
+            <!-- Search + Select All -->
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:10px">
+                <input type="text" id="create-search-input" class="glass" placeholder="Filter by name, IP, URL..." oninput="filterCreateMembers()" style="flex:1; padding:7px 10px; font-size:11px; border-radius:4px; color:var(--text)">
+                <div style="font-size:10px; display:flex; gap:10px; flex-shrink:0">
+                    <a href="javascript:void(0)" onclick="selectAllCreateMembers(true)" style="color:var(--cyan); text-decoration:none">Select All</a>
+                    <a href="javascript:void(0)" onclick="selectAllCreateMembers(false)" style="color:var(--text-sub); text-decoration:none">Clear</a>
                 </div>
             </div>
-            <div id="create-assets-list" style="max-height:160px; overflow-y:auto; background:rgba(8,12,24,0.7); border:1px solid var(--border); border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px">
-                <div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">Loading available assets...</div>
+
+            <!-- Members List -->
+            <div id="create-members-list" style="max-height:170px; overflow-y:auto; background:rgba(8,12,24,0.85); border:1px solid var(--border); border-radius:6px; padding:8px; display:flex; flex-direction:column; gap:5px">
+                <!-- Injected dynamically -->
             </div>
         </div>
 
         <div style="display:flex; justify-content:flex-end; gap:12px">
             <button type="button" class="btn btn-glass" onclick="closeCreateModal()">Cancel</button>
-            <button type="submit" class="btn btn-primary" id="btn-submit">Create Project</button>
+            <button type="submit" class="btn btn-primary" id="btn-submit">Save Project</button>
         </div>
     </form>
 </div>
 
-<!-- ── MANAGE / ADD ASSETS MODAL FOR EXISTING PROJECT ── -->
-<div id="manage-assets-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:540px; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--cyan)">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+<!-- ── MANAGE PROJECT MEMBERS MODAL (EXISTING PROJECT) ── -->
+<div id="manage-members-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 32px; z-index:1000; border-radius:var(--radius-lg, 8px); width:640px; max-width:94vw; box-shadow:0 25px 70px rgba(0,0,0,0.9); border:1px solid var(--cyan)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
         <div>
-            <h3 class="card-title" style="font-size:16px; font-family:var(--font-sans); font-weight:700; color:var(--cyan); letter-spacing:0.5px" id="manage-modal-title">MANAGE PROJECT ASSETS</h3>
-            <p class="text-sub" style="font-size:11px; margin-top:2px" id="manage-modal-sub">Check assets to include in this project</p>
+            <h3 class="card-title" style="font-size:16px; font-weight:700; color:var(--cyan); letter-spacing:0.5px" id="manage-modal-title">MANAGE PROJECT MEMBERS</h3>
+            <p class="text-sub" style="font-size:11px; margin-top:2px">Select servers and applications to assign to this project</p>
         </div>
-        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeManageAssetsModal()">✕</button>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeManageMembersModal()">✕</button>
     </div>
 
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-        <input type="text" id="manage-asset-search" class="glass" placeholder="Search servers by name/IP..." oninput="filterManageAssets()" style="padding:8px 12px; font-size:11px; width:240px; border-radius:4px; color:var(--text)">
-        <div style="font-size:10px; display:flex; gap:10px">
-            <a href="javascript:void(0)" onclick="selectAllManageAssets(true)" style="color:var(--cyan); text-decoration:none">Select All</a>
-            <a href="javascript:void(0)" onclick="selectAllManageAssets(false)" style="color:var(--text-sub); text-decoration:none">Clear All</a>
+    <!-- Tabs: [ Assets ] [ App Nodes ] -->
+    <div style="display:flex; gap:8px; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:8px">
+        <button type="button" id="member-tab-assets-btn" class="member-tab-btn active" onclick="switchManageMemberTab('assets')">
+            🖥️ Assets (<span id="manage-assets-count-badge">0</span>)
+        </button>
+        <button type="button" id="member-tab-apps-btn" class="member-tab-btn" onclick="switchManageMemberTab('apps')">
+            📱 App Nodes (<span id="manage-apps-count-badge">0</span>)
+        </button>
+    </div>
+
+    <!-- Search + Select All -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:12px">
+        <input type="text" id="manage-member-search" class="glass" placeholder="Search by name, IP, URL..." oninput="filterManageMembers()" style="flex:1; padding:8px 12px; font-size:11px; border-radius:4px; color:var(--text)">
+        <div style="font-size:10px; display:flex; gap:12px; flex-shrink:0">
+            <a href="javascript:void(0)" onclick="selectAllManageMembers(true)" style="color:var(--cyan); text-decoration:none; font-weight:600">Select All</a>
+            <a href="javascript:void(0)" onclick="selectAllManageMembers(false)" style="color:var(--text-sub); text-decoration:none">Clear All</a>
         </div>
     </div>
 
-    <div id="manage-assets-list" style="max-height:220px; overflow-y:auto; background:rgba(8,12,24,0.8); border:1px solid var(--border); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px; margin-bottom:24px">
-        <!-- Loaded by JS -->
+    <!-- Member List -->
+    <div id="manage-members-list" style="max-height:250px; overflow-y:auto; background:rgba(8,12,24,0.85); border:1px solid var(--border); border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:6px; margin-bottom:20px">
+        <!-- Injected dynamically -->
+    </div>
+
+    <!-- Footer -->
+    <div style="display:flex; justify-content:space-between; align-items:center">
+        <span class="text-meta" id="manage-selected-count" style="font-weight:600; color:var(--text)">0 assets, 0 app nodes selected</span>
+        <div style="display:flex; gap:10px">
+            <button class="btn btn-glass" onclick="closeManageMembersModal()">Cancel</button>
+            <button class="btn btn-primary" id="btn-save-members" onclick="saveProjectMembers()">Save Assignments</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── DELETE CONFIRMATION MODAL ── -->
+<div id="delete-confirm-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 30px; z-index:1100; border-radius:var(--radius-lg, 8px); width:480px; max-width:92vw; box-shadow:0 25px 70px rgba(0,0,0,0.9); border:1px solid var(--red)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
+        <h3 class="card-title" style="font-size:16px; color:var(--red); font-weight:700; display:flex; align-items:center; gap:8px">
+            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            CONFIRM PROJECT DELETION
+        </h3>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeDeleteConfirmModal()">✕</button>
+    </div>
+    <p style="font-size:13px; color:var(--text); line-height:1.6; margin-bottom:16px" id="delete-confirm-text">
+        Checking linked assets, apps, and groups...
+    </p>
+    <div style="background:rgba(255,59,92,0.08); border:1px solid rgba(255,59,92,0.25); border-radius:6px; padding:12px; margin-bottom:24px; font-size:11px; color:var(--text-sub)">
+        ℹ️ <strong>Safety Guarantee:</strong> Assets and app nodes are <strong>NOT</strong> deleted; they are only unassigned. Existing alerts and incidents keep all historical data.
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:12px">
+        <button class="btn btn-glass" onclick="closeDeleteConfirmModal()">Cancel</button>
+        <button class="btn" id="btn-confirm-delete" onclick="executeDeleteProject()" style="background:var(--red); color:#fff; font-weight:700; border:none; padding:8px 18px; border-radius:4px; cursor:pointer">
+            Delete Project
+        </button>
+    </div>
+</div>
+
+<!-- ── DUPLICATE CLEANUP MODAL ── -->
+<div id="duplicate-cleanup-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px 30px; z-index:1100; border-radius:var(--radius-lg, 8px); width:660px; max-width:94vw; box-shadow:0 25px 70px rgba(0,0,0,0.9); border:1px solid var(--amber)">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
+        <div>
+            <h3 class="card-title" style="font-size:16px; font-weight:700; color:var(--amber); letter-spacing:0.5px">CLEAN UP DUPLICATE PROJECTS</h3>
+            <p class="text-sub" style="font-size:11px; margin-top:2px">The system has identified multiple empty projects with identical names</p>
+        </div>
+        <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeDuplicateCleanupModal()">✕</button>
+    </div>
+
+    <div id="duplicate-cleanup-list" style="max-height:280px; overflow-y:auto; background:rgba(8,12,24,0.85); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:20px; font-size:12px">
+        <!-- Injected dynamically -->
     </div>
 
     <div style="display:flex; justify-content:space-between; align-items:center">
-        <span class="text-meta" id="manage-selected-count">0 assets selected</span>
+        <span class="text-meta" id="dup-cleanup-counter">0 empty projects selected</span>
         <div style="display:flex; gap:10px">
-            <button class="btn btn-glass" onclick="closeManageAssetsModal()">Cancel</button>
-            <button class="btn btn-primary" id="btn-save-assets" onclick="saveProjectAssets()">Save Asset Assignments</button>
+            <button class="btn btn-glass" onclick="closeDuplicateCleanupModal()">Cancel</button>
+            <button class="btn" id="btn-execute-cleanup" onclick="executeDuplicateCleanup()" style="background:var(--red); color:#fff; font-weight:700; border:none; padding:8px 18px; border-radius:4px; cursor:pointer">
+                Delete Selected Empty Duplicates
+            </button>
         </div>
     </div>
 </div>
 
 <!-- ── MANAGE GROUPS & USERS MODAL FOR PROJECT ── -->
-<div id="manage-groups-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px; z-index:1000; border-radius:var(--radius-lg, 8px); width:540px; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--amber)">
+<div id="manage-groups-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px; z-index:1000; border-radius:var(--radius-lg, 8px); width:540px; max-width:92vw; box-shadow:0 25px 70px rgba(0,0,0,0.85); border:1px solid var(--amber)">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
         <div>
             <h3 class="card-title" style="font-size:16px; font-family:var(--font-sans); font-weight:700; color:var(--amber); letter-spacing:0.5px" id="manage-groups-title">MANAGE GROUPS & USER ACCESS</h3>
@@ -130,19 +306,63 @@
 {% block extra_js %}
 <script>
 let currentProjects = [];
-let allAvailableServers = [];
-let activeManagingProjectId = null;
-let activeManagingGroupsProjectId = null;
+let allServersList = [];
+let allAppsList = [];
 
+// Create / Edit modal state
+let isEditingProjectId = null;
+let activeCreateTab = 'assets';
+let createSelectedServerIds = new Set();
+let createSelectedAppIds = new Set();
+
+// Manage members modal state
+let activeManagingProjectId = null;
+let activeManagingProjectName = '';
+let activeManageTab = 'assets';
+let manageSelectedServerIds = new Set();
+let manageSelectedAppIds = new Set();
+let manageOriginalServerIds = new Set();
+let manageOriginalAppIds = new Set();
+
+// Delete modal state
+let pendingDeleteProjectId = null;
+let pendingDeleteProjectName = '';
+
+// Duplicate modal state
+let duplicateGroupsData = [];
+
+/* ── Main Data Loader ────────────────────────────────────── */
 async function loadData() {
     try {
         currentProjects = await apiFetch('/api/projects');
         renderProjects();
+        checkDuplicates();
     } catch (err) {
-        showToast('Failed to load projects', 'error');
+        showToast(err.message || 'Failed to load projects', 'error');
     }
 }
 
+/* ── Check & Render Duplicates Banner ────────────────────── */
+async function checkDuplicates() {
+    try {
+        const res = await apiFetch('/api/projects/duplicates');
+        if (res.has_duplicates && res.duplicates && res.duplicates.length > 0) {
+            duplicateGroupsData = res.duplicates;
+            const totalEmpty = res.duplicates.reduce((sum, g) => sum + (g.empty_ids || []).length, 0);
+            const banner = document.getElementById('duplicate-warning-banner');
+            const sub = document.getElementById('dup-banner-sub');
+            if (banner && sub) {
+                sub.textContent = `Found ${totalEmpty} empty duplicate project instances across ${res.duplicates.length} duplicate group(s). Keep active ones and clean up.`;
+                banner.style.display = 'flex';
+            }
+        } else {
+            const banner = document.getElementById('duplicate-warning-banner');
+            if (banner) banner.style.display = 'none';
+        }
+    } catch (e) {}
+}
+
+/* ── Render Project Cards ────────────────────────────────── */
 function renderProjects() {
     const grid = document.getElementById('projects-grid');
     if (!currentProjects || currentProjects.length === 0) {
@@ -152,49 +372,86 @@ function renderProjects() {
 
     grid.innerHTML = currentProjects.map(p => {
         const id = p.id;
-        const name = String(p.name || 'Unnamed Project').replace(/'/g, "\\'");
+        const name = (p.name || 'Unnamed Project').replace(/"/g, '&quot;');
+        const safeNameJs = String(p.name || '').replace(/'/g, "\\'");
         const desc = p.description || 'No description provided';
         const serverCount = p.server_count || 0;
+        const appCount = p.app_count || 0;
         const groupCount = (p.assigned_groups || []).length;
         const userCount = p.user_count || 0;
 
+        // Render quick remove chips for assigned servers & apps
+        const assignedServers = p.assigned_servers || [];
+        const assignedApps = p.assigned_apps || [];
+        const allChips = [
+            ...assignedServers.map(s => ({ type: 'server', id: s.id, name: s.hostname || s.name })),
+            ...assignedApps.map(a => ({ type: 'app', id: a.id, name: a.name }))
+        ];
+        
+        let chipsHtml = '';
+        if (allChips.length > 0) {
+            const visibleChips = allChips.slice(0, 4);
+            const extraCount = allChips.length - 4;
+            chipsHtml = `
+            <div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(255,255,255,0.08); display:flex; flex-wrap:wrap; align-items:center; gap:4px">
+                <span class="text-meta" style="font-size:9px; margin-right:2px">MEMBERS:</span>
+                ${visibleChips.map(c => `
+                    <span class="member-chip" title="${c.type === 'server' ? 'Server' : 'App Node'}">
+                        ${c.type === 'server' ? '🖥️' : '📱'} ${escapeHtml(c.name)}
+                        <button type="button" class="member-chip-remove" onclick="event.stopPropagation(); quickRemoveMember(${id}, '${c.type}', ${c.id}, '${escapeHtml(c.name)}', '${safeNameJs}')" title="Remove member">✕</button>
+                    </span>
+                `).join('')}
+                ${extraCount > 0 ? `<span class="text-meta" style="font-size:9.5px; padding:2px 4px">+${extraCount} more</span>` : ''}
+            </div>
+            `;
+        }
+
         return `
-        <div class="card glass glass-hover fade-in" id="proj-${id}" onclick="enterProjectView(${id})" title="Click to enter ${p.name || 'Project'}" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:20px; cursor:pointer;">
+        <div class="card glass glass-hover fade-in" id="proj-${id}" onclick="enterProjectView(${id})" title="Click to enter ${name}" style="position:relative; display:flex; flex-direction:column; justify-content:space-between; padding:20px; cursor:pointer;">
             <div>
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
-                    <h3 class="card-title" style="font-size:16px; font-family:var(--font-sans); font-weight:700; color:var(--cyan); letter-spacing:0.5px">${p.name}</h3>
-                    <div>
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
+                    <div style="display:flex; align-items:center; gap:8px">
+                        <span style="font-size:18px">${p.icon || '🏢'}</span>
+                        <h3 class="card-title" style="font-size:15px; font-family:var(--font-sans); font-weight:700; color:var(--cyan); letter-spacing:0.5px">${escapeHtml(p.name)}</h3>
+                    </div>
+                    <div style="display:flex; gap:4px">
                         <button onclick="event.stopPropagation(); openEditModal(${id})"
                             title="Edit project"
-                            style="background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.4); color:var(--cyan); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono); margin-right:4px">
+                            style="background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.4); color:var(--cyan); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono);">
                             EDIT
                         </button>
-                        <button onclick="event.stopPropagation(); deleteProject(${id}, '${name}', this)"
+                        <button onclick="event.stopPropagation(); requestDeleteProject(${id}, '${safeNameJs}')"
                             title="Delete project"
                             style="background:rgba(255,59,92,0.1); border:1px solid rgba(255,59,92,0.4); color:var(--red); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:10px; font-family:var(--mono);">
                             DEL
                         </button>
                     </div>
                 </div>
-                <p class="text-meta" style="margin-bottom:14px; line-height:1.5; height:36px; overflow:hidden">${desc}</p>
+                <p class="text-meta" style="margin-bottom:12px; line-height:1.4; height:34px; overflow:hidden">${escapeHtml(desc)}</p>
             </div>
 
             <div>
+                <!-- Counts: Both Assets & App Nodes -->
                 <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:8px; margin-bottom:6px">
-                    <span class="text-meta">SERVERS ASSIGNED</span>
-                    <span class="badge ${serverCount > 0 ? 'badge-info' : 'badge-secondary'}">${serverCount} assets</span>
+                    <span class="text-meta">INFRASTRUCTURE</span>
+                    <div style="display:flex; gap:6px">
+                        <span class="badge ${serverCount > 0 ? 'badge-info' : 'badge-secondary'}" style="font-size:9.5px">${serverCount} ASSETS</span>
+                        <span class="badge ${appCount > 0 ? 'badge-success' : 'badge-secondary'}" style="font-size:9.5px">${appCount} APP NODES</span>
+                    </div>
                 </div>
 
-                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px">
                     <span class="text-meta">GROUPS & USERS</span>
-                    <span class="badge badge-purple" style="font-size:10px">${groupCount} groups (${userCount} users)</span>
+                    <span class="badge badge-purple" style="font-size:9.5px">${groupCount} groups (${userCount} users)</span>
                 </div>
 
-                <div style="display:flex; gap:8px; flex-wrap:wrap">
-                    <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:6px 8px; border-color:var(--cyan); color:var(--cyan)" onclick="event.stopPropagation(); openManageAssetsModal(${id}, '${name}')">
-                        ⚙ ASSETS
+                ${chipsHtml}
+
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
+                    <button class="btn btn-glass" style="flex:1; font-size:10px; padding:6px 8px; border-color:var(--cyan); color:var(--cyan)" onclick="event.stopPropagation(); openManageMembersModal(${id}, '${safeNameJs}')">
+                        ⚙ ASSETS & APPS
                     </button>
-                    <button class="btn btn-glass" style="flex:1; font-size:9.5px; padding:6px 8px; border-color:var(--amber); color:var(--amber)" onclick="event.stopPropagation(); openManageGroupsModal(${id}, '${name}')">
+                    <button class="btn btn-glass" style="flex:1; font-size:10px; padding:6px 8px; border-color:var(--amber); color:var(--amber)" onclick="event.stopPropagation(); openManageGroupsModal(${id}, '${safeNameJs}')">
                         👥 GROUPS
                     </button>
                 </div>
@@ -204,6 +461,10 @@ function renderProjects() {
     }).join('');
 }
 
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
 
 /* ── Enter project mode ───────────────────────────────────── */
 async function enterProjectView(projectId) {
@@ -228,21 +489,413 @@ async function enterProjectView(projectId) {
     }
 }
 
-/* ── Create project with asset checkboxes ────────────────── */
-let isEditingProjectId = null;
+/* ── Quick Remove Member from Card ────────────────────────── */
+async function quickRemoveMember(projectId, memberType, memberId, memberName, projectName) {
+    if (!confirm(`Remove ${memberType === 'server' ? 'server' : 'app'} '${memberName}' from project '${projectName}'?\n(Asset will not be deleted, only unassigned)`)) {
+        return;
+    }
+    try {
+        const res = await apiFetch(`/api/projects/${projectId}/members/${memberType}/${memberId}`, { method: 'DELETE' });
+        showToast(res.message || 'Member unassigned successfully', 'success');
+        loadData();
+    } catch (err) {
+        showToast(err.message || 'Failed to remove member', 'error');
+    }
+}
 
-async function openEditModal(id) {
-    const proj = currentProjects.find(p => p.id === id);
-    if (!proj) return;
+/* ── Delete Project with Confirm Modal ────────────────────── */
+async function requestDeleteProject(id, name) {
+    pendingDeleteProjectId = id;
+    pendingDeleteProjectName = name;
     
-    isEditingProjectId = id;
+    const textEl = document.getElementById('delete-confirm-text');
+    textEl.innerHTML = `Fetching project statistics for <strong>${escapeHtml(name)}</strong>...`;
+    document.getElementById('delete-confirm-modal').style.display = 'block';
+
+    try {
+        const res = await apiFetch(`/api/projects/${id}/summary`);
+        const assets = res.assets || 0;
+        const apps = res.app_nodes || 0;
+        const groups = res.groups || 0;
+        textEl.innerHTML = `Are you sure you want to delete project <strong>${escapeHtml(name)}</strong>?<br><br>
+        This project has <strong>${assets} assets</strong>, <strong>${apps} app nodes</strong>, and <strong>${groups} groups</strong>.<br>
+        Assets and app nodes are <strong>NOT</strong> deleted; they are only unassigned.`;
+    } catch (e) {
+        textEl.innerHTML = `Are you sure you want to delete project <strong>${escapeHtml(name)}</strong>?<br><br>
+        Assets and app nodes are <strong>NOT</strong> deleted; they are only unassigned.`;
+    }
+}
+
+function closeDeleteConfirmModal() {
+    document.getElementById('delete-confirm-modal').style.display = 'none';
+    pendingDeleteProjectId = null;
+    pendingDeleteProjectName = '';
+}
+
+async function executeDeleteProject() {
+    if (!pendingDeleteProjectId) return;
+    const btn = document.getElementById('btn-confirm-delete');
+    btn.disabled = true;
+    btn.innerText = 'Deleting...';
+
+    const pid = pendingDeleteProjectId;
+    const pname = pendingDeleteProjectName;
+
+    try {
+        const res = await apiFetch(`/api/projects/${pid}`, { method: 'DELETE' });
+        showToast(res.message || `Project '${pname}' deleted successfully`, 'success');
+        closeDeleteConfirmModal();
+        
+        // Remove card from DOM immediately
+        const cardEl = document.getElementById(`proj-${pid}`);
+        if (cardEl) cardEl.remove();
+
+        // Refresh dataset and duplicates check
+        loadData();
+    } catch (err) {
+        showToast(err.message || 'Delete failed', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Delete Project';
+    }
+}
+
+/* ── Duplicate Cleanup Modal ──────────────────────────────── */
+function openDuplicateCleanupModal() {
+    if (!duplicateGroupsData || duplicateGroupsData.length === 0) {
+        showToast('No duplicates detected', 'info');
+        return;
+    }
+    const container = document.getElementById('duplicate-cleanup-list');
+    container.innerHTML = duplicateGroupsData.map((group, gIdx) => {
+        return `
+        <div style="margin-bottom:14px; padding:10px; background:rgba(255,255,255,0.02); border-radius:6px; border:1px solid var(--border)">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                <span style="font-weight:700; color:var(--amber)">Group: "${escapeHtml(group.name)}" (${group.total_count} total copies)</span>
+                <span class="badge badge-success">Keep: #${group.keep_id} (${group.keep_server_count} assets, ${group.keep_app_count} apps)</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px">
+                ${group.all_projects.map(p => {
+                    const isKeep = p.id === group.keep_id;
+                    const isChecked = !isKeep;
+                    return `
+                    <label style="display:flex; justify-content:space-between; align-items:center; padding:5px 8px; border-radius:4px; ${isKeep ? 'background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.2)' : 'background:rgba(255,255,255,0.01)'}">
+                        <div style="display:flex; align-items:center; gap:8px">
+                            ${isKeep ? '<span style="color:var(--green); font-size:12px">✓</span>' : `<input type="checkbox" class="dup-del-chk" value="${p.id}" ${isChecked ? 'checked' : ''} onchange="updateDupCounter()">`}
+                            <span style="font-family:var(--mono); color:var(--text)">Project #${p.id}</span>
+                            <span style="font-size:10px; color:var(--text-sub)">Created: ${p.created_at || 'N/A'}</span>
+                        </div>
+                        <div>
+                            ${isKeep ? '<span class="badge badge-success" style="font-size:9px">KEEP (HAS ASSETS)</span>' : `<span class="badge badge-secondary" style="font-size:9px">${p.server_count || 0} Assets | ${p.app_count || 0} Apps</span>`}
+                        </div>
+                    </label>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+        `;
+    }).join('');
+
+    updateDupCounter();
+    document.getElementById('duplicate-cleanup-modal').style.display = 'block';
+}
+
+function updateDupCounter() {
+    const checked = document.querySelectorAll('.dup-del-chk:checked').length;
+    document.getElementById('dup-cleanup-counter').textContent = `${checked} empty project${checked !== 1 ? 's' : ''} selected for deletion`;
+}
+
+function closeDuplicateCleanupModal() {
+    document.getElementById('duplicate-cleanup-modal').style.display = 'none';
+}
+
+async function executeDuplicateCleanup() {
+    const checkedBoxes = Array.from(document.querySelectorAll('.dup-del-chk:checked'));
+    if (checkedBoxes.length === 0) {
+        showToast('Please select at least one duplicate to delete', 'warning');
+        return;
+    }
+    const ids = checkedBoxes.map(b => parseInt(b.value));
+    if (!confirm(`Are you sure you want to bulk-delete ${ids.length} empty duplicate project(s)?`)) return;
+
+    const btn = document.getElementById('btn-execute-cleanup');
+    btn.disabled = true;
+    btn.innerText = 'Deleting...';
+
+    try {
+        const res = await apiFetch('/api/projects/cleanup-duplicates', {
+            method: 'POST',
+            body: JSON.stringify({ project_ids: ids })
+        });
+        showToast(res.message || 'Duplicates cleaned up successfully', 'success');
+        closeDuplicateCleanupModal();
+        loadData();
+    } catch (err) {
+        showToast(err.message || 'Failed to cleanup duplicates', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Delete Selected Empty Duplicates';
+    }
+}
+
+/* ── Manage Project Members Modal ─────────────────────────── */
+async function openManageMembersModal(projectId, projectName) {
+    activeManagingProjectId = projectId;
+    activeManagingProjectName = projectName;
+    activeManageTab = 'assets';
+
+    document.getElementById('manage-modal-title').textContent = `MANAGE PROJECT MEMBERS: ${projectName.toUpperCase()}`;
+    document.getElementById('manage-members-modal').style.display = 'block';
+    
+    switchManageMemberTab('assets');
+    const listEl = document.getElementById('manage-members-list');
+    listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">Loading member data...</div>';
+
+    try {
+        const res = await apiFetch(`/api/projects/${projectId}/members`);
+        allServersList = res.servers || [];
+        allAppsList = res.apps || [];
+
+        manageSelectedServerIds = new Set(allServersList.filter(s => s.assigned).map(s => s.id));
+        manageSelectedAppIds = new Set(allAppsList.filter(a => a.assigned).map(a => a.id));
+
+        manageOriginalServerIds = new Set(manageSelectedServerIds);
+        manageOriginalAppIds = new Set(manageSelectedAppIds);
+
+        document.getElementById('manage-assets-count-badge').textContent = allServersList.length;
+        document.getElementById('manage-apps-count-badge').textContent = allAppsList.length;
+
+        renderManageMembersList();
+    } catch (e) {
+        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--red); font-size:11px">Failed to load member records</div>';
+    }
+}
+
+function switchManageMemberTab(tab) {
+    activeManageTab = tab;
+    document.getElementById('member-tab-assets-btn').classList.toggle('active', tab === 'assets');
+    document.getElementById('member-tab-apps-btn').classList.toggle('active', tab === 'apps');
+    document.getElementById('manage-member-search').value = '';
+    renderManageMembersList();
+}
+
+function renderManageMembersList() {
+    const listEl = document.getElementById('manage-members-list');
+    const query = (document.getElementById('manage-member-search').value || '').toLowerCase().trim();
+
+    if (activeManageTab === 'assets') {
+        const filtered = allServersList.filter(s => {
+            const name = (s.hostname || s.name || '').toLowerCase();
+            const ip = (s.ip_address || s.ip || '').toLowerCase();
+            return name.includes(query) || ip.includes(query);
+        });
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">No matching assets found</div>';
+            updateManageSelectionCounter();
+            return;
+        }
+
+        listEl.innerHTML = filtered.map(s => {
+            const isChecked = manageSelectedServerIds.has(s.id);
+            const otherProject = s.project_name;
+            let badgeHtml = '';
+            if (isChecked) {
+                badgeHtml = '<span class="badge badge-success" style="font-size:9px">ASSIGNED</span>';
+            } else if (otherProject) {
+                badgeHtml = `<span class="badge badge-info" style="font-size:9px">Also in: ${escapeHtml(otherProject)}</span>`;
+            } else {
+                badgeHtml = '<span class="badge badge-secondary" style="font-size:9px">UNASSIGNED</span>';
+            }
+
+            const statusClass = (s.status === 'online' || s.status === 'up') ? 'status-online' : ((s.severity === 'critical') ? 'status-critical' : 'status-offline');
+
+            return `
+            <label class="member-row ${isChecked ? 'is-selected' : ''}">
+                <div style="display:flex; align-items:center; gap:10px">
+                    <input type="checkbox" class="manage-chk-item" value="${s.id}" data-type="server" data-name="${escapeHtml(s.hostname || s.name)}" data-other="${escapeHtml(otherProject)}" ${isChecked ? 'checked' : ''} onchange="toggleManageMemberCheck(this, 'server', ${s.id})" style="accent-color:var(--cyan); width:14px; height:14px">
+                    <span class="status-indicator ${statusClass}" title="${s.status || 'unknown'}"></span>
+                    <div>
+                        <span style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(s.hostname || s.name)}</span>
+                        <span style="font-size:10px; color:var(--text-sub); margin-left:6px">${escapeHtml(s.ip_address || s.ip || 'No IP')}</span>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px">
+                    <span class="badge badge-secondary" style="font-size:8.5px">SERVER</span>
+                    ${badgeHtml}
+                </div>
+            </label>
+            `;
+        }).join('');
+    } else {
+        const filtered = allAppsList.filter(a => {
+            const name = (a.name || '').toLowerCase();
+            const url = (a.primary_url || '').toLowerCase();
+            return name.includes(query) || url.includes(query);
+        });
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">No matching app nodes found</div>';
+            updateManageSelectionCounter();
+            return;
+        }
+
+        listEl.innerHTML = filtered.map(a => {
+            const isChecked = manageSelectedAppIds.has(a.id);
+            const otherProject = a.project_name;
+            let badgeHtml = '';
+            if (isChecked) {
+                badgeHtml = '<span class="badge badge-success" style="font-size:9px">ASSIGNED</span>';
+            } else if (otherProject) {
+                badgeHtml = `<span class="badge badge-info" style="font-size:9px">Also in: ${escapeHtml(otherProject)}</span>`;
+            } else {
+                badgeHtml = '<span class="badge badge-secondary" style="font-size:9px">UNASSIGNED</span>';
+            }
+
+            const st = (a.status || '').toUpperCase();
+            const statusClass = (st === 'NORMAL' || st === 'UP') ? 'status-online' : ((st === 'CRITICAL' || st === 'DOWN') ? 'status-critical' : 'status-trouble');
+
+            return `
+            <label class="member-row ${isChecked ? 'is-selected' : ''}">
+                <div style="display:flex; align-items:center; gap:10px">
+                    <input type="checkbox" class="manage-chk-item" value="${a.id}" data-type="app" data-name="${escapeHtml(a.name)}" data-other="${escapeHtml(otherProject)}" ${isChecked ? 'checked' : ''} onchange="toggleManageMemberCheck(this, 'app', ${a.id})" style="accent-color:var(--cyan); width:14px; height:14px">
+                    <span class="status-indicator ${statusClass}" title="${a.status || 'unknown'}"></span>
+                    <div>
+                        <span style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(a.name)}</span>
+                        <span style="font-size:10px; color:var(--text-sub); margin-left:6px">${escapeHtml(a.primary_url || 'No URL')}</span>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px">
+                    <span class="badge badge-secondary" style="font-size:8.5px">APP NODE</span>
+                    ${badgeHtml}
+                </div>
+            </label>
+            `;
+        }).join('');
+    }
+
+    updateManageSelectionCounter();
+}
+
+function filterManageMembers() {
+    renderManageMembersList();
+}
+
+function toggleManageMemberCheck(checkbox, type, id) {
+    const isChecked = checkbox.checked;
+    const name = checkbox.dataset.name;
+    const otherProject = checkbox.dataset.other;
+
+    if (isChecked && otherProject && otherProject !== activeManagingProjectName) {
+        if (!confirm(`'${name}' is currently assigned to project '${otherProject}'. Move it to '${activeManagingProjectName}'?`)) {
+            checkbox.checked = false;
+            return;
+        }
+    }
+
+    if (type === 'server') {
+        if (isChecked) manageSelectedServerIds.add(id);
+        else manageSelectedServerIds.delete(id);
+    } else {
+        if (isChecked) manageSelectedAppIds.add(id);
+        else manageSelectedAppIds.delete(id);
+    }
+
+    // Toggle parent row highlight
+    const row = checkbox.closest('.member-row');
+    if (row) row.classList.toggle('is-selected', isChecked);
+
+    updateManageSelectionCounter();
+}
+
+function selectAllManageMembers(check) {
+    const visibleCheckboxes = document.querySelectorAll('.manage-chk-item');
+    visibleCheckboxes.forEach(cb => {
+        const id = parseInt(cb.value);
+        const type = cb.dataset.type;
+        const otherProject = cb.dataset.other;
+        
+        if (check && otherProject && otherProject !== activeManagingProjectName) {
+            // Prompt moving
+        }
+        cb.checked = check;
+        if (type === 'server') {
+            if (check) manageSelectedServerIds.add(id);
+            else manageSelectedServerIds.delete(id);
+        } else {
+            if (check) manageSelectedAppIds.add(id);
+            else manageSelectedAppIds.delete(id);
+        }
+        const row = cb.closest('.member-row');
+        if (row) row.classList.toggle('is-selected', check);
+    });
+    updateManageSelectionCounter();
+}
+
+function updateManageSelectionCounter() {
+    const serverCnt = manageSelectedServerIds.size;
+    const appCnt = manageSelectedAppIds.size;
+    document.getElementById('manage-selected-count').textContent = `${serverCnt} asset${serverCnt !== 1 ? 's' : ''}, ${appCnt} app node${appCnt !== 1 ? 's' : ''} selected`;
+}
+
+function closeManageMembersModal() {
+    document.getElementById('manage-members-modal').style.display = 'none';
+    activeManagingProjectId = null;
+    activeManagingProjectName = '';
+}
+
+async function saveProjectMembers() {
+    if (!activeManagingProjectId) return;
+    const btn = document.getElementById('btn-save-members');
+    btn.disabled = true;
+    btn.innerText = 'Saving...';
+
+    try {
+        const res = await apiFetch(`/api/projects/${activeManagingProjectId}/members`, {
+            method: 'POST',
+            body: JSON.stringify({
+                server_ids: Array.from(manageSelectedServerIds),
+                app_ids: Array.from(manageSelectedAppIds)
+            })
+        });
+        showToast(res.message || 'Project members updated successfully', 'success');
+        closeManageMembersModal();
+        loadData();
+    } catch (err) {
+        showToast(err.message || 'Failed to update members', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Save Assignments';
+    }
+}
+
+/* ── Create / Edit Project Modal Logic ────────────────────── */
+async function openCreateModal() {
+    isEditingProjectId = null;
+    document.getElementById('create-modal-title').textContent = 'CREATE NEW PROJECT';
+    document.getElementById('create-form').reset();
+    document.getElementById('vpnSubnetContainer').style.display = 'none';
+    
+    createSelectedServerIds.clear();
+    createSelectedAppIds.clear();
+    activeCreateTab = 'assets';
+
+    document.getElementById('create-modal').style.display = 'block';
+    loadCreateMembersData();
+}
+
+async function openEditModal(projectId) {
+    const proj = currentProjects.find(p => p.id === projectId);
+    if (!proj) return;
+
+    isEditingProjectId = projectId;
+    document.getElementById('create-modal-title').textContent = `EDIT PROJECT: ${proj.name}`;
     document.getElementById('create-form').reset();
     document.getElementById('name').value = proj.name || '';
     document.getElementById('description').value = proj.description || '';
-    
+
     const vpnTrack = document.getElementById('vpnTrackingEnabled');
     const vpnSubnet = document.getElementById('vpnSubnets');
-    
     if (proj.vpn_tracking_enabled) {
         vpnTrack.checked = true;
         document.getElementById('vpnSubnetContainer').style.display = 'block';
@@ -253,108 +906,195 @@ async function openEditModal(id) {
         vpnSubnet.value = '';
     }
 
-    const titleEl = document.getElementById('create-modal').querySelector('h3');
-    if (titleEl) titleEl.innerText = 'EDIT PROJECT';
+    createSelectedServerIds = new Set((proj.assigned_servers || []).map(s => s.id));
+    createSelectedAppIds = new Set((proj.assigned_apps || []).map(a => a.id));
+    activeCreateTab = 'assets';
+
     document.getElementById('create-modal').style.display = 'block';
-    
-    const listEl = document.getElementById('create-assets-list');
-    listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">Loading assets...</div>';
+    loadCreateMembersData();
+}
+
+async function loadCreateMembersData() {
+    switchCreateTab('assets');
+    const listEl = document.getElementById('create-members-list');
+    listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">Loading member inventory...</div>';
 
     try {
         let servers = await apiFetch('/api/servers');
         if (!Array.isArray(servers)) servers = servers.servers || [];
-        allAvailableServers = servers;
+        allServersList = servers;
+        allServersList.sort((a,b) => (a.hostname || a.name || '').localeCompare(b.hostname || b.name || '', undefined, {sensitivity:'base'}));
 
-        if (servers.length === 0) {
-            listEl.innerHTML = '<div style="text-align:center; padding:10px; color:var(--text-sub); font-size:11px">No assets registered yet</div>';
+        let apps = [];
+        try {
+            apps = await apiFetch('/api/applications');
+            if (!Array.isArray(apps)) apps = apps.applications || [];
+        } catch(e) {}
+        allAppsList = apps;
+        allAppsList.sort((a,b) => (a.name || '').localeCompare(b.name || '', undefined, {sensitivity:'base'}));
+
+        renderCreateMembersList();
+    } catch (e) {
+        listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--red); font-size:11px">Failed to load member records</div>';
+    }
+}
+
+function switchCreateTab(tab) {
+    activeCreateTab = tab;
+    document.getElementById('create-tab-assets').classList.toggle('active', tab === 'assets');
+    document.getElementById('create-tab-apps').classList.toggle('active', tab === 'apps');
+    document.getElementById('create-search-input').value = '';
+    renderCreateMembersList();
+}
+
+function renderCreateMembersList() {
+    const listEl = document.getElementById('create-members-list');
+    const query = (document.getElementById('create-search-input').value || '').toLowerCase().trim();
+
+    if (activeCreateTab === 'assets') {
+        const filtered = allServersList.filter(s => {
+            const name = (s.hostname || s.name || '').toLowerCase();
+            const ip = (s.ip_address || s.ip || '').toLowerCase();
+            return name.includes(query) || ip.includes(query);
+        });
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">No matching assets found</div>';
+            updateCreateSelectionSummary();
             return;
         }
 
-        const assignedIds = typeof proj.server_ids === 'string' ? JSON.parse(proj.server_ids || '[]') : (proj.server_ids || []);
-
-        listEl.innerHTML = servers.map(s => {
-            const isAssigned = assignedIds.includes(s.id);
+        listEl.innerHTML = filtered.map(s => {
+            const isChecked = createSelectedServerIds.has(s.id);
+            const statusClass = (s.status === 'online' || s.status === 'up') ? 'status-online' : ((s.severity === 'critical') ? 'status-critical' : 'status-offline');
             return `
-            <label style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:rgba(255,255,255,0.02); border-radius:4px; margin-bottom:6px; cursor:pointer">
-                <div style="display:flex; align-items:center; gap:10px">
-                    <input type="checkbox" class="create-asset-chk" value="${s.id}" style="accent-color:var(--cyan)" ${isAssigned ? 'checked' : ''}>
-                    <span style="font-size:12px; color:var(--text); font-weight:500">${s.hostname || s.name}</span>
+            <label class="member-row ${isChecked ? 'is-selected' : ''}">
+                <div style="display:flex; align-items:center; gap:8px">
+                    <input type="checkbox" class="create-chk-item" value="${s.id}" data-type="server" ${isChecked ? 'checked' : ''} onchange="toggleCreateMemberCheck(this, 'server', ${s.id})" style="accent-color:var(--cyan); width:14px; height:14px">
+                    <span class="status-indicator ${statusClass}"></span>
+                    <span style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(s.hostname || s.name)}</span>
+                    <span style="font-size:10px; color:var(--text-sub)">(${escapeHtml(s.ip_address || s.ip || 'No IP')})</span>
                 </div>
-                <span style="font-size:10px; color:var(--text-sub)">${s.ip_address || s.ip}</span>
+                <span class="badge badge-secondary" style="font-size:8.5px">SERVER</span>
             </label>
             `;
         }).join('');
-    } catch (e) {
-        listEl.innerHTML = '<div style="text-align:center; padding:10px; color:var(--red); font-size:11px">Failed to load assets</div>';
-    }
-}
+    } else {
+        const filtered = allAppsList.filter(a => {
+            const name = (a.name || '').toLowerCase();
+            const url = (a.primary_url || '').toLowerCase();
+            return name.includes(query) || url.includes(query);
+        });
 
-async function openCreateModal() {
-    isEditingProjectId = null;
-    const titleEl = document.getElementById('create-modal').querySelector('h3');
-    if (titleEl) titleEl.innerText = 'CREATE NEW PROJECT';
-    document.getElementById('create-form').reset();
-    document.getElementById('vpnSubnetContainer').style.display = 'none';
-    document.getElementById('create-modal').style.display = 'block';
-    
-    const listEl = document.getElementById('create-assets-list');
-    listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">Loading assets...</div>';
-
-    try {
-        let servers = await apiFetch('/api/servers');
-        if (!Array.isArray(servers)) servers = servers.servers || [];
-        allAvailableServers = servers;
-
-        if (servers.length === 0) {
-            listEl.innerHTML = '<div style="text-align:center; padding:10px; color:var(--text-sub); font-size:11px">No assets registered yet</div>';
+        if (filtered.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">No matching app nodes found</div>';
+            updateCreateSelectionSummary();
             return;
         }
 
-        listEl.innerHTML = servers.map(s => `
-            <label style="display:flex; align-items:center; gap:10px; font-size:12px; cursor:pointer; padding:4px 6px; border-radius:3px" class="glass-hover">
-                <input type="checkbox" class="create-asset-chk" value="${s.id}" style="accent-color:var(--cyan)">
-                <span style="font-family:var(--mono); color:var(--text)">${s.hostname || s.name}</span>
-                <span style="font-size:10px; color:var(--text-sub)">(${s.ip_address || s.ip})</span>
+        listEl.innerHTML = filtered.map(a => {
+            const isChecked = createSelectedAppIds.has(a.id);
+            const st = (a.status || '').toUpperCase();
+            const statusClass = (st === 'NORMAL' || st === 'UP') ? 'status-online' : ((st === 'CRITICAL' || st === 'DOWN') ? 'status-critical' : 'status-trouble');
+            return `
+            <label class="member-row ${isChecked ? 'is-selected' : ''}">
+                <div style="display:flex; align-items:center; gap:8px">
+                    <input type="checkbox" class="create-chk-item" value="${a.id}" data-type="app" ${isChecked ? 'checked' : ''} onchange="toggleCreateMemberCheck(this, 'app', ${a.id})" style="accent-color:var(--cyan); width:14px; height:14px">
+                    <span class="status-indicator ${statusClass}"></span>
+                    <span style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(a.name)}</span>
+                    <span style="font-size:10px; color:var(--text-sub)">(${escapeHtml(a.primary_url || 'No URL')})</span>
+                </div>
+                <span class="badge badge-secondary" style="font-size:8.5px">APP NODE</span>
             </label>
-        `).join('');
-    } catch(e) {
-        listEl.innerHTML = '<div style="text-align:center; padding:10px; color:var(--red); font-size:11px">Failed to load assets</div>';
+            `;
+        }).join('');
     }
+
+    updateCreateSelectionSummary();
 }
 
-function selectAllCreateAssets(check) {
-    document.querySelectorAll('.create-asset-chk').forEach(c => c.checked = check);
+function filterCreateMembers() {
+    renderCreateMembersList();
+}
+
+function toggleCreateMemberCheck(checkbox, type, id) {
+    const isChecked = checkbox.checked;
+    if (type === 'server') {
+        if (isChecked) createSelectedServerIds.add(id);
+        else createSelectedServerIds.delete(id);
+    } else {
+        if (isChecked) createSelectedAppIds.add(id);
+        else createSelectedAppIds.delete(id);
+    }
+
+    const row = checkbox.closest('.member-row');
+    if (row) row.classList.toggle('is-selected', isChecked);
+
+    updateCreateSelectionSummary();
+}
+
+function selectAllCreateMembers(check) {
+    const visibleCheckboxes = document.querySelectorAll('.create-chk-item');
+    visibleCheckboxes.forEach(cb => {
+        const id = parseInt(cb.value);
+        const type = cb.dataset.type;
+        cb.checked = check;
+        if (type === 'server') {
+            if (check) createSelectedServerIds.add(id);
+            else createSelectedServerIds.delete(id);
+        } else {
+            if (check) createSelectedAppIds.add(id);
+            else createSelectedAppIds.delete(id);
+        }
+        const row = cb.closest('.member-row');
+        if (row) row.classList.toggle('is-selected', check);
+    });
+    updateCreateSelectionSummary();
+}
+
+function updateCreateSelectionSummary() {
+    const serverCnt = createSelectedServerIds.size;
+    const appCnt = createSelectedAppIds.size;
+    document.getElementById('create-selection-summary').textContent = `Selected: ${serverCnt} asset${serverCnt !== 1 ? 's' : ''}, ${appCnt} app node${appCnt !== 1 ? 's' : ''}`;
 }
 
 function closeCreateModal() {
     document.getElementById('create-modal').style.display = 'none';
+    isEditingProjectId = null;
 }
 
-async function submitForm(e) {
+async function submitProjectForm(e) {
     e.preventDefault();
     const btn = document.getElementById('btn-submit');
+    if (btn.disabled) return;
     btn.disabled = true;
     btn.innerText = 'Saving...';
 
-    const selectedIds = Array.from(document.querySelectorAll('.create-asset-chk:checked')).map(c => parseInt(c.value));
+    const name = document.getElementById('name').value.trim();
+    if (!name) {
+        showToast('Project name is required', 'error');
+        btn.disabled = false;
+        btn.innerText = 'Save Project';
+        return;
+    }
+
+    const payload = {
+        name: name,
+        description: document.getElementById('description').value.trim(),
+        vpn_tracking_enabled: document.getElementById('vpnTrackingEnabled').checked,
+        vpn_subnet: document.getElementById('vpnSubnets').value.trim(),
+        server_ids: Array.from(createSelectedServerIds),
+        app_ids: Array.from(createSelectedAppIds)
+    };
 
     try {
-        const payload = {
-            name: document.getElementById('name').value,
-            description: document.getElementById('description').value,
-            vpn_tracking_enabled: document.getElementById('vpnTrackingEnabled').checked,
-            vpn_subnet: document.getElementById('vpnSubnets').value,
-            server_ids: selectedIds
-        };
-        
         if (isEditingProjectId) {
-            await apiFetch(`/api/projects/${isEditingProjectId}`, { method: 'PUT', body: JSON.stringify(payload) });
-            showToast('Project updated successfully', 'success');
+            const res = await apiFetch(`/api/projects/${isEditingProjectId}`, { method: 'PUT', body: JSON.stringify(payload) });
+            showToast(res.message || 'Project updated successfully', 'success');
         } else {
-            await apiFetch('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
-            showToast('Project created successfully', 'success');
+            const res = await apiFetch('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
+            showToast(res.message || 'Project created successfully', 'success');
         }
-        
         closeCreateModal();
         loadData();
     } catch (err) {
@@ -365,115 +1105,9 @@ async function submitForm(e) {
     }
 }
 
-/* ── Manage assets for existing project ───────────────────── */
-async function openManageAssetsModal(projectId, projectName) {
-    activeManagingProjectId = projectId;
-    document.getElementById('manage-modal-title').textContent = `MANAGE ASSETS: ${projectName.toUpperCase()}`;
-    document.getElementById('manage-assets-modal').style.display = 'block';
-    
-    const listEl = document.getElementById('manage-assets-list');
-    listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">Loading assets...</div>';
+/* ── Manage Groups Modal ─────────────────────────────────── */
+let activeManagingGroupsProjectId = null;
 
-    try {
-        const res = await apiFetch(`/api/projects/${projectId}/assets`);
-        const servers = res.servers || [];
-        allAvailableServers = servers;
-        renderManageAssetList(servers);
-    } catch (e) {
-        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--red); font-size:11px">Failed to load project assets</div>';
-    }
-}
-
-function renderManageAssetList(servers) {
-    const listEl = document.getElementById('manage-assets-list');
-    if (servers.length === 0) {
-        listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">No assets registered in SOC platform</div>';
-        updateSelectedCount();
-        return;
-    }
-
-    listEl.innerHTML = servers.map(s => {
-        const isChecked = s.assigned ? 'checked' : '';
-        return `
-        <label style="display:flex; align-items:center; justify-content:space-between; font-size:12px; cursor:pointer; padding:6px 10px; border-radius:4px; background:rgba(255,255,255,0.02)" class="glass-hover">
-            <div style="display:flex; align-items:center; gap:10px">
-                <input type="checkbox" class="manage-asset-chk" value="${s.id}" ${isChecked} onchange="updateSelectedCount()" style="accent-color:var(--cyan); width:15px; height:15px">
-                <span style="font-family:var(--mono); color:var(--text); font-weight:600">${s.hostname || s.name}</span>
-                <span style="font-size:11px; color:var(--text-sub)">(${s.ip_address || s.ip})</span>
-            </div>
-            <span class="badge ${s.assigned ? 'badge-success' : 'badge-secondary'}" style="font-size:9px">
-                ${s.assigned ? 'ASSIGNED' : 'UNASSIGNED'}
-            </span>
-        </label>
-        `;
-    }).join('');
-    updateSelectedCount();
-}
-
-function filterManageAssets() {
-    const q = document.getElementById('manage-asset-search').value.toLowerCase().trim();
-    const filtered = allAvailableServers.filter(s => 
-        (s.hostname || s.name || '').toLowerCase().includes(q) ||
-        (s.ip_address || s.ip || '').toLowerCase().includes(q)
-    );
-    renderManageAssetList(filtered);
-}
-
-function updateSelectedCount() {
-    const count = document.querySelectorAll('.manage-asset-chk:checked').length;
-    document.getElementById('manage-selected-count').textContent = `${count} asset${count !== 1 ? 's' : ''} selected`;
-}
-
-function selectAllManageAssets(check) {
-    document.querySelectorAll('.manage-asset-chk').forEach(c => c.checked = check);
-    updateSelectedCount();
-}
-
-function closeManageAssetsModal() {
-    document.getElementById('manage-assets-modal').style.display = 'none';
-    activeManagingProjectId = null;
-}
-
-async function saveProjectAssets() {
-    if (!activeManagingProjectId) return;
-    const btn = document.getElementById('btn-save-assets');
-    btn.disabled = true;
-    btn.innerText = 'Saving...';
-
-    const selectedIds = Array.from(document.querySelectorAll('.manage-asset-chk:checked')).map(c => parseInt(c.value));
-
-    try {
-        await apiFetch(`/api/projects/${activeManagingProjectId}/assets`, {
-            method: 'POST',
-            body: JSON.stringify({ server_ids: selectedIds })
-        });
-        showToast('Project assets updated successfully', 'success');
-        closeManageAssetsModal();
-        loadData();
-    } catch(e) {
-        showToast('Failed to update project assets', 'error');
-    } finally {
-        btn.disabled = false;
-        btn.innerText = 'Save Asset Assignments';
-    }
-}
-
-async function deleteProject(id, name, btn) {
-    if (!confirm(`Are you sure you want to delete project '${name}'?`)) return;
-    btn.disabled = true;
-    btn.innerText = '...';
-    try {
-        await apiFetch(`/api/projects/${id}`, { method: 'DELETE' });
-        showToast('Project deleted', 'success');
-        loadData();
-    } catch (err) {
-        showToast('Delete failed', 'error');
-        btn.disabled = false;
-        btn.innerText = 'DEL';
-    }
-}
-
-/* ── Manage groups for project ────────────────────────────── */
 async function openManageGroupsModal(projectId, projectName) {
     activeManagingGroupsProjectId = projectId;
     document.getElementById('manage-groups-title').textContent = `MANAGE GROUPS: ${projectName.toUpperCase()}`;
@@ -496,7 +1130,7 @@ async function openManageGroupsModal(projectId, projectName) {
                 <div style="display:flex; align-items:center; gap:10px">
                     <input type="checkbox" class="manage-group-chk" value="${g.id}" ${isChecked} style="accent-color:var(--amber); width:15px; height:15px">
                     <div>
-                        <div style="font-family:var(--mono); color:var(--text); font-weight:600">${g.name}</div>
+                        <div style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(g.name)}</div>
                         <div style="font-size:10px; color:var(--text-sub)">${g.member_count || 0} members linked</div>
                     </div>
                 </div>
@@ -533,7 +1167,7 @@ async function saveProjectGroups() {
         closeManageGroupsModal();
         loadData();
     } catch(e) {
-        showToast('Failed to update project groups', 'error');
+        showToast(e.message || 'Failed to update project groups', 'error');
     } finally {
         btn.disabled = false;
         btn.innerText = 'Save Group Access';
