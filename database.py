@@ -18,6 +18,7 @@ import re
 import random
 import time
 import logging
+import uuid
 import sqlite3
 import json
 import subprocess

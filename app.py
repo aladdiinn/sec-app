@@ -3,7 +3,7 @@
 # EMBEDDED REAL-TIME HOST SECURITY WATCHER + FIM (FILE INTEGRITY MONITORING)
 # Continuously monitors SSH logs, shell commands, process execution, and FIM
 # ══════════════════════════════════════════════════════════════════════════════
-import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac
+import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac, uuid
 import geoip_service
 geoip_service.ensure_database_downloaded_async()
 import psycopg2, psycopg2.extras
@@ -565,7 +565,8 @@ def ensure_app_siem_schema_columns():
             for col, ctype in [
                 ("closed_by", "VARCHAR(100)"),
                 ("closed_at", "TIMESTAMPTZ"),
-                ("closed_note", "TEXT")
+                ("closed_note", "TEXT"),
+                ("alert_dispatched", "BOOLEAN DEFAULT FALSE")
             ]:
                 try:
                     cur.execute(f"ALTER TABLE app_incidents ADD COLUMN IF NOT EXISTS {col} {ctype};")
@@ -9640,13 +9641,14 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                             tactics_set.add(x["mitre_tag"])
 
                     cur.execute("""
-                        SELECT id, events_count, severity, mitre_tactics
+                        SELECT id, events_count, severity, mitre_tactics, alert_dispatched
                         FROM app_incidents
                         WHERE application_id = %s AND attacker_key = %s AND status = 'Open'
                         ORDER BY id DESC LIMIT 1;
                     """, (actual_app_id, attacker_key))
                     existing_inc = cur.fetchone()
 
+                    should_send_email = False
                     if existing_inc:
                         inc_id = existing_inc["id"]
                         new_count = (existing_inc.get("events_count") or 0) + len(inc_list)
@@ -9658,25 +9660,32 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                             except Exception: existing_tactics = []
                         all_tactics = list(set(existing_tactics) | tactics_set)
 
+                        # ANTI-SPAM: Send email ONLY if newly escalated to critical and alert not yet dispatched
+                        already_dispatched = existing_inc.get("alert_dispatched") or False
+                        if calc_sev == "critical" and not already_dispatched:
+                            should_send_email = True
+
                         cur.execute("""
                             UPDATE app_incidents
                             SET events_count = %s, last_event_at = NOW(), severity = %s,
-                                mitre_tactics = %s, updated_at = NOW()
+                                mitre_tactics = %s, updated_at = NOW(),
+                                alert_dispatched = (alert_dispatched OR %s)
                             WHERE id = %s;
-                        """, (new_count, calc_sev, psycopg2.extras.Json(all_tactics), inc_id))
+                        """, (new_count, calc_sev, psycopg2.extras.Json(all_tactics), should_send_email, inc_id))
                     else:
                         inc_title = sample.get("rule_title") or f"Security incident from {attacker_key}"
+                        should_send_email = (inc_sev == "critical")
                         cur.execute("""
                             INSERT INTO app_incidents (
                                 application_id, title, attacker_key, attacker_type, client_ip, user_name,
-                                severity, status, first_event_at, last_event_at, events_count, stages_count, mitre_tactics
+                                severity, status, first_event_at, last_event_at, events_count, stages_count, mitre_tactics, alert_dispatched
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'Open', NOW(), NOW(), %s, 1, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, 'Open', NOW(), NOW(), %s, 1, %s, %s)
                             RETURNING id;
                         """, (
                             actual_app_id, inc_title, attacker_key,
                             'ip' if sample.get("ip") else 'user',
-                            sample.get("ip"), sample.get("user"), inc_sev, len(inc_list), psycopg2.extras.Json(list(tactics_set))
+                            sample.get("ip"), sample.get("user"), inc_sev, len(inc_list), psycopg2.extras.Json(list(tactics_set)), should_send_email
                         ))
                         new_inc_row = cur.fetchone()
                         inc_id = new_inc_row["id"] if new_inc_row else None
@@ -9691,8 +9700,19 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                                 inc_id, node_name, role, item.get("rule_title") or item.get("event_type") or "Security Attack",
                                 item.get("mitre_tag") or "", item.get("summary") or item.get("raw_line")[:200]
                             ))
-                            if item.get("sev") == "critical" and item.get("type") == "web":
-                                trigger_critical_app_incident_email(actual_app_id, inc_id, item.get("rule_title") or "Critical Exploit", item.get("event_type", "EXPLOIT"), "critical", item.get("ip"), item.get("user"), item.get("raw_path", ""), node_name, role)
+
+                        # ANTI-SPAM: Exactly ONE smart email alert per Critical Incident (never spammed per event)
+                        if should_send_email:
+                            rep_item = next((x for x in inc_list if x.get("sev") == "critical"), sample)
+                            trigger_critical_app_incident_email(
+                                actual_app_id, inc_id,
+                                rep_item.get("rule_title") or "Critical Application Exploit Incident",
+                                rep_item.get("event_type", "EXPLOIT"),
+                                "critical",
+                                sample.get("ip"), sample.get("user"),
+                                rep_item.get("raw_path") or rep_item.get("summary") or rep_item.get("raw_line", "")[:280],
+                                node_name, role
+                            )
 
             # Update application_components and applications ONCE per batch
             cur.execute("""
