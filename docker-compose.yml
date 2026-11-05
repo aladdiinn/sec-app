@@ -42,13 +42,13 @@ services:
       - /application/Soc/.env
     ports:
       # Bound to loopback port 8001 (avoids collision with host services like GitLab on port 8000)
-      - "127.0.0.1:8001:8000"
+      - "127.0.0.1:8001:8001"
     volumes:
       # Persistent host-mounted storage (logs, offline GeoIP database, local state)
       - /application/Soc/logs:/app/logs
       - /application/Soc/data:/app/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/api/version || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8001/api/version || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
