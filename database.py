@@ -1791,11 +1791,23 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
     if not conn:
         return {"id": 1, "token": token or f"sp-token-{int(time.time())}", "status": "pending", "node_type": node_type}
     try:
-        if not token:
-            token = f"sp-token-{uuid.uuid4().hex[:12]}"
         clean_hostname = re.sub(r'^\[.*?\]\s*', '', hostname or '').strip()
 
         with conn.cursor() as cur:
+            if not token:
+                if ip_address and ip_address not in ("127.0.0.1", "0.0.0.0"):
+                    cur.execute("SELECT id, agent_token, status FROM approvals WHERE ip_address = %s ORDER BY id DESC LIMIT 1;", (ip_address,))
+                    existing_appr = cur.fetchone()
+                    if existing_appr and existing_appr.get("agent_token"):
+                        token = existing_appr["agent_token"]
+                if not token and clean_hostname and clean_hostname.lower() not in ("localhost", "target-node"):
+                    cur.execute("SELECT id, agent_token, status FROM approvals WHERE hostname = %s ORDER BY id DESC LIMIT 1;", (clean_hostname,))
+                    existing_appr = cur.fetchone()
+                    if existing_appr and existing_appr.get("agent_token"):
+                        token = existing_appr["agent_token"]
+
+            if not token:
+                token = f"sp-token-{uuid.uuid4().hex[:12]}"
             # Check if this token belongs to an application component
             if not app_id and token:
                 try:
