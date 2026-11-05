@@ -4716,7 +4716,10 @@ REQ_RES=$(curl -s -X POST "{base_url}/api/approvals/request" \\
     -H "Content-Type: application/json" \\
     -d "$PAYLOAD_JSON" || echo '{{"ok": false}}')
 
-TOKEN=$(echo "$REQ_RES" | grep -o '"token":"[^"]*' | cut -d'"' -f4 || echo "sp-token-$NODE_NAME")
+TOKEN=$(echo "$REQ_RES" | grep -oE '"token"[[:space:]]*:[[:space:]]*"[^"]+"' | sed -E 's/.*:[[:space:]]*"([^"]+)".*/\\1/' || echo "")
+if [ -z "$TOKEN" ] && command -v python3 >/dev/null 2>&1; then
+    TOKEN=$(echo "$REQ_RES" | python3 -c "import sys, json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
+fi
 if [ -z "$TOKEN" ]; then TOKEN="sp-token-$NODE_NAME"; fi
 
 echo ""
@@ -4732,8 +4735,16 @@ while ([ "$STATUS" = "pending" ] || ([ "$STATUS" = "approved" ] && [ -z "$ASSIGN
     sleep 3
     WAITED=$((WAITED+3))
     CHECK_RES=$(curl -s -G "{base_url}/api/agent/status" --data-urlencode "token=$TOKEN" --data-urlencode "hostname=$NODE_NAME" --data-urlencode "ip=$NODE_IP" || echo '{{"status":"pending"}}')
-    STATUS=$(echo "$CHECK_RES" | grep -o '"status":"[^"]*' | cut -d'"' -f4 || echo "pending")
-    ASSIGNED_ID=$(echo "$CHECK_RES" | grep -o '"server_id":[0-9]*' | cut -d':' -f2 || echo "")
+    STATUS=$(echo "$CHECK_RES" | grep -oE '"status"[[:space:]]*:[[:space:]]*"[^"]+"' | sed -E 's/.*:[[:space:]]*"([^"]+)".*/\\1/' || echo "pending")
+    if [ -z "$STATUS" ] && command -v python3 >/dev/null 2>&1; then
+        STATUS=$(echo "$CHECK_RES" | python3 -c "import sys, json; print(json.load(sys.stdin).get('status','pending'))" 2>/dev/null || echo "pending")
+    fi
+    ASSIGNED_ID=$(echo "$CHECK_RES" | grep -oE '"server_id"[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' || echo "")
+    if [ -z "$ASSIGNED_ID" ] && command -v python3 >/dev/null 2>&1; then
+        ASSIGNED_ID=$(echo "$CHECK_RES" | python3 -c "import sys, json; print(json.load(sys.stdin).get('server_id') or '')" 2>/dev/null || echo "")
+    fi
+    NEW_TOKEN=$(echo "$CHECK_RES" | grep -oE '"token"[[:space:]]*:[[:space:]]*"[^"]+"' | sed -E 's/.*:[[:space:]]*"([^"]+)".*/\\1/' || echo "")
+    if [ -n "$NEW_TOKEN" ]; then TOKEN="$NEW_TOKEN"; fi
     if [ "$STATUS" = "pending" ]; then
         echo -n "."
     fi
@@ -6637,29 +6648,55 @@ async def api_agents_register(request: Request):
 async def api_agent_status(request: Request):
     token = request.query_params.get("token")
     client_ip = request.client.host if request.client else "127.0.0.1"
+    req_ip = (request.query_params.get("ip") or "").strip()
+    req_host = (request.query_params.get("hostname") or "").strip()
 
-    if not token:
-        return {"status": "pending", "server_id": None, "message": "Missing agent token"}
+    appr = None
+    if token:
+        appr = db.get_approval_by_token(token)
 
-    appr = db.get_approval_by_token(token)
+    if not appr:
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    if req_ip and req_ip not in ("127.0.0.1", "0.0.0.0"):
+                        cur.execute("SELECT * FROM approvals WHERE ip_address = %s ORDER BY id DESC LIMIT 1;", (req_ip,))
+                        r = cur.fetchone()
+                        if r: appr = dict(r)
+                    if not appr and req_host:
+                        clean_h = re.sub(r'^\[.*?\]\s*', '', req_host).strip()
+                        cur.execute("SELECT * FROM approvals WHERE hostname = %s OR hostname LIKE %s ORDER BY id DESC LIMIT 1;", (clean_h, f"%{clean_h}%"))
+                        r = cur.fetchone()
+                        if r: appr = dict(r)
+            except Exception:
+                pass
+            finally:
+                conn.close()
+
     if not appr:
         return {"status": "pending", "server_id": None, "message": "No registration record found"}
 
     status = appr.get("status", "pending")
     node_type = appr.get("node_type", "server")
+    agent_token = appr.get("agent_token") or token
     server_id = None
 
     if status == "approved":
         if node_type == "app":
             # Application component node is approved! Server ID is strictly None.
-            return {"status": "approved", "node_type": "app", "server_id": None, "server_ip": appr.get("ip_address") or client_ip}
+            return {"status": "approved", "node_type": "app", "server_id": None, "server_ip": appr.get("ip_address") or client_ip, "token": agent_token}
         else:
-            # Server asset node: lookup in servers table by token
+            # Server asset node: lookup in servers table by token or IP
             conn = db.get_db_connection()
             if conn:
                 try:
                     with conn.cursor() as cur:
-                        cur.execute("SELECT id FROM servers WHERE agent_token = %s OR api_token = %s LIMIT 1;", (token, token))
+                        cur.execute("""
+                            SELECT id FROM servers 
+                            WHERE agent_token = %s OR api_token = %s OR ip = %s OR ip_address = %s
+                            ORDER BY id DESC LIMIT 1;
+                        """, (agent_token, agent_token, appr.get("ip_address") or req_ip, appr.get("ip_address") or req_ip))
                         r = cur.fetchone()
                         if r:
                             server_id = r["id"] if isinstance(r, dict) else r[0]
@@ -6667,14 +6704,14 @@ async def api_agent_status(request: Request):
                     pass
                 finally:
                     conn.close()
-            
+
             if not server_id:
                 # Server was deleted by admin
                 return {"status": "rejected", "node_type": "server", "server_id": None, "message": "Server registration was revoked"}
 
-            return {"status": "approved", "node_type": "server", "server_id": server_id, "server_ip": appr.get("ip_address") or client_ip}
+            return {"status": "approved", "node_type": "server", "server_id": server_id, "server_ip": appr.get("ip_address") or client_ip, "token": agent_token}
 
-    return {"status": status, "node_type": node_type, "server_id": None, "server_ip": appr.get("ip_address") or client_ip}
+    return {"status": status, "node_type": node_type, "server_id": None, "server_ip": appr.get("ip_address") or client_ip, "token": agent_token}
 
 @app.get("/api/approvals")
 async def api_get_approvals(request: Request):
