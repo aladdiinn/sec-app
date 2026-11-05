@@ -953,6 +953,19 @@ def init_db():
                            OR url_path ILIKE '%backupForPureSwapping%'
                            OR url_path ILIKE '%backupForDataCorrection%');
                 """)
+                # Requirement 10: Record all cleaned incidents into detection_cleanup_log before closing (Logged and Reversible)
+                cur.execute("""
+                    INSERT INTO detection_cleanup_log (incident_id, original_event_type, original_severity, original_status, rule_name, pattern_matched)
+                    SELECT id, 'DATA_EXFILTRATION', severity, status, title, summary
+                    FROM app_incidents 
+                    WHERE status IN ('Open', 'investigating')
+                      AND (summary ILIKE '%GetDuplicateKnumbersWithMtrno%' 
+                           OR summary ILIKE '%VerifyKnoMeterNumber%' 
+                           OR summary ILIKE '%updateVerifyStatus%'
+                           OR summary ILIKE '%ConsumerSurvey%'
+                           OR summary ILIKE '%backupForPureSwapping%'
+                           OR summary ILIKE '%backupForDataCorrection%');
+                """)
                 cur.execute("""
                     UPDATE app_incidents 
                     SET status = 'Closed', resolution = 'Auto-closed: Benign field query endpoint verified', closed_at = NOW()
@@ -2413,11 +2426,21 @@ def create_detection_rule(name, pattern, severity, event_type, mitre_tactic=None
     if not conn: return None
     try:
         with conn.cursor() as cur:
+            # Requirement 8: Shadow mode ON by default for new rules with an admin promotion step
             cur.execute("""
-                INSERT INTO detection_rules (name, pattern, severity, event_type, mitre_tactic, mitre_technique, enabled, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW()) RETURNING id;
+                INSERT INTO detection_rules (name, pattern, severity, event_type, mitre_tactic, mitre_technique, enabled, is_shadow, shadow_until, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, NOW() + INTERVAL '7 days', 'shadow', NOW()) RETURNING id;
             """, (name, pattern, severity, event_type, mitre_tactic, mitre_technique, enabled))
-            return cur.fetchone()['id']
+            rid = cur.fetchone()['id']
+            try:
+                cur.execute("""
+                    INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                    VALUES (NULL, 'CREATE_RULE_SHADOW', %s, 'New rule placed into default 7-day shadow mode awaiting admin promotion', NOW());
+                """, (name,))
+            except Exception:
+                pass
+            conn.commit()
+            return rid
     except Exception as e:
         logger.error(f"Error in create_detection_rule: {e}")
         return None
@@ -5211,13 +5234,37 @@ def record_rule_verdict(target_type: str, target_id: int, verdict: str, reason: 
                     fp = r.get("cnt") if isinstance(r, dict) else r[1]
 
             total_rev = tp + fp
-            if total_rev >= 5 and (fp / total_rev) > 0.30:
-                # Auto-cap severity at LOW and mark rule as needs_tuning
+            # Requirement 6: Minimum 50 reviewed alerts before a rule can be capped
+            if total_rev >= 50 and (fp / total_rev) > 0.30:
+                # Auto-cap severity at warning/low and mark rule as needs_tuning
                 cur.execute("""
                     UPDATE detection_rules
                     SET status = 'needs_tuning', severity = 'warning'
-                    WHERE name = %s;
+                    WHERE name = %s AND status != 'needs_tuning';
                 """, (rule_name,))
+                if cur.rowcount > 0:
+                    try:
+                        cur.execute("""
+                            INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                            VALUES (NULL, 'RULE_AUTO_CAPPED', %s, %s, NOW());
+                        """, (rule_name, f"Auto-capped severity: FP rate {((fp/total_rev)*100):.1f}% ({fp}/{total_rev}) exceeded 30% threshold"))
+                    except Exception:
+                        pass
+            elif total_rev >= 50 and (fp / total_rev) <= 0.15:
+                # Uncap if analyst feedback improves below 15%
+                cur.execute("""
+                    UPDATE detection_rules
+                    SET status = 'healthy'
+                    WHERE name = %s AND status = 'needs_tuning';
+                """, (rule_name,))
+                if cur.rowcount > 0:
+                    try:
+                        cur.execute("""
+                            INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                            VALUES (NULL, 'RULE_UNCAPPED', %s, %s, NOW());
+                        """, (rule_name, f"Uncapped: FP rate improved to {((fp/total_rev)*100):.1f}% ({fp}/{total_rev})"))
+                    except Exception:
+                        pass
 
             conn.commit()
             return True
@@ -5253,6 +5300,16 @@ def get_rule_accuracy_metrics():
                 total = tp + fp
                 rd["precision_pct"] = round((tp / total * 100), 1) if total > 0 else 100.0
                 rd["reviewed_count"] = total
+
+                # Fetch top false positive patterns/reasons for this rule
+                cur.execute("""
+                    SELECT reason, COUNT(*) as cnt
+                    FROM rule_feedback
+                    WHERE rule_name = %s AND verdict = 'false_positive' AND reason IS NOT NULL AND reason != ''
+                    GROUP BY reason ORDER BY cnt DESC LIMIT 3;
+                """, (rd.get("name"),))
+                top_reasons = [f"{row['reason']} ({row['cnt']})" for row in cur.fetchall()]
+                rd["top_fp_patterns"] = top_reasons
                 if total >= 5 and (fp / total) > 0.30:
                     rd["status"] = "needs_tuning"
                 elif rd.get("is_shadow"):
@@ -5318,7 +5375,7 @@ def add_app_allowlist(application_id: int, pattern_type: str, pattern_value: str
         conn.close()
 
 def is_request_allowlisted(application_id: int, path: str, client_ip: str, user: str = None) -> bool:
-    """Check if request matches an active per-application allowlist rule."""
+    """Check if request matches an active per-application allowlist rule and track hits."""
     if not application_id: return False
     allowlists = get_app_allowlists(application_id)
     if not allowlists: return False
@@ -5326,12 +5383,137 @@ def is_request_allowlisted(application_id: int, path: str, client_ip: str, user:
     for al in allowlists:
         ptype = al.get("pattern_type")
         pval = al.get("pattern_value", "")
+        matched = False
         if ptype == "path_regex":
             try:
-                if re.search(pval, path, re.IGNORECASE): return True
+                if re.search(pval, path, re.IGNORECASE): matched = True
             except: pass
         elif ptype == "ip_subnet":
-            if pval and pval in client_ip: return True
+            if pval and pval in client_ip: matched = True
         elif ptype == "user_name":
-            if user and pval.lower() == user.lower(): return True
+            if user and pval.lower() == user.lower(): matched = True
+
+        if matched:
+            try:
+                conn = get_db_connection()
+                if conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            UPDATE app_detection_allowlists
+                            SET hit_count = COALESCE(hit_count, 0) + 1, last_hit_at = NOW()
+                            WHERE id = %s;
+                        """, (al.get("id"),))
+                        conn.commit()
+                    conn.close()
+            except Exception:
+                pass
+            return True
     return False
+
+
+def get_project_subnets(project_id: int):
+    """Get configured internal CIDR subnets for a project."""
+    conn = get_db_connection()
+    if not conn: return ["172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16"]
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT internal_subnets FROM projects WHERE id = %s;", (project_id,))
+            row = cur.fetchone()
+            if row and row.get("internal_subnets"):
+                sub_str = row["internal_subnets"]
+                return [s.strip() for s in sub_str.split(",") if s.strip()]
+            return ["172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16"]
+    except Exception as e:
+        logger.error(f"Error fetching project subnets: {e}")
+        return ["172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16"]
+    finally:
+        conn.close()
+
+def set_project_subnets(project_id: int, subnets_str: str):
+    """Update internal subnets for a project."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE projects SET internal_subnets = %s WHERE id = %s;", (subnets_str, project_id))
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error updating project subnets: {e}")
+        return False
+    finally:
+        conn.close()
+
+def promote_detection_rule(rule_id: int):
+    """Admin promotion: exits shadow mode and moves rule to active enforcement."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE detection_rules
+                SET is_shadow = FALSE, status = 'healthy', shadow_until = NULL
+                WHERE id = %s RETURNING name;
+            """, (rule_id,))
+            row = cur.fetchone()
+            if row:
+                r_name = row["name"] if isinstance(row, dict) else row[0]
+                try:
+                    cur.execute("""
+                        INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                        VALUES (NULL, 'RULE_PROMOTED', %s, 'Admin promoted rule from 7-day shadow mode to active production enforcement', NOW());
+                    """, (r_name,))
+                except Exception:
+                    pass
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error promoting detection rule: {e}")
+        return False
+    finally:
+        conn.close()
+
+def rollback_cleanup_migration():
+    """Rollback false-positive cleanup migration."""
+    conn = get_db_connection()
+    if not conn: return {"ok": False, "reason": "database unavailable"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT incident_id, original_status
+                FROM detection_cleanup_log
+                WHERE is_rolled_back = FALSE;
+            """)
+            logs = cur.fetchall()
+            restored = 0
+            for l in logs:
+                iid = l["incident_id"] if isinstance(l, dict) else l[0]
+                orig_st = l["original_status"] if isinstance(l, dict) else l[1]
+                cur.execute("UPDATE app_incidents SET status = %s WHERE id = %s;", (orig_st, iid))
+                restored += cur.rowcount
+            cur.execute("UPDATE detection_cleanup_log SET is_rolled_back = TRUE WHERE is_rolled_back = FALSE;")
+            conn.commit()
+            return {"ok": True, "restored": restored, "message": f"Successfully rolled back cleanup for {restored} incidents."}
+    except Exception as e:
+        logger.error(f"Error rolling back cleanup migration: {e}")
+        return {"ok": False, "reason": str(e)}
+    finally:
+        conn.close()
+
+def get_cleanup_log():
+    """Returns audit records of all cleaned false-positive alerts."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, incident_id, original_event_type, original_severity, original_status, rule_name, pattern_matched, cleaned_at, is_rolled_back
+                FROM detection_cleanup_log
+                ORDER BY cleaned_at DESC LIMIT 200;
+            """)
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"Error fetching cleanup log: {e}")
+        return []
+    finally:
+        conn.close()

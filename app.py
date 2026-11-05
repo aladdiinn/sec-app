@@ -8645,14 +8645,16 @@ AUTOMATED_SCRAPER_UA = re.compile(
 
 # Sensitive system & configuration files for directory traversal attacks
 SENSITIVE_TRAVERSAL_TARGETS = (
-    "/etc/passwd", "/etc/shadow", "win.ini", "boot.ini", ".env", "id_rsa", 
+    "/etc/passwd", "/etc/shadow", "/etc/sudoers", "/etc/hosts", "win.ini", "boot.ini", ".env", "id_rsa", 
     "web.xml", "/proc/self/", "settings.py", "database.yml"
 )
 
 # Strict SQL Injection patterns (strictly requiring genuine SQL syntax patterns, eliminating bare '--' false positives)
 SQLI_PATTERNS = [
-    re.compile(r"(?:'|%27)\s*(?:or|and)\s+['\"]?\w+['\"]?\s*(=|<|>|like)\s*['\"]?\w+", re.I),
+    re.compile(r"(?:'|%27)\s*(?:or|and)\s+['\"\(]?\w+['\"\(]?\s*(=|<|>|like)\s*['\"\(]?\w+", re.I),
+    re.compile(r"(?:'|%27)\s*(?:or|and)\s+.*?\bselect\b", re.I),
     re.compile(r"\bunion\s+(?:all\s+)?select\b", re.I),
+    re.compile(r"\bselect\b\s+[^;]+\s+\bfrom\b", re.I),
     re.compile(r"\b(?:sleep\s*\(\s*\d+\s*\)|pg_sleep\s*\(\s*\d+\s*\)|benchmark\s*\(\s*\d+\s*,|waitfor\s+delay\s+['\"][0-9:]+['\"])", re.I),
     re.compile(r"\b(?:information_schema\.(?:tables|columns|schemata)|into\s+(?:outfile|dumpfile)|extractvalue\s*\(|updatexml\s*\(|load_file\s*\()", re.I),
     re.compile(r"(?:'|%27)\s*(?:--\s+|\/\*.*?\*\/|#\s+)", re.I),
@@ -8663,12 +8665,11 @@ SQLI_PATTERNS = [
 XSS_PATTERNS = [
     re.compile(r"(?:<|%3c)\s*script\b", re.I),
     re.compile(r"javascript:\s*(?:alert|prompt|confirm|eval|document\.|window\.)", re.I),
-    re.compile(r"(?:<|%3c)[^>]+?\b(?:onerror|onload|onunload|onmouseover|onclick|onfocus)\s*=", re.I),
+    re.compile(r"(?:<|%3c|[\"\']\s*)[^>]*?\b(?:onerror|onload|onunload|onmouseover|onclick|onfocus)\s*=", re.I),
     re.compile(r"(?:<|%3c)\s*(?:iframe|embed|object|base)\b", re.I),
     re.compile(r"(?:document\.(?:cookie|location|write)|window\.location)\b", re.I)
 ]
 
-# Generic identifier parameter matching across ANY enterprise application (CRM, ERP, billing, meters, survey, users)
 RECORD_PARAM_RE = re.compile(
     r'(?:\?|&)(?:[a-zA-Z0-9_-]*(?:id|no|num|key|code|record|account|meter|user|consumer|entity|kno|cno))[=]([0-9a-zA-Z_-]+)',
     re.I
@@ -8738,17 +8739,40 @@ def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "
 _scanner_probe_tracker = {}
 _scanner_probe_lock = threading.Lock()
 
-def is_ip_internal(ip_str: str) -> bool:
+_project_subnet_cache = {}
+_project_subnet_cache_time = {}
+
+def is_ip_internal(ip_str: str, project_id: Optional[int] = None) -> bool:
     if not ip_str or ip_str in ("127.0.0.1", "localhost", "::1"):
         return True
     import ipaddress
     try:
-        addr = ipaddress.ip_address(ip_str)
-        return addr.is_private or addr.is_loopback
+        addr = ipaddress.ip_address(ip_str.strip())
+        if addr.is_loopback:
+            return True
+
+        if project_id:
+            now = time.time()
+            if project_id not in _project_subnet_cache or now - _project_subnet_cache_time.get(project_id, 0) > 60:
+                subnets_list = db.get_project_subnets(project_id)
+                parsed_nets = []
+                for s in subnets_list:
+                    try:
+                        parsed_nets.append(ipaddress.ip_network(s, strict=False))
+                    except Exception:
+                        pass
+                _project_subnet_cache[project_id] = parsed_nets
+                _project_subnet_cache_time[project_id] = now
+
+            for net in _project_subnet_cache.get(project_id, []):
+                if addr in net:
+                    return True
+
+        return addr.is_private
     except Exception:
         return False
 
-def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str, raw_line: str = "", bytes_sent: int = 0):
+def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str, raw_line: str = "", bytes_sent: int = 0, project_id: Optional[int] = None, event_id: Optional[int] = None):
     """
     Real-time high-fidelity heuristics detecting confirmed web attacks with structured URL parsing,
     multi-signal corroboration, internal/external context, and complete evidence generation.
@@ -8760,17 +8784,20 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
     query_unquoted = urllib.parse.unquote(parsed.query).lower()
     full_target_lower = clean_p + ("?" + query_unquoted if query_unquoted else "")
     full_line = (raw_line or "").lower()
-    is_internal = is_ip_internal(ip)
+    is_internal = is_ip_internal(ip, project_id=project_id)
     network_zone = "INTERNAL" if is_internal else "EXTERNAL"
 
-    # Default evidence template
-    def make_evidence(rule_id, rule_name, conf, why, signals, fp_indicators, action):
+    # Default evidence template with full auditing fields (Requirement 7)
+    def make_evidence(rule_id, rule_name, conf, why, signals, fp_indicators, action, matched_val=None, thresh_val=None):
         return {
             "rule_id": rule_id,
             "rule_name": rule_name,
-            "rule_version": "2.2",
+            "rule_version": "2.4",
             "confidence": conf,
             "why_it_fired": why,
+            "event_ids": [event_id] if event_id else [],
+            "matched_value": matched_val,
+            "threshold_value": thresh_val,
             "matched_fields": {
                 "method": method_upper,
                 "path": parsed.path,
@@ -8779,6 +8806,7 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
                 "network_zone": network_zone,
                 "bytes_sent": bytes_sent
             },
+            "raw_log_redacted": redact_sensitive_params(raw_line) if raw_line else None,
             "signals": signals,
             "false_positive_indicators": fp_indicators,
             "recommended_action": action
@@ -8844,14 +8872,17 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
             return "XSS_ATTACK", sev, "Cross-Site Scripting (XSS) Injection", "T1059.007 - Cross-Site Scripting", make_evidence("W04", "Cross-Site Scripting", conf, why, sig, "Parameter safely JSON-encoded in API response.", "Verify output encoding in rendered response.")
 
     # 4. Path Traversal / LFI
-    if re.search(r'(?:\.\.[\/\]|\.\.%2[fe]){2,}', full_target_lower) or any(st in full_target_lower for st in SENSITIVE_TRAVERSAL_TARGETS):
-        has_sensitive_target = any(st in full_target_lower for st in SENSITIVE_TRAVERSAL_TARGETS)
-        if has_sensitive_target and status in (200, 206):
-            sev = "high"
+    has_traversal_syntax = bool(re.search(r'(?:\.\.[\/\]|\.\.%2[fe]|\.\./|\.\.\\)', full_target_lower))
+    if has_traversal_syntax:
+        matched_sensitive = [st for st in SENSITIVE_TRAVERSAL_TARGETS if st in full_target_lower]
+        if matched_sensitive and status in (200, 206):
+            is_crit_target = any(k in full_target_lower for k in (".env", "/etc/shadow", "/etc/sudoers", "id_rsa"))
+            sev = "critical" if is_crit_target else "high"
             conf = "HIGH"
-            why = f"Path traversal directed at sensitive OS target '{has_sensitive_target}' returned HTTP {status}."
-            sig = ["Path traversal syntax `../`", "Sensitive target file matched", f"HTTP {status}"]
-            return "PATH_TRAVERSAL_BREACH", sev, "Path Traversal File Access (HTTP 200)", "T1083 - File and Directory Discovery", make_evidence("W05", "Path Traversal Breach", conf, why, sig, "Static documentation containing reference to sensitive filenames.", "Inspect web response payload.")
+            target_name = matched_sensitive[0]
+            why = f"Path traversal directed at sensitive OS target '{target_name}' returned HTTP {status}."
+            sig = ["Path traversal syntax `../`", f"Sensitive target file '{target_name}' matched", f"HTTP {status}"]
+            return "PATH_TRAVERSAL_BREACH", sev, "Path Traversal File Access (HTTP 200)", "T1083 - File and Directory Discovery", make_evidence("W05", "Path Traversal Breach", conf, why, sig, "Static documentation containing reference to sensitive filenames.", "Inspect web response payload.", matched_val=target_name, thresh_val="HTTP 200 on sensitive OS path")
         else:
             sev = "low"
             conf = "LOW"
@@ -8893,23 +8924,41 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
                 sig = ["Expression language syntax", f"HTTP {status}"]
             return "SSTI_PROBE", sev, "Expression Language / Template Injection Probe", "T1190 - Exploit Public-Facing Application", make_evidence("W09", "Expression Language Probe", conf, why, sig, "JSP expression evaluation inside harmless view tag.", "Review JSP expression handling.")
 
-    # 7. Automated Scanner / Reconnaissance Probes (Aggregated over sliding window)
-    if re.search(r'(?:wp-admin|wp-login|phpmyadmin|pma|actuator/heapdump|actuator/env|\.env|solr/admin|jmx-console|web-console|\.git/config|\.svn/entries)', clean_p):
+    # 7. Sensitive Configuration & Environment File Exposure (Requirement 9: HTTP 200 on .env/.git is a critical leak)
+    is_sensitive_config = bool(re.search(r'(?:^|/)(?:\.env|\.git/(?:config|HEAD)|\.svn/entries|actuator/(?:env|heapdump)|web\.xml|wp-config\.php|database\.yml|settings\.py)(?:$|\?)', clean_p))
+    if is_sensitive_config and status in (200, 206):
+        sev = 'critical'
+        conf = 'HIGH'
+        why = f"CRITICAL LEAK: Sensitive configuration file '{clean_p}' was directly exposed and returned HTTP {status} to {network_zone} IP {ip}."
+        sig = ['Sensitive configuration path accessed', f'HTTP {status} successful response', 'Confidential credentials/keys exposure risk']
+        return 'SENSITIVE_DATA_EXPOSURE', sev, 'Sensitive Configuration File Exposure (HTTP 200)', 'T1552.001 - Credentials in Files', make_evidence('W15', 'Sensitive Config Exposure', conf, why, sig, 'Mock documentation route or static stub returning 200.', 'CRITICAL: Immediately revoke credentials and restrict public access to hidden dotfiles.', matched_val=clean_p, thresh_val='HTTP 200 response on sensitive path')
+
+    # 7b. Automated Scanner & Reconnaissance Probes (Requirement 9: Fast scan 60s + Slow scan 1h windows)
+    if re.search(r'(?:wp-admin|wp-login|phpmyadmin|pma|actuator/heapdump|actuator/env|\.env|solr/admin|jmx-console|web-console|\.git/config|\.svn/entries)', clean_p):
         if status in (404, 403, 401):
             now_t = time.time()
             with _scanner_probe_lock:
-                probe_list = _scanner_probe_tracker.setdefault(ip, [])
-                probe_list = [t for t in probe_list if now_t - t < 60.0]
-                probe_list.append(now_t)
-                _scanner_probe_tracker[ip] = probe_list
-                count = len(probe_list)
+                probe_records = _scanner_probe_tracker.setdefault(ip, [])
+                # Keep up to 1 hour (3600 seconds) for slow-scan correlation
+                probe_records = [r for r in probe_records if now_t - r[0] < 3600.0]
+                probe_records.append((now_t, clean_p))
+                _scanner_probe_tracker[ip] = probe_records
 
-            if count < 5:
-                # Single or low-frequency probe: log as INFO, never create incident
-                return "SCANNER_PROBE", "info", f"Scanner Probe (HTTP {status})", "T1595 - Active Scanning", make_evidence("W10", "Scanner Probe", "LOW", f"Single probe to {clean_p} safely returned HTTP {status}.", [f"Probe path {clean_p}", f"HTTP {status}", f"Count: {count}/5"], "Harmless automated internet noise.", "No action needed.")
+                recent_60s = [r for r in probe_records if now_t - r[0] < 60.0]
+                distinct_1h = set(r[1] for r in probe_records)
+
+                count_60s = len(recent_60s)
+                count_1h = len(distinct_1h)
+
+            if count_60s >= 5:
+                # Fast probe cluster (>= 5 in 60s)
+                return 'SCANNER_RECON', 'low', f'Automated Vulnerability Scanner Probe Cluster ({count_60s} probes in 60s)', 'T1595 - Active Scanning', make_evidence('W10', 'Fast Scanner Probe Cluster', 'MEDIUM', f'Aggregated {count_60s} scanner probes in 60s safely rejected with HTTP {status}.', [f'Velocity: {count_60s} probes/min >= 5 threshold', f'Network zone: {network_zone}'], 'External automated vulnerability scanner.', 'Consider rate-limiting or blocking IP at edge gateway.', matched_val=f'{count_60s} probes in 60s', thresh_val='5 probes / 60s')
+            elif count_1h >= 20:
+                # Slow stealth scanner sweep (>= 20 distinct targets in 1 hour)
+                return 'SLOW_SCAN_RECON', 'low', f'Slow Vulnerability Scan Sweep ({count_1h} distinct paths in 1h)', 'T1595 - Active Scanning', make_evidence('W10B', 'Slow Stealth Scanner Sweep', 'MEDIUM', f'Distributed reconnaissance: {count_1h} distinct probe targets tested over 1 hour.', [f'Unique paths tested: {count_1h} >= 20 threshold', 'Low-frequency evasion attempt', f'Network zone: {network_zone}'], 'Pacing-evading security scanner or penetration tester.', 'Monitor IP for targeted exploitation attempts.', matched_val=f'{count_1h} distinct paths in 1h', thresh_val='20 distinct paths / 1 hour')
             else:
-                # High-frequency cluster (>= 5 in 60s): create LOW alert
-                return "SCANNER_RECON", "low", f"Automated Vulnerability Scanner Probe Cluster ({count} probes)", "T1595 - Active Scanning", make_evidence("W10", "Automated Scanner Probe Cluster", "MEDIUM", f"Aggregated {count} scanner probes in 60s safely rejected with HTTP {status}.", [f"Count: {count} >= 5 threshold", "Reconnaissance targets", f"Network zone: {network_zone}"], "External bot reconnaissance or internal vulnerability scan.", "Consider IP block on edge firewall if volume increases.")
+                # Single or low-frequency probe: log as INFO, never create incident
+                return 'SCANNER_PROBE', 'info', f'Scanner Probe (HTTP {status})', 'T1595 - Active Scanning', make_evidence('W10', 'Scanner Probe', 'LOW', f'Single probe to {clean_p} safely returned HTTP {status}.', [f'Probe path {clean_p}', f'HTTP {status}', f'Fast count: {count_60s}/5', f'1h distinct count: {count_1h}/20'], 'Harmless automated internet noise.', 'No action needed.', matched_val=f'{count_60s}/5 fast, {count_1h}/20 slow', thresh_val='5 probes/60s or 20/1h')
 
     # 8. Dangerous HTTP Method / Verb Tampering
     if method_upper in ("TRACE", "TRACK", "CONNECT", "DEBUG"):
@@ -8944,6 +8993,7 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
         # Confirmed database dump / backup archive file exposure (.sql, .dump, .bak, .tar.gz, etc.)
         is_db_dump_file = bool(re.search(r'(?:^|/)[^/]*(?:db|database|dump|backup)[^/]*\.(?:sql(?:\.gz|\.bz2|\.zip)?|dump(?:\.tar|\.gz)?|dmp|bak|tar\.gz|tgz|7z|zip)$', clean_p)) or bool(re.search(r'\.(?:sql(?:\.gz|\.bz2|\.zip)?|dump|dmp|bak)$', clean_p))
         is_dump_endpoint = bool(re.search(r'(?:^|/)(?:db_dump|pg_dump|mysqldump|full_backup)(?:/|$)', clean_p))
+        # Requirement 3: 15 MB rule strictly requires measured bytes_sent > 0 from AccessLogValve %b/%B; otherwise marked 'missing data source'
         is_massive_export = (bytes_sent >= 15 * 1024 * 1024) and bool(re.search(r'(?:^|/)(?:export|bulk_download|download_all)(?:/|$)', clean_p))
 
         if is_db_dump_file or is_dump_endpoint:
@@ -10877,3 +10927,40 @@ async def api_add_app_allowlist(app_id: int, request: Request):
     days = int(data.get("expires_days", 90))
     rid = db.add_app_allowlist(app_id, ptype, pval, owner, reason, days)
     return {"ok": bool(rid), "id": rid}
+
+
+@app.get("/api/projects/{id}/subnets")
+async def api_get_project_subnets(id: int):
+    subnets = db.get_project_subnets(id)
+    return {"ok": True, "project_id": id, "internal_subnets": subnets}
+
+@app.post("/api/projects/{id}/subnets")
+async def api_set_project_subnets(id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Admin privileges required."})
+    body = await request.json()
+    subnets_str = body.get("subnets", "")
+    ok = db.set_project_subnets(id, subnets_str)
+    # Clear cache
+    global _project_subnet_cache, _project_subnet_cache_time
+    _project_subnet_cache.pop(id, None)
+    _project_subnet_cache_time.pop(id, None)
+    return {"ok": ok, "message": "Project subnets updated successfully"}
+
+@app.post("/api/detection/rules/{id}/promote")
+async def api_promote_detection_rule(id: int, request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Admin privileges required."})
+    ok = db.promote_detection_rule(id)
+    return {"ok": ok, "message": "Rule successfully promoted to active enforcement"}
+
+@app.get("/api/detection/cleanup/log")
+async def api_get_cleanup_log(request: Request):
+    return {"ok": True, "items": db.get_cleanup_log()}
+
+@app.post("/api/detection/cleanup/rollback")
+async def api_rollback_cleanup(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Admin privileges required."})
+    res = db.rollback_cleanup_migration()
+    return res

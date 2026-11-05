@@ -154,11 +154,16 @@
 
                 const evBox = (ev && Object.keys(ev).length > 0) ? `
                     <div style="background:rgba(15,23,42,0.8); border:1px solid rgba(255,255,255,0.08); border-left:3px solid var(--cyan); border-radius:4px; padding:10px 14px; margin:12px 0 8px 0; font-size:12px">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
-                            <span style="font-weight:700; color:var(--cyan); letter-spacing:0.5px; font-size:11px">EVIDENCE & CORROBORATING SIGNALS</span>
-                            ${ev.network_zone ? `<span style="font-size:11px; color:var(--text3)">Zone: <b style="color:${ev.network_zone === 'INTERNAL' ? 'var(--green)' : 'var(--red)'}">${ev.network_zone}</b></span>` : ''}
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
+                            <span style="font-weight:700; color:var(--cyan); letter-spacing:0.5px; font-size:11px">EVIDENCE & CORROBORATING SIGNALS <span style="color:#64748b; font-weight:normal; font-size:10px;">(Rule ${ev.rule_id || 'DET'} v${ev.rule_version || '2.4'})</span></span>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                ${ev.event_ids && ev.event_ids.length ? `<span class="badge" style="font-size:9.5px; background:rgba(255,255,255,0.08); color:#cbd5e1;">Evt: #${ev.event_ids.join(', #')}</span>` : ''}
+                                ${ev.network_zone ? `<span style="font-size:11px; color:var(--text3)">Zone: <b style="color:${ev.network_zone === 'INTERNAL' ? 'var(--green)' : 'var(--red)'}">${ev.network_zone}</b></span>` : ''}
+                            </div>
                         </div>
                         <div style="color:var(--text); margin-bottom:4px"><b>Why it fired:</b> ${ev.why_it_fired || inc.description || inc.title}</div>
+                        ${ev.matched_value ? `<div style="font-size:11px; color:#38bdf8; margin:3px 0;"><b>Matched vs Threshold:</b> Observed: <code style="color:#f8fafc; background:rgba(255,255,255,0.08); padding:1px 4px; border-radius:3px;">${ev.matched_value}</code> | Threshold: <code style="color:#94a3b8; background:rgba(255,255,255,0.08); padding:1px 4px; border-radius:3px;">${ev.threshold_value || 'Strict Match'}</code></div>` : ''}
+                        ${ev.raw_log_redacted ? `<div style="font-size:10.5px; font-family:var(--mono); color:#94a3b8; background:rgba(0,0,0,0.4); padding:4px 8px; border-radius:3px; margin:4px 0; overflow-x:auto;"><b>Raw Log (Redacted):</b> ${ev.raw_log_redacted}</div>` : ''}
                         ${ev.false_positive_indicators ? `<div style="font-size:11.5px; color:var(--amber); margin-top:4px"><b>Potential False Positive:</b> ${ev.false_positive_indicators}</div>` : ''}
                         ${ev.recommended_action ? `<div style="font-size:11.5px; color:var(--text2); margin-top:3px"><b>Recommended Action:</b> ${ev.recommended_action}</div>` : ''}
                     </div>` : '';
@@ -299,8 +304,12 @@
     }
 
     function promptFalsePositive(targetType, targetId, ruleName) {
-        const reason = prompt('Reason for marking False Positive (e.g. internal batch job, test script, utility route):');
+        const reason = prompt('Reason for marking False Positive (REQUIRED - e.g. internal batch job, test script, utility route):');
         if (reason === null) return;
+        if (!reason.trim()) {
+            showToast('A reason is required to mark an alert as False Positive', 'error');
+            return;
+        }
         submitVerdict(targetType, targetId, 'false_positive', ruleName, reason.trim());
     }
 

@@ -1847,9 +1847,12 @@ async function submitVerdict(targetType, targetId, verdict, ruleName, reason = '
 }
 
 function promptFalsePositive(targetType, targetId, ruleName) {
-    const reason = prompt('Please provide the reason for marking this alert as False Positive (e.g. routine field utility query, expected admin task):');
-    if (reason && reason.trim()) {
-        submitVerdict(targetType, targetId, 'false_positive', ruleName, reason.trim());
+    const reason = prompt('Please provide the reason for marking this alert as False Positive (REQUIRED - e.g. routine field utility query, expected admin task):');
+    if (reason === null) return;
+    if (!reason.trim()) {
+        if (typeof showToast === 'function') showToast('A reason is required to mark an alert as False Positive', 'error');
+        return;
     }
+    submitVerdict(targetType, targetId, 'false_positive', ruleName, reason.trim());
 }
 </script>

@@ -442,6 +442,7 @@ async function loadAccuracyMetrics() {
                     <td style="padding: 8px; font-weight:600; color:#f8fafc;">
                         ${r.name || 'Detection Rule'}
                         ${r.mitre_technique ? `<div style="font-size:10px; color:#64748b; font-family:monospace;">${r.mitre_technique}</div>` : ''}
+                        ${(r.top_fp_patterns && r.top_fp_patterns.length > 0) ? `<div style="font-size:10px; color:#f87171; margin-top:2px;" title="Top False Positive Reasons">Top FP: ${r.top_fp_patterns.join(' | ')}</div>` : ''}
                     </td>
                     <td style="padding: 8px;">
                         <span class="det-rule-sev sev-${(r.severity || 'warning').toLowerCase()}">${(r.severity || 'warning').toUpperCase()}</span>
@@ -455,9 +456,14 @@ async function loadAccuracyMetrics() {
                             <div style="width:${prec}%; height:100%; background:${precColor};"></div>
                         </div>
                     </td>
-                    <td style="padding: 8px; text-align: right;">
+                    <td style="padding: 8px; text-align: right; white-space:nowrap;">
+                        ${r.is_shadow ? `
+                            <button onclick="promoteRule(${r.id})" class="btn btn-sm btn-primary" style="font-size:10px; padding:3px 8px; margin-right:4px; background:var(--green); border:none; color:black; font-weight:700;" title="Promote to Active Production Enforcement">
+                                🚀 Promote Active
+                            </button>
+                        ` : ''}
                         <button onclick="toggleRuleShadow(${r.id})" class="btn btn-sm btn-glass" style="font-size:10px; padding:3px 8px; color:${r.is_shadow ? 'var(--cyan)' : 'var(--amber)'};">
-                            ${r.is_shadow ? '✓ Exit Shadow' : '👻 7-Day Shadow'}
+                            ${r.is_shadow ? 'Exit Shadow' : '👻 7-Day Shadow'}
                         </button>
                     </td>
                 </tr>
@@ -473,6 +479,17 @@ async function loadAccuracyMetrics() {
 
     } catch(e) {
         console.error('Failed to load detection accuracy metrics', e);
+    }
+}
+
+async function promoteRule(ruleId) {
+    if (!window.isAdmin()) { showToast('Access Denied: Admin privileges required.', 'error'); return; }
+    try {
+        await apiFetch(`/api/detection/rules/${ruleId}/promote`, { method: 'POST' });
+        showToast('Rule successfully promoted from shadow mode to active enforcement', 'success');
+        loadAccuracyMetrics();
+    } catch(e) {
+        showToast('Promotion failed: ' + e.message, 'error');
     }
 }
 
