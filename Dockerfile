@@ -43,11 +43,11 @@ RUN mkdir -p /app/logs /app/data && \
 USER socuser
 
 # Expose internal FastAPI port (bound via HAProxy reverse proxy)
-EXPOSE 8000
+EXPOSE 8001
 
 # Container healthcheck testing version endpoint
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 --start-period=15s \
-    CMD curl -f http://127.0.0.1:8000/api/version || exit 1
+    CMD curl -f http://127.0.0.1:8001/api/version || exit 1
 
 # Start Uvicorn ASGI server with production proxy headers
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers", "--forwarded-allow-ips", "*"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "4", "--proxy-headers", "--forwarded-allow-ips", "*"]
