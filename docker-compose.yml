@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ==============================================================================
 # BSmart SOC Command Center — Production Docker Compose Deployment
 # Reads secrets strictly from /opt/soc/.env at runtime (never baked into image)
