@@ -255,8 +255,10 @@ def get_ip_location(ip_str: str) -> Dict[str, Any]:
 
     return res
 
-def ensure_database_downloaded_async():
-    """Starts a non-blocking background thread to download GeoLite2-City.mmdb if missing."""
+def ensure_database_downloaded_async():
+    """Starts a non-blocking background thread to download GeoLite2-City.mmdb if missing."""
+    if os.environ.get("TESTING") or os.environ.get("SKIP_GEOIP_DOWNLOAD"):
+        return
     reader = _get_mmdb_reader()
     if reader is not None:
         return

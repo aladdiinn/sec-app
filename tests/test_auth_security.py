@@ -2,9 +2,35 @@ import unittest
 import asyncio
 import json
 import os
+import bcrypt
 from starlette.requests import Request
 import database as db
 import app as app_module
+
+class MockCursor:
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        pass
+    def execute(self, *args, **kwargs):
+        pass
+    def fetchone(self):
+        # Mock stored admin user with strong bcrypt hash
+        # Prevents unit tests from hanging on PostgreSQL socket connection timeouts
+        return {
+            "id": 1,
+            "username": "admin",
+            "email": "admin@bsmartsoc.local",
+            "hashed_password": "$2b$12$e8Yk26D8b98bJp1.yvUaG.P0zK8.O2kM0jU2fA3k9lX0vQ1mP9W8q"
+        }
+
+class MockConn:
+    def cursor(self):
+        return MockCursor()
+    def commit(self):
+        pass
+    def close(self):
+        pass
 
 class TestAuthSecurity(unittest.TestCase):
     """
@@ -13,6 +39,15 @@ class TestAuthSecurity(unittest.TestCase):
     - Account lockout after 5 failed attempts (LOGIN_LOCKED)
     - IP allowlist enforcement (ADMIN_ALLOWED_IPS -> 403 LOGIN_BLOCKED_IP)
     """
+
+    @classmethod
+    def setUpClass(cls):
+        cls._orig_conn = db.get_db_connection
+        db.get_db_connection = lambda: MockConn()
+
+    @classmethod
+    def tearDownClass(cls):
+        db.get_db_connection = cls._orig_conn
 
     def _call_login(self, username, password, client_ip="203.0.113.10"):
         scope = {
