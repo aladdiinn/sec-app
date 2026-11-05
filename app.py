@@ -4780,14 +4780,16 @@ chmod -R +r /var/log/tomcat* /opt/tomcat* 2>/dev/null || true
 
 # 1.5 Setup auditd safely (Cross-platform)
 echo "[{APP_BRAND}] Configuring auditd security policies..."
-if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq >/dev/null 2>&1 || true
-    apt-get install -y -qq auditd </dev/null >/dev/null 2>&1 || echo "[{APP_BRAND}] Failed to install auditd, continuing..."
-elif command -v yum >/dev/null 2>&1; then
-    yum install -y audit </dev/null >/dev/null 2>&1 || echo "[{APP_BRAND}] Failed to install audit, continuing..."
-elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y audit </dev/null >/dev/null 2>&1 || echo "[{APP_BRAND}] Failed to install audit, continuing..."
+if ! command -v auditctl >/dev/null 2>&1 && ! command -v auditd >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq >/dev/null 2>&1 || true
+        apt-get install -y -qq auditd </dev/null >/dev/null 2>&1 || echo "[{APP_BRAND}] Note: auditd install skipped (system repositories offline), continuing..."
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y audit </dev/null >/dev/null 2>&1 || true
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y audit </dev/null >/dev/null 2>&1 || true
+    fi
 fi
 
 if [ -d /etc/audit/rules.d/ ]; then
