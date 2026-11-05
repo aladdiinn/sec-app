@@ -112,7 +112,7 @@ curl -f http://127.0.0.1:8001/api/version
 
 ## 4. Reverse Proxy Options on Host (Port 80/443 Termination)
 
-Because your server already runs a reverse proxy managing existing services, route traffic to `http://127.0.0.1:8000` using either option below.
+Because your server already runs a reverse proxy managing existing services, route traffic to `http://127.0.0.1:8001` using either option below.
 
 ### Option A: Using Nginx on the Host
 Create `/etc/nginx/sites-available/soc.conf`:
@@ -177,7 +177,7 @@ backend soc_backend
     timeout tunnel 3600s
     http-request set-header X-Forwarded-Proto https
     http-request set-header X-Real-IP %[src]
-    server soc_app 127.0.0.1:8000 check inter 5s rise 2 fall 3
+    server soc_app 127.0.0.1:8001 check inter 5s rise 2 fall 3
 ```
 Reload HAProxy:
 ```bash
