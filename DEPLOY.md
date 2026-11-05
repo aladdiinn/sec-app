@@ -8,7 +8,7 @@
 1. **Zero Secrets in Git**: No real `.env` file, database passwords, or cryptographic tokens exist in this repository.
 2. **Zero Secrets in Docker Images**: `.dockerignore` blocks `.env*`, `.pem`, and keys. Secrets are injected strictly at runtime via Docker Compose `env_file`.
 3. **Private Image Registry**: Images are built via GitHub Actions and published to GitHub Container Registry (`ghcr.io`).
-4. **Local Host Proxying**: The container binds only to `127.0.0.1:8000` on the loopback interface, shielding FastAPI and PostgreSQL from direct internet exposure.
+4. **Local Host Proxying**: The container binds only to `127.0.0.1:8005` on the loopback interface (preventing collision with existing host services like GitLab Dashboard on port 8000), shielding FastAPI and PostgreSQL from direct internet exposure.
 
 ---
 
@@ -87,7 +87,7 @@ docker compose ps
 docker compose logs -f soc
 
 # Verify local healthcheck
-curl -f http://127.0.0.1:8000/api/version
+curl -f http://127.0.0.1:8005/api/version
 ```
 
 ---
@@ -138,7 +138,7 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:8005;
         proxy_http_version 1.1;
 
         # WebSocket & SSE Streaming Support

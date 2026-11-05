@@ -12,8 +12,8 @@ services:
     env_file:
       - /opt/soc/.env
     ports:
-      # Bound strictly to loopback 127.0.0.1 (not 0.0.0.0) so only the host reverse proxy can reach it
-      - "127.0.0.1:8000:8000"
+      # Bound to loopback port 8005 (avoids collision with host GitLab Dashboard on port 8000)
+      - "127.0.0.1:8005:8000"
     volumes:
       # Persistent host-mounted storage (logs, offline GeoIP database, local state)
       - /opt/soc/logs:/app/logs
