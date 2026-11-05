@@ -34,7 +34,7 @@ DB_HOST = os.getenv("POSTGRES_HOST", os.getenv("DB_HOST", "localhost"))
 DB_PORT = int(os.getenv("POSTGRES_PORT", os.getenv("DB_PORT", "5432")))
 DB_NAME = os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "securepulse_db"))
 DB_USER = os.getenv("POSTGRES_USER", os.getenv("DB_USER", "securepulse"))
-DB_PASS = os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASS", "securepulse_pass"))
+DB_PASS = os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", os.getenv("DB_PASS", "")))
 DATABASE_URL = os.getenv("DATABASE_URL")
 _SERVER_LATEST_PROCESSES = {}
 

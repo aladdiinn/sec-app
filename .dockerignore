@@ -1,21 +1,33 @@
+# Version control
 .git
 .github
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-*.db
-securepulse.db
+
+# Secrets and environment configs (CRITICAL: Never copy into Docker image)
 .env
 .env.*
-logs/*
-!logs/.gitkeep
-tmp*
-*.log
-scratch/
-scripts_patch/
-.system_generated/
+!.env.example
 *.pem
-*.crt
 *.key
+*.crt
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Tests and temporary patch scripts
+tests/
+scripts_patch/
+scratch/
+.system_generated/
+tmp*
+
+# Logs and databases
+logs/
+*.log
+app.log
+securepulse.db
+*.db
+*.sqlite3
 data/GeoLite2-City.mmdb

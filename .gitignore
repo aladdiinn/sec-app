@@ -1,8 +1,25 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-app.log
-.env
+*$py.class
 
+# Secrets and environment configs (CRITICAL: Never commit to git)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Database & SQLite files
 securepulse.db
 *.db
+*.sqlite3
+
+# Application logs & scratch
+logs/
+*.log
+app.log
 scratch/
+scripts_patch/
+.system_generated/

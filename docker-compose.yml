@@ -1,104 +1,31 @@
 version: '3.8'
 
 # ==============================================================================
-# BSmart SOC Command Center — Production Docker Compose Architecture
-# Ubuntu 22.04 LTS Stack: HAProxy (TLS 443/80) -> FastAPI (8000) -> PostgreSQL 16
+# BSmart SOC Command Center — Production Docker Compose Deployment
+# Reads secrets strictly from /opt/soc/.env at runtime (never baked into image)
+# Bound to 127.0.0.1:8000 for host reverse proxy (Nginx or existing host HAProxy)
 # ==============================================================================
 
 services:
-  # ────────────────────────────────────────────────────────────────────────────
-  # 1. Database Tier: Hardened PostgreSQL 16
-  # Internal network only (port 5432 not exposed to host or internet)
-  # ────────────────────────────────────────────────────────────────────────────
-  postgres:
-    image: postgres:16-alpine
-    container_name: bsmart-soc-postgres
-    restart: always
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-bsmart_soc}
-      POSTGRES_USER: ${POSTGRES_USER:-socadmin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-soc_secure_pass_2026}
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    networks:
-      - soc_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  # ────────────────────────────────────────────────────────────────────────────
-  # 2. Application Tier: FastAPI / Uvicorn SOC Engine
-  # Runs as unprivileged 'socuser' (UID 10001)
-  # ────────────────────────────────────────────────────────────────────────────
-  sec-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+  soc:
     image: ${DOCKER_IMAGE:-ghcr.io/aladdiinn/sec-app:latest}
     container_name: bsmart-soc-app
-    restart: always
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=${POSTGRES_DB:-bsmart_soc}
-      - POSTGRES_USER=${POSTGRES_USER:-socadmin}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-soc_secure_pass_2026}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-socadmin}:${POSTGRES_PASSWORD:-soc_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-bsmart_soc}
-      - ADMIN_ALLOWED_IPS=${ADMIN_ALLOWED_IPS:-}
-      - ENABLE_BCRYPT=true
-      - SECRET_KEY=${SECRET_KEY:-}
-      - ENVIRONMENT=production
+    restart: unless-stopped
+    env_file:
+      - /opt/soc/.env
+    ports:
+      # Bound strictly to loopback 127.0.0.1 (not 0.0.0.0) so only the host reverse proxy can reach it
+      - "127.0.0.1:8000:8000"
     volumes:
-      - app_logs:/app/logs
-      - app_data:/app/data
-    networks:
-      - soc_network
+      # Persistent host-mounted storage (logs, offline GeoIP database, local state)
+      - /opt/soc/logs:/app/logs
+      - /opt/soc/data:/app/data
+    extra_hosts:
+      # Resolves host.docker.internal to access host services (e.g. host PostgreSQL on port 5432)
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/api/version || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 20s
-
-  # ────────────────────────────────────────────────────────────────────────────
-  # 3. Ingress Tier: HAProxy 2.8 Reverse Proxy & TLS Termination
-  # Listens on 80 (HTTP redirect), 443 (HTTPS), 8404 (Stats Dashboard)
-  # ────────────────────────────────────────────────────────────────────────────
-  haproxy:
-    image: haproxy:2.8-alpine
-    container_name: bsmart-soc-haproxy
-    restart: always
-    depends_on:
-      sec-app:
-        condition: service_started
-    ports:
-      - "80:80"
-      - "443:443"
-      - "8404:8404"
-    volumes:
-      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-      - ./certs:/etc/haproxy/certs:ro
-    networks:
-      - soc_network
-
-networks:
-  soc_network:
-    name: soc_network
-    driver: bridge
-
-volumes:
-  pg_data:
-    name: bsmart_soc_pg_data
-    driver: local
-  app_logs:
-    name: bsmart_soc_app_logs
-    driver: local
-  app_data:
-    name: bsmart_soc_app_data
-    driver: local

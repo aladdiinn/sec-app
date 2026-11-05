@@ -868,9 +868,47 @@ class RawAgentFloodMiddleware:
 
 app.add_middleware(RawAgentFloodMiddleware)
 
-# Secret Key from Environment Variable
-SECRET_KEY = os.getenv("SECRET_KEY", "ec2-security-monitor-production-secret-key-2026")
-SECURE_COOKIES = os.getenv("SECURE_COOKIES", "false").lower() == "true"
+# -- Production Secrets Validation & Fail-Fast Check --------------------------
+def validate_production_config():
+    """
+    Validates required environment secrets at startup.
+    Fails fast with non-zero exit code if required security or database secrets are missing.
+    CRITICAL: Names only, never logs or prints secret values or connection strings.
+    """
+    if os.getenv("TESTING") == "1":
+        return
+
+    missing_secrets = []
+
+    # 1. SECRET_KEY
+    secret_key = os.getenv("SECRET_KEY", "").strip()
+    if not secret_key:
+        missing_secrets.append("SECRET_KEY")
+
+    # 2. Database Password (either DATABASE_URL or POSTGRES_PASSWORD / DB_PASSWORD / DB_PASS)
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    db_pass = os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", os.getenv("DB_PASS", ""))).strip()
+    if not database_url and not db_pass:
+        missing_secrets.append("DB_PASSWORD (or POSTGRES_PASSWORD / DATABASE_URL)")
+
+    if missing_secrets:
+        import sys
+        sys.stderr.write(
+            "\n" + "=" * 74 + "\n"
+            "[CRITICAL CONFIGURATION ERROR] Missing required environment secrets:\n"
+            + "".join(f"  - {v}\n" for v in missing_secrets)
+            + "\nThe application cannot start without these required secrets.\n"
+            "Please configure them in /opt/soc/.env or set them in your environment.\n"
+            + "=" * 74 + "\n\n"
+        )
+        sys.stderr.flush()
+        sys.exit(1)
+
+validate_production_config()
+
+# Secret Key from Environment Variable (No hardcoded fallback in production)
+SECRET_KEY = os.getenv("SECRET_KEY", "test-secret-key-for-testing" if os.getenv("TESTING") == "1" else "")
+SECURE_COOKIES = os.getenv("SECURE_COOKIES", "true").lower() == "true"
 app.add_middleware(
     SessionMiddleware, 
     secret_key=SECRET_KEY,
