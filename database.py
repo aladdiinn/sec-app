@@ -154,6 +154,7 @@ def init_db():
                 ("full_name", "VARCHAR(255)"),
                 ("is_admin", "BOOLEAN DEFAULT FALSE"),
                 ("is_active", "BOOLEAN DEFAULT TRUE"),
+                ("must_change_password", "BOOLEAN DEFAULT FALSE"),
                 ("created_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP")
             ]:
                 try:
@@ -166,14 +167,11 @@ def init_db():
             cur.execute("SELECT id FROM users WHERE email = 'admin@bsmartsoc.local' OR LOWER(username) IN ('admin', 'superuser') ORDER BY (CASE WHEN email = 'admin@bsmartsoc.local' THEN 1 ELSE 2 END), id ASC LIMIT 1;")
             admin_row = cur.fetchone()
             if not admin_row:
+                # Seed super admin ONCE only if not exists, requiring password change on first login
                 cur.execute("""
-                    INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active, created_at)
-                    VALUES (%s, %s, %s, 'superuser', 'System Administrator', TRUE, TRUE, NOW());
+                    INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active, must_change_password, created_at)
+                    VALUES (%s, %s, %s, 'superuser', 'System Administrator', TRUE, TRUE, TRUE, NOW());
                 """, ("admin", "admin@bsmartsoc.local", hashed_admin))
-            else:
-                cur.execute("""
-                    UPDATE users SET username = 'admin', email = 'admin@bsmartsoc.local', hashed_password = %s, role = 'superuser', is_admin = TRUE, is_active = TRUE WHERE id = %s;
-                """, (hashed_admin, admin_row["id"]))
 
 
             # Servers Table

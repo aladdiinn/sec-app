@@ -1094,6 +1094,29 @@ from collections import defaultdict
 
 _login_attempts = defaultdict(lambda: {"count": 0, "lock_until": 0})
 ENABLE_BCRYPT = os.getenv("ENABLE_BCRYPT", "true").lower() == "true"
+ADMIN_ALLOWED_IPS = [ip.strip() for ip in os.getenv("ADMIN_ALLOWED_IPS", "").split(",") if ip.strip()]
+
+def is_admin_ip_permitted(client_ip: str) -> bool:
+    """Checks client IP against ADMIN_ALLOWED_IPS if configured."""
+    if not ADMIN_ALLOWED_IPS:
+        return True
+    if client_ip in ("127.0.0.1", "::1", "localhost"):
+        return True
+    import ipaddress
+    try:
+        cip = ipaddress.ip_address(client_ip)
+        for allowed in ADMIN_ALLOWED_IPS:
+            try:
+                if "/" in allowed:
+                    if cip in ipaddress.ip_network(allowed, strict=False):
+                        return True
+                elif cip == ipaddress.ip_address(allowed):
+                    return True
+            except Exception:
+                pass
+        return False
+    except Exception:
+        return False
 
 @app.post("/auth/login")
 @app.post("/api/login")
@@ -1120,64 +1143,125 @@ async def auth_login(request: Request):
     conn = db.get_db_connection()
     if not conn:
         return JSONResponse(status_code=500, content={"ok": False, "error": "Database error"})
+    # Enforce Admin IP Allowlist if configured
+    if not is_admin_ip_permitted(client_ip):
+        logger.warning(f"Admin login blocked by IP allowlist for IP {client_ip}")
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                    VALUES (NULL, 'LOGIN_BLOCKED_IP', %s, %s, NOW());
+                """, (username, f"Login attempt blocked by ADMIN_ALLOWED_IPS from {client_ip}"))
+                conn.commit()
+        except Exception:
+            pass
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Access Denied: Admin interface restricted to authorized IP allowlist"})
+
     try:
         with conn.cursor() as cur:
+            # Query user strictly from database - zero hardcoded fallback accounts
             cur.execute("SELECT * FROM users WHERE username = %s OR email = %s;", (username, username))
             user = cur.fetchone()
-            if not user:
-                if username == "admin" and password in ["admin", "Admin@1234"]:
-                    cur.execute("SELECT * FROM users WHERE is_admin = TRUE LIMIT 1;")
-                    user = cur.fetchone()
 
             if not user:
                 _login_attempts[rate_key]["count"] += 1
                 if _login_attempts[rate_key]["count"] >= 5:
                     _login_attempts[rate_key]["lock_until"] = now + 900
+                    try:
+                        cur.execute("""
+                            INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                            VALUES (NULL, 'LOGIN_LOCKED', %s, %s, NOW());
+                        """, (username, f"Account locked for 15 minutes after 5 consecutive failed attempts from IP {client_ip}"))
+                        conn.commit()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        cur.execute("""
+                            INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                            VALUES (NULL, 'LOGIN_FAILED', %s, %s, NOW());
+                        """, (username, f"Failed login attempt (user not found) from IP {client_ip}"))
+                        conn.commit()
+                    except Exception:
+                        pass
+                time.sleep(0.3) # Timing defense
                 logger.warning(f"Login failed: user not found for {username} from {client_ip}")
                 return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid username or password"})
             
+            # Verify password strictly against database cryptographic hash
             pw_match = False
-            hashed_db = user["hashed_password"]
+            hashed_db = user["hashed_password"] or ""
             needs_rehash = False
             
             if hashed_db.startswith("$2b$") or hashed_db.startswith("$2a$"):
                 try:
                     pw_match = bcrypt.checkpw(password.encode(), hashed_db.encode())
-                except:
+                except Exception:
                     pw_match = False
             else:
                 pw_match = check_password_hash(hashed_db, password)
-                needs_rehash = True
-
-            if not pw_match and username == "admin" and password in ["admin", "Admin@1234"]:
-                pw_match = True
                 needs_rehash = True
             
             if not pw_match:
                 _login_attempts[rate_key]["count"] += 1
                 if _login_attempts[rate_key]["count"] >= 5:
                     _login_attempts[rate_key]["lock_until"] = now + 900
+                    try:
+                        cur.execute("""
+                            INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                            VALUES (%s, 'LOGIN_LOCKED', %s, %s, NOW());
+                        """, (user["id"], username, f"Account locked for 15 minutes after 5 consecutive failed attempts from IP {client_ip}"))
+                        conn.commit()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        cur.execute("""
+                            INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                            VALUES (%s, 'LOGIN_FAILED', %s, %s, NOW());
+                        """, (user["id"], username, f"Failed login attempt (bad password) from IP {client_ip}"))
+                        conn.commit()
+                    except Exception:
+                        pass
+                time.sleep(0.3) # Timing defense
                 logger.warning(f"Login failed: wrong password for {username} from {client_ip}")
                 return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid username or password"})
 
+            # Rehash legacy hashes if needed
             if needs_rehash and ENABLE_BCRYPT:
                 new_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
                 cur.execute("UPDATE users SET hashed_password = %s WHERE id = %s", (new_hash, user["id"]))
                 conn.commit()
                 logger.info(f"Rehashed password for user {username}")
 
+            # Reset rate limiter
             _login_attempts[rate_key] = {"count": 0, "lock_until": 0}
             logger.info(f"Login successful for {username} from {client_ip}")
+
+            # Log successful login in audit log
+            try:
+                cur.execute("""
+                    INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                    VALUES (%s, 'LOGIN_SUCCESS', %s, %s, NOW());
+                """, (user["id"], username, f"Successful authentication from IP {client_ip}"))
+                conn.commit()
+            except Exception:
+                pass
 
             request.session["user_id"] = user["id"]
             request.session["username"] = user.get("username") or user.get("email") or "admin"
             request.session["user_role"] = user.get("role", "admin")
             request.session["user_email"] = user.get("email", "")
             
+            must_change = bool(user.get("must_change_password"))
+            if must_change:
+                request.session["must_change_password"] = True
+
             return JSONResponse(content={
                 "ok": True,
                 "message": "Login successful",
-                "redirect_url": "/",
+                "must_change_password": must_change,
+                "redirect_url": "/change-password" if must_change else "/",
                 "user": {"id": user["id"], "username": user.get("username"), "email": user.get("email")}
             })
     except Exception as e:
