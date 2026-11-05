@@ -183,10 +183,21 @@
             </div>
         </div>
 
+        <!-- Master Select All bar for Incidents -->
+        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px; padding:6px 12px; margin-bottom:8px">
+            <label style="display:flex; align-items:center; gap:8px; font-size:11.5px; font-weight:600; color:var(--text); cursor:pointer">
+                <input type="checkbox" id="incidents-select-all" onchange="toggleSelectAll('incidents', this.checked)">
+                <span>Select All Incidents</span>
+            </label>
+            <span style="font-size:10.5px; color:var(--text3)">Check boxes to perform bulk triage or export multi-incident report</span>
+        </div>
+
         <!-- Selection Bar -->
         <div id="incidents-selection-bar" style="display:none; justify-content:space-between; align-items:center; background:rgba(2,132,199,0.15); border:1px solid var(--cyan); border-radius:6px; padding:6px 12px; margin-bottom:10px">
             <span style="font-size:11.5px; font-weight:700; color:var(--cyan)"><span id="incidents-selected-count">0</span> incidents selected</span>
             <div style="display:flex; gap:6px; align-items:center">
+                <button class="btn btn-glass" onclick="batchVerdictSelected('true_positive')" style="padding:4px 10px; font-size:11px; color:var(--cyan); border-color:rgba(56,189,248,0.4)">✓ True (Bulk)</button>
+                <button class="btn btn-glass" onclick="batchVerdictSelected('false_positive')" style="padding:4px 10px; font-size:11px; color:var(--red); border-color:rgba(239,68,68,0.4)">✗ False Pos (Bulk)</button>
                 <button class="btn btn-glass" onclick="openCloseModal('incidents')" style="padding:4px 10px; font-size:11px; color:var(--amber); border-color:rgba(245,158,11,0.4)">✓ Mark as Closed</button>
                 <button class="btn btn-glass" onclick="batchReopenRows('incidents')" style="padding:4px 10px; font-size:11px; color:var(--green); border-color:rgba(16,185,129,0.4)">↺ Reopen</button>
                 <button class="btn btn-primary" onclick="generateSelectedReport('incidents')" style="padding:4px 12px; font-size:11px">📄 Report for Selected</button>
@@ -960,8 +971,8 @@ async function loadAppIncidents(appId) {
                             <div style="font-size:11px; color:var(--text3)">Last seen: <b>${i.last_event_at ? new Date(i.last_event_at).toLocaleTimeString() : 'now'}</b></div>
                             <div style="margin-top:6px">
                                 <div style="display:flex; gap:4px; align-items:center; justify-content:flex-end">
-                                    <button class="btn btn-ghost" onclick="submitVerdict('incident', ${i.id}, 'true_positive', '${escapeHtml(i.title)}')" style="font-size:10px; padding:3px 8px; color:var(--cyan)" title="Confirm True Positive">✓ True</button>
-                                    <button class="btn btn-ghost" onclick="promptFalsePositive('incident', ${i.id}, '${escapeHtml(i.title)}')" style="font-size:10px; padding:3px 8px; color:var(--red)" title="Mark as False Positive">✕ False Pos</button>
+                                    <button class="btn btn-ghost" onclick="event.preventDefault(); event.stopPropagation(); submitVerdict('incident', ${i.id}, 'true_positive', '${escapeHtml(i.title)}')" style="font-size:10px; padding:3px 8px; color:var(--cyan)" title="Confirm True Positive">✓ True</button>
+                                    <button class="btn btn-ghost" onclick="event.preventDefault(); event.stopPropagation(); promptFalsePositive('incident', ${i.id}, '${escapeHtml(i.title)}')" style="font-size:10px; padding:3px 8px; color:var(--red)" title="Mark as False Positive">✕ False Pos</button>
                                     ${isClosed ? `
                                         <button class="btn btn-ghost" onclick="batchReopenRows('incidents', ${i.id})" style="font-size:10px; padding:3px 8px; color:var(--green)">↺ Reopen</button>
                                     ` : `
@@ -1841,11 +1852,49 @@ async function submitVerdict(targetType, targetId, verdict, ruleName, reason = '
         if (typeof showToast === 'function') {
             showToast(verdict === 'true_positive' ? 'Confirmed True Positive' : 'Marked False Positive & Auto-Closed', 'success');
         }
-        if (typeof refreshIncidentsTab === 'function') refreshIncidentsTab();
-        else if (typeof refreshAppEventsView === 'function') refreshAppEventsView();
-        else window.location.reload();
+        if (typeof loadAppIncidents === 'function' && typeof activeModalAppId !== 'undefined' && activeModalAppId) {
+            loadAppIncidents(activeModalAppId);
+        } else if (typeof refreshAppEventsView === 'function') {
+            refreshAppEventsView();
+        }
     } catch(e) {
-        if (typeof showToast === 'function') showToast('Failed to record verdict', 'error');
+        if (typeof showToast === 'function') showToast('Failed to record verdict: ' + (e.message || e), 'error');
+    }
+}
+
+async function batchVerdictSelected(verdict) {
+    const ids = Array.from(selectedTabRows.incidents);
+    if (ids.length === 0) {
+        alert('Please select at least one incident.');
+        return;
+    }
+    let reason = verdict === 'true_positive' ? 'Confirmed by analyst in bulk' : '';
+    if (verdict === 'false_positive') {
+        reason = prompt('Reason for marking selected incidents as False Positive (REQUIRED):');
+        if (reason === null) return;
+        if (!reason.trim()) {
+            alert('A reason is required.');
+            return;
+        }
+    }
+    try {
+        for (const incId of ids) {
+            await apiFetch('/api/detection/verdict', {
+                method: 'POST',
+                body: JSON.stringify({
+                    target_type: 'incident',
+                    target_id: parseInt(incId),
+                    verdict: verdict,
+                    rule_name: 'Bulk Triage',
+                    reason: reason
+                })
+            });
+        }
+        if (typeof showToast === 'function') showToast(`Successfully triaged ${ids.length} incidents as ${verdict}`, 'success');
+        clearTabSelection('incidents');
+        if (typeof loadAppIncidents === 'function') loadAppIncidents(activeModalAppId);
+    } catch(e) {
+        alert('Error triaging incidents: ' + (e.message || e));
     }
 }
 

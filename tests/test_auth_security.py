@@ -46,23 +46,29 @@ class TestAuthSecurity(unittest.TestCase):
         self.assertEqual(res.status_code, 401)
 
     def test_account_lockout_rate_limiting(self):
-        # 5 consecutive failures triggers 15-minute lock
-        test_ip = "192.0.2.77"
+        # 5 consecutive failures triggers 15-minute lock on that IP
+        attacker_ip = "192.0.2.77"
+        admin_ip = "198.51.100.5"
         app_module._login_attempts.clear()
         
         for i in range(4):
-            res = self._call_login("testuser", f"wrong_{i}", test_ip)
+            res = self._call_login("admin", f"wrong_{i}", attacker_ip)
             self.assertEqual(res.status_code, 401)
         
-        # 5th attempt locks
-        res5 = self._call_login("testuser", "wrong_5", test_ip)
+        # 5th attempt locks attacker IP
+        res5 = self._call_login("admin", "wrong_5", attacker_ip)
         self.assertEqual(res5.status_code, 401)
 
-        # 6th attempt is blocked with account lockout message
-        res6 = self._call_login("testuser", "wrong_6", test_ip)
+        # 6th attempt from attacker IP is blocked with 429
+        res6 = self._call_login("admin", "wrong_6", attacker_ip)
         self.assertEqual(res6.status_code, 429)
         data = json.loads(res6.body.decode())
         self.assertIn("locked", data.get("error", "").lower())
+
+        # Crucial Requirement 4: Real admin from legitimate IP is NOT locked out!
+        res_admin = self._call_login("admin", "some_attempt", admin_ip)
+        # Should return 401 (normal password check), NOT 429 lockout!
+        self.assertEqual(res_admin.status_code, 401)
 
     def test_admin_ip_allowlist_blocking(self):
         # When ADMIN_ALLOWED_IPS is configured, unauthorized IP gets 403

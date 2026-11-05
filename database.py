@@ -162,16 +162,23 @@ def init_db():
                 except Exception:
                     pass
 
-            # Seed primary super admin with exact password Admin@1234
-            hashed_admin = generate_password_hash("Admin@1234")
+            # Initial admin verification: NEVER reset passwords on startup; NEVER seed default passwords
             cur.execute("SELECT id FROM users WHERE email = 'admin@bsmartsoc.local' OR LOWER(username) IN ('admin', 'superuser') ORDER BY (CASE WHEN email = 'admin@bsmartsoc.local' THEN 1 ELSE 2 END), id ASC LIMIT 1;")
             admin_row = cur.fetchone()
             if not admin_row:
-                # Seed super admin ONCE only if not exists, requiring password change on first login
+                import secrets
+                bootstrap_pwd = secrets.token_urlsafe(16)
+                hashed_admin = generate_password_hash(bootstrap_pwd)
                 cur.execute("""
                     INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active, must_change_password, created_at)
                     VALUES (%s, %s, %s, 'superuser', 'System Administrator', TRUE, TRUE, TRUE, NOW());
                 """, ("admin", "admin@bsmartsoc.local", hashed_admin))
+                logger.warning(
+                    f"\n{'='*72}\n[SECURITY FIRST-RUN SETUP] Initial administrator created.\n"
+                    f"Username: admin\n"
+                    f"One-Time Setup Password: {bootstrap_pwd}\n"
+                    f"You must change this password upon first login.\n{'='*72}\n"
+                )
 
 
             # Servers Table

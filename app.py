@@ -471,6 +471,18 @@ import database as db
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("security_monitor.app")
 
+# Persistent rotated application log file (Requirement 9)
+from logging.handlers import RotatingFileHandler
+try:
+    log_dir = os.path.join(os.path.dirname(__file__), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "app_security.log")
+    file_handler = RotatingFileHandler(log_file, maxBytes=20 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    logging.getLogger().addHandler(file_handler)
+except Exception as _log_e:
+    logger.warning(f"Could not initialize RotatingFileHandler: {_log_e}")
+
 class UvicornTelemetryFilter(logging.Filter):
     """Suppresses high-frequency 200/429 access logs from collector endpoints to avoid stdout CPU saturation."""
     def filter(self, record: logging.LogRecord) -> bool:
@@ -1096,6 +1108,16 @@ _login_attempts = defaultdict(lambda: {"count": 0, "lock_until": 0})
 ENABLE_BCRYPT = os.getenv("ENABLE_BCRYPT", "true").lower() == "true"
 ADMIN_ALLOWED_IPS = [ip.strip() for ip in os.getenv("ADMIN_ALLOWED_IPS", "").split(",") if ip.strip()]
 
+def get_client_ip(request: Request) -> str:
+    """Extracts the client IP address, properly inspecting proxy headers when behind reverse proxies."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    x_real = request.headers.get("x-real-ip")
+    if x_real:
+        return x_real.strip()
+    return request.client.host if request.client else "127.0.0.1"
+
 def is_admin_ip_permitted(client_ip: str) -> bool:
     """Checks client IP against ADMIN_ALLOWED_IPS if configured."""
     if not ADMIN_ALLOWED_IPS:
@@ -1121,7 +1143,7 @@ def is_admin_ip_permitted(client_ip: str) -> bool:
 @app.post("/auth/login")
 @app.post("/api/login")
 async def auth_login(request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     try:
         body = await request.json()
     except Exception:
@@ -1137,8 +1159,9 @@ async def auth_login(request: Request):
     now = time.time()
     
     if _login_attempts[rate_key]["lock_until"] > now:
-        logger.warning(f"Login failed: locked out for {username} from {client_ip}")
-        return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid username or password"})
+        remaining = int(_login_attempts[rate_key]["lock_until"] - now)
+        logger.warning(f"Login throttled: per-IP lockout for {username} from {client_ip} ({remaining}s remaining)")
+        return JSONResponse(status_code=429, content={"ok": False, "error": f"Too many failed login attempts from your IP. Account locked for {remaining} seconds."})
 
     conn = db.get_db_connection()
     if not conn:
@@ -1184,7 +1207,7 @@ async def auth_login(request: Request):
                         conn.commit()
                     except Exception:
                         pass
-                time.sleep(0.3) # Timing defense
+                await asyncio.sleep(0.3) # Non-blocking async timing defense
                 logger.warning(f"Login failed: user not found for {username} from {client_ip}")
                 return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid username or password"})
             
@@ -1223,7 +1246,7 @@ async def auth_login(request: Request):
                         conn.commit()
                     except Exception:
                         pass
-                time.sleep(0.3) # Timing defense
+                await asyncio.sleep(0.3) # Non-blocking async timing defense
                 logger.warning(f"Login failed: wrong password for {username} from {client_ip}")
                 return JSONResponse(status_code=401, content={"ok": False, "error": "Invalid username or password"})
 
