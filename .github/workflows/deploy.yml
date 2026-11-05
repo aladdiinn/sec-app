@@ -153,7 +153,7 @@ jobs:
           script: |
             set -euo pipefail
             echo "==> Deploying BSmart SOC to Ubuntu 22.04 LTS..."
-            cd /opt/soc
+            cd /application/Soc
 
             # 1. Log in to GHCR
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -174,8 +174,8 @@ jobs:
             echo "==> Verifying application health..."
             sleep 4
             for i in {1..10}; do
-              if curl -sf http://127.0.0.1:8000/api/version > /dev/null; then
-                echo "==> Deployment Healthy! Application is online on 127.0.0.1:8000"
+              if curl -sf http://127.0.0.1:8005/api/version > /dev/null; then
+                echo "==> Deployment Healthy! Application is online on 127.0.0.1:8005"
                 exit 0
               fi
               echo "Waiting for app to become ready ($i/10)..."

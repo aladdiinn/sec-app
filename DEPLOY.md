@@ -17,21 +17,21 @@
 ### Step 1: Create Host Directory Layout
 ```bash
 # Create deployment directories
-sudo mkdir -p /opt/soc/logs /opt/soc/data
-cd /opt/soc
+sudo mkdir -p /application/Soc/logs /application/Soc/data
+cd /application/Soc
 ```
 
 ### Step 2: Copy Docker Compose Configuration
-Copy [`docker-compose.yml`](file:///c:/Users/Test/Downloads/security-dash/docker-compose.yml) to `/opt/soc/docker-compose.yml`:
+Copy [`docker-compose.yml`](file:///c:/Users/Test/Downloads/security-dash/docker-compose.yml) to `/application/Soc/docker-compose.yml`:
 ```bash
-sudo curl -fsSL https://raw.githubusercontent.com/aladdiinn/sec-app/main/docker-compose.yml -o /opt/soc/docker-compose.yml
-# Or copy via SCP: scp docker-compose.yml user@server:/opt/soc/
+sudo curl -fsSL https://raw.githubusercontent.com/aladdiinn/sec-app/main/docker-compose.yml -o /application/Soc/docker-compose.yml
+# Or copy via SCP: scp docker-compose.yml user@server:/application/Soc/
 ```
 
-### Step 3: Create `/opt/soc/.env` Manually
-Create `/opt/soc/.env` from `.env.example`:
+### Step 3: Create `/application/Soc/.env` Manually
+Create `/application/Soc/.env` from `.env.example`:
 ```bash
-sudo nano /opt/soc/.env
+sudo nano /application/Soc/.env
 ```
 Populate the required secrets:
 ```dotenv
@@ -60,9 +60,9 @@ GEOIP_DB_PATH=/app/data/GeoLite2-City.mmdb
 
 ### Step 4: Lock Down Permissions (Root-only read)
 ```bash
-sudo chown -R root:root /opt/soc
-sudo chmod 600 /opt/soc/.env
-sudo chmod 755 /opt/soc/logs /opt/soc/data
+sudo chown -R root:root /application/Soc
+sudo chmod 600 /application/Soc/.env
+sudo chmod 755 /application/Soc/logs /application/Soc/data
 ```
 
 ### Step 5: Log in to GitHub Container Registry (GHCR)
@@ -73,7 +73,7 @@ echo "YOUR_GHCR_PAT_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --pass
 
 ### Step 6: Start the SOC Container
 ```bash
-cd /opt/soc
+cd /application/Soc
 docker compose pull
 docker compose up -d
 ```
@@ -192,11 +192,11 @@ Every build pushed by GitHub Actions is tagged with the short commit SHA (e.g. `
 
 To roll back immediately to a known stable build:
 ```bash
-# Set image to specific commit SHA tag in /opt/soc/.env
-echo "DOCKER_IMAGE=ghcr.io/aladdiinn/sec-app:sha-4e804d0" | sudo tee -a /opt/soc/.env
+# Set image to specific commit SHA tag in /application/Soc/.env
+echo "DOCKER_IMAGE=ghcr.io/aladdiinn/sec-app:sha-4e804d0" | sudo tee -a /application/Soc/.env
 
 # Pull and restart
-cd /opt/soc
+cd /application/Soc
 docker compose pull soc
 docker compose up -d
 ```
@@ -205,20 +205,20 @@ docker compose up -d
 
 ## 6. Optional Enterprise Upgrade: AWS SSM Parameter Store
 
-To avoid maintaining `/opt/soc/.env` manually, store secrets in AWS SSM Parameter Store under path `/soc/production/`:
+To avoid maintaining `/application/Soc/.env` manually, store secrets in AWS SSM Parameter Store under path `/soc/production/`:
 - `/soc/production/DB_PASSWORD` (SecureString)
 - `/soc/production/SECRET_KEY` (SecureString)
 
-Attach an IAM Role with `ssm:GetParametersByPath` to the EC2 instance, then generate `/opt/soc/.env` automatically during deployment:
+Attach an IAM Role with `ssm:GetParametersByPath` to the EC2 instance, then generate `/application/Soc/.env` automatically during deployment:
 
 ```bash
 #!/usr/bin/env bash
-# /opt/soc/fetch_env_from_ssm.sh
+# /application/Soc/fetch_env_from_ssm.sh
 aws ssm get-parameters-by-path \
   --path "/soc/production/" \
   --with-decryption \
   --query "Parameters[*].[Name,Value]" \
-  --output text | awk '{split($1,a,"/"); print a[4]"="$2}' > /opt/soc/.env
+  --output text | awk '{split($1,a,"/"); print a[4]"="$2}' > /application/Soc/.env
 
-chmod 600 /opt/soc/.env
+chmod 600 /application/Soc/.env
 ```

@@ -1,29 +1,61 @@
 # ==============================================================================
-# BSmart SOC Command Center — Production Docker Compose Deployment
-# Reads secrets strictly from /opt/soc/.env at runtime (never baked into image)
-# Bound to 127.0.0.1:8000 for host reverse proxy (Nginx or existing host HAProxy)
+# BSmart SOC Command Center — Production Docker Compose Stack
+# Multi-container deployment with dedicated PostgreSQL database
+# Paths: /application/Soc
 # ==============================================================================
 
 services:
+  # ----------------------------------------------------------------------------
+  # Dedicated PostgreSQL Database Container
+  # ----------------------------------------------------------------------------
+  soc-db:
+    image: postgres:15-alpine
+    container_name: bsmart-soc-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-bsmart_soc}
+      POSTGRES_USER: ${DB_USER:-socadmin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-SocSecurePass2026_db}
+    volumes:
+      # Persistent host data storage (dedicated isolated database)
+      - /application/Soc/SOC-DB:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-socadmin} -d ${DB_NAME:-bsmart_soc}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - soc-network
+
+  # ----------------------------------------------------------------------------
+  # BSmart SOC Application Container (FastAPI + Uvicorn)
+  # ----------------------------------------------------------------------------
   soc:
     image: ${DOCKER_IMAGE:-ghcr.io/aladdiinn/sec-app:latest}
     container_name: bsmart-soc-app
     restart: unless-stopped
+    depends_on:
+      soc-db:
+        condition: service_healthy
     env_file:
-      - /opt/soc/.env
+      - /application/Soc/.env
     ports:
-      # Bound to loopback port 8005 (avoids collision with host GitLab Dashboard on port 8000)
+      # Bound to loopback port 8005 (avoids collision with host services like GitLab on port 8000)
       - "127.0.0.1:8005:8000"
     volumes:
       # Persistent host-mounted storage (logs, offline GeoIP database, local state)
-      - /opt/soc/logs:/app/logs
-      - /opt/soc/data:/app/data
-    extra_hosts:
-      # Resolves host.docker.internal to access host services (e.g. host PostgreSQL on port 5432)
-      - "host.docker.internal:host-gateway"
+      - /application/Soc/logs:/app/logs
+      - /application/Soc/data:/app/data
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/api/version || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 25s
+    networks:
+      - soc-network
+
+networks:
+  soc-network:
+    driver: bridge

@@ -898,7 +898,7 @@ def validate_production_config():
             "[CRITICAL CONFIGURATION ERROR] Missing required environment secrets:\n"
             + "".join(f"  - {v}\n" for v in missing_secrets)
             + "\nThe application cannot start without these required secrets.\n"
-            "Please configure them in /opt/soc/.env or set them in your environment.\n"
+            "Please configure them in /application/Soc/.env or set them in your environment.\n"
             + "=" * 74 + "\n\n"
         )
         sys.stderr.flush()
