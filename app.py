@@ -8763,6 +8763,16 @@ RECORD_PARAM_RE = re.compile(
 _scraping_tracker = {}
 _scraping_lock = threading.Lock()
 
+# In-memory sliding tracker for SQL injection velocity / multi-signal escalation
+_sqli_tracker = {}
+_sqli_lock = threading.Lock()
+
+# Cross-log correlation buffer (catalina / postgres errors <-> web access log requests)
+from collections import deque
+_recent_cross_log_web_events = deque(maxlen=500)
+_recent_cross_log_db_errors = deque(maxlen=500)
+_cross_log_lock = threading.Lock()
+
 def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "GET", raw_line: str = "") -> tuple:
     """
     Universal high-precision detection of automated IDOR / record harvesting bots for ANY application:
@@ -8873,10 +8883,13 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
 
     # Default evidence template with full auditing fields (Requirement 7)
     def make_evidence(rule_id, rule_name, conf, why, signals, fp_indicators, action, matched_val=None, thresh_val=None):
+        cache = _get_rule_cache()
+        rule_rec = cache.get(rule_id) or cache.get(rule_name) or {}
+        dynamic_ver = rule_rec.get("version") or 1
         return {
             "rule_id": rule_id,
             "rule_name": rule_name,
-            "rule_version": "2.4",
+            "rule_version": str(dynamic_ver),
             "confidence": conf,
             "why_it_fired": why,
             "event_ids": [event_id] if event_id else [],
@@ -8896,35 +8909,77 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
             "recommended_action": action
         }
 
-    # 1. SQL Injection (Enterprise Strict Syntax Verification)
+    # 1. SQL Injection (Enterprise Strict Syntax Verification & Multi-Signal Escalation)
     for sqli_pat in SQLI_PATTERNS:
         if sqli_pat.search(full_target_lower):
-            has_db_err = any(e in full_line for e in ("syntax error", "psycopg2", "org.postgresql", "sqlexception", "ora-", "mysql_error"))
-            
+            now_t = time.time()
+            with _sqli_lock:
+                ip_hist = _sqli_tracker.setdefault(ip, [])
+                ip_hist = [t for t in ip_hist if now_t - t < 300]
+                ip_hist.append(now_t)
+                _sqli_tracker[ip] = ip_hist
+                sqli_velocity = len(ip_hist)
+
+            # Check cross-log buffer for any DB error within +/- 10s on the node/application
+            correlated_db_err = False
+            with _cross_log_lock:
+                for t_err, r_err, app_err_id in _recent_cross_log_db_errors:
+                    if abs(now_t - t_err) <= 10.0:
+                        correlated_db_err = True
+                        break
+
+            has_db_err = correlated_db_err or any(e in full_line for e in ("syntax error", "psycopg2", "org.postgresql", "sqlexception", "ora-", "mysql_error"))
+
+            # Independent signals:
+            abnormal_size = bool(status in (200, 201) and bytes_sent and bytes_sent >= 10000)
+            repeated_attempts = bool(sqli_velocity >= 3)
+            is_extraction = bool(re.search(r'\b(?:union\s+select|select\s+.*\s+from|waitfor\s+delay|pg_sleep)\b', full_target_lower))
+
+            signals_fired = [f"SQL syntax matched in query: {clean_p}"]
+            if abnormal_size:
+                signals_fired.append(f"Independent Signal: Abnormal response size ({bytes_sent} bytes returned on injected query)")
+            if repeated_attempts:
+                signals_fired.append(f"Independent Signal: Velocity spike ({sqli_velocity} SQLi attempts from IP in 5 min)")
+            if has_db_err:
+                signals_fired.append("Independent Signal: Correlated database syntax/runtime error in server logs")
+            if is_extraction:
+                signals_fired.append("Independent Signal: Data extraction / schema discovery payload (UNION/SELECT/SLEEP)")
+
             if status == 500:
                 if has_db_err:
                     sev = "critical"
                     conf = "HIGH"
-                    why = "SQL injection payload triggered confirmed database execution failure (HTTP 500 with DB syntax error)."
-                    sig = ["SQL injection syntax matched", "HTTP 500 status code", "Database error keyword in logs"]
+                    why = "SQL injection payload triggered confirmed database execution failure (HTTP 500 with correlated DB syntax error)."
+                elif repeated_attempts:
+                    sev = "high"
+                    conf = "HIGH"
+                    why = f"Sustained SQL injection attack cluster ({sqli_velocity} attempts) triggering HTTP 500 errors."
                 else:
                     sev = "medium"
                     conf = "MEDIUM"
                     why = "SQL injection payload triggered HTTP 500 server error (unconfirmed DB execution)."
-                    sig = ["SQL injection syntax matched", "HTTP 500 status code"]
-                return "SQL_INJECTION", sev, "SQL Injection Attempt", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "SQL Injection Exploit", conf, why, sig, "Application runtime NullPointerException unrelated to database.", "Inspect application exception logs.")
+                return "SQL_INJECTION", sev, "SQL Injection Attempt", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "SQL Injection Exploit", conf, why, signals_fired, "Application runtime NullPointerException unrelated to database.", "Inspect application exception logs.")
             elif status in (200, 201):
-                sev = "low"
-                conf = "LOW"
-                why = f"SQL syntax payload sent to endpoint returning HTTP {status} (single request unconfirmed execution)."
-                sig = ["SQL syntax in query parameter", f"HTTP {status} response"]
-                return "SQL_INJECTION_PROBE", sev, "SQL Injection Probe (HTTP 200)", "T1190 - Exploit Public-Facing Application", make_evidence("W02", "SQL Injection Probe", conf, why, sig, "Benign search term or text containing SQL keywords.", "Monitor IP for repeated injection variants.")
+                if abnormal_size or has_db_err:
+                    sev = "critical"
+                    conf = "HIGH"
+                    why = f"Confirmed SQL injection data extraction (HTTP {status} with abnormal response size {bytes_sent} bytes)."
+                    return "SQL_INJECTION", sev, "Successful SQL Injection Data Extraction (HTTP 200)", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "SQL Injection Data Extraction", conf, why, signals_fired, "Legitimate administrative query or report.", "Audit endpoint data protection and parameterization.")
+                elif repeated_attempts:
+                    sev = "high"
+                    conf = "HIGH"
+                    why = f"Sustained SQL injection attack cluster ({sqli_velocity} attempts from {ip}) accepted with HTTP {status}."
+                    return "SQL_INJECTION", sev, "Sustained SQL Injection Attack Cluster (HTTP 200)", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "Sustained SQL Injection Attack", conf, why, signals_fired, "Automated vulnerability scanner probe against secured endpoint.", "Review endpoint sanitization.")
+                else:
+                    sev = "low"
+                    conf = "LOW"
+                    why = f"SQL syntax payload sent to endpoint returning HTTP {status} (single request unconfirmed execution)."
+                    return "SQL_INJECTION_PROBE", sev, "SQL Injection Probe (HTTP 200)", "T1190 - Exploit Public-Facing Application", make_evidence("W02", "SQL Injection Probe", conf, why, signals_fired, "Benign search term or text containing SQL keywords.", "Monitor IP for repeated injection variants.")
             else:
-                sev = "low"
-                conf = "LOW"
+                sev = "medium" if repeated_attempts else "low"
+                conf = "MEDIUM" if repeated_attempts else "LOW"
                 why = f"Blocked SQL injection attempt rejected with HTTP {status}."
-                sig = ["SQL syntax in query parameter", f"Blocked with HTTP {status}"]
-                return "SQL_INJECTION_PROBE", sev, f"Blocked SQL Injection Probe (HTTP {status})", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "Blocked SQL Injection", conf, why, sig, "Security filter correctly dropped request.", "No action needed; safely rejected.")
+                return "SQL_INJECTION_PROBE", sev, f"Blocked SQL Injection Probe (HTTP {status})", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "Blocked SQL Injection", conf, why, signals_fired, "Security filter correctly dropped request.", "No action needed; safely rejected.")
 
     # 2. Log4j / JNDI Remote Code Execution Exploit
     if re.search(r'(?:\$\{|\%24\%7b)(?:\$|\%24)?\{?[^}]*(?:jndi|ldap|rmi|dns)[\s:]', full_target_lower):
@@ -9264,6 +9319,9 @@ def api_app_events(request: Request, payload: dict = Body(...)):
         # 1. PostgreSQL log evaluation
         if source_type in ("postgres", "database") or role == "database":
             ev_type, sev, rule_title, mitre_tag, db_user, db_name, db_lvl = evaluate_postgres_security_event(raw_line)
+            if "syntax error" in raw_line.lower() or "error" in raw_line.lower():
+                with _cross_log_lock:
+                    _recent_cross_log_db_errors.append((time.time(), raw_line, actual_app_id))
             if sev == "info" and any(k in raw_line.lower() for k in ["checkpoint starting", "checkpoint complete", "connection authorized"]):
                 continue
 
@@ -9318,6 +9376,8 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                     pass
 
             sanitized_path = redact_sensitive_params(raw_path)
+            with _cross_log_lock:
+                _recent_cross_log_web_events.append((time.time(), actual_app_id, c_ip, raw_path))
             eval_res = evaluate_web_security_event(
                 method, raw_path, status_code, user, c_ip, raw_line=raw_line, bytes_sent=bytes_sent
             )
@@ -9432,6 +9492,13 @@ def api_app_events(request: Request, payload: dict = Body(...)):
             rule_title = f"Restricted Admin Privilege Violation ({cat_user or 'unknown'})"
             mitre_tag = "T1078 - Valid Accounts"
             status_code = 403
+        elif any(k in cat_lower for k in ("psqlexception", "sqlexception", "syntax error at or near", "jdbcexception")):
+            ev_type = "DB_EXCEPTION"
+            sev = "high"
+            rule_title = "Correlated Database SQL Execution Exception"
+            mitre_tag = "T1190 - Exploit Public-Facing Application"
+            with _cross_log_lock:
+                _recent_cross_log_db_errors.append((time.time(), raw_line, actual_app_id))
         elif any(k in cat_lower for k in ("severe", "fatal")):
             ev_type = "APP_EXCEPTION"
             sev = "info"
@@ -10843,14 +10910,34 @@ def api_get_app_rules(request: Request, app_id: int):
         return []
     try:
         with conn.cursor() as cur:
+            has_bytes = False
+            try:
+                cur.execute("SELECT 1 FROM app_events WHERE application_id = %s AND bytes_sent > 0 LIMIT 1;", (app_id,))
+                has_bytes = bool(cur.fetchone())
+            except Exception:
+                has_bytes = False
+
             cur.execute("""
-                SELECT id, name, description, rule_type, severity, mitre_technique_id, mitre_tactic, enabled, threshold, window_seconds
+                SELECT id, name, description, rule_type, severity, mitre_technique_id, mitre_tactic, enabled, threshold, window_seconds, COALESCE(version, 1) as version
                 FROM app_rules
                 WHERE application_id IS NULL OR application_id = %s
                 ORDER BY id ASC;
             """, (app_id,))
             rows = cur.fetchall()
-            return [dict(r) for r in rows]
+            rules_out = []
+            for r in rows:
+                rd = dict(r)
+                # Requirement 2: 15 MB / Exfiltration rule shows MISSING_DATA_SOURCE if bytes_sent has never been collected
+                if ("15 MB" in (rd.get("name") or "") or "Exfiltration" in (rd.get("name") or "") or rd.get("id") in (17,)):
+                    if not has_bytes:
+                        rd["data_source_status"] = "MISSING_DATA_SOURCE"
+                        rd["missing_data_reason"] = "Field bytes_sent not collected. Tomcat AccessLogValve requires %b or %B pattern."
+                    else:
+                        rd["data_source_status"] = "COLLECTED"
+                else:
+                    rd["data_source_status"] = "COLLECTED"
+                rules_out.append(rd)
+            return rules_out
     except Exception as e:
         logger.error(f"Error in api_get_app_rules: {e}")
         return []

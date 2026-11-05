@@ -1,6 +1,6 @@
 import unittest
 import time
-from app import evaluate_web_security_event, is_ip_internal
+from app import evaluate_web_security_event, is_ip_internal, _sqli_tracker
 
 class TestSIEMAccuracyCorpus(unittest.TestCase):
     """
@@ -8,6 +8,9 @@ class TestSIEMAccuracyCorpus(unittest.TestCase):
     Tests 5 Benign and 5 Malicious cases per rule category including near-miss names,
     multi-signal requirements, status code correlation, and network zone awareness.
     """
+
+    def setUp(self):
+        _sqli_tracker.clear()
 
     # =========================================================================
     # 1. DATA EXFILTRATION & BACKUP ARCHIVE EXPOSURE
@@ -42,10 +45,10 @@ class TestSIEMAccuracyCorpus(unittest.TestCase):
             self.assertIn(sev, ("high", "critical"), f"Malicious path {path} MUST alert! Got: {sev}")
             self.assertEqual(ev_type, "DATA_EXFILTRATION")
             self.assertIn("rule_id", ev_dict)
-            self.assertEqual(ev_dict.get("rule_version"), "2.4")
+            self.assertTrue(bool(ev_dict.get("rule_version")), "Real rule version must be present")
 
     # =========================================================================
-    # 2. SQL INJECTION (Corroborated vs Probes)
+    # 2. SQL INJECTION (Multi-Signal Escalation & Independent Signals)
     # =========================================================================
     def test_sqli_benign_cases(self):
         benign_cases = [
@@ -61,25 +64,36 @@ class TestSIEMAccuracyCorpus(unittest.TestCase):
             )
             self.assertIn(sev, ("info", "low"), f"Benign SQL route {path} alerted as: {sev}")
 
-    def test_sqli_malicious_cases(self):
-        malicious_cases = [
-            ("GET", "/products?id=1' UNION SELECT username, password FROM users--", 500, "org.postgresql.util.PSQLException: syntax error"),
-            ("GET", "/api/users?name=' OR 1=1--", 200, ""),
-            ("GET", "/login?user=admin' AND 1=(SELECT 1)--", 403, ""),
-            ("GET", "/catalog?cat=1; WAITFOR DELAY '0:0:5'--", 200, ""),
-            ("GET", "/search?term=1' AND pg_sleep(5)--", 200, "")
-        ]
-        for item in malicious_cases:
-            method, path, status = item[0], item[1], item[2]
-            raw_log = item[3] if len(item) > 3 else ""
-            ev_type, sev, title, _, ev_dict = evaluate_web_security_event(
-                method, path, status, "attacker", "45.142.195.12", raw_line=raw_log
-            )
-            self.assertIn(ev_type, ("SQL_INJECTION", "SQL_INJECTION_PROBE"))
-            if status == 500 and "syntax error" in raw_log:
-                self.assertEqual(sev, "critical", "SQLi with confirmed DB error MUST be CRITICAL")
-            else:
-                self.assertIn(sev, ("low", "medium"))
+    def test_sqli_successful_injection_escalation(self):
+        # Successful injection returning large data (HTTP 200 with 35KB payload) MUST escalate to CRITICAL
+        ev_type, sev, title, _, ev_dict = evaluate_web_security_event(
+            "GET", "/api/users?name=' OR 1=1--", 200, "attacker", "198.51.100.40", bytes_sent=35000
+        )
+        self.assertEqual(ev_type, "SQL_INJECTION")
+        self.assertEqual(sev, "critical", "Successful SQLi with abnormal response size MUST escalate to CRITICAL")
+        self.assertTrue(any("Abnormal response size" in s for s in ev_dict.get("signals", [])))
+
+    def test_sqli_velocity_repeated_attempts_escalation(self):
+        # Repeated injection attempts (>= 3) from the same source IP MUST escalate to HIGH
+        ip = "198.51.100.41"
+        for i in range(2):
+            evaluate_web_security_event("GET", f"/search?q=test_{i}' OR 1=1--", 200, "attacker", ip, bytes_sent=512)
+        
+        # 3rd attempt reaches velocity threshold -> escalated to HIGH
+        ev_type, sev, title, _, ev_dict = evaluate_web_security_event(
+            "GET", "/search?q=test_3' OR 1=1--", 200, "attacker", ip, bytes_sent=512
+        )
+        self.assertEqual(ev_type, "SQL_INJECTION")
+        self.assertEqual(sev, "high", "Sustained SQLi velocity cluster (>=3 attempts) MUST escalate to HIGH")
+        self.assertTrue(any("Velocity spike" in s for s in ev_dict.get("signals", [])))
+
+    def test_sqli_isolated_single_probe(self):
+        # Single isolated SQLi probe without secondary signals remains LOW
+        ev_type, sev, title, _, ev_dict = evaluate_web_security_event(
+            "GET", "/items?cat=1' WAITFOR DELAY '0:0:5'--", 200, "attacker", "198.51.100.42", bytes_sent=256
+        )
+        self.assertEqual(ev_type, "SQL_INJECTION_PROBE")
+        self.assertEqual(sev, "low", "Single uncorroborated probe MUST evaluate to LOW")
 
     # =========================================================================
     # 3. CROSS-SITE SCRIPTING (XSS)
@@ -148,7 +162,7 @@ class TestSIEMAccuracyCorpus(unittest.TestCase):
             self.assertEqual(ev_dict.get("confidence"), "HIGH")
 
     # =========================================================================
-    # 5. SCANNER PROBES & SENSITIVE FILE 200 LEAKS (Requirement 9)
+    # 5. SCANNER PROBES & SENSITIVE FILE 200 LEAKS
     # =========================================================================
     def test_scanner_and_exposure_cases(self):
         # 1. Single 404 probe must evaluate to INFO (No alert)
