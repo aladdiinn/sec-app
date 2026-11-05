@@ -6675,7 +6675,7 @@ async def api_agent_status(request: Request):
                 conn.close()
 
     if not appr:
-        return {"status": "pending", "server_id": None, "message": "No registration record found"}
+        return Response(content=json.dumps({"status":"pending","server_id":None,"message":"No registration record found"}, separators=(',', ':')), media_type="application/json")
 
     status = appr.get("status", "pending")
     node_type = appr.get("node_type", "server")
@@ -6685,7 +6685,7 @@ async def api_agent_status(request: Request):
     if status == "approved":
         if node_type == "app":
             # Application component node is approved! Server ID is strictly None.
-            return {"status": "approved", "node_type": "app", "server_id": None, "server_ip": appr.get("ip_address") or client_ip, "token": agent_token}
+            return Response(content=json.dumps({"status":"approved","node_type":"app","server_id":None,"server_ip":appr.get("ip_address") or client_ip,"token":agent_token}, separators=(',', ':')), media_type="application/json")
         else:
             # Server asset node: lookup in servers table by token or IP
             conn = db.get_db_connection()
@@ -6707,11 +6707,11 @@ async def api_agent_status(request: Request):
 
             if not server_id:
                 # Server was deleted by admin
-                return {"status": "rejected", "node_type": "server", "server_id": None, "message": "Server registration was revoked"}
+                return Response(content=json.dumps({"status":"rejected","node_type":"server","server_id":None,"message":"Server registration was revoked"}, separators=(',', ':')), media_type="application/json")
 
-            return {"status": "approved", "node_type": "server", "server_id": server_id, "server_ip": appr.get("ip_address") or client_ip, "token": agent_token}
+            return Response(content=json.dumps({"status":"approved","node_type":"server","server_id":server_id,"server_ip":appr.get("ip_address") or client_ip,"token":agent_token}, separators=(',', ':')), media_type="application/json")
 
-    return {"status": status, "node_type": node_type, "server_id": None, "server_ip": appr.get("ip_address") or client_ip, "token": agent_token}
+    return Response(content=json.dumps({"status":status,"node_type":node_type,"server_id":None,"server_ip":appr.get("ip_address") or client_ip,"token":agent_token}, separators=(',', ':')), media_type="application/json")
 
 @app.get("/api/approvals")
 async def api_get_approvals(request: Request):
