@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - app-siem
   pull_request:
     branches:
       - main
+      - app-siem
   workflow_dispatch:
 
 env:
@@ -137,7 +139,7 @@ jobs:
     name: Deploy to Production Ubuntu 22.04
     needs: build-and-push
     environment: production   # Manual approval gate via GitHub Environment
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/app-siem') && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: SSH to Ubuntu Server and Deploy Stack
