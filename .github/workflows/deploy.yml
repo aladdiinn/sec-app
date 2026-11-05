@@ -172,8 +172,8 @@ jobs:
             echo "==> Verifying application health..."
             sleep 4
             for i in {1..10}; do
-              if curl -sf http://127.0.0.1:8005/api/version > /dev/null; then
-                echo "==> Deployment Healthy! Application is online on 127.0.0.1:8005"
+              if curl -sf http://127.0.0.1:8001/api/version > /dev/null; then
+                echo "==> Deployment Healthy! Application is online on 127.0.0.1:8001"
                 exit 0
               fi
               echo "Waiting for app to become ready ($i/10)..."

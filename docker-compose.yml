@@ -41,8 +41,8 @@ services:
     env_file:
       - /application/Soc/.env
     ports:
-      # Bound to loopback port 8005 (avoids collision with host services like GitLab on port 8000)
-      - "127.0.0.1:8005:8000"
+      # Bound to loopback port 8001 (avoids collision with host services like GitLab on port 8000)
+      - "127.0.0.1:8001:8000"
     volumes:
       # Persistent host-mounted storage (logs, offline GeoIP database, local state)
       - /application/Soc/logs:/app/logs
