@@ -8838,6 +8838,34 @@ def api_delete_app_component(request: Request, app_id: int, comp_id: int):
     db.log_audit(username, "REMOVE_APP_COMPONENT", "application_component", comp_id, f"Removed component {comp_id} from application {app_id}")
     return {"status": "success", "message": f"Component {comp_id} removed"}
 
+@app.put("/api/apps/{app_id}/components/{comp_id}")
+def api_update_app_component(request: Request, app_id: int, comp_id: int, payload: dict = Body(...)):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    app_record = db.get_application_by_id(app_id)
+    if not app_record:
+        raise HTTPException(status_code=404, detail="Application not found")
+    node_name = (payload.get("node_name") or "").strip()
+    node_ip = (payload.get("node_ip") or "").strip()
+    role = (payload.get("role") or "").strip().lower() or None
+    if role and role not in ("web", "database"):
+        raise HTTPException(status_code=400, detail="Invalid role. Must be 'web' or 'database'")
+    port = (payload.get("port") or "").strip() or None
+    db_name = (payload.get("db_name") or "").strip() or None
+
+    if not node_name or not node_ip:
+        raise HTTPException(status_code=400, detail="Node name and Node IP are required")
+    comp = db.update_application_component(app_id, comp_id, node_name, node_ip, port=port, db_name=db_name, role=role)
+    if not comp:
+        raise HTTPException(status_code=404, detail="Component not found or could not be updated")
+    username = user.get("username", "system")
+    details_str = f"Updated component '{node_name}' ({node_ip})"
+    if port: details_str += f" on port {port}"
+    if db_name: details_str += f" (target db: {db_name})"
+    db.log_audit(username, "UPDATE_APP_COMPONENT", "application_component", comp_id, f"{details_str} for application '{app_record['name']}'")
+    return comp
+
 @app.get("/api/app/setup")
 def api_app_setup(
     request: Request,

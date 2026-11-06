@@ -906,3 +906,39 @@ def delete_application_component(conn, app_id: int, comp_id: int):
         cur.execute("DELETE FROM application_components WHERE id = %s AND application_id = %s RETURNING id;", (comp_id, app_id))
         res = cur.fetchone()
         return bool(res)
+
+def update_application_component(conn, app_id: int, comp_id: int, node_name: str, node_ip: str, port: str = None, db_name: str = None, role: str = None):
+    """Updates an existing application component details."""
+    if not conn:
+        return None
+    config_readiness = psycopg2.extras.Json({"port": port, "db_name": db_name})
+    with conn.cursor() as cur:
+        # Check if matching server exists to link
+        linked_srv_id = None
+        if node_ip:
+            cur.execute("SELECT id FROM servers WHERE ip = %s LIMIT 1;", (node_ip,))
+            srv = cur.fetchone()
+            if srv:
+                linked_srv_id = srv['id']
+
+        # Ensure columns exist
+        try:
+            cur.execute("ALTER TABLE application_components ADD COLUMN IF NOT EXISTS target_port VARCHAR(20);")
+            cur.execute("ALTER TABLE application_components ADD COLUMN IF NOT EXISTS target_db_name VARCHAR(100);")
+        except Exception:
+            pass
+
+        cur.execute("""
+            UPDATE application_components
+            SET node_name = %s,
+                node_ip = %s,
+                target_port = %s,
+                target_db_name = %s,
+                role = COALESCE(%s, role),
+                linked_server_id = COALESCE(%s, linked_server_id),
+                config_readiness = %s
+            WHERE id = %s AND application_id = %s
+            RETURNING id, application_id, role, node_name, node_ip, linked_server_id, enrollment_token, status, target_port, target_db_name;
+        """, (node_name, node_ip, str(port) if port else None, db_name, role, linked_srv_id, config_readiness, comp_id, app_id))
+        row = cur.fetchone()
+        return dict(row) if row else None

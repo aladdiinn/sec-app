@@ -5246,6 +5246,15 @@ def delete_application_component(app_id, comp_id):
     finally:
         conn.close()
 
+def update_application_component(app_id, comp_id, node_name, node_ip, port=None, db_name=None, role=None):
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        import app_siem_db
+        return app_siem_db.update_application_component(conn, app_id, comp_id, node_name, node_ip, port=port, db_name=db_name, role=role)
+    finally:
+        conn.close()
+
 # ── SIEM Detection Accuracy & Self-Correction Helpers ─────────────────────────
 def record_rule_verdict(target_type: str, target_id: int, verdict: str, reason: str, rule_name: str, analyst_user: str = "soc_analyst"):
     """Record analyst verdict (true_positive / false_positive) and calculate self-tuning precision."""

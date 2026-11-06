@@ -313,7 +313,12 @@
     <div id="pop-tab-components" class="modal-tab-pane" style="display:none">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
             <span style="font-size:12px; color:var(--text3)">Manage enrolled telemetry forwarder nodes (Tomcat web instances & PostgreSQL servers)</span>
-            <button class="btn btn-glass" onclick="loadAppComponentsTab(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+            <div style="display:flex; gap:8px">
+                <button class="btn btn-primary" onclick="openAddComponentModal(activeModalAppId)" style="padding:5px 14px; font-size:11px; background:var(--cyan); color:#000; font-weight:700; border:none; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:5px">
+                    <span>➕</span> Add Component
+                </button>
+                <button class="btn btn-glass" onclick="loadAppComponentsTab(activeModalAppId)" style="padding:5px 12px; font-size:11px">🔄 Refresh</button>
+            </div>
         </div>
         <div id="pop-components-tab-content" style="display:flex; flex-direction:column; gap:10px">
             <div style="padding:30px; text-align:center; color:var(--text3)">Loading components...</div>
@@ -354,6 +359,125 @@
             </div>
         </div>
     </div>
+
+<!-- Add / Edit Component Modal -->
+<div id="app-component-form-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:10006; backdrop-filter:blur(4px); align-items:center; justify-content:center">
+    <div style="background:var(--card, #0f172a); border:1px solid var(--cyan, #38bdf8); border-radius:12px; padding:24px 28px; width:520px; max-width:94%; box-shadow:0 20px 60px rgba(0,0,0,0.85); position:relative" onclick="event.stopPropagation()">
+        <!-- Header -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid var(--border); padding-bottom:12px">
+            <div>
+                <h4 id="cf-modal-title" style="margin:0; font-size:15px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:8px">
+                    <span>➕</span> Add Application Component
+                </h4>
+                <p id="cf-modal-subtitle" style="margin:4px 0 0 0; font-size:11.5px; color:var(--text3)">
+                    Enroll a Web (Tomcat) or Database (PostgreSQL) forwarder node.
+                </p>
+            </div>
+            <button class="btn btn-ghost" onclick="closeComponentFormModal()" style="font-size:16px; padding:2px 8px; color:var(--text2)">✕</button>
+        </div>
+
+        <!-- Form Body -->
+        <div style="display:flex; flex-direction:column; gap:14px">
+            <!-- Role Selection -->
+            <div>
+                <label style="display:block; font-size:11px; font-weight:700; color:var(--text3); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px">
+                    Component Role
+                </label>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+                    <label id="cf-role-db-card" style="display:flex; align-items:center; gap:8px; background:rgba(56,189,248,0.08); border:1px solid var(--cyan); padding:10px 14px; border-radius:8px; cursor:pointer">
+                        <input type="radio" name="cf-role-radio" id="cf-role-db" value="database" checked onchange="onComponentFormRoleChange()" style="accent-color:var(--cyan)">
+                        <div>
+                            <div style="font-size:12px; font-weight:700; color:var(--text)">🗄️ Database</div>
+                            <div style="font-size:10px; color:var(--text3)">PostgreSQL (Port 5432)</div>
+                        </div>
+                    </label>
+                    <label id="cf-role-web-card" style="display:flex; align-items:center; gap:8px; background:var(--bg2); border:1px solid var(--border); padding:10px 14px; border-radius:8px; cursor:pointer">
+                        <input type="radio" name="cf-role-radio" id="cf-role-web" value="web" onchange="onComponentFormRoleChange()" style="accent-color:var(--cyan)">
+                        <div>
+                            <div style="font-size:12px; font-weight:700; color:var(--text)">🌐 Web Node</div>
+                            <div style="font-size:10px; color:var(--text3)">Tomcat / HTTP Instance</div>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Node IP Address (with Asset Autocomplete) -->
+            <div style="position:relative">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
+                    <label id="cf-node-ip-label" style="font-size:11px; font-weight:700; color:var(--cyan); text-transform:uppercase; letter-spacing:0.5px">
+                        Node IP Address <span style="color:var(--red)">*</span>
+                    </label>
+                    <span style="font-size:10px; color:var(--text3)">Select or type asset IP</span>
+                </div>
+                <input type="text" id="cf-node-ip" placeholder="e.g. 192.168.150.16" class="glass mono" oninput="onComponentFormNodeInput('ip')" autocomplete="off" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                <!-- Autocomplete Suggestions Dropdown -->
+                <div id="cf-asset-autocomplete-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--card, #0f172a); border:1px solid var(--cyan); border-radius:6px; z-index:1010; box-shadow:0 10px 25px rgba(0,0,0,0.7); max-height:160px; overflow-y:auto; margin-top:2px"></div>
+            </div>
+
+            <!-- Component / Host Name -->
+            <div>
+                <label style="display:block; font-size:11px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px">
+                    Component / Host Name <span style="color:var(--red)">*</span>
+                </label>
+                <input type="text" id="cf-node-name" placeholder="e.g. Jvvnl-Mitra DB 1" class="glass" oninput="onComponentFormNodeInput('name')" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+            </div>
+
+            <!-- Port & DB Name (Grid) -->
+            <div style="display:grid; grid-template-columns:130px 1fr; gap:12px">
+                <div>
+                    <label style="display:block; font-size:11px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px">
+                        Target Port
+                    </label>
+                    <input type="text" id="cf-port" placeholder="5432" value="5432" class="glass mono" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                </div>
+                <div id="cf-db-name-group">
+                    <label style="display:block; font-size:11px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px">
+                        Target Database Name
+                    </label>
+                    <input type="text" id="cf-db-name" placeholder="e.g. bijlimitra, postgres, or blank" class="glass mono" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                </div>
+            </div>
+
+            <!-- Dynamic Hint -->
+            <div id="cf-modal-hint" style="background:rgba(56,189,248,0.06); border:1px solid rgba(56,189,248,0.2); border-radius:6px; padding:10px 12px; font-size:11px; color:var(--text2)">
+                💡 <b>Database Telemetry:</b> Monitors PostgreSQL audit queries and transactions. Run the generated curl setup script on the database host to begin live streaming.
+            </div>
+        </div>
+
+        <!-- Footer Buttons -->
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px; border-top:1px solid var(--border); padding-top:14px">
+            <button class="btn btn-ghost" onclick="closeComponentFormModal()" style="font-size:12px; padding:7px 16px">Cancel</button>
+            <button class="btn btn-primary" id="cf-submit-btn" onclick="submitComponentForm()" style="font-size:12px; padding:7px 20px; background:var(--cyan); color:#000; font-weight:700; border:none; border-radius:6px; cursor:pointer">
+                ➕ Enroll Component
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Setup Command Modal -->
+<div id="app-component-command-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:10007; backdrop-filter:blur(4px); align-items:center; justify-content:center">
+    <div style="background:var(--card, #0f172a); border:1px solid var(--green, #10b981); border-radius:12px; padding:24px 28px; width:580px; max-width:94%; box-shadow:0 25px 70px rgba(0,0,0,0.9); position:relative" onclick="event.stopPropagation()">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
+            <span style="font-size:24px">🎉</span>
+            <div>
+                <h4 style="margin:0; font-size:15px; font-weight:700; color:var(--green)">Component Enrolled Successfully!</h4>
+                <p style="margin:2px 0 0 0; font-size:11.5px; color:var(--text3)" id="acm-sub">Install forwarder on the server to start live telemetry stream.</p>
+            </div>
+        </div>
+        <div style="margin:14px 0">
+            <div style="font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; margin-bottom:6px">Run this command on the server via SSH as root/sudo:</div>
+            <div style="background:var(--bg, #090d16); border:1px solid var(--border); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:8px">
+                <code id="acm-curl-text" style="font-size:11.5px; color:var(--cyan); word-break:break-all; font-family:var(--font-mono), monospace"></code>
+            </div>
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px">
+            <button class="btn btn-glass" onclick="document.getElementById('app-component-command-modal').style.display='none'" style="font-size:12px; padding:7px 16px">Close</button>
+            <button class="btn btn-primary" onclick="copyAcmCommand()" style="font-size:12px; padding:7px 20px; background:var(--green); color:#000; font-weight:700; border:none; border-radius:6px; cursor:pointer">
+                📋 Copy Command & Close
+            </button>
+        </div>
+    </div>
+</div>
 
 <!-- Close Action Note Modal -->
 <div id="app-close-action-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:10005; backdrop-filter:blur(3px); align-items:center; justify-content:center">
@@ -1576,6 +1700,23 @@ async function loadAppRules(appId) {
 }
 
 // Load Components Tab
+let editingComponentId = null;
+let appServerAssets = [];
+let cachedAppComponents = {};
+
+async function loadServerAssetsForAppModal() {
+    if (appServerAssets.length > 0) return;
+    try {
+        const res = await fetch('/api/servers');
+        if (res.ok) {
+            const data = await res.json();
+            appServerAssets = data.servers || (Array.isArray(data) ? data : []);
+        }
+    } catch(e) {
+        console.warn('Could not load servers list for autocomplete', e);
+    }
+}
+
 async function loadAppComponentsTab(appId) {
     const container = document.getElementById('pop-components-tab-content');
     if (!container) return;
@@ -1585,8 +1726,25 @@ async function loadAppComponentsTab(appId) {
         const res = await fetch(`/api/apps/${appId}/components`);
         if (res.ok) {
             const comps = await res.json();
+            cachedAppComponents = {};
+            (comps || []).forEach(c => { cachedAppComponents[c.id] = c; });
+
+            if (document.getElementById('pop-metric-comps')) {
+                document.getElementById('pop-metric-comps').innerText = (comps || []).length;
+            }
+
             if (!comps || comps.length === 0) {
-                container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text3)">No components attached.</div>';
+                container.innerHTML = `
+                <div style="padding:36px 20px; text-align:center; color:var(--text3); background:var(--bg2); border:1px dashed var(--border); border-radius:10px">
+                    <div style="font-size:26px; margin-bottom:8px">🧩</div>
+                    <div style="font-size:13px; font-weight:700; color:var(--text); margin-bottom:4px">No Telemetry Components Attached</div>
+                    <p style="font-size:11.5px; color:var(--text3); margin-bottom:14px; max-width:440px; margin-left:auto; margin-right:auto">
+                        Stream real-time access logs and database audit telemetry into this application by adding a Tomcat web node or PostgreSQL server forwarder.
+                    </p>
+                    <button class="btn btn-primary" onclick="openAddComponentModal(activeModalAppId)" style="padding:6px 16px; font-size:11.5px; background:var(--cyan); color:#000; font-weight:700; border:none; border-radius:6px; cursor:pointer">
+                        ➕ Add Component
+                    </button>
+                </div>`;
                 return;
             }
 
@@ -1602,7 +1760,7 @@ async function loadAppComponentsTab(appId) {
                 const isApproved = st === 'APPROVED';
 
                 return `
-                <div style="background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:16px">
+                <div style="background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:16px" id="comp-card-${c.id}">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
                         <div>
                             <div style="display:flex; align-items:center; gap:8px">
@@ -1613,7 +1771,7 @@ async function loadAppComponentsTab(appId) {
                                 <span style="font-family:var(--font-mono), monospace; font-size:11px; color:var(--text3)">(${escapeHtml(c.node_ip || '')})</span>
                             </div>
                             <div style="font-size:11.5px; color:var(--text3); margin-top:4px">
-                                ${c.role === 'web' ? `Target Port: <b style="color:var(--text)">${c.target_port || '8000/auto'}</b>` : `Database: <b style="color:var(--text)">${c.target_db_name || 'all'}</b> (Port: ${c.target_port || '5432'})`}
+                                ${c.role === 'web' ? `Target Port: <b style="color:var(--text)">${c.target_port || '3030/auto'}</b>` : `Database: <b style="color:var(--text)">${c.target_db_name || 'all'}</b> (Port: ${c.target_port || '5432'})`}
                                 • Enrollment Token: <code style="color:var(--cyan); font-size:10.5px">${c.enrollment_token ? c.enrollment_token.substring(0, 16) + '...' : '-'}</code>
                             </div>
                         </div>
@@ -1623,9 +1781,12 @@ async function loadAppComponentsTab(appId) {
                             </span>
                             ${!isReceiving && !isApproved ? `
                             <button class="btn btn-primary" onclick="approveComponentFromModal(${appId}, ${c.id})" style="padding:4px 10px; font-size:10.5px">
-                                ✓ Approve Component
+                                ✓ Approve
                             </button>
                             ` : ''}
+                            <button class="btn btn-glass" onclick="openEditComponentModal(${appId}, ${c.id})" style="font-size:10.5px; padding:4px 10px; color:var(--cyan); border-color:rgba(56,189,248,0.3)" title="Edit Component Details">
+                                ✏️ Edit
+                            </button>
                             <button class="btn btn-ghost" onclick="deleteComponentFromModal(${appId}, ${c.id})" style="border:1px solid rgba(239,68,68,0.4); color:var(--red); font-size:10.5px; padding:4px 10px" title="Delete Component">
                                 🗑️ Delete
                             </button>
@@ -1645,6 +1806,267 @@ async function loadAppComponentsTab(appId) {
     } catch(e) {
         container.innerHTML = '<div style="padding:30px; text-align:center; color:var(--red)">Network error loading components.</div>';
     }
+}
+
+function openAddComponentModal(appId) {
+    editingComponentId = null;
+    loadServerAssetsForAppModal();
+
+    document.getElementById('cf-modal-title').innerHTML = '<span>➕</span> Add Application Component';
+    document.getElementById('cf-modal-subtitle').innerText = 'Enroll a Web (Tomcat) or Database (PostgreSQL) forwarder node.';
+    document.getElementById('cf-submit-btn').innerHTML = '➕ Enroll Component';
+
+    // Default to database since user is adding DB component or web
+    document.getElementById('cf-role-db').checked = true;
+    document.getElementById('cf-node-ip').value = '';
+    document.getElementById('cf-node-name').value = '';
+    document.getElementById('cf-port').value = '5432';
+    document.getElementById('cf-db-name').value = '';
+    if (document.getElementById('cf-asset-autocomplete-dropdown')) {
+        document.getElementById('cf-asset-autocomplete-dropdown').style.display = 'none';
+    }
+
+    onComponentFormRoleChange();
+    document.getElementById('app-component-form-modal').style.display = 'flex';
+}
+
+function openEditComponentModal(appId, compId) {
+    const comp = cachedAppComponents[compId];
+    if (!comp) return;
+
+    editingComponentId = compId;
+    loadServerAssetsForAppModal();
+
+    document.getElementById('cf-modal-title').innerHTML = '<span>✏️</span> Edit Component Details';
+    document.getElementById('cf-modal-subtitle').innerText = 'Update node name, IP, target port, or database catalog.';
+    document.getElementById('cf-submit-btn').innerHTML = '💾 Save Changes';
+
+    if (comp.role === 'database') {
+        document.getElementById('cf-role-db').checked = true;
+    } else {
+        document.getElementById('cf-role-web').checked = true;
+    }
+
+    document.getElementById('cf-node-name').value = comp.node_name || '';
+    document.getElementById('cf-node-ip').value = comp.node_ip || '';
+    document.getElementById('cf-port').value = comp.target_port || (comp.role === 'database' ? '5432' : '3030');
+    document.getElementById('cf-db-name').value = comp.target_db_name || '';
+
+    if (document.getElementById('cf-asset-autocomplete-dropdown')) {
+        document.getElementById('cf-asset-autocomplete-dropdown').style.display = 'none';
+    }
+
+    onComponentFormRoleChange();
+    document.getElementById('app-component-form-modal').style.display = 'flex';
+}
+
+function closeComponentFormModal() {
+    const m = document.getElementById('app-component-form-modal');
+    if (m) m.style.display = 'none';
+    const dd = document.getElementById('cf-asset-autocomplete-dropdown');
+    if (dd) dd.style.display = 'none';
+    editingComponentId = null;
+}
+
+function onComponentFormRoleChange() {
+    const isDb = document.getElementById('cf-role-db').checked;
+    const dbCard = document.getElementById('cf-role-db-card');
+    const webCard = document.getElementById('cf-role-web-card');
+    const dbNameGroup = document.getElementById('cf-db-name-group');
+    const portInput = document.getElementById('cf-port');
+    const nameInput = document.getElementById('cf-node-name');
+    const hint = document.getElementById('cf-modal-hint');
+
+    if (isDb) {
+        if (dbCard) { dbCard.style.border = '1px solid var(--cyan)'; dbCard.style.background = 'rgba(56,189,248,0.08)'; }
+        if (webCard) { webCard.style.border = '1px solid var(--border)'; webCard.style.background = 'var(--bg2)'; }
+        if (dbNameGroup) dbNameGroup.style.display = 'block';
+        if (!editingComponentId && (portInput.value === '' || portInput.value === '3030' || portInput.value === '8080')) {
+            portInput.value = '5432';
+        }
+        if (!editingComponentId && nameInput.value === '') {
+            nameInput.placeholder = 'e.g. Jvvnl-Mitra DB 1';
+        }
+        if (hint) {
+            hint.innerHTML = '💡 <b>Database Telemetry:</b> Monitors PostgreSQL audit queries and transactions. Run the generated curl setup script on the database host to begin live streaming.';
+        }
+    } else {
+        if (webCard) { webCard.style.border = '1px solid var(--cyan)'; webCard.style.background = 'rgba(56,189,248,0.08)'; }
+        if (dbCard) { dbCard.style.border = '1px solid var(--border)'; dbCard.style.background = 'var(--bg2)'; }
+        if (dbNameGroup) dbNameGroup.style.display = 'none';
+        if (!editingComponentId && (portInput.value === '' || portInput.value === '5432')) {
+            portInput.value = '3030';
+        }
+        if (!editingComponentId && nameInput.value === '') {
+            nameInput.placeholder = 'e.g. Jvvnl -Mitra Web 2';
+        }
+        if (hint) {
+            hint.innerHTML = '💡 <b>Web Telemetry:</b> Streams real-time Tomcat catalina/access logs and HTTP transactions. Run the generated curl setup script on the web host to begin live streaming.';
+        }
+    }
+}
+
+function onComponentFormNodeInput(source) {
+    const ipInput = document.getElementById('cf-node-ip');
+    const nameInput = document.getElementById('cf-node-name');
+    const dropdown = document.getElementById('cf-asset-autocomplete-dropdown');
+    if (!dropdown) return;
+
+    const q = (source === 'ip' ? (ipInput?.value || '') : (nameInput?.value || '')).toLowerCase().trim();
+    if (!q || q.length < 1) {
+        dropdown.style.display = 'none';
+        return;
+    }
+
+    const matches = (appServerAssets || []).filter(s => {
+        const ip = (s.ip || '').toLowerCase();
+        const host = (s.hostname || '').toLowerCase();
+        return ip.includes(q) || host.includes(q);
+    }).slice(0, 5);
+
+    if (matches.length === 0) {
+        dropdown.style.display = 'none';
+        return;
+    }
+
+    dropdown.innerHTML = matches.map(s => `
+        <div onclick="selectComponentFormAsset('${s.ip || ''}', '${escapeHtml(s.hostname || '')}')" style="padding:8px 12px; cursor:pointer; font-size:11.5px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background='transparent'">
+            <div>
+                <strong style="color:var(--text)">${escapeHtml(s.hostname || 'Server')}</strong>
+                <span style="font-family:var(--font-mono), monospace; color:var(--cyan); margin-left:6px">${s.ip || ''}</span>
+            </div>
+            <span class="badge" style="font-size:9.5px">${escapeHtml(s.os || 'Linux')}</span>
+        </div>
+    `).join('');
+    dropdown.style.display = 'block';
+}
+
+function selectComponentFormAsset(ip, hostname) {
+    const ipInput = document.getElementById('cf-node-ip');
+    const nameInput = document.getElementById('cf-node-name');
+    const dropdown = document.getElementById('cf-asset-autocomplete-dropdown');
+
+    if (ipInput && ip) ipInput.value = ip;
+    if (nameInput && hostname) {
+        const isDb = document.getElementById('cf-role-db').checked;
+        nameInput.value = isDb ? `${hostname} DB` : hostname;
+    }
+    if (dropdown) dropdown.style.display = 'none';
+}
+
+async function submitComponentForm() {
+    if (!activeModalAppId) {
+        if (typeof showToast === 'function') showToast('Active application context not found', 'error');
+        return;
+    }
+
+    const role = document.getElementById('cf-role-db').checked ? 'database' : 'web';
+    const nodeName = (document.getElementById('cf-node-name')?.value || '').trim();
+    const nodeIp = (document.getElementById('cf-node-ip')?.value || '').trim();
+    const port = (document.getElementById('cf-port')?.value || '').trim() || null;
+    const dbName = (document.getElementById('cf-db-name')?.value || '').trim() || null;
+
+    if (!nodeName || !nodeIp) {
+        if (typeof showToast === 'function') showToast('Please enter both Node IP Address and Component Name', 'warning');
+        return;
+    }
+
+    const submitBtn = document.getElementById('cf-submit-btn');
+    const origText = submitBtn.innerHTML;
+    submitBtn.innerHTML = '⏳ Saving...';
+    submitBtn.disabled = true;
+
+    try {
+        if (editingComponentId) {
+            // Update existing component
+            const res = await fetch(`/api/apps/${activeModalAppId}/components/${editingComponentId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    role: role,
+                    node_name: nodeName,
+                    node_ip: nodeIp,
+                    port: port,
+                    db_name: role === 'database' ? dbName : null
+                })
+            });
+
+            if (res.ok) {
+                if (typeof showToast === 'function') showToast(`Component "${nodeName}" updated successfully!`, 'success');
+                closeComponentFormModal();
+                loadAppComponentsTab(activeModalAppId);
+                if (typeof loadApplications === 'function') loadApplications();
+                if (typeof loadDashboardData === 'function') loadDashboardData();
+            } else {
+                const err = await res.json().catch(() => ({}));
+                if (typeof showToast === 'function') showToast(err.detail || 'Failed to update component', 'error');
+            }
+        } else {
+            // Add new component
+            const res = await fetch(`/api/apps/${activeModalAppId}/components`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    role: role,
+                    node_name: nodeName,
+                    node_ip: nodeIp,
+                    port: port,
+                    db_name: role === 'database' ? dbName : null
+                })
+            });
+
+            if (res.ok) {
+                const comp = await res.json();
+                closeComponentFormModal();
+                await loadAppComponentsTab(activeModalAppId);
+                if (typeof loadApplications === 'function') loadApplications();
+                if (typeof loadDashboardData === 'function') loadDashboardData();
+
+                // Display setup curl command modal
+                const baseUrl = window.location.origin;
+                let setupUrl = `${baseUrl}/api/app/setup?token=${comp.enrollment_token}&app=${activeModalAppId}&role=${comp.role}&node=${encodeURIComponent(comp.node_name)}`;
+                if (comp.target_port) setupUrl += `&port=${encodeURIComponent(comp.target_port)}`;
+                if (comp.target_db_name) setupUrl += `&db_name=${encodeURIComponent(comp.target_db_name)}`;
+                const curlCmd = `curl -s "${setupUrl}" | sudo bash`;
+
+                // Auto copy to clipboard
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(curlCmd).catch(() => {});
+                }
+
+                const cmdModal = document.getElementById('app-component-command-modal');
+                const curlText = document.getElementById('acm-curl-text');
+                const subText = document.getElementById('acm-sub');
+                if (cmdModal && curlText) {
+                    curlText.innerText = curlCmd;
+                    if (subText) subText.innerText = `Enrolled "${comp.node_name}" (${(comp.role || '').toUpperCase()}). Run this installer on ${comp.node_ip}.`;
+                    cmdModal.style.display = 'flex';
+                }
+
+                if (typeof showToast === 'function') {
+                    showToast(`Component "${comp.node_name}" enrolled! Setup curl command copied to clipboard.`, 'success');
+                }
+            } else {
+                const err = await res.json().catch(() => ({}));
+                if (typeof showToast === 'function') showToast(err.detail || 'Failed to enroll component', 'error');
+            }
+        }
+    } catch(e) {
+        if (typeof showToast === 'function') showToast('Network error processing component: ' + (e.message || e), 'error');
+    } finally {
+        submitBtn.innerHTML = origText;
+        submitBtn.disabled = false;
+    }
+}
+
+function copyAcmCommand() {
+    const text = document.getElementById('acm-curl-text')?.innerText || '';
+    if (text && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+    }
+    if (typeof showToast === 'function') showToast('Setup command copied to clipboard!', 'success');
+    const cmdModal = document.getElementById('app-component-command-modal');
+    if (cmdModal) cmdModal.style.display = 'none';
 }
 
 async function approveComponentFromModal(appId, compId) {
