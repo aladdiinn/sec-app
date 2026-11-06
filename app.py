@@ -9572,9 +9572,9 @@ def evaluate_postgres_security_event(raw_line: str):
 
     msg_lower = msg.lower()
 
-    # 1. Password authentication failure
-    if "password authentication failed" in msg_lower:
-        m_u = re.search(r'for user ["\']?([^"\'\s]+)["\']?', msg, re.IGNORECASE)
+    # 1. Password authentication failure or unauthorized/non-existent role probe
+    if "password authentication failed" in msg_lower or ("role" in msg_lower and "does not exist" in msg_lower) or "authentication failed" in msg_lower or "no pg_hba.conf entry" in msg_lower:
+        m_u = re.search(r'(?:for user|role)\s+["\']?([^"\'\s]+)["\']?', msg, re.IGNORECASE)
         u = m_u.group(1) if m_u else (db_user or "unknown")
         return "DB_AUTH_FAILURE", "high", f"Database Authentication Failed (User: {u})", "T1110 - Brute Force", u, db_name, level
 
