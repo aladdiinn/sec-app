@@ -7,7 +7,7 @@
 echo "Running pre-commit security checks..."
 
 # 1. Check if .env or secret config is staged
-STAGED_ENV=$(git diff --cached --name-only | grep -E "^\.env$|^\.env\..*")
+STAGED_ENV=$(git diff --cached --name-only | grep -E "^\.env($|\.)" | grep -v "^\.env\.example$" || true)
 if [ -n "$STAGED_ENV" ]; then
     echo "======================================================================"
     echo "❌ COMMIT REJECTED: Attempting to commit environment secret file:"

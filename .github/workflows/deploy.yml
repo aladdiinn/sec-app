@@ -43,8 +43,9 @@ jobs:
             exit 1
           fi
           echo "Checking git index for tracked secrets or .env files..."
-          if git ls-files | grep -E "^\.env$|^\.env\..*"; then
-            echo "CRITICAL ERROR: .env file is tracked in git index!"
+          TRACKED_ENV=$(git ls-files | grep -E "^\.env($|\.)" | grep -v "^\.env\.example$" || true)
+          if [ -n "$TRACKED_ENV" ]; then
+            echo "CRITICAL ERROR: Secret .env file is tracked in git index: $TRACKED_ENV"
             exit 1
           fi
           echo "[PASS] No .env files present or tracked in build context."
