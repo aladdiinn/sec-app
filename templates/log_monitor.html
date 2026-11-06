@@ -1399,6 +1399,7 @@ async function analyzeWithLlm() {
         const currentCat = (typeof activeCategory !== 'undefined' && activeCategory && activeCategory !== 'all') ? activeCategory : '';
         const res = await apiFetch('/api/logs/llm-analyze', {
             method: 'POST',
+            timeout: 90000,
             body: JSON.stringify({ 
                 server_id: srvId === '0' ? null : parseInt(srvId), 
                 period: period,

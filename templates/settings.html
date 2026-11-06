@@ -355,6 +355,7 @@ async function triggerTestEmail(btn) {
     try {
         const res = await apiFetch('/api/settings/notifications/test-email', {
             method: 'POST',
+            timeout: 30000,
             body: JSON.stringify({ recipient: rcpt || undefined })
         });
 
