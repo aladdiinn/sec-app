@@ -60,7 +60,7 @@
     if (token) headers['Authorization'] = 'Bearer ' + token;
 
     // Default 10s timeout to prevent UI hangs during heavy backend load
-    const timeoutMs = options.timeout || 10000;
+    const timeoutMs = options.timeout || 45000;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const signal = options.signal || controller.signal;

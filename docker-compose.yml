@@ -32,6 +32,9 @@ services:
   # BSmart SOC Application Container (FastAPI + Uvicorn)
   # ----------------------------------------------------------------------------
   soc:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ${DOCKER_IMAGE:-ghcr.io/aladdiinn/sec-app:latest}
     container_name: bsmart-soc-app
     restart: unless-stopped
