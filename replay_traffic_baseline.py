@@ -45,7 +45,7 @@ def run_replay(days=7):
             cur.execute("""
                 SELECT server_id, recorded_at, window_seconds, delta_rx_bytes, delta_tx_bytes, hour_of_day, day_of_week
                 FROM network_traffic_history
-                WHERE recorded_at >= NOW() - INTERVAL '%s days'
+                WHERE recorded_at >= NOW() - (%s * INTERVAL '1 day')
                 ORDER BY recorded_at ASC;
             """, (days,))
             traffic_samples = [dict(r) if isinstance(r, dict) else {
@@ -57,10 +57,10 @@ def run_replay(days=7):
             cur.execute("""
                 SELECT id, title, severity, description, created_at, server_id
                 FROM incidents
-                WHERE (title ILIKE '%traffic%' OR title ILIKE '%spike%')
-                  AND created_at >= NOW() - INTERVAL '%s days'
+                WHERE (title ILIKE %s OR title ILIKE %s)
+                  AND created_at >= NOW() - (%s * INTERVAL '1 day')
                 ORDER BY created_at ASC;
-            """, (days,))
+            """, ('%traffic%', '%spike%', days))
             old_incidents = [dict(r) if isinstance(r, dict) else {
                 "id": r[0], "title": r[1], "severity": r[2], "description": r[3], "created_at": r[4], "server_id": r[5]
             } for r in cur.fetchall()]

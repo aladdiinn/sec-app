@@ -112,9 +112,9 @@ def merge_duplicates():
                     f"Primary Incident #{primary['id']} for Server #{primary['server_id']}."
                 )
                 cur.execute("""
-                    INSERT INTO audit_logs (user_id, action, target, details, created_at)
-                    VALUES (1, 'MERGE_DUPLICATE_INCIDENTS', 'incidents', %s, NOW());
-                """, (audit_details,))
+                    INSERT INTO audit_logs (user_id, action, target, target_type, target_id, detail, timestamp)
+                    VALUES (1, 'MERGE_DUPLICATE_INCIDENTS', 'incidents', 'incident', %s, %s, NOW());
+                """, (primary["id"], audit_details))
 
                 merged_total += len(duplicates)
 

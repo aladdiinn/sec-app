@@ -2482,7 +2482,7 @@ def create_detection_rule(name, pattern, severity, event_type, mitre_tactic=None
             rid = cur.fetchone()['id']
             try:
                 cur.execute("""
-                    INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                    INSERT INTO audit_logs (user_id, action, target, detail, timestamp)
                     VALUES (NULL, 'CREATE_RULE_SHADOW', %s, 'New rule placed into default 7-day shadow mode awaiting admin promotion', NOW());
                 """, (name,))
             except Exception:
@@ -5293,7 +5293,7 @@ def record_rule_verdict(target_type: str, target_id: int, verdict: str, reason: 
                 if cur.rowcount > 0:
                     try:
                         cur.execute("""
-                            INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                            INSERT INTO audit_logs (user_id, action, target, detail, timestamp)
                             VALUES (NULL, 'RULE_AUTO_CAPPED', %s, %s, NOW());
                         """, (rule_name, f"Auto-capped severity: FP rate {((fp/total_rev)*100):.1f}% ({fp}/{total_rev}) exceeded 30% threshold"))
                     except Exception:
@@ -5308,7 +5308,7 @@ def record_rule_verdict(target_type: str, target_id: int, verdict: str, reason: 
                 if cur.rowcount > 0:
                     try:
                         cur.execute("""
-                            INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                            INSERT INTO audit_logs (user_id, action, target, detail, timestamp)
                             VALUES (NULL, 'RULE_UNCAPPED', %s, %s, NOW());
                         """, (rule_name, f"Uncapped: FP rate improved to {((fp/total_rev)*100):.1f}% ({fp}/{total_rev})"))
                     except Exception:
@@ -5508,7 +5508,7 @@ def promote_detection_rule(rule_id: int):
                 r_name = row["name"] if isinstance(row, dict) else row[0]
                 try:
                     cur.execute("""
-                        INSERT INTO audit_logs (user_id, action, target, details, created_at)
+                        INSERT INTO audit_logs (user_id, action, target, detail, timestamp)
                         VALUES (NULL, 'RULE_PROMOTED', %s, 'Admin promoted rule from 7-day shadow mode to active production enforcement', NOW());
                     """, (r_name,))
                 except Exception:
@@ -5643,7 +5643,7 @@ def get_network_traffic_history(server_id: int, days: int = 7):
             cur.execute("""
                 SELECT recorded_at, window_seconds, delta_rx_bytes, delta_tx_bytes, hour_of_day, day_of_week
                 FROM network_traffic_history
-                WHERE server_id = %s AND recorded_at >= NOW() - INTERVAL '%s days'
+                WHERE server_id = %s AND recorded_at >= NOW() - (%s * INTERVAL '1 day')
                 ORDER BY recorded_at ASC;
             """, (server_id, days))
             rows = cur.fetchall()
