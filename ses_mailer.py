@@ -436,13 +436,28 @@ def build_alert_html(alert_id: int, alert_title: str, alert_type: str, message: 
     </html>
     """
 
+def is_email_dispatch_enabled() -> bool:
+    """Checks whether email alerting is globally enabled in settings."""
+    try:
+        import database as db
+        settings = db.get_settings()
+        val = settings.get("email_notifications_enabled", "true")
+        return str(val).strip().lower() not in ("false", "0", "no", "disabled")
+    except Exception as e:
+        logger.debug(f"[SES] Failed to read email_notifications_enabled setting: {e}")
+        return True
+
 def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, message: str, severity: str, timestamp: str, server_ip: str, hostname: str, project_id: int = 1, force: bool = False):
     """
     Main dispatch entry point:
+    - Checks if email notifications are globally enabled in settings.
     - Enforces 15-minute deduplication for critical alerts per (rule, server).
     - Prevents mail storm from frequent 30-60s alerts.
     - Runs in background without blocking caller.
     """
+    if not force and not is_email_dispatch_enabled():
+        logger.info(f"[SES] Alert email dispatch suppressed for #{alert_id} ({alert_title}): email_notifications_enabled is DISABLED in Settings.")
+        return False
     rule_key = str(alert_type).upper()
     now = time.time()
 
@@ -466,8 +481,17 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
     result = send_email_per_recipient(subject, html_body, alert_id=alert_id)
     return result["ok"]
 
-def send_test_email(target_recipient: str = None):
+def send_test_email(target_recipient: str = None, force: bool = False):
     """Sends a single test email and returns the exact SES MessageId or error."""
+    if not force and not is_email_dispatch_enabled():
+        err_msg = "Email Notifications are DISABLED in Settings. Enable 'Global Alert Dispatch' in Settings -> Notifications to send emails."
+        logger.warning(f"[SES] Test email blocked: {err_msg}")
+        cfg = get_ses_config()
+        rcpt = target_recipient or (parse_recipients(cfg["recipient_str"])[0] if parse_recipients(cfg["recipient_str"]) else "unconfigured")
+        import database as db
+        db.log_email_attempt(rcpt, "[BLOCKED] SES Verification Test Email", "SUPPRESSED", None, err_msg, None)
+        return {"ok": False, "error": err_msg, "recipient": rcpt, "disabled": True}
+
     cfg = get_ses_config()
     sender = cfg["sender"]
     rcpt = target_recipient or (parse_recipients(cfg["recipient_str"])[0] if parse_recipients(cfg["recipient_str"]) else None)

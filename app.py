@@ -7062,8 +7062,9 @@ async def api_send_test_email(request: Request):
     try: body = await request.json()
     except Exception: body = {}
     target = body.get("recipient")
+    force = bool(body.get("force", False))
     import ses_mailer
-    return ses_mailer.send_test_email(target_recipient=target)
+    return ses_mailer.send_test_email(target_recipient=target, force=force)
 
 @app.get("/api/settings/notifications/logs")
 async def api_get_email_logs(request: Request):

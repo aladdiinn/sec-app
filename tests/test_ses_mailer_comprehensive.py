@@ -52,5 +52,25 @@ class TestSesMailerComprehensive(unittest.TestCase):
             )
             self.assertFalse(res2)
 
+    def test_disabled_email_suppression(self):
+        # When email_notifications_enabled is false, alert emails must be suppressed
+        with patch("ses_mailer.is_email_dispatch_enabled", return_value=False):
+            with patch("ses_mailer.send_email_per_recipient") as mock_send:
+                res = ses_mailer.send_smart_alert_email(
+                    alert_id=3, alert_title="Alert", alert_type="TEST_RULE",
+                    message="msg", severity="CRITICAL", timestamp="now",
+                    server_ip="10.0.0.2", hostname="host-2", force=False
+                )
+                self.assertFalse(res)
+                mock_send.assert_not_called()
+
+        # Test send_test_email suppression when disabled
+        with patch("ses_mailer.is_email_dispatch_enabled", return_value=False):
+            with patch("database.log_email_attempt") as mock_log:
+                res_test = ses_mailer.send_test_email()
+                self.assertFalse(res_test["ok"])
+                self.assertTrue(res_test.get("disabled"))
+                mock_log.assert_called_once()
+
 if __name__ == '__main__':
     unittest.main()

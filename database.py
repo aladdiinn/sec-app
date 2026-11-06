@@ -1219,13 +1219,13 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 _CACHED_EMAIL_TIME = 0
                 
             current_time = time.time()
-            if current_time - _CACHED_EMAIL_TIME > 180: # Cache for 3 minutes
+            if current_time - _CACHED_EMAIL_TIME > 5: # Fast 5s cache
                 try:
                     cur.execute("SELECT value FROM settings WHERE key = 'email_notifications_enabled';")
                     s_row = cur.fetchone()
                     if s_row:
                         val = s_row["value"] if isinstance(s_row, dict) else s_row[0]
-                        _CACHED_EMAIL_SETTING = (val.lower() != "false")
+                        _CACHED_EMAIL_SETTING = (str(val).strip().lower() not in ("false", "0", "no", "disabled"))
                     _CACHED_EMAIL_TIME = current_time
                 except Exception as ex_set:
                     logger.debug(f"Settings check error: {ex_set}")
@@ -2761,6 +2761,11 @@ def save_setting(key, value):
                 INSERT INTO settings (key, value) VALUES (%s, %s)
                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
             """, (key, str(value)))
+            if key == 'email_notifications_enabled':
+                global _CACHED_EMAIL_SETTING, _CACHED_EMAIL_TIME
+                import time
+                _CACHED_EMAIL_SETTING = (str(value).strip().lower() not in ('false', '0', 'no', 'disabled'))
+                _CACHED_EMAIL_TIME = time.time()
             return True
     except Exception as e:
         try:
