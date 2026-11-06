@@ -241,25 +241,101 @@ def find_tomcat_log_files(target_port: str = "") -> list:
     return active_files
 
 def find_postgres_log_files(target_port: str = "") -> list:
-    """Locates active PostgreSQL log files."""
+    """Locates active PostgreSQL log files across running processes, open file descriptors, and filesystem."""
     candidates = []
     if CONFIG["PG_LOG_DIR"] and os.path.isdir(CONFIG["PG_LOG_DIR"]):
-        candidates.append(os.path.realpath(CONFIG["PG_LOG_DIR"]))
+        for f in glob.glob(os.path.join(CONFIG["PG_LOG_DIR"], "*.log*")):
+            if os.path.isfile(f) and not f.endswith((".gz", ".zip")):
+                candidates.append(os.path.realpath(f))
 
+    # 1. Port-based process inspection (Linux /proc)
+    if target_port and sys.platform.startswith("linux"):
+        try:
+            import subprocess
+            res = subprocess.run(["ss", "-tulpn"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True)
+            for line in res.stdout.splitlines():
+                if f":{target_port} " in line or f":{target_port}	" in line:
+                    match = re.search(r'pid=(\d+)', line)
+                    if match:
+                        pid = match.group(1)
+                        # Check /proc/<pid>/fd for open log files
+                        fd_dir = f"/proc/{pid}/fd"
+                        if os.path.isdir(fd_dir):
+                            for fd in os.listdir(fd_dir):
+                                try:
+                                    link = os.readlink(os.path.join(fd_dir, fd))
+                                    if os.path.isfile(link) and (".log" in link or ".csv" in link) and not link.endswith((".gz", ".zip")):
+                                        rf = os.path.realpath(link)
+                                        if rf not in candidates:
+                                            candidates.append(rf)
+                                except Exception:
+                                    pass
+                        # Check data directory in cmdline (-D <path>)
+                        cmdline_path = f"/proc/{pid}/cmdline"
+                        if os.path.exists(cmdline_path):
+                            with open(cmdline_path, "r", encoding="utf-8", errors="ignore") as f:
+                                cmd = f.read().replace(' ', ' ')
+                                m_data = re.search(r'-D\s+([^\s]+)', cmd) or re.search(r'-D([^\s]+)', cmd)
+                                if m_data:
+                                    data_dir = m_data.group(1).strip()
+                                    for sub in ("log", "pg_log", "current_logfiles", ""):
+                                        p = os.path.join(data_dir, sub, "*.log*") if sub else os.path.join(data_dir, "*.log*")
+                                        for f in glob.glob(p):
+                                            if os.path.isfile(f) and not f.endswith((".gz", ".zip")):
+                                                rf = os.path.realpath(f)
+                                                if rf not in candidates:
+                                                    candidates.append(rf)
+        except Exception:
+            pass
+
+    # 2. Inspect all running postgres processes for open log file descriptors
+    if sys.platform.startswith("linux"):
+        try:
+            import subprocess
+            pg_pids = subprocess.run(["pgrep", "-f", "postgres"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True)
+            for p in pg_pids.stdout.splitlines()[:15]:
+                pid = p.strip()
+                if not pid: continue
+                fd_dir = f"/proc/{pid}/fd"
+                if os.path.isdir(fd_dir):
+                    for fd in os.listdir(fd_dir):
+                        try:
+                            link = os.readlink(os.path.join(fd_dir, fd))
+                            if os.path.isfile(link) and (".log" in link or ".csv" in link) and not link.endswith((".gz", ".zip")):
+                                rf = os.path.realpath(link)
+                                if rf not in candidates:
+                                    candidates.append(rf)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    # 3. Standard and enterprise PostgreSQL log paths
     standard_patterns = [
         "/var/log/postgresql/postgresql-*.log",
-        "/var/lib/pgsql/*/data/log/*.log",
-        "/var/lib/postgresql/*/main/log/*.log",
-        "/var/log/postgresql/*.log"
+        "/var/log/postgresql/*.log",
+        "/var/lib/pgsql/*/data/log/*.log*",
+        "/var/lib/pgsql/*/data/pg_log/*.log*",
+        "/var/lib/postgresql/*/main/log/*.log*",
+        "/var/lib/postgresql/*/main/pg_log/*.log*",
+        "/var/log/pgaudit/*.log*",
+        "/var/log/pgaudit.log",
+        "/data/*/log/*.log*",
+        "/data/*/pg_log/*.log*",
+        "/application/*/log*/*.log*",
+        "/opt/*/data/log/*.log*",
+        "/opt/pgsql/*/data/log/*.log*"
     ]
     for pattern in standard_patterns:
         for f in glob.glob(pattern):
-            if os.path.isfile(f) and not f.endswith(".gz") and not f.endswith(".zip"):
+            if os.path.isfile(f) and not f.endswith((".gz", ".zip")):
                 rf = os.path.realpath(f)
                 if rf not in candidates:
                     candidates.append(rf)
 
-    return [{"path": f, "source": "postgres"} for f in candidates]
+    # Prioritize latest modified active log file
+    candidates.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+    return [{"path": f, "source": "postgres"} for f in candidates[:5]]
 
 # ── NOISE FILTERING & PATTERNS ────────────────────────────────────────────────
 
