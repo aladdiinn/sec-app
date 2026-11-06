@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 """
 One-Off Administrator Password Reset & Security Re-initialization Tool
-Usage on server: python reset_admin.py
-
-Actions performed:
-1. Generates a cryptographically strong 20-character random password.
-2. Hashes it with bcrypt and updates the admin/superuser record(s) in PostgreSQL.
-3. Enforces `must_change_password = TRUE` (user must choose a new password on first login).
-4. Clears active session locks.
-5. Writes an immutable audit entry to `audit_logs`.
-6. Prints the temporary password to stdout ONCE in a secure banner.
+Usage on server:
+  python reset_admin.py                   # Generates random 20-char password with must_change_password=True
+  python reset_admin.py <custom_password> # Sets exact custom password (e.g. Adminsecure2026) directly
 """
 import sys
 import os
@@ -31,7 +25,6 @@ except ImportError:
 
 def generate_strong_password(length=20):
     chars = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
-    # Ensure at least one uppercase, lowercase, digit, and symbol
     pwd = [
         secrets.choice(string.ascii_uppercase),
         secrets.choice(string.ascii_lowercase),
@@ -55,11 +48,18 @@ def reset_admin():
         print("[ERROR] Could not establish database connection.")
         sys.exit(1)
 
-    raw_password = generate_strong_password(20)
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        raw_password = sys.argv[1].strip()
+        must_change = False
+        print(f"[*] Setting custom administrator password provided via CLI argument.")
+    else:
+        raw_password = generate_strong_password(20)
+        must_change = True
 
     if USE_BCRYPT:
         hashed = bcrypt.hashpw(raw_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     else:
+        from werkzeug.security import generate_password_hash
         hashed = generate_password_hash(raw_password)
 
     try:
@@ -74,24 +74,24 @@ def reset_admin():
             cur.execute("""
                 UPDATE users 
                 SET hashed_password = %s,
-                    must_change_password = TRUE,
+                    must_change_password = %s,
                     is_active = TRUE
                 WHERE is_admin = TRUE OR LOWER(role) IN ('admin', 'superuser') OR LOWER(username) = 'admin'
                 RETURNING id, username, email;
-            """, (hashed,))
+            """, (hashed, must_change))
             updated_users = cur.fetchall()
 
             if not updated_users:
                 # If no admin user exists, create one
                 cur.execute("""
                     INSERT INTO users (username, email, hashed_password, role, full_name, is_admin, is_active, must_change_password, created_at)
-                    VALUES ('admin', 'admin@bsmartsoc.local', %s, 'superuser', 'System Administrator', TRUE, TRUE, TRUE, NOW())
+                    VALUES ('admin', 'admin@bsmartsoc.local', %s, 'superuser', 'System Administrator', TRUE, TRUE, %s, NOW())
                     RETURNING id, username, email;
-                """, (hashed,))
+                """, (hashed, must_change))
                 updated_users = cur.fetchall()
 
             # 3. Write structured audit log entry
-            details_str = f"Administrator credentials reset with random strong password on {len(updated_users)} account(s); must_change_password enforced."
+            details_str = f"Administrator credentials reset on {len(updated_users)} account(s); must_change_password={must_change}."
             try:
                 cur.execute("""
                     INSERT INTO audit_logs (user_id, action, target, details, created_at)
@@ -114,14 +114,10 @@ def reset_admin():
             uemail = u['email'] if isinstance(u, dict) else u[2]
             print(f"  * Username: {uname} (Email: {uemail})")
         print("-" * 72)
-        print("TEMPORARY ONE-TIME ADMINISTRATOR PASSWORD:")
+        print("ADMINISTRATOR PASSWORD CONFIGURED:")
         print(f"\n    {raw_password}\n")
         print("-" * 72)
-        print("SECURITY ENFORCEMENTS:")
-        print("  1. Hardcoded password fallbacks (admin/admin, Admin@1234) are REMOVED.")
-        print("  2. 'must_change_password' flag is set to TRUE.")
-        print("  3. You will be redirected to /change-password immediately upon login.")
-        print("  4. Save this temporary password now; it will NOT be shown again.")
+        print(f"Direct Login Ready: {'YES (Ready for immediate access)' if not must_change else 'Must change upon first login'}")
         print("="*72 + "\n")
 
     except Exception as e:

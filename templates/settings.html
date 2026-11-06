@@ -233,6 +233,18 @@ async function changePassword(e) {
     const btn = document.getElementById('btn-pwd');
     const np = document.getElementById('new_password').value;
     const cp = document.getElementById('confirm_password').value;
+
+    const hasLen = np.length >= 8;
+    const hasUpper = /[A-Z]/.test(np);
+    const hasLower = /[a-z]/.test(np);
+    const hasNum = /[0-9]/.test(np);
+    const hasSpec = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?`~]/.test(np);
+
+    if (!hasLen || !hasUpper || !hasLower || !hasNum || !hasSpec) {
+        showToast('Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character.', 'warning');
+        return;
+    }
+
     if (np !== cp) {
         showToast('Passwords do not match', 'warning');
         return;

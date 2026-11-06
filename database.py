@@ -4287,6 +4287,8 @@ def get_user_by_id(user_id: int):
 
 def create_user(username, email, password, role="normal", full_name=None):
     """Create a new user in the database."""
+    if not password or len(str(password)) < 8:
+        raise ValueError("Password must be at least 8 characters long.")
     conn = get_db_connection()
     if not conn: return None
     try:
@@ -4726,6 +4728,8 @@ def get_user_allowed_project_ids(user_id: int):
 
 def change_user_password(user_id: int, new_password: str):
     """Update password hash for a given user ID."""
+    if not new_password or len(str(new_password)) < 8:
+        raise ValueError("Password must be at least 8 characters long.")
     conn = get_db_connection()
     if not conn: return False
     try:

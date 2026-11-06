@@ -308,22 +308,146 @@ if (!projectTags) {
         }
     }
 
+    // ── Strong Password Evaluation Rules (Min 8 Chars, Upper, Lower, Digit, Symbol) ──
+    function evalPasswordStrength(pwd) {
+        pwd = pwd || '';
+        const hasLen = pwd.length >= 8;
+        const hasUpper = /[A-Z]/.test(pwd);
+        const hasLower = /[a-z]/.test(pwd);
+        const hasCase = hasUpper && hasLower;
+        const hasNum = /[0-9]/.test(pwd);
+        const hasSpec = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?`~]/.test(pwd);
+        let score = 0;
+        if (hasLen) score++;
+        if (hasCase) score++;
+        if (hasNum) score++;
+        if (hasSpec) score++;
+        return {
+            hasLen,
+            hasCase,
+            hasNum,
+            hasSpec,
+            score,
+            isStrong: (score === 4)
+        };
+    }
+
+    function validateCpPasswordStrength(pwd) {
+        const res = evalPasswordStrength(pwd);
+        const p2Input = document.getElementById('cp-confirm-pass');
+        const p2 = p2Input ? p2Input.value : '';
+        const bar = document.getElementById('cp-strength-bar');
+        const label = document.getElementById('cp-strength-label');
+        const btn = document.getElementById('cp-submit-btn');
+        const hint = document.getElementById('cp-match-hint');
+
+        const updateRule = (elId, valid, text) => {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            if (valid) {
+                el.innerHTML = `<span style="color:#10b981; font-weight:800;">✔</span> <span style="color:#e2e8f0;">${text}</span>`;
+            } else {
+                el.innerHTML = `<span style="color:#64748b;">○</span> <span style="color:#94a3b8;">${text}</span>`;
+            }
+        };
+
+        updateRule('cp-rule-len', res.hasLen, '8+ Characters');
+        updateRule('cp-rule-case', res.hasCase, 'Upper & Lowercase');
+        updateRule('cp-rule-num', res.hasNum, 'Numeric Digit (0-9)');
+        updateRule('cp-rule-spec', res.hasSpec, 'Special Char (!@#$...)');
+
+        if (bar && label) {
+            if (res.score === 0) {
+                bar.style.width = '0%';
+                bar.style.background = '#ef4444';
+                label.innerText = 'Required';
+                label.style.color = '#ef4444';
+            } else if (res.score <= 1) {
+                bar.style.width = '25%';
+                bar.style.background = '#ef4444';
+                label.innerText = 'Too Weak';
+                label.style.color = '#ef4444';
+            } else if (res.score === 2) {
+                bar.style.width = '50%';
+                bar.style.background = '#f97316';
+                label.innerText = 'Weak';
+                label.style.color = '#f97316';
+            } else if (res.score === 3) {
+                bar.style.width = '75%';
+                bar.style.background = '#f59e0b';
+                label.innerText = 'Moderate';
+                label.style.color = '#f59e0b';
+            } else {
+                bar.style.width = '100%';
+                bar.style.background = '#10b981';
+                label.innerText = 'Strong Password ✔';
+                label.style.color = '#10b981';
+            }
+        }
+
+        const matches = (p2.length > 0 && pwd === p2);
+        if (hint) {
+            if (p2.length > 0) {
+                hint.style.display = 'block';
+                if (matches) {
+                    hint.innerHTML = '<span style="color:#10b981; font-weight:600;">✔ Passwords match</span>';
+                } else {
+                    hint.innerHTML = '<span style="color:#ef4444; font-weight:600;">✖ Passwords do not match</span>';
+                }
+            } else {
+                hint.style.display = 'none';
+            }
+        }
+
+        if (btn) {
+            if (res.isStrong && matches) {
+                btn.disabled = false;
+                btn.style.opacity = '1.0';
+                btn.style.cursor = 'pointer';
+                btn.style.filter = 'none';
+            } else {
+                btn.disabled = true;
+                btn.style.opacity = '0.45';
+                btn.style.cursor = 'not-allowed';
+                btn.style.filter = 'grayscale(60%)';
+            }
+        }
+    }
+
     function openChangePasswordModal(userId, username) {
         showModal(`
-            <div style="width:380px">
+            <div style="width:430px">
                 <h3 class="card-title" style="color:var(--amber)">🔑 CHANGE USER PASSWORD</h3>
                 <p style="font-size:11px; color:var(--text3); margin-bottom:15px">Set a new password for account: <strong style="color:var(--cyan)">${username}</strong></p>
-                <div style="display:flex; flex-direction:column; gap:10px">
+                <div style="display:flex; flex-direction:column; gap:12px">
                     <div>
-                        <label class="stat-label">NEW PASSWORD</label>
-                        <input type="password" id="cp-new-pass" style="width:100%" placeholder="••••••••">
+                        <label class="stat-label">NEW PASSWORD (MIN 8 CHARACTERS & STRONG)</label>
+                        <input type="password" id="cp-new-pass" style="width:100%" placeholder="••••••••" oninput="validateCpPasswordStrength(this.value)">
+                        
+                        <!-- Real-Time Password Strength Checklist -->
+                        <div style="margin-top:8px; background:rgba(0,0,0,0.3); border:1px solid var(--border); border-radius:6px; padding:10px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                <span style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700;">Password Strength:</span>
+                                <span id="cp-strength-label" style="font-size:10.5px; font-weight:800; color:#ef4444;">Required</span>
+                            </div>
+                            <div style="height:4px; width:100%; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden; margin-bottom:8px;">
+                                <div id="cp-strength-bar" style="height:100%; width:0%; background:#ef4444; transition:all 0.25s;"></div>
+                            </div>
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:5px; font-size:10.5px; font-family:var(--font-mono, monospace);">
+                                <div id="cp-rule-len" style="color:#64748b;">○ 8+ Characters</div>
+                                <div id="cp-rule-case" style="color:#64748b;">○ Upper & Lowercase</div>
+                                <div id="cp-rule-num" style="color:#64748b;">○ At least 1 Number (0-9)</div>
+                                <div id="cp-rule-spec" style="color:#64748b;">○ Special Char (!@#$...)</div>
+                            </div>
+                        </div>
                     </div>
                     <div>
                         <label class="stat-label">CONFIRM PASSWORD</label>
-                        <input type="password" id="cp-confirm-pass" style="width:100%" placeholder="••••••••">
+                        <input type="password" id="cp-confirm-pass" style="width:100%" placeholder="••••••••" oninput="validateCpPasswordStrength(document.getElementById('cp-new-pass').value)">
+                        <div id="cp-match-hint" style="font-size:10px; margin-top:4px; display:none;"></div>
                     </div>
                     <div style="display:flex; gap:10px; margin-top:10px">
-                        <button class="btn btn-primary" style="flex:1" onclick="execChangeUserPassword(${userId})">SAVE PASSWORD</button>
+                        <button id="cp-submit-btn" class="btn btn-primary" style="flex:1; opacity:0.45; cursor:not-allowed; filter:grayscale(60%);" disabled onclick="execChangeUserPassword(${userId})">SAVE PASSWORD</button>
                         <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
                     </div>
                 </div>
@@ -335,6 +459,10 @@ if (!projectTags) {
         const p1 = document.getElementById('cp-new-pass').value;
         const p2 = document.getElementById('cp-confirm-pass').value;
         if (!p1) return showToast('Password cannot be empty', 'error');
+        const check = evalPasswordStrength(p1);
+        if (!check.isStrong) {
+            return showToast('Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character.', 'error');
+        }
         if (p1 !== p2) return showToast('Passwords do not match', 'error');
         try {
             await apiFetch(`/api/users/${userId}/password`, { method: 'PATCH', body: JSON.stringify({ password: p1 }) });
@@ -343,13 +471,80 @@ if (!projectTags) {
         } catch (e) { showToast(e.message || 'Password update failed', 'error'); }
     }
 
-
     function filterTable() { renderTables(); }
+
+    function validateNuPasswordStrength(pwd) {
+        const res = evalPasswordStrength(pwd);
+        const bar = document.getElementById('nu-strength-bar');
+        const label = document.getElementById('nu-strength-label');
+        const btn = document.getElementById('nu-submit-btn');
+
+        const updateRule = (elId, valid, text) => {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            if (valid) {
+                el.innerHTML = `<span style="color:#10b981; font-weight:800;">✔</span> <span style="color:#e2e8f0;">${text}</span>`;
+            } else {
+                el.innerHTML = `<span style="color:#64748b;">○</span> <span style="color:#94a3b8;">${text}</span>`;
+            }
+        };
+
+        updateRule('nu-rule-len', res.hasLen, '8+ Characters');
+        updateRule('nu-rule-case', res.hasCase, 'Upper & Lowercase');
+        updateRule('nu-rule-num', res.hasNum, 'At least 1 Number (0-9)');
+        updateRule('nu-rule-spec', res.hasSpec, 'Special Char (!@#$...)');
+
+        if (bar && label) {
+            if (res.score === 0) {
+                bar.style.width = '0%';
+                bar.style.background = '#ef4444';
+                label.innerText = 'Required';
+                label.style.color = '#ef4444';
+            } else if (res.score <= 1) {
+                bar.style.width = '25%';
+                bar.style.background = '#ef4444';
+                label.innerText = 'Too Weak';
+                label.style.color = '#ef4444';
+            } else if (res.score === 2) {
+                bar.style.width = '50%';
+                bar.style.background = '#f97316';
+                label.innerText = 'Weak';
+                label.style.color = '#f97316';
+            } else if (res.score === 3) {
+                bar.style.width = '75%';
+                bar.style.background = '#f59e0b';
+                label.innerText = 'Moderate (Needs remaining rule)';
+                label.style.color = '#f59e0b';
+            } else {
+                bar.style.width = '100%';
+                bar.style.background = '#10b981';
+                label.innerText = 'Strong Password ✔';
+                label.style.color = '#10b981';
+            }
+        }
+
+        // Lock button until password is fully strong
+        if (btn) {
+            if (res.isStrong) {
+                btn.disabled = false;
+                btn.style.opacity = '1.0';
+                btn.style.cursor = 'pointer';
+                btn.style.filter = 'none';
+                btn.title = 'Create Account';
+            } else {
+                btn.disabled = true;
+                btn.style.opacity = '0.45';
+                btn.style.cursor = 'not-allowed';
+                btn.style.filter = 'grayscale(60%)';
+                btn.title = 'Password must be 8+ characters and contain upper, lower, number, and special character';
+            }
+        }
+    }
 
     /* Single User Modal */
     function openCreateUserModal() {
         showModal(`
-            <div style="width:420px">
+            <div style="width:440px">
                 <h3 class="card-title">ADD NEW USER ACCOUNT</h3>
                 <p style="font-size:11px; color:var(--text3); margin-bottom:15px">Create a direct Super Admin, Normal User, or GC User</p>
                 <div style="display:flex; flex-direction:column; gap:12px">
@@ -366,8 +561,25 @@ if (!projectTags) {
                         <input type="email" id="nu-email" style="width:100%" placeholder="jsmith@bsmartsoc.local">
                     </div>
                     <div>
-                        <label class="stat-label">INITIAL PASSWORD</label>
-                        <input type="password" id="nu-password" style="width:100%" placeholder="••••••••">
+                        <label class="stat-label">INITIAL PASSWORD (MIN 8 CHARACTERS & STRONG)</label>
+                        <input type="password" id="nu-password" style="width:100%" placeholder="••••••••" oninput="validateNuPasswordStrength(this.value)">
+                        
+                        <!-- Real-Time Password Strength Checklist -->
+                        <div style="margin-top:8px; background:rgba(0,0,0,0.3); border:1px solid var(--border); border-radius:6px; padding:10px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                <span style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700;">Password Strength:</span>
+                                <span id="nu-strength-label" style="font-size:10.5px; font-weight:800; color:#ef4444;">Required</span>
+                            </div>
+                            <div style="height:4px; width:100%; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden; margin-bottom:8px;">
+                                <div id="nu-strength-bar" style="height:100%; width:0%; background:#ef4444; transition:all 0.25s;"></div>
+                            </div>
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:5px; font-size:10.5px; font-family:var(--font-mono, monospace);">
+                                <div id="nu-rule-len" style="color:#64748b;">○ 8+ Characters</div>
+                                <div id="nu-rule-case" style="color:#64748b;">○ Upper & Lowercase</div>
+                                <div id="nu-rule-num" style="color:#64748b;">○ At least 1 Number (0-9)</div>
+                                <div id="nu-rule-spec" style="color:#64748b;">○ Special Char (!@#$...)</div>
+                            </div>
+                        </div>
                     </div>
                     <div>
                         <label class="stat-label">ASSIGN ROLE</label>
@@ -377,7 +589,7 @@ if (!projectTags) {
                         </select>
                     </div>
                     <div style="display:flex; gap:10px; margin-top:15px">
-                        <button class="btn btn-primary" style="flex:1" onclick="execCreateUser()">CREATE ACCOUNT</button>
+                        <button id="nu-submit-btn" class="btn btn-primary" style="flex:1; opacity:0.45; cursor:not-allowed; filter:grayscale(60%);" disabled onclick="execCreateUser()">CREATE ACCOUNT</button>
                         <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
                     </div>
                 </div>
@@ -386,13 +598,19 @@ if (!projectTags) {
     }
 
     async function execCreateUser() {
-        const body = {
-            username: document.getElementById('nu-username').value,
-            full_name: document.getElementById('nu-fullname').value,
-            email: document.getElementById('nu-email').value,
-            password: document.getElementById('nu-password').value,
-            role: document.getElementById('nu-role').value
-        };
+        const username = document.getElementById('nu-username').value.trim();
+        const full_name = document.getElementById('nu-fullname').value.trim();
+        const email = document.getElementById('nu-email').value.trim();
+        const password = document.getElementById('nu-password').value;
+        const role = document.getElementById('nu-role').value;
+
+        if (!username) return showToast('Username is required', 'error');
+        const check = evalPasswordStrength(password);
+        if (!check.isStrong) {
+            return showToast('Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character.', 'error');
+        }
+
+        const body = { username, full_name, email, password, role };
         try {
             await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(body) });
             showToast('User created successfully', 'success');
@@ -963,6 +1181,10 @@ if (!projectTags) {
         const e = document.getElementById('mg-nu-email').value.trim();
         const p = document.getElementById('mg-nu-pass').value.trim();
         if (!u || !p) return showToast('Username and password required', 'error');
+        const check = evalPasswordStrength(p);
+        if (!check.isStrong) {
+            return showToast('Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character.', 'error');
+        }
         try {
             const newUser = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify({ username: u, email: e, password: p, role: 'normal' }) });
             if (newUser && newUser.id) {

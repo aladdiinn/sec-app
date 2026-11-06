@@ -1142,6 +1142,12 @@ async def run_ssh_command(host: str, port: int, user: str, password: Optional[st
 # AUTHENTICATION ROUTES
 # ══════════════════════════════════════════════════════════════════════════════
 
+@app.get("/change-password", response_class=HTMLResponse)
+async def change_password_page(request: Request):
+    if not request.session.get("user_id"):
+        return RedirectResponse(url="/login", status_code=302)
+    return RedirectResponse(url="/settings#profile", status_code=302)
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     if get_session_user(request):
@@ -1187,8 +1193,6 @@ def is_admin_ip_permitted(client_ip: str) -> bool:
     except Exception:
         return False
 
-@app.post("/auth/login")
-@app.post("/api/login")
 def generate_user_ws_token(user_id: int, username: str) -> str:
     """Generates a cryptographically signed per-user token for WebSocket authentication."""
     import hmac, hashlib, base64, json, time
@@ -1214,6 +1218,29 @@ def verify_user_ws_token(token: str, max_age: int = 86400) -> dict:
     except Exception:
         return None
 
+def validate_password_strength(password: str) -> tuple:
+    """
+    Enforces corporate strong password policy:
+    - Minimum 8 characters in length
+    - At least one uppercase letter (A-Z)
+    - At least one lowercase letter (a-z)
+    - At least one numeric digit (0-9)
+    - At least one special character (!@#$%^&* etc.)
+    """
+    if not password or len(password) < 8:
+        return False, "Password must be at least 8 characters long."
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must contain at least one uppercase letter (A-Z)."
+    if not re.search(r"[a-z]", password):
+        return False, "Password must contain at least one lowercase letter (a-z)."
+    if not re.search(r"[0-9]", password):
+        return False, "Password must contain at least one number (0-9)."
+    if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?`~]", password):
+        return False, "Password must contain at least one special character (e.g. !@#$%^&*)."
+    return True, "Strong password"
+
+@app.post("/auth/login")
+@app.post("/api/login")
 async def auth_login(request: Request):
     client_ip = get_client_ip(request)
     try:
@@ -4495,12 +4522,19 @@ async def api_create_user(request: Request):
         body = {}
     username = body.get("username") or body.get("email")
     email = body.get("email") or f"{username}@bsmartsoc.local"
-    password = body.get("password") or "User123!"
+    password = body.get("password")
     role = body.get("role", "normal")
     full_name = body.get("full_name") or username
 
     if not username:
         return JSONResponse(status_code=400, content={"ok": False, "message": "Missing username"})
+
+    if not password:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Password is required"})
+
+    is_strong, err_msg = validate_password_strength(password)
+    if not is_strong:
+        return JSONResponse(status_code=400, content={"ok": False, "message": f"Weak Password: {err_msg}"})
 
     try:
         uid = db.create_user(username, email, password, role, full_name)
@@ -4536,6 +4570,9 @@ async def api_change_user_password(user_id: int, request: Request):
     new_password = body.get("password")
     if not new_password:
         return JSONResponse(status_code=400, content={"ok": False, "message": "New password required"})
+    is_strong, err_msg = validate_password_strength(new_password)
+    if not is_strong:
+        return JSONResponse(status_code=400, content={"ok": False, "message": f"Weak Password: {err_msg}"})
     if db.change_user_password(user_id, new_password):
         uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
         db.log_audit(uname, "CHANGE_USER_PASSWORD", "user", user_id, f"Changed password for user #{user_id}")
@@ -7210,6 +7247,9 @@ async def api_change_password(request: Request):
     new_pwd = body.get("new_password", "")
     if not new_pwd:
         return JSONResponse(status_code=400, content={"ok": False, "message": "New password required"})
+    is_strong, err_msg = validate_password_strength(new_pwd)
+    if not is_strong:
+        return JSONResponse(status_code=400, content={"ok": False, "message": f"Weak Password: {err_msg}"})
     user_id = request.session.get("user_id", 1)
     conn = db.get_db_connection()
     if not conn: return JSONResponse(status_code=500, content={"ok": False, "message": "Database offline"})
