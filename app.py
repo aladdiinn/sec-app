@@ -2376,10 +2376,10 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
         return  # Silently suppress based on allowlist rules
         
     cache_key = (int(server_id) if server_id else 0, str(alert_type))
-    # print(f"DEBUG dedup check: {cache_key} against cache keys: {list(_dedup_alerts_cache.keys())}")
     now = time.time()
     last_time = _dedup_alerts_cache.get(cache_key, 0)
-    if now - last_time < 120:
+    dedup_window = 86400 if 'DANGEROUS_PORT' in alert_type else 120
+    if now - last_time < dedup_window:
         return
     _dedup_alerts_cache[cache_key] = now
     try:
@@ -2796,37 +2796,64 @@ def _check_port_scan(server_id, data):
         except Exception:
             pass
 
-    # Phase 4: Strict Dangerous Default Port Detection
     dangerous_defaults = {
         21: "FTP", 23: "Telnet", 3389: "RDP", 5432: "PostgreSQL",
         3306: "MySQL", 6379: "Redis", 27017: "MongoDB", 11211: "Memcached",
         9200: "Elasticsearch", 2375: "Docker API"
     }
-    for p in current_ports:
-        if p in dangerous_defaults:
-            _create_alert_dedup(
-                server_id, f'DANGEROUS_PORT_{p}', 'critical',
-                'Exposed Infrastructure Port',
-                f'Detection Rule [Exposed Service]: Dangerous default port {p} ({dangerous_defaults[p]}) is open and exposed. This should not be publicly listening.'
-            )
 
+    global _known_server_ports
     if server_id not in _known_server_ports:
-        _known_server_ports[server_id] = current_ports
-        return
+        # Load previously recorded open ports from DB so reloads/restarts never re-alert existing ports
+        db_ports = set()
+        try:
+            conn = db.get_db_connection()
+            if conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT port FROM server_ports WHERE server_id = %s AND status = 'open';", (server_id,))
+                    db_ports = {int(r["port"] if isinstance(r, dict) else r[0]) for r in cur.fetchall()}
+                conn.close()
+        except Exception:
+            pass
 
-    known = _known_server_ports[server_id]
+        if db_ports:
+            _known_server_ports[server_id] = db_ports
+        else:
+            # Baseline establishment: record ports and alert only once on initial scan
+            _known_server_ports[server_id] = current_ports
+            for p in current_ports:
+                if p in dangerous_defaults:
+                    _create_alert_dedup(
+                        server_id, f'DANGEROUS_PORT_{p}', 'critical',
+                        'Exposed Infrastructure Port',
+                        f'Detection Rule [Exposed Service]: Dangerous default port {p} ({dangerous_defaults[p]}) is open and exposed. This should not be publicly listening.'
+                    )
+            return
+
+    known = _known_server_ports.get(server_id, set())
     new_ports = current_ports - known
-    
-    # Only ignore strictly public expected ports for the general "new port" alert
-    whitelisted_public = [22, 80, 443, 8080, 8443, 8000, 5000]
-    suspicious_ports = [p for p in new_ports if p not in whitelisted_public and p not in dangerous_defaults]
-    
-    if suspicious_ports:
-        _create_alert_dedup(
-            server_id, 'PORT_SCAN_DETECTED', 'warning',
-            'Unexpected Port Opened Alert',
-            f'Detection Rule [Network Anomaly]: New unexpected open port(s) detected: {suspicious_ports}. Possible backdoor or unauthorized service.'
-        )
+
+    # Only alert when ports are NEWLY OPENED
+    if new_ports:
+        # 1. Dangerous default ports that were newly opened
+        for p in new_ports:
+            if p in dangerous_defaults:
+                _create_alert_dedup(
+                    server_id, f'DANGEROUS_PORT_{p}', 'critical',
+                    'Exposed Infrastructure Port',
+                    f'Detection Rule [Exposed Service]: Dangerous default port {p} ({dangerous_defaults[p]}) is open and exposed. This should not be publicly listening.'
+                )
+
+        # 2. General unexpected ports that were newly opened
+        whitelisted_public = [22, 80, 443, 8080, 8443, 8000, 5000]
+        suspicious_ports = [p for p in new_ports if p not in whitelisted_public and p not in dangerous_defaults]
+
+        if suspicious_ports:
+            _create_alert_dedup(
+                server_id, 'PORT_SCAN_DETECTED', 'warning',
+                'Unexpected Port Opened Alert',
+                f'Detection Rule [Network Anomaly]: New unexpected open port(s) detected: {suspicious_ports}. Possible backdoor or unauthorized service.'
+            )
 
     _known_server_ports[server_id] = current_ports
 

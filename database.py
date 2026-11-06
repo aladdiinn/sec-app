@@ -1199,15 +1199,36 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
             except Exception as ex_al:
                 logger.error(f"Alert insert error: {ex_al}")
 
+            is_new_incident = False
             try:
+                # Deduplication: Re-use active OPEN incident for the same server and issue instead of creating duplicate rows
                 cur.execute("""
-                    INSERT INTO incidents (title, severity, description, status, assigned_to, server_id, created_at, updated_at)
-                    VALUES (%s, %s, %s, 'open', 'Unassigned', %s, NOW(), NOW());
-                """, (final_title, severity, message, valid_server_id))
+                    SELECT id FROM incidents 
+                    WHERE server_id = %s 
+                      AND title = %s 
+                      AND status = 'open'
+                      AND (description = %s OR description ILIKE %s)
+                    ORDER BY id DESC LIMIT 1;
+                """, (valid_server_id, final_title, message, f"%{alert_type}%"))
+                existing_inc = cur.fetchone()
+                if existing_inc:
+                    inc_id = existing_inc["id"] if isinstance(existing_inc, dict) else existing_inc[0]
+                    cur.execute("UPDATE incidents SET updated_at = NOW() WHERE id = %s;", (inc_id,))
+                    logger.info(f"[INCIDENT DEDUP] Updated existing open incident #{inc_id} for server #{valid_server_id} ({final_title}). Suppressed duplicate incident row.")
+                else:
+                    cur.execute("""
+                        INSERT INTO incidents (title, severity, description, status, assigned_to, server_id, created_at, updated_at)
+                        VALUES (%s, %s, %s, 'open', 'Unassigned', %s, NOW(), NOW());
+                    """, (final_title, severity, message, valid_server_id))
+                    is_new_incident = True
             except Exception as ex_inc:
                 logger.debug(f"Incident insert error: {ex_inc}")
-                
+                is_new_incident = True
+
             # --- NEW: SES Smart Email Integration ---
+            # Suppress alert email dispatch if an incident for this issue is ALREADY open
+            if not is_new_incident:
+                return
             # Check if emails are globally enabled (cached to prevent DB slowness on every alert)
             email_enabled = True # default
             
