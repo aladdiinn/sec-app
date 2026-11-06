@@ -194,7 +194,14 @@ def find_tomcat_log_files(target_port: str = "") -> list:
         "/usr/local/tomcat*/logs",
         "/var/lib/tomcat*/logs",
         "/home/*/tomcat*/logs",
-        "/opt/*/tomcat*/logs"
+        "/opt/*/tomcat*/logs",
+        "/application/*/logs",
+        "/application/*/*/logs",
+        "/application/*/apache-tomcat*/logs",
+        "/application/*/*tomcat*/logs",
+        "/app/*/logs",
+        "/app/*/*/logs",
+        "/data/*/logs"
     ]
     for pattern in standard_paths:
         for p in glob.glob(pattern):
@@ -599,9 +606,22 @@ def run_collector():
             for fpath, tailer in list(tailers.items()):
                 new_lines = tailer.read_new_lines()
                 for line in new_lines:
-                    # Database filtering
+                    # Database filtering (flexible prefix & security signal matching)
                     if CONFIG["COMPONENT_ROLE"] == "database" and CONFIG["TARGET_DB_NAME"]:
-                        if f"@{CONFIG['TARGET_DB_NAME']}" not in line and "FATAL" not in line:
+                        db_token = CONFIG["TARGET_DB_NAME"].lower()
+                        line_lower = line.lower()
+                        has_db_match = (
+                            f"@{db_token}" in line_lower or
+                            f"db={db_token}" in line_lower or
+                            f"dbname={db_token}" in line_lower or
+                            f'database "{db_token}"' in line_lower or
+                            db_token in line_lower
+                        )
+                        is_sec_signal = any(k in line_lower for k in (
+                            "fatal", "panic", "error", "drop table", "alter table", "truncate",
+                            "create table", "grant", "revoke", "statement:", "audit:", "duration:", "connection authorized"
+                        ))
+                        if not has_db_match and not is_sec_signal:
                             continue
 
                     # Tomcat Access Log Filtering & Aggregation
