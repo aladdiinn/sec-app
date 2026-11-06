@@ -569,8 +569,8 @@
                 <option value="500">500 lines</option>
             </select>
 
-            <button class="btn-ctrl btn-stream" id="btn-toggle-auto" onclick="toggleAutoRefresh()" title="Toggle Real-time Stream">
-                ⏸️ STREAM PAUSED
+            <button class="btn-ctrl btn-stream active" id="btn-toggle-auto" onclick="toggleAutoRefresh()" title="Toggle Real-time Stream">
+                ▶️ LIVE STREAMING
             </button>
             <button class="btn-ctrl" onclick="fetchLogsNow()" title="Fetch Latest Logs">
                 🔄 REFRESH
@@ -792,7 +792,7 @@ let currentServiceType = '';
 let activePresetKey = '';
 let allLogLines = [];
 let autoRefreshTimer = null;
-let isAutoRefresh = false;
+let isAutoRefresh = true;
 let currentNodeMode = 'existing';
 
 // --- Virtualization state ---
@@ -865,7 +865,11 @@ function selectServerFromDropdown(srvId, displayText, dotClass = 'online') {
 
     closeServerDropdown();
     updateLogFileSelectorForServer(srvId);
-    fetchLogsNow();
+    if (!isAutoRefresh) {
+        startAutoRefresh();
+    } else {
+        fetchLogsNow();
+    }
 }
 
 // ── LOG SERVICE TYPE DROPDOWN ──
@@ -879,7 +883,11 @@ function onServiceDropdownChanged(val) {
 function onLogFileSelected() {
     const sel = document.getElementById('log-file-selector');
     selectedLogFilePath = (sel && sel.value) ? sel.value : null;
-    fetchLogsNow();
+    if (!isAutoRefresh) {
+        startAutoRefresh();
+    } else {
+        fetchLogsNow();
+    }
 }
 
 async function updateLogFileSelectorForServer(serverId) {
@@ -1279,7 +1287,7 @@ function updateStreamButtonState() {
         btn.innerText = '▶️ LIVE STREAMING';
         btn.classList.add('active');
     } else {
-        btn.innerText = '⏸️ STREAM PAUSED';
+        btn.innerText = '⏸️ STREAM PAUSED (Click to Resume)';
         btn.classList.remove('active');
     }
 }

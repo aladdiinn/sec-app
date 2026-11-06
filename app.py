@@ -4982,7 +4982,7 @@ SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
 ASSIGNED_SERVER_ID = int("$ASSIGNED_ID") if "$ASSIGNED_ID".isdigit() else {server_id or "None"}
-PUSH_INTERVAL = 30  # seconds
+PUSH_INTERVAL = 15  # seconds (responsive real-time log ingestion)
 
 # ── VULNERABILITY INVENTORY STATE (Agent v1.6) ──
 last_package_hash = ""
@@ -5905,7 +5905,7 @@ def get_bash_commands():
 # Log tail positions per file
 log_positions = {{}}
 
-def get_new_log_lines(max_lines_per_file=50):
+def get_new_log_lines(max_lines_per_file=100):
     cat_lines = {{"os": [], "tomcat": [], "postgres": [], "other": []}}
 
     for path, ltype in discovered_paths.items():
@@ -5940,9 +5940,13 @@ def get_new_log_lines(max_lines_per_file=50):
                 elif re.search(r'postgresql-[A-Za-z0-9_-]+\\.log$', clean_src, re.I):
                     clean_src = re.sub(r'postgresql-[A-Za-z0-9_-]+\\.log$', 'postgresql.log', clean_src, flags=re.I)
 
+                seen_batch = set()
                 for line in raw_lines[-max_lines_per_file:]:
                     line = line.strip()
                     if not line: continue
+                    batch_k = (clean_src, line)
+                    if batch_k in seen_batch: continue
+                    seen_batch.add(batch_k)
                     lt = ltype
                     if lt not in ('tomcat', 'postgres', 'os'):
                         lower_l = line.lower()
@@ -5988,12 +5992,12 @@ def get_new_log_lines(max_lines_per_file=50):
                     cat_lines["postgres"].append({{"line": line, "source": "systemd/postgresql", "log_type": "postgres"}})
         except: pass
 
-    # Balance lines across categories: up to 40 each so no single source starves the rest
+    # Balance lines across categories: up to 100 for high-volume tomcat
     balanced = []
-    balanced.extend(cat_lines["os"][-40:])
-    balanced.extend(cat_lines["tomcat"][-40:])
-    balanced.extend(cat_lines["postgres"][-40:])
-    balanced.extend(cat_lines["other"][-20:])
+    balanced.extend(cat_lines["os"][-50:])
+    balanced.extend(cat_lines["tomcat"][-100:])
+    balanced.extend(cat_lines["postgres"][-50:])
+    balanced.extend(cat_lines["other"][-30:])
     return balanced
 
 # Main loop
