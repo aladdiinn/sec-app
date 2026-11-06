@@ -9032,8 +9032,9 @@ TOMCAT_ACCESS_RE = re.compile(
 )
 
 def trigger_critical_app_incident_email(app_id: int, inc_id: int, title: str, event_type: str, severity: str, client_ip: str, user_name: str, payload_sample: str, node_name: str, role: str):
-    """Dispatches asynchronous LLM-analyzed email alert for CRITICAL application threats via AWS SES."""
-    if severity.lower() != "critical":
+    """Dispatches asynchronous LLM-analyzed email alert for CRITICAL & HIGH application threats via AWS SES."""
+    sev_upper = (severity or "CRITICAL").upper()
+    if sev_upper not in ("CRITICAL", "HIGH"):
         return
     try:
         import threading
@@ -9058,7 +9059,7 @@ def trigger_critical_app_incident_email(app_id: int, inc_id: int, title: str, ev
 
         t = threading.Thread(
             target=ses_mailer.send_smart_alert_email,
-            args=(inc_id, formatted_title, event_type, raw_msg, "CRITICAL", timestamp, client_ip or "127.0.0.1", f"{app_name} ({node_name})"),
+            args=(inc_id, formatted_title, event_type, raw_msg, sev_upper, timestamp, client_ip or "127.0.0.1", f"{app_name} ({node_name})"),
             daemon=True
         )
         t.start()
@@ -9998,9 +9999,9 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                             except Exception: existing_tactics = []
                         all_tactics = list(set(existing_tactics) | tactics_set)
 
-                        # ANTI-SPAM: Send email ONLY if newly escalated to critical and alert not yet dispatched
+                        # ANTI-SPAM: Send email ONLY if newly escalated to critical/high and alert not yet dispatched
                         already_dispatched = existing_inc.get("alert_dispatched") or False
-                        if calc_sev == "critical" and not already_dispatched:
+                        if calc_sev in ("critical", "high") and not already_dispatched:
                             should_send_email = True
 
                         cur.execute("""
@@ -10012,7 +10013,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                         """, (new_count, calc_sev, psycopg2.extras.Json(all_tactics), should_send_email, inc_id))
                     else:
                         inc_title = sample.get("rule_title") or f"Security incident from {attacker_key}"
-                        should_send_email = (inc_sev == "critical")
+                        should_send_email = (inc_sev in ("critical", "high"))
                         cur.execute("""
                             INSERT INTO app_incidents (
                                 application_id, title, attacker_key, attacker_type, client_ip, user_name,
@@ -10039,14 +10040,15 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                                 item.get("mitre_tag") or "", item.get("summary") or item.get("raw_line")[:200]
                             ))
 
-                        # ANTI-SPAM: Exactly ONE smart email alert per Critical Incident (never spammed per event)
+                        # ANTI-SPAM: Exactly ONE smart email alert per Critical / High Incident (never spammed per event)
                         if should_send_email:
-                            rep_item = next((x for x in inc_list if x.get("sev") == "critical"), sample)
+                            rep_item = next((x for x in inc_list if x.get("sev") in ("critical", "high")), sample)
+                            effective_sev = rep_item.get("sev") or ("critical" if any(x.get("sev") == "critical" for x in inc_list) else "high")
                             trigger_critical_app_incident_email(
                                 actual_app_id, inc_id,
-                                rep_item.get("rule_title") or "Critical Application Exploit Incident",
+                                rep_item.get("rule_title") or f"{effective_sev.capitalize()} Application Threat Incident",
                                 rep_item.get("event_type", "EXPLOIT"),
-                                "critical",
+                                effective_sev,
                                 sample.get("ip"), sample.get("user"),
                                 rep_item.get("raw_path") or rep_item.get("summary") or rep_item.get("raw_line", "")[:280],
                                 node_name, role

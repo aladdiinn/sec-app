@@ -48,8 +48,10 @@ CONFIG = {
     "AGGREGATE_ROUTINE_ACCESS": os.environ.get("AGGREGATE_ROUTINE_ACCESS", "true").lower() in ("true", "1", "yes")
 }
 
-def load_env_file(filepath="/etc/securepulse-app/collector.env"):
+def load_env_file(filepath=None):
     """Loads configuration from environment file if present with strict type coercion."""
+    if not filepath:
+        filepath = os.environ.get("COLLECTOR_ENV_FILE") or "/etc/securepulse-app/collector.env"
     if not os.path.exists(filepath):
         return
     try:

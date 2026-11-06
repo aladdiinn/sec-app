@@ -103,11 +103,14 @@ fi
 
 PYTHON_BIN=$(command -v python3 || echo "/usr/bin/python3")
 
-# 3. Create directories
+# 3. Create directories & determine instance-safe service name
 mkdir -p /opt/securepulse-app /etc/securepulse-app
+INSTANCE_ID="${APP_ID}-${ROLE}"
+ENV_FILE="/etc/securepulse-app/collector-${INSTANCE_ID}.env"
+SERVICE_NAME="securepulse-app-${INSTANCE_ID}.service"
 
-# 4. Write configuration file
-cat << EOF > /etc/securepulse-app/collector.env
+# 4. Write instance-specific configuration file
+cat << EOF > "$ENV_FILE"
 SOC_URL="$SOC_URL"
 ENROLLMENT_TOKEN="$TOKEN"
 APP_ID="$APP_ID"
@@ -122,17 +125,20 @@ HEARTBEAT_INTERVAL_SEC=30.0
 no_proxy="*"
 NO_PROXY="*"
 EOF
-chmod 600 /etc/securepulse-app/collector.env
+chmod 600 "$ENV_FILE"
+
+# Maintain default fallback configuration for standalone manual debugging
+cp -f "$ENV_FILE" /etc/securepulse-app/collector.env 2>/dev/null || true
 
 # 5. Fetch collector script from SOC server
 echo "[+] Downloading SecurePulse Application Collector..."
 curl -sSL --noproxy "*" "${SOC_URL}/api/app/collector.py?token=${TOKEN}" -o /opt/securepulse-app/app_collector.py
 chmod 755 /opt/securepulse-app/app_collector.py
 
-# 6. Install systemd service
-cat << EOF > /etc/systemd/system/securepulse-app.service
+# 6. Install isolated instance systemd service (allows multiple apps/roles on same node)
+cat << EOF > /etc/systemd/system/${SERVICE_NAME}
 [Unit]
-Description=SecurePulse Application-Level SIEM Collector
+Description=SecurePulse Application SIEM Collector (App ${APP_ID} - ${ROLE} - ${NODE_NAME})
 Documentation=https://github.com/aladdiinn/sec-app
 After=network.target tomcat.service postgresql.service
 
@@ -140,7 +146,8 @@ After=network.target tomcat.service postgresql.service
 Type=simple
 User=root
 WorkingDirectory=/opt/securepulse-app
-EnvironmentFile=/etc/securepulse-app/collector.env
+Environment="COLLECTOR_ENV_FILE=${ENV_FILE}"
+EnvironmentFile=${ENV_FILE}
 ExecStart=${PYTHON_BIN} /opt/securepulse-app/app_collector.py
 Restart=always
 RestartSec=5s
@@ -158,24 +165,30 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
+# Clean migration: if single generic service was running for this exact App ID, stop and disable it
+if [ -f /etc/systemd/system/securepulse-app.service ]; then
+    systemctl stop securepulse-app.service 2>/dev/null || true
+    systemctl disable securepulse-app.service 2>/dev/null || true
+fi
+
 # 7. Enable and restart service
-echo "[+] Starting securepulse-app service..."
+echo "[+] Starting ${SERVICE_NAME} service..."
 systemctl daemon-reload
-systemctl enable securepulse-app.service
-systemctl restart securepulse-app.service
+systemctl enable ${SERVICE_NAME}
+systemctl restart ${SERVICE_NAME}
 
 # 8. Verification check
 sleep 2
-if systemctl is-active --quiet securepulse-app.service; then
+if systemctl is-active --quiet ${SERVICE_NAME}; then
     echo "======================================================================"
-    echo "✅ [SUCCESS] SecurePulse Application Collector is ACTIVE and RUNNING!"
+    echo "✅ [SUCCESS] SecurePulse Collector (${SERVICE_NAME}) is ACTIVE and RUNNING!"
     echo "======================================================================"
     echo "Recent collector telemetry:"
-    journalctl -u securepulse-app -n 6 --no-pager || true
+    journalctl -u ${SERVICE_NAME} -n 6 --no-pager || true
     echo "======================================================================"
     echo "Check your BSmart SOC dashboard; the status badge will turn to 'RECEIVING' / 'NORMAL'."
     echo "======================================================================"
 else
     echo "[WARN] Service started but status is not active. Check logs:"
-    journalctl -u securepulse-app -n 20 --no-pager
+    journalctl -u ${SERVICE_NAME} -n 20 --no-pager
 fi

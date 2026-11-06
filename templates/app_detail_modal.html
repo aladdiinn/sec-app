@@ -361,40 +361,40 @@
     </div>
 
 <!-- Add / Edit Component Modal -->
-<div id="app-component-form-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:10006; backdrop-filter:blur(4px); align-items:center; justify-content:center">
-    <div style="background:var(--card, #0f172a); border:1px solid var(--cyan, #38bdf8); border-radius:12px; padding:24px 28px; width:520px; max-width:94%; box-shadow:0 20px 60px rgba(0,0,0,0.85); position:relative" onclick="event.stopPropagation()">
-        <!-- Header -->
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid var(--border); padding-bottom:12px">
+<div id="app-component-form-modal" style="display:none; position:fixed; inset:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); z-index:10006; backdrop-filter:blur(5px); overflow-y:auto; padding:20px 10px; box-sizing:border-box; align-items:center; justify-content:center">
+    <div style="background:var(--card, #0f172a); border:1px solid var(--cyan, #38bdf8); border-radius:12px; width:520px; max-width:96%; max-height:calc(100vh - 40px); display:flex; flex-direction:column; box-shadow:0 25px 70px rgba(0,0,0,0.9); position:relative; overflow:hidden; margin:auto" onclick="event.stopPropagation()">
+        <!-- Header (Pinned at top) -->
+        <div style="flex-shrink:0; display:flex; justify-content:space-between; align-items:center; padding:14px 20px 10px; border-bottom:1px solid var(--border); background:var(--card, #0f172a)">
             <div>
-                <h4 id="cf-modal-title" style="margin:0; font-size:15px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:8px">
+                <h4 id="cf-modal-title" style="margin:0; font-size:14.5px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:8px">
                     <span>➕</span> Add Application Component
                 </h4>
-                <p id="cf-modal-subtitle" style="margin:4px 0 0 0; font-size:11.5px; color:var(--text3)">
+                <p id="cf-modal-subtitle" style="margin:3px 0 0 0; font-size:11px; color:var(--text3)">
                     Enroll a Web (Tomcat) or Database (PostgreSQL) forwarder node.
                 </p>
             </div>
-            <button class="btn btn-ghost" onclick="closeComponentFormModal()" style="font-size:16px; padding:2px 8px; color:var(--text2)">✕</button>
+            <button class="btn btn-ghost" onclick="closeComponentFormModal()" style="font-size:16px; padding:2px 8px; color:var(--text2); cursor:pointer">✕</button>
         </div>
 
-        <!-- Form Body -->
-        <div style="display:flex; flex-direction:column; gap:14px">
+        <!-- Form Body (Scrollable inside dialog) -->
+        <div style="flex:1; overflow-y:auto; padding:14px 20px; display:flex; flex-direction:column; gap:11px">
             <!-- Role Selection -->
             <div>
-                <label style="display:block; font-size:11px; font-weight:700; color:var(--text3); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px">
+                <label style="display:block; font-size:10.5px; font-weight:700; color:var(--text3); margin-bottom:5px; text-transform:uppercase; letter-spacing:0.5px">
                     Component Role
                 </label>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
-                    <label id="cf-role-db-card" style="display:flex; align-items:center; gap:8px; background:rgba(56,189,248,0.08); border:1px solid var(--cyan); padding:10px 14px; border-radius:8px; cursor:pointer">
+                    <label id="cf-role-db-card" style="display:flex; align-items:center; gap:8px; background:rgba(56,189,248,0.08); border:1px solid var(--cyan); padding:8px 12px; border-radius:8px; cursor:pointer">
                         <input type="radio" name="cf-role-radio" id="cf-role-db" value="database" checked onchange="onComponentFormRoleChange()" style="accent-color:var(--cyan)">
                         <div>
-                            <div style="font-size:12px; font-weight:700; color:var(--text)">🗄️ Database</div>
+                            <div style="font-size:11.5px; font-weight:700; color:var(--text)">🗄️ Database</div>
                             <div style="font-size:10px; color:var(--text3)">PostgreSQL (Port 5432)</div>
                         </div>
                     </label>
-                    <label id="cf-role-web-card" style="display:flex; align-items:center; gap:8px; background:var(--bg2); border:1px solid var(--border); padding:10px 14px; border-radius:8px; cursor:pointer">
+                    <label id="cf-role-web-card" style="display:flex; align-items:center; gap:8px; background:var(--bg2); border:1px solid var(--border); padding:8px 12px; border-radius:8px; cursor:pointer">
                         <input type="radio" name="cf-role-radio" id="cf-role-web" value="web" onchange="onComponentFormRoleChange()" style="accent-color:var(--cyan)">
                         <div>
-                            <div style="font-size:12px; font-weight:700; color:var(--text)">🌐 Web Node</div>
+                            <div style="font-size:11.5px; font-weight:700; color:var(--text)">🌐 Web Node</div>
                             <div style="font-size:10px; color:var(--text3)">Tomcat / HTTP Instance</div>
                         </div>
                     </label>
@@ -403,51 +403,51 @@
 
             <!-- Node IP Address (with Asset Autocomplete) -->
             <div style="position:relative">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
-                    <label id="cf-node-ip-label" style="font-size:11px; font-weight:700; color:var(--cyan); text-transform:uppercase; letter-spacing:0.5px">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px">
+                    <label id="cf-node-ip-label" style="font-size:10.5px; font-weight:700; color:var(--cyan); text-transform:uppercase; letter-spacing:0.5px">
                         Node IP Address <span style="color:var(--red)">*</span>
                     </label>
                     <span style="font-size:10px; color:var(--text3)">Select or type asset IP</span>
                 </div>
-                <input type="text" id="cf-node-ip" placeholder="e.g. 192.168.150.16" class="glass mono" oninput="onComponentFormNodeInput('ip')" autocomplete="off" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                <input type="text" id="cf-node-ip" placeholder="e.g. 192.168.150.16" class="glass mono" oninput="onComponentFormNodeInput('ip')" autocomplete="off" style="width:100%; padding:8px 10px; font-size:11.5px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
                 <!-- Autocomplete Suggestions Dropdown -->
-                <div id="cf-asset-autocomplete-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--card, #0f172a); border:1px solid var(--cyan); border-radius:6px; z-index:1010; box-shadow:0 10px 25px rgba(0,0,0,0.7); max-height:160px; overflow-y:auto; margin-top:2px"></div>
+                <div id="cf-asset-autocomplete-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--card, #0f172a); border:1px solid var(--cyan); border-radius:6px; z-index:1010; box-shadow:0 10px 25px rgba(0,0,0,0.7); max-height:150px; overflow-y:auto; margin-top:2px"></div>
             </div>
 
             <!-- Component / Host Name -->
             <div>
-                <label style="display:block; font-size:11px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px">
+                <label style="display:block; font-size:10.5px; font-weight:700; color:var(--text3); margin-bottom:3px; text-transform:uppercase; letter-spacing:0.5px">
                     Component / Host Name <span style="color:var(--red)">*</span>
                 </label>
-                <input type="text" id="cf-node-name" placeholder="e.g. Jvvnl-Mitra DB 1" class="glass" oninput="onComponentFormNodeInput('name')" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                <input type="text" id="cf-node-name" placeholder="e.g. Jvvnl-Mitra DB 1" class="glass" oninput="onComponentFormNodeInput('name')" style="width:100%; padding:8px 10px; font-size:11.5px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
             </div>
 
             <!-- Port & DB Name (Grid) -->
-            <div style="display:grid; grid-template-columns:130px 1fr; gap:12px">
+            <div style="display:grid; grid-template-columns:120px 1fr; gap:10px">
                 <div>
-                    <label style="display:block; font-size:11px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px">
+                    <label style="display:block; font-size:10.5px; font-weight:700; color:var(--text3); margin-bottom:3px; text-transform:uppercase; letter-spacing:0.5px">
                         Target Port
                     </label>
-                    <input type="text" id="cf-port" placeholder="5432" value="5432" class="glass mono" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                    <input type="text" id="cf-port" placeholder="5432" value="5432" class="glass mono" style="width:100%; padding:8px 10px; font-size:11.5px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
                 </div>
                 <div id="cf-db-name-group">
-                    <label style="display:block; font-size:11px; font-weight:700; color:var(--text3); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px">
+                    <label style="display:block; font-size:10.5px; font-weight:700; color:var(--text3); margin-bottom:3px; text-transform:uppercase; letter-spacing:0.5px">
                         Target Database Name
                     </label>
-                    <input type="text" id="cf-db-name" placeholder="e.g. bijlimitra, postgres, or blank" class="glass mono" style="width:100%; padding:9px 12px; font-size:12px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
+                    <input type="text" id="cf-db-name" placeholder="e.g. bijlimitra, postgres, or blank" class="glass mono" style="width:100%; padding:8px 10px; font-size:11.5px; border-radius:6px; border:1px solid var(--border); color:var(--text); background:var(--bg2)">
                 </div>
             </div>
 
             <!-- Dynamic Hint -->
-            <div id="cf-modal-hint" style="background:rgba(56,189,248,0.06); border:1px solid rgba(56,189,248,0.2); border-radius:6px; padding:10px 12px; font-size:11px; color:var(--text2)">
+            <div id="cf-modal-hint" style="background:rgba(56,189,248,0.06); border:1px solid rgba(56,189,248,0.2); border-radius:6px; padding:8px 12px; font-size:10.5px; color:var(--text2)">
                 💡 <b>Database Telemetry:</b> Monitors PostgreSQL audit queries and transactions. Run the generated curl setup script on the database host to begin live streaming.
             </div>
         </div>
 
-        <!-- Footer Buttons -->
-        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px; border-top:1px solid var(--border); padding-top:14px">
-            <button class="btn btn-ghost" onclick="closeComponentFormModal()" style="font-size:12px; padding:7px 16px">Cancel</button>
-            <button class="btn btn-primary" id="cf-submit-btn" onclick="submitComponentForm()" style="font-size:12px; padding:7px 20px; background:var(--cyan); color:#000; font-weight:700; border:none; border-radius:6px; cursor:pointer">
+        <!-- Footer Buttons (Pinned at bottom, always visible & reachable) -->
+        <div style="flex-shrink:0; display:flex; justify-content:flex-end; gap:10px; padding:11px 20px 13px; border-top:1px solid var(--border); background:var(--card, #0f172a)">
+            <button class="btn btn-ghost" onclick="closeComponentFormModal()" style="font-size:11.5px; padding:6px 14px">Cancel</button>
+            <button class="btn btn-primary" id="cf-submit-btn" onclick="submitComponentForm()" style="font-size:11.5px; padding:6px 18px; background:var(--cyan); color:#000; font-weight:700; border:none; border-radius:6px; cursor:pointer">
                 ➕ Enroll Component
             </button>
         </div>
@@ -455,24 +455,29 @@
 </div>
 
 <!-- Setup Command Modal -->
-<div id="app-component-command-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:10007; backdrop-filter:blur(4px); align-items:center; justify-content:center">
-    <div style="background:var(--card, #0f172a); border:1px solid var(--green, #10b981); border-radius:12px; padding:24px 28px; width:580px; max-width:94%; box-shadow:0 25px 70px rgba(0,0,0,0.9); position:relative" onclick="event.stopPropagation()">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
-            <span style="font-size:24px">🎉</span>
+<div id="app-component-command-modal" style="display:none; position:fixed; inset:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); z-index:10007; backdrop-filter:blur(5px); overflow-y:auto; padding:20px 10px; box-sizing:border-box; align-items:center; justify-content:center">
+    <div style="background:var(--card, #0f172a); border:1px solid var(--green, #10b981); border-radius:12px; width:560px; max-width:96%; max-height:calc(100vh - 40px); display:flex; flex-direction:column; box-shadow:0 25px 70px rgba(0,0,0,0.9); position:relative; overflow:hidden; margin:auto" onclick="event.stopPropagation()">
+        <!-- Header -->
+        <div style="flex-shrink:0; display:flex; align-items:center; gap:10px; padding:14px 20px 10px; border-bottom:1px solid var(--border)">
+            <span style="font-size:20px">🎉</span>
             <div>
-                <h4 style="margin:0; font-size:15px; font-weight:700; color:var(--green)">Component Enrolled Successfully!</h4>
-                <p style="margin:2px 0 0 0; font-size:11.5px; color:var(--text3)" id="acm-sub">Install forwarder on the server to start live telemetry stream.</p>
+                <h4 style="margin:0; font-size:14.5px; font-weight:700; color:var(--green)">Component Enrolled Successfully!</h4>
+                <p style="margin:2px 0 0 0; font-size:11px; color:var(--text3)" id="acm-sub">Install forwarder on the server to start live telemetry stream.</p>
             </div>
         </div>
-        <div style="margin:14px 0">
-            <div style="font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; margin-bottom:6px">Run this command on the server via SSH as root/sudo:</div>
+
+        <!-- Body -->
+        <div style="flex:1; overflow-y:auto; padding:14px 20px">
+            <div style="font-size:10.5px; font-weight:700; color:var(--text3); text-transform:uppercase; margin-bottom:6px">Run this command on the server via SSH as root/sudo:</div>
             <div style="background:var(--bg, #090d16); border:1px solid var(--border); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:8px">
-                <code id="acm-curl-text" style="font-size:11.5px; color:var(--cyan); word-break:break-all; font-family:var(--font-mono), monospace"></code>
+                <code id="acm-curl-text" style="font-size:11px; color:var(--cyan); word-break:break-all; font-family:var(--font-mono), monospace"></code>
             </div>
         </div>
-        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px">
-            <button class="btn btn-glass" onclick="document.getElementById('app-component-command-modal').style.display='none'" style="font-size:12px; padding:7px 16px">Close</button>
-            <button class="btn btn-primary" onclick="copyAcmCommand()" style="font-size:12px; padding:7px 20px; background:var(--green); color:#000; font-weight:700; border:none; border-radius:6px; cursor:pointer">
+
+        <!-- Footer -->
+        <div style="flex-shrink:0; display:flex; justify-content:flex-end; gap:10px; padding:11px 20px 13px; border-top:1px solid var(--border)">
+            <button class="btn btn-glass" onclick="document.getElementById('app-component-command-modal').style.display='none'" style="font-size:11.5px; padding:6px 14px">Close</button>
+            <button class="btn btn-primary" onclick="copyAcmCommand()" style="font-size:11.5px; padding:6px 18px; background:var(--green); color:#000; font-weight:700; border:none; border-radius:6px; cursor:pointer">
                 📋 Copy Command & Close
             </button>
         </div>
