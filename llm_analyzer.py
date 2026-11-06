@@ -16,8 +16,8 @@ logger = logging.getLogger("llm_analyzer")
 logger.setLevel(logging.INFO)
 
 # ── Configuration ────────────────────────────────────────────────────────────
-S3_BUCKET_NAME = os.environ.get("S3_LOG_ARCHIVE_BUCKET", "securepulse-logs-archive-bucket-2026")
-AWS_REGION     = os.environ.get("AWS_REGION", "us-east-1")
+S3_BUCKET_NAME = os.environ.get("AWS_S3_BUCKET_NAME") or os.environ.get("S3_LOG_ARCHIVE_BUCKET", "securepulse-logs-archive-bucket-2026")
+AWS_REGION     = os.environ.get("AWS_S3_REGION") or os.environ.get("AWS_REGION", "us-east-1")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # ── Gemini Client (new google-genai SDK) ─────────────────────────────────────
@@ -37,7 +37,12 @@ def _generate(prompt: str) -> str:
 
 # ── S3 helpers ───────────────────────────────────────────────────────────────
 def get_s3_client():
-    return boto3.client("s3", region_name=AWS_REGION)
+    key_id = os.environ.get("AWS_S3_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
+    secret_key = os.environ.get("AWS_S3_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY")
+    region = os.environ.get("AWS_S3_REGION") or os.environ.get("AWS_REGION", "us-east-1")
+    if key_id and secret_key:
+        return boto3.client("s3", region_name=region, aws_access_key_id=key_id, aws_secret_access_key=secret_key)
+    return boto3.client("s3", region_name=region)
 
 
 def fetch_logs_from_db(server_id: int, log_type: str, start_time: datetime, end_time: datetime):

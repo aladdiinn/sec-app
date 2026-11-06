@@ -85,14 +85,38 @@ input:checked + .slider:before { transform: translateX(14px); background-color: 
     </div>
     
     {% if user and (user.role == 'admin' or user.role == 'superuser') %}
-    <!-- Email Notifications (Admin Only) -->
-    <div class="card glass">
-        <h3 class="card-title" style="margin-bottom:16px">Smart Email Alerts (SES)</h3>
+    <!-- Email Notifications & SES Health (Admin Only) -->
+    <div class="card glass" style="margin-bottom:24px">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+            <h3 class="card-title">AWS SES Notifications &amp; Delivery Posture</h3>
+            <span id="ses-connection-badge" class="badge" style="font-size:11px; padding:4px 10px; background:rgba(0,212,255,0.1); color:var(--cyan); border:1px solid rgba(0,212,255,0.3)">Checking SES...</span>
+        </div>
+
+        <!-- Diagnostic Overview Cards -->
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:16px" id="ses-diagnostics-bar">
+            <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">SES Region</div>
+                <div style="font-size:14px; font-weight:700; color:var(--text); font-family:monospace; margin-top:4px" id="ses-diag-region">--</div>
+            </div>
+            <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">Access Tier</div>
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-top:4px" id="ses-diag-sandbox">--</div>
+            </div>
+            <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">Sender Identity</div>
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-top:4px" id="ses-diag-sender">--</div>
+            </div>
+            <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">24h Quota / Sent</div>
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-top:4px" id="ses-diag-quota">--</div>
+            </div>
+        </div>
+
         <form onsubmit="saveSettings(event, 'btn-email')">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; padding:12px; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:6px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px;">
                 <div>
-                    <strong style="color:var(--cyan); font-size:12px;">Global Email Notifications</strong>
-                    <div class="text-meta" style="margin-top:4px;">Sends Critical and Audit alerts to the SOC team using AWS SES and Gemini AI. Filtered for noise (sudo, session, etc).</div>
+                    <strong style="color:var(--cyan); font-size:12px;">Global Alert Dispatch</strong>
+                    <div class="text-meta" style="margin-top:2px;">Dispatches Critical and Audit incident emails to the SOC team via AWS SES with 15-minute deduplication.</div>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <label class="switch">
@@ -102,10 +126,61 @@ input:checked + .slider:before { transform: translateX(14px); background-color: 
                     <span id="email_status_label" style="font-size:11px; font-weight:bold;">ENABLED</span>
                 </div>
             </div>
-            <div style="display:flex; justify-content:flex-end">
-                <button type="submit" class="btn btn-primary" id="btn-email">Save Email Settings</button>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px;">
+                <div>
+                    <strong style="color:var(--text); font-size:12px;">Gemini AI Alert Triage &amp; Sanitization</strong>
+                    <div class="text-meta" style="margin-top:2px;">Allows generating executive analysis via Gemini. All IP addresses, tokens, and passwords are masked before external transmission.</div>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <label class="switch">
+                        <input type="checkbox" id="email_ai_analysis_enabled">
+                        <span class="slider round"></span>
+                    </label>
+                    <span id="email_ai_status_label" style="font-size:11px; font-weight:bold;">ENABLED</span>
+                </div>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; margin-bottom:20px">
+                <button type="submit" class="btn btn-primary" id="btn-email">Save Notification Preferences</button>
             </div>
         </form>
+
+        <!-- Send Test Email Section -->
+        <div style="border-top:1px solid var(--border); padding-top:16px; margin-bottom:20px">
+            <h4 style="font-size:13px; font-weight:700; color:var(--text); margin-bottom:10px">Send Test Email</h4>
+            <div style="display:flex; gap:10px; align-items:center">
+                <input type="email" id="test_email_recipient" class="glass" placeholder="Custom recipient (leave blank for configured default)" style="flex:1; padding:8px 12px; font-size:12px">
+                <button type="button" class="btn btn-glass" onclick="triggerTestEmail(this)" style="display:flex; align-items:center; gap:6px; font-size:12px; padding:8px 16px; color:var(--cyan); border-color:rgba(0,212,255,0.3)">
+                    ✉ Send Test Email
+                </button>
+            </div>
+            <div id="test_email_result" style="display:none; margin-top:10px; padding:10px 14px; border-radius:6px; font-size:12px; font-family:monospace"></div>
+        </div>
+
+        <!-- Recent Email Logs (Latest 50) -->
+        <div style="border-top:1px solid var(--border); padding-top:16px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+                <h4 style="font-size:13px; font-weight:700; color:var(--text)">Recent Email Delivery Attempts (Latest 50)</h4>
+                <button class="btn btn-glass" onclick="loadEmailLogs()" style="font-size:11px; padding:4px 10px">↻ Refresh Logs</button>
+            </div>
+            <div style="max-height:280px; overflow-y:auto; border:1px solid var(--border); border-radius:6px">
+                <table style="width:100%; border-collapse:collapse; font-size:11.5px">
+                    <thead>
+                        <tr style="background:var(--bg3); border-bottom:1px solid var(--border); text-align:left; color:var(--text2)">
+                            <th style="padding:8px 12px">Time (UTC)</th>
+                            <th style="padding:8px 12px">Recipient</th>
+                            <th style="padding:8px 12px">Subject</th>
+                            <th style="padding:8px 12px">Status</th>
+                            <th style="padding:8px 12px">SES MessageId / Error</th>
+                        </tr>
+                    </thead>
+                    <tbody id="email-logs-table-body">
+                        <tr><td colspan="5" style="text-align:center; padding:20px; color:var(--text3)">Loading delivery logs...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
     {% endif %}
 
@@ -133,6 +208,21 @@ async function loadSettings() {
                 document.getElementById('email_status_label').style.color = this.checked ? 'var(--green)' : 'var(--red)';
             });
         }
+
+        const aiToggle = document.getElementById('email_ai_analysis_enabled');
+        if (aiToggle) {
+            aiToggle.checked = (data.email_ai_analysis_enabled !== 'false');
+            document.getElementById('email_ai_status_label').innerText = aiToggle.checked ? 'ENABLED' : 'DISABLED';
+            document.getElementById('email_ai_status_label').style.color = aiToggle.checked ? 'var(--green)' : 'var(--red)';
+            
+            aiToggle.addEventListener('change', function() {
+                document.getElementById('email_ai_status_label').innerText = this.checked ? 'ENABLED' : 'DISABLED';
+                document.getElementById('email_ai_status_label').style.color = this.checked ? 'var(--green)' : 'var(--red)';
+            });
+        }
+
+        loadSesStatus();
+        loadEmailLogs();
     } catch (err) {
         showToast('Failed to load settings', 'error');
     }
@@ -211,6 +301,118 @@ async function testWebhook(btn) {
     }
 }
 
-window.addEventListener('load', loadSettings);
+async function loadSesStatus() {
+    try {
+        const res = await apiFetch('/api/settings/notifications/status');
+        const badge = document.getElementById('ses-connection-badge');
+        if (badge) {
+            if (res.configured && res.reachability) {
+                badge.innerText = 'Connected';
+                badge.style.background = 'rgba(16,185,129,0.15)';
+                badge.style.color = 'var(--green)';
+                badge.style.borderColor = 'rgba(16,185,129,0.3)';
+            } else {
+                badge.innerText = res.configured ? 'Endpoint Error' : 'Missing Config';
+                badge.style.background = 'rgba(239,68,68,0.15)';
+                badge.style.color = 'var(--red)';
+                badge.style.borderColor = 'rgba(239,68,68,0.3)';
+            }
+        }
+        document.getElementById('ses-diag-region').innerText = res.region || 'Not Set';
+        document.getElementById('ses-diag-sandbox').innerText = res.sandbox_mode || 'Unknown';
+        
+        let senderHtml = res.sender || 'Not Set';
+        if (res.sender_verified) {
+            senderHtml += ' <span style="color:var(--green); font-size:10px">✔</span>';
+        } else if (res.sender) {
+            senderHtml += ' <span style="color:var(--red); font-size:10px" title="Unverified in SES region">✖</span>';
+        }
+        document.getElementById('ses-diag-sender').innerHTML = senderHtml;
+
+        if (res.quota) {
+            document.getElementById('ses-diag-quota').innerText = `${res.quota.sent_24h} / ${res.quota.max_24h}`;
+        } else {
+            document.getElementById('ses-diag-quota').innerText = '--';
+        }
+    } catch (e) {
+        console.error('Error loading SES status:', e);
+    }
+}
+
+async function triggerTestEmail(btn) {
+    btn.disabled = true;
+    const oldText = btn.innerHTML;
+    btn.innerHTML = 'Sending...';
+    const resBox = document.getElementById('test_email_result');
+    resBox.style.display = 'block';
+    resBox.style.background = 'rgba(255,255,255,0.03)';
+    resBox.style.border = '1px solid var(--border)';
+    resBox.style.color = 'var(--text)';
+    resBox.innerText = 'Contacting AWS SES...';
+
+    const rcpt = document.getElementById('test_email_recipient').value.trim();
+
+    try {
+        const res = await apiFetch('/api/settings/notifications/test-email', {
+            method: 'POST',
+            body: JSON.stringify({ recipient: rcpt || undefined })
+        });
+
+        if (res.ok) {
+            resBox.style.background = 'rgba(16,185,129,0.1)';
+            resBox.style.border = '1px solid rgba(16,185,129,0.3)';
+            resBox.style.color = 'var(--green)';
+            resBox.innerText = `✔ Test Email Delivered! Recipient: ${res.recipient} | SES MessageId: ${res.message_id}`;
+            showToast('Test email sent successfully', 'success');
+        } else {
+            resBox.style.background = 'rgba(239,68,68,0.1)';
+            resBox.style.border = '1px solid rgba(239,68,68,0.3)';
+            resBox.style.color = 'var(--red)';
+            resBox.innerText = `✖ SES Error: ${res.error}`;
+            showToast(`SES Error: ${res.error}`, 'error');
+        }
+        loadEmailLogs();
+    } catch (e) {
+        resBox.style.background = 'rgba(239,68,68,0.1)';
+        resBox.style.border = '1px solid rgba(239,68,68,0.3)';
+        resBox.style.color = 'var(--red)';
+        resBox.innerText = `✖ Request Failed: ${e.message || e}`;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = oldText;
+    }
+}
+
+async function loadEmailLogs() {
+    try {
+        const res = await apiFetch('/api/settings/notifications/logs');
+        const tbody = document.getElementById('email-logs-table-body');
+        if (!tbody) return;
+        const logs = res.logs || [];
+        if (!logs.length) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--text3)">No email delivery attempts logged yet.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = logs.map(l => {
+            const isSent = (l.status === 'SENT');
+            const statusBadge = isSent 
+                ? '<span style="background:rgba(16,185,129,0.15); color:var(--green); padding:2px 6px; border-radius:4px; font-weight:700; font-size:10px">SENT</span>'
+                : '<span style="background:rgba(239,68,68,0.15); color:var(--red); padding:2px 6px; border-radius:4px; font-weight:700; font-size:10px">FAILED</span>';
+            const detail = isSent ? `<span style="color:var(--text3); font-family:monospace">${l.ses_message_id || ''}</span>` : `<span style="color:var(--red); font-family:monospace">${l.error_message || 'Unknown error'}</span>`;
+            return `
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.03)">
+                <td style="padding:7px 12px; color:var(--text2); font-family:monospace">${l.timestamp ? l.timestamp.slice(0, 19).replace('T', ' ') : ''}</td>
+                <td style="padding:7px 12px; font-weight:600">${l.recipient}</td>
+                <td style="padding:7px 12px; color:var(--text2)">${l.subject || ''}</td>
+                <td style="padding:7px 12px">${statusBadge}</td>
+                <td style="padding:7px 12px; word-break:break-all">${detail}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        console.error('Error loading email logs:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadSettings);
 </script>
 {% endblock %}

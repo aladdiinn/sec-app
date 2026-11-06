@@ -758,6 +758,36 @@ def init_db():
                 );
             """)
 
+            # 12. Email Notifications Log
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS email_log (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    recipient VARCHAR(255) NOT NULL,
+                    subject VARCHAR(512),
+                    status VARCHAR(32) NOT NULL,
+                    ses_message_id VARCHAR(255),
+                    error_message TEXT,
+                    alert_id INT
+                );
+                CREATE INDEX IF NOT EXISTS idx_email_log_timestamp ON email_log(timestamp DESC);
+            """)
+
+            # 13. Network Traffic 7-Day History for Robust Statistical Anomaly Detection
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS network_traffic_history (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT NOT NULL,
+                    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    window_seconds INT DEFAULT 30,
+                    delta_rx_bytes BIGINT NOT NULL,
+                    delta_tx_bytes BIGINT NOT NULL,
+                    hour_of_day INT NOT NULL,
+                    day_of_week INT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_net_traffic_server_time ON network_traffic_history(server_id, recorded_at);
+            """)
+
 
             # Alerts Alter
             for col, col_type in [
@@ -5532,6 +5562,98 @@ def get_cleanup_log():
             return [dict(r) for r in cur.fetchall()]
     except Exception as e:
         logger.error(f"Error fetching cleanup log: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+# ==============================================================================
+# Email Notification Logs & Network Baseline Helpers
+# ==============================================================================
+
+def log_email_attempt(recipient: str, subject: str, status: str, ses_message_id: str = None, error_message: str = None, alert_id: int = None):
+    """Records an SES email delivery attempt in email_log table."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO email_log (timestamp, recipient, subject, status, ses_message_id, error_message, alert_id)
+                VALUES (NOW(), %s, %s, %s, %s, %s, %s);
+            """, (recipient[:255], subject[:512] if subject else "", status[:32], ses_message_id[:255] if ses_message_id else None, error_message, alert_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error logging email attempt: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_recent_email_logs(limit: int = 50):
+    """Returns the latest email notification attempts from email_log."""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, timestamp, recipient, subject, status, ses_message_id, error_message, alert_id
+                FROM email_log
+                ORDER BY timestamp DESC
+                LIMIT %s;
+            """, (limit,))
+            rows = cur.fetchall()
+            return [dict(r) if isinstance(r, dict) else {
+                "id": r[0], "timestamp": str(r[1]), "recipient": r[2], "subject": r[3],
+                "status": r[4], "ses_message_id": r[5], "error_message": r[6], "alert_id": r[7]
+            } for r in rows]
+    except Exception as e:
+        logger.error(f"Error fetching email logs: {e}")
+        return []
+    finally:
+        conn.close()
+
+def record_network_traffic(server_id: int, delta_rx_bytes: int, delta_tx_bytes: int, window_seconds: int = 30):
+    """Records a network traffic sample in network_traffic_history."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO network_traffic_history (server_id, recorded_at, window_seconds, delta_rx_bytes, delta_tx_bytes, hour_of_day, day_of_week)
+                VALUES (%s, NOW(), %s, %s, %s, EXTRACT(HOUR FROM NOW())::int, EXTRACT(DOW FROM NOW())::int);
+            """, (server_id, window_seconds, max(0, delta_rx_bytes), max(0, delta_tx_bytes)))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Error recording network traffic: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_network_traffic_history(server_id: int, days: int = 7):
+    """Fetches historical network samples for a server over the past N days."""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT recorded_at, window_seconds, delta_rx_bytes, delta_tx_bytes, hour_of_day, day_of_week
+                FROM network_traffic_history
+                WHERE server_id = %s AND recorded_at >= NOW() - INTERVAL '%s days'
+                ORDER BY recorded_at ASC;
+            """, (server_id, days))
+            rows = cur.fetchall()
+            return [dict(r) if isinstance(r, dict) else {
+                "recorded_at": r[0], "window_seconds": r[1],
+                "delta_rx_bytes": r[2], "delta_tx_bytes": r[3],
+                "hour_of_day": r[4], "day_of_week": r[5]
+            } for r in rows]
+    except Exception as e:
+        logger.error(f"Error fetching network traffic history: {e}")
         return []
     finally:
         conn.close()

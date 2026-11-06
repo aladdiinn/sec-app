@@ -10,8 +10,11 @@ __pycache__/
 *.pem
 *.key
 *.crt
+*.pfx
 
 # Database & SQLite files
+SOC-DB/
+data/
 securepulse.db
 *.db
 *.sqlite3

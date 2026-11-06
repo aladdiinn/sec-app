@@ -668,6 +668,14 @@ async def lifespan(app: FastAPI):
     db.init_db()
     ensure_app_siem_schema_columns()
     
+    # --- AWS SES Startup Diagnostics ---
+    try:
+        import ses_mailer
+        ses_mailer.log_startup_ses_check_once()
+    except Exception as e:
+        logger.warning(f"Failed to check SES configuration on startup: {e}")
+    # -----------------------------------
+
     # --- Gemini Startup Diagnostics ---
     import gemini_client
     try:
@@ -1181,6 +1189,31 @@ def is_admin_ip_permitted(client_ip: str) -> bool:
 
 @app.post("/auth/login")
 @app.post("/api/login")
+def generate_user_ws_token(user_id: int, username: str) -> str:
+    """Generates a cryptographically signed per-user token for WebSocket authentication."""
+    import hmac, hashlib, base64, json, time
+    payload = {"uid": user_id, "u": username, "ts": int(time.time())}
+    data = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    sig = hmac.new(SECRET_KEY.encode(), data.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{data}.{sig}"
+
+def verify_user_ws_token(token: str, max_age: int = 86400) -> dict:
+    """Validates signed per-user WebSocket token and rejects banned static token."""
+    import hmac, hashlib, base64, json, time
+    if not token or token == "sp-token-session":
+        return None
+    try:
+        data_part, sig_part = token.split(".", 1)
+        expected_sig = hmac.new(SECRET_KEY.encode(), data_part.encode(), hashlib.sha256).hexdigest()[:32]
+        if not hmac.compare_digest(sig_part, expected_sig):
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(data_part.encode()).decode())
+        if time.time() - payload.get("ts", 0) > max_age:
+            return None
+        return payload
+    except Exception:
+        return None
+
 async def auth_login(request: Request):
     client_ip = get_client_ip(request)
     try:
@@ -1324,6 +1357,7 @@ async def auth_login(request: Request):
                 "message": "Login successful",
                 "must_change_password": must_change,
                 "redirect_url": "/change-password" if must_change else "/",
+                "access_token": generate_user_ws_token(user["id"], user.get("username") or user.get("email") or "admin"),
                 "user": {"id": user["id"], "username": user.get("username"), "email": user.get("email")}
             })
     except Exception as e:
@@ -2856,19 +2890,48 @@ def _check_network_and_connections(server_id, data):
                         delta_rx = rx_bytes - last_rx
                         delta_tx = tx_bytes - last_tx
                         
-                        if samples > 10:
-                            def format_bytes(b):
-                                if not b: return '0.00 GB'
-                                mb = b / (1024 * 1024)
-                                if mb < 1024: return f"{mb:.2f} MB"
-                                gb = mb / 1024
-                                if gb < 1024: return f"{gb:.2f} GB"
-                                return f"{gb/1024:.2f} TB"
+                        # 1. Record sample to 7-day network traffic history
+                        try:
+                            db.record_network_traffic(server_id, delta_rx, delta_tx, window_seconds=30)
+                        except Exception as ex_tr:
+                            logger.debug(f"Error recording traffic sample: {ex_tr}")
 
-                            if delta_rx > (rx_avg * 4) and delta_rx > 52428800:
-                                _create_alert_dedup(server_id, 'NETWORK_RX_SPIKE', 'critical', 'Network Traffic Spike Alert', f'Detection Rule [Traffic Anomaly]: Sudden incoming traffic spike. 30s volume was {format_bytes(delta_rx)} (Historical 24h avg is {format_bytes(rx_avg)}).')
-                            if delta_tx > (tx_avg * 4) and delta_tx > 52428800:
-                                _create_alert_dedup(server_id, 'NETWORK_TX_SPIKE', 'critical', 'Network Traffic Spike Alert', f'Detection Rule [Traffic Anomaly]: Sudden outgoing traffic spike. 30s volume was {format_bytes(delta_tx)} (Historical 24h avg is {format_bytes(tx_avg)}).')
+                        # 2. Evaluate with 7-day robust baseline engine (Median + MAD + Seasonality + Second Signals)
+                        try:
+                            import traffic_anomaly_engine as tae
+                            history_samples = db.get_network_traffic_history(server_id, days=7)
+                            
+                            # Rule config: shadow_mode = True pending review per requirement B.9
+                            rule_cfg = {
+                                "k_multiplier": 4.0,
+                                "floor_bytes": 52428800, # 50 MB
+                                "sustain_windows": 2,
+                                "shadow_mode": True
+                            }
+                            
+                            anomaly_res = tae.detect_traffic_anomaly(
+                                server_id=server_id,
+                                delta_tx=delta_tx,
+                                delta_rx=delta_rx,
+                                history_samples=history_samples,
+                                active_conns=proc_conns,
+                                config=rule_cfg
+                            )
+                            
+                            if anomaly_res["is_anomaly"]:
+                                if rule_cfg.get("shadow_mode"):
+                                    logger.info(f"[TRAFFIC ANOMALY SHADOW] Server #{server_id}: {anomaly_res['message']} (Severity: {anomaly_res['severity'].upper()})")
+                                else:
+                                    _create_alert_dedup(
+                                        server_id, 'NETWORK_TX_SPIKE', anomaly_res["severity"],
+                                        'Network Traffic Spike Alert',
+                                        f"Detection Rule [Traffic Anomaly]: {anomaly_res['message']}"
+                                    )
+                            
+                            # Auto-close quiet traffic incidents after 10 minutes
+                            tae.auto_close_quiet_incidents(conn, quiet_minutes=10)
+                        except Exception as ex_tae:
+                            logger.error(f"Error in 7-day traffic anomaly evaluation: {ex_tae}")
 
                         alpha = 2.0 / (min(samples, 2880) + 1.0)
                         new_rx_avg = int((delta_rx * alpha) + (rx_avg * (1.0 - alpha))) if rx_avg > 0 else delta_rx
@@ -4614,6 +4677,40 @@ from fastapi import WebSocket
 @app.websocket("/socket.io/")
 @app.websocket("/socket.io/{path:path}")
 async def socket_io_ws_endpoint(websocket: WebSocket, path: str = ""):
+    token = websocket.query_params.get("token")
+    
+    # 1. Reject fixed string "sp-token-session" explicitly
+    if token == "sp-token-session":
+        logger.warning("[WS AUTH] Rejected WebSocket connection: banned static token used")
+        await websocket.close(code=4403, reason="Forbidden: Static token prohibited")
+        return
+
+    # 2. Validate signed per-user token or session cookie
+    is_authenticated = False
+    if token:
+        user_payload = verify_user_ws_token(token)
+        if user_payload:
+            is_authenticated = True
+
+    if not is_authenticated:
+        sess_cookie = websocket.cookies.get("session")
+        if sess_cookie:
+            try:
+                from itsdangerous import TimestampSigner
+                import base64, json
+                signer = TimestampSigner(SECRET_KEY)
+                raw_data = signer.unsign(sess_cookie, max_age=86400)
+                sess = json.loads(base64.b64decode(raw_data.decode("utf-8")).decode("utf-8"))
+                if sess.get("user_id"):
+                    is_authenticated = True
+            except Exception:
+                pass
+
+    if not is_authenticated:
+        logger.warning("[WS AUTH] Rejected unauthenticated WebSocket connection: valid session or token required")
+        await websocket.close(code=4401, reason="Unauthorized: Valid session required")
+        return
+
     await websocket.accept()
     try:
         await websocket.send_text('0{"sid":"sp-live-session","upgrades":[],"pingInterval":25000,"pingTimeout":20000}')
@@ -4629,10 +4726,18 @@ async def socket_io_ws_endpoint(websocket: WebSocket, path: str = ""):
         except Exception:
             pass
 
-# Socket.IO HTTP Polling Fallback Handler
+# Socket.IO HTTP Polling Fallback Handler with Strict Authentication
 @app.get("/socket.io/{path:path}")
 @app.post("/socket.io/{path:path}")
-async def socket_io_fallback(path: str):
+async def socket_io_fallback(request: Request, path: str):
+    token = request.query_params.get("token")
+    if token == "sp-token-session":
+        return Response(content="Forbidden: Static token prohibited", status_code=403, media_type="text/plain")
+    user = get_session_user(request)
+    if not user:
+        if token and verify_user_ws_token(token):
+            return Response(content="ok", media_type="text/plain")
+        return Response(content="Unauthorized: Valid session required", status_code=401, media_type="text/plain")
     return Response(content="ok", media_type="text/plain")
 
 # Setup Script Endpoint for Target Server Node Onboarding (Push Agent Model - Zero SSH Credentials Needed)
@@ -6884,6 +6989,34 @@ async def api_save_settings(request: Request):
     uname = request.session.get('username', 'system')
     db.log_audit(uname, 'UPDATE_SETTINGS', 'settings', 0, "Updated settings")
     return {"ok": True}
+
+# SES Notifications API Endpoints
+@app.get("/api/settings/notifications/status")
+async def api_get_ses_status(request: Request):
+    user = get_session_user(request)
+    if not user or user.get("role") not in ("admin", "superuser"):
+        return JSONResponse(status_code=403, content={"error": "Admin privilege required"})
+    import ses_mailer
+    return ses_mailer.perform_ses_self_check()
+
+@app.post("/api/settings/notifications/test-email")
+async def api_send_test_email(request: Request):
+    user = get_session_user(request)
+    if not user or user.get("role") not in ("admin", "superuser"):
+        return JSONResponse(status_code=403, content={"error": "Admin privilege required"})
+    try: body = await request.json()
+    except Exception: body = {}
+    target = body.get("recipient")
+    import ses_mailer
+    return ses_mailer.send_test_email(target_recipient=target)
+
+@app.get("/api/settings/notifications/logs")
+async def api_get_email_logs(request: Request):
+    user = get_session_user(request)
+    if not user or user.get("role") not in ("admin", "superuser"):
+        return JSONResponse(status_code=403, content={"error": "Admin privilege required"})
+    logs = db.get_recent_email_logs(limit=50)
+    return {"logs": logs}
 
 @app.post("/api/settings/test-webhook")
 async def api_test_webhook(request: Request):

@@ -101,26 +101,53 @@
             </div>
         </div>
 
-        <!-- Filter and Search Toolbar -->
-        <div style="padding:14px 18px; border-bottom:1px solid var(--border); display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; align-items:center; background:var(--bg2)">
-            <div style="display:flex; align-items:center; gap:8px; flex:1; max-width:440px;">
-                <div style="position:relative; width:100%">
+        <!-- Filter and Search Toolbar with Dedicated Server Search Dropdown -->
+        <div style="padding:14px 18px; border-bottom:1px solid var(--border); background:var(--bg2)">
+            <div style="display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; align-items:center">
+                <!-- Dedicated Server Search Control -->
+                <div style="position:relative; min-width:280px; flex:1; max-width:380px;">
+                    <div style="position:relative; display:flex; align-items:center;">
+                        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="position:absolute; left:10px; color:var(--cyan)">
+                            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
+                        </svg>
+                        <input type="text" id="server-search-input" placeholder="Search server name, hostname, or IP..." autocomplete="off"
+                            style="width:100%; background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:7px 28px 7px 32px; font-size:12px; color:var(--text); box-sizing:border-box;">
+                        <button id="server-search-clear-btn" type="button" onclick="clearServerInput()" style="display:none; position:absolute; right:8px; background:transparent; border:none; color:var(--text3); cursor:pointer; font-size:14px; padding:0 4px;">&times;</button>
+                    </div>
+                    
+                    <!-- Suggestions Dropdown -->
+                    <div id="server-suggest-dropdown" style="display:none; position:absolute; top:calc(100% + 4px); left:0; right:0; background:#0f172a; border:1px solid var(--border); border-radius:6px; max-height:280px; overflow-y:auto; z-index:9999; box-shadow:0 12px 28px rgba(0,0,0,0.8);">
+                    </div>
+                </div>
+
+                <!-- Text Search for CVE ID / Package / Advisory -->
+                <div style="position:relative; flex:1; max-width:320px;">
                     <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text3)">
                         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                     </svg>
-                    <input type="text" id="vuln-search-input" oninput="applyFilters()" placeholder="Search CVE-XXXX-YYYY, package, or server name..."
+                    <input type="text" id="vuln-search-input" oninput="applyFilters()" placeholder="Search CVE-XXXX-YYYY, package, or summary..."
                         style="width:100%; background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:7px 10px 7px 30px; font-size:12px; color:var(--text); box-sizing:border-box;">
+                </div>
+
+                <!-- Severity Filter Pills -->
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <span style="font-size:11px; color:var(--text3); margin-right:4px;">Severity:</span>
+                    <span class="filter-pill active" onclick="setSeverityFilter('ALL', this)">ALL</span>
+                    <span class="filter-pill" onclick="setSeverityFilter('CRITICAL', this)">CRITICAL</span>
+                    <span class="filter-pill" onclick="setSeverityFilter('HIGH', this)">HIGH</span>
+                    <span class="filter-pill" onclick="setSeverityFilter('MEDIUM', this)">MEDIUM</span>
+                    <span class="filter-pill" onclick="setSeverityFilter('KEV', this)">CISA KEV</span>
                 </div>
             </div>
 
-            <!-- Severity Filter Pills -->
-            <div style="display:flex; gap:6px; align-items:center;">
-                <span style="font-size:11px; color:var(--text3); margin-right:4px;">Severity:</span>
-                <span class="filter-pill active" onclick="setSeverityFilter('ALL', this)">ALL</span>
-                <span class="filter-pill" onclick="setSeverityFilter('CRITICAL', this)">CRITICAL</span>
-                <span class="filter-pill" onclick="setSeverityFilter('HIGH', this)">HIGH</span>
-                <span class="filter-pill" onclick="setSeverityFilter('MEDIUM', this)">MEDIUM</span>
-                <span class="filter-pill" onclick="setSeverityFilter('KEV', this)">CISA KEV</span>
+            <!-- Multi-Server Filter Chips Bar -->
+            <div id="selected-servers-bar" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px dashed rgba(255,255,255,0.08);">
+                <span style="font-size:11px; font-weight:700; color:var(--cyan); text-transform:uppercase; letter-spacing:0.5px;">Showing:</span>
+                <div id="server-chips-container" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;"></div>
+                <button class="btn btn-glass" onclick="clearAllServerFilters()" style="padding:2px 8px; font-size:10px; color:var(--red); border-color:rgba(239,68,68,0.3)">
+                    Clear all &times;
+                </button>
+                <div id="showing-summary-label" style="margin-left:auto; font-size:11px; font-weight:600; color:var(--text2);"></div>
             </div>
         </div>
 
@@ -184,8 +211,13 @@
 <script>
 let allFindings = [];
 let allServers = [];
+let fleetSummary = null;
+let currentFilteredFindings = [];
 let activeSeverity = 'ALL';
 let currentTab = 'cves';
+let selectedServers = new Map(); // id -> serverObj
+let focusedSuggestIndex = -1;
+let searchDebounceTimer = null;
 
 function switchVulnTab(tab) {
     currentTab = tab;
@@ -210,36 +242,230 @@ async function loadFleetData() {
             fetch('/api/vulnerabilities/fleet-cves').then(r => r.json())
         ]);
 
-        // KPIs
-        document.getElementById('kpi-total-vulns').innerText = sumRes.total_vulnerabilities || 0;
-        document.getElementById('kpi-critical').innerText = sumRes.critical || 0;
-        document.getElementById('kpi-high').innerText = sumRes.high || 0;
-        document.getElementById('kpi-kev').innerText = sumRes.kev_count || 0;
-        document.getElementById('kpi-reboot').innerText = sumRes.reboot_pending_servers || 0;
-
+        fleetSummary = sumRes;
         allServers = srvRes.servers || [];
         allFindings = cveRes.findings || [];
 
-        renderFindingsTable(allFindings);
+        restorePersistence();
+        applyFilters();
         renderServersTable(allServers);
-
-        document.getElementById('last-sync-label').innerText = `Fleet: ${allServers.length} Servers Monitored`;
     } catch (e) {
         console.error('Failed to load fleet data:', e);
     }
 }
 
+// ── Server Suggestion Dropdown Handling ──────────────────────────────────────
+const serverInput = document.getElementById('server-search-input');
+const suggestDropdown = document.getElementById('server-suggest-dropdown');
+const clearInputBtn = document.getElementById('server-search-clear-btn');
+
+if (serverInput) {
+    serverInput.addEventListener('input', function() {
+        const val = this.value;
+        clearInputBtn.style.display = val ? 'block' : 'none';
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            renderServerSuggestions(val);
+        }, 200);
+    });
+
+    serverInput.addEventListener('focus', function() {
+        renderServerSuggestions(this.value);
+    });
+
+    serverInput.addEventListener('keydown', function(e) {
+        if (suggestDropdown.style.display !== 'block') return;
+        const items = suggestDropdown.querySelectorAll('.suggest-item');
+        if (!items.length) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            focusedSuggestIndex = Math.min(focusedSuggestIndex + 1, items.length - 1);
+            highlightSuggestItem(items);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            focusedSuggestIndex = Math.max(focusedSuggestIndex - 1, 0);
+            highlightSuggestItem(items);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (focusedSuggestIndex >= 0 && items[focusedSuggestIndex]) {
+                items[focusedSuggestIndex].click();
+            }
+        } else if (e.key === 'Escape') {
+            suggestDropdown.style.display = 'none';
+        }
+    });
+}
+
+function highlightSuggestItem(items) {
+    items.forEach((it, idx) => {
+        if (idx === focusedSuggestIndex) {
+            it.style.background = 'rgba(0,212,255,0.15)';
+            it.scrollIntoView({ block: 'nearest' });
+        } else {
+            it.style.background = 'transparent';
+        }
+    });
+}
+
+function clearServerInput() {
+    serverInput.value = '';
+    clearInputBtn.style.display = 'none';
+    suggestDropdown.style.display = 'none';
+    serverInput.focus();
+}
+
+function renderServerSuggestions(query) {
+    const q = (query || '').toLowerCase().trim();
+
+    // Calculate per-server counts and max severity from allFindings
+    const serverCounts = {};
+    allFindings.forEach(f => {
+        const sname = (f.server_name || '').toLowerCase();
+        const sip = f.server_ip || '';
+        const sid = f.server_id || sname;
+        if (!serverCounts[sid]) serverCounts[sid] = { total: 0, critical: 0, high: 0, medium: 0, low: 0 };
+        serverCounts[sid].total++;
+        const s = (f.severity || '').toUpperCase();
+        if (s === 'CRITICAL') serverCounts[sid].critical++;
+        else if (s === 'HIGH') serverCounts[sid].high++;
+        else if (s === 'MEDIUM') serverCounts[sid].medium++;
+        else serverCounts[sid].low++;
+    });
+
+    let matches = allServers.filter(s => {
+        if (selectedServers.has(s.id)) return false;
+        if (!q) return true; // empty query lists all servers A-Z
+        const name = (s.name || '').toLowerCase();
+        const host = (s.hostname || '').toLowerCase();
+        const ip = (s.ip || s.ip_address || '').toLowerCase();
+        return name.includes(q) || host.includes(q) || ip.includes(q);
+    });
+
+    matches.sort((a, b) => (a.hostname || a.name || '').localeCompare(b.hostname || b.name || ''));
+
+    if (!matches.length) {
+        suggestDropdown.innerHTML = '<div style="padding:14px; text-align:center; color:var(--text3); font-size:12px">No matching server</div>';
+        suggestDropdown.style.display = 'block';
+        return;
+    }
+
+    focusedSuggestIndex = -1;
+    suggestDropdown.innerHTML = matches.map((s, idx) => {
+        const sname = s.hostname || s.name || 'Server';
+        const ip = s.ip || s.ip_address || '';
+        const proj = s.project_name || (s.project_id ? `Project #${s.project_id}` : 'Default');
+        
+        const cnt = serverCounts[s.id] || serverCounts[sname.toLowerCase()] || { total: 0, critical: 0, high: 0 };
+        
+        let badgeHtml = '';
+        if (cnt.critical > 0) {
+            badgeHtml = `<span class="vuln-badge vuln-badge-critical" style="font-size:9.5px">${cnt.critical} Critical</span>`;
+        } else if (cnt.high > 0) {
+            badgeHtml = `<span class="vuln-badge vuln-badge-high" style="font-size:9.5px">${cnt.high} High</span>`;
+        } else if (cnt.total > 0) {
+            badgeHtml = `<span class="vuln-badge vuln-badge-medium" style="font-size:9.5px">${cnt.total} Open</span>`;
+        } else {
+            badgeHtml = `<span style="font-size:10px; color:var(--green); font-weight:600">0 CVEs</span>`;
+        }
+
+        return `
+        <div class="suggest-item" data-idx="${idx}" onclick="selectServer(${s.id})"
+            style="padding:10px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s;">
+            <div>
+                <div style="font-weight:600; font-size:12.5px; color:var(--text)">${escapeHtml(sname)}</div>
+                <div style="display:flex; gap:8px; align-items:center; margin-top:2px; font-size:10px; color:var(--text3)">
+                    <span style="font-family:monospace; color:var(--cyan)">${ip}</span>
+                    <span>&bull;</span>
+                    <span>${escapeHtml(proj)}</span>
+                </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px;">
+                ${badgeHtml}
+            </div>
+        </div>`;
+    }).join('');
+
+    suggestDropdown.style.display = 'block';
+}
+
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#server-search-input') && !e.target.closest('#server-suggest-dropdown')) {
+        suggestDropdown.style.display = 'none';
+    }
+});
+
+function selectServer(serverId) {
+    const s = allServers.find(srv => srv.id === serverId);
+    if (!s) return;
+    selectedServers.set(s.id, s);
+    serverInput.value = '';
+    clearInputBtn.style.display = 'none';
+    suggestDropdown.style.display = 'none';
+    renderServerChips();
+    applyFilters();
+    updatePersistence();
+}
+
+function removeServer(serverId) {
+    selectedServers.delete(serverId);
+    renderServerChips();
+    applyFilters();
+    updatePersistence();
+}
+
+function clearAllServerFilters() {
+    selectedServers.clear();
+    renderServerChips();
+    applyFilters();
+    updatePersistence();
+}
+
+function renderServerChips() {
+    const bar = document.getElementById('selected-servers-bar');
+    const container = document.getElementById('server-chips-container');
+    if (!selectedServers.size) {
+        bar.style.display = 'none';
+        container.innerHTML = '';
+        return;
+    }
+    bar.style.display = 'flex';
+    container.innerHTML = Array.from(selectedServers.values()).map(s => `
+        <span class="badge" style="background:rgba(0,212,255,0.15); color:var(--cyan); border:1px solid rgba(0,212,255,0.4); padding:3px 9px; font-size:11px; display:inline-flex; align-items:center; gap:6px;">
+            <strong>${escapeHtml(s.hostname || s.name)}</strong> <span style="font-size:10px; opacity:0.8">(${s.ip || s.ip_address})</span>
+            <span onclick="removeServer(${s.id})" style="cursor:pointer; font-size:14px; font-weight:bold; margin-left:3px; opacity:0.8;" title="Remove filter">&times;</span>
+        </span>
+    `).join('');
+}
+
+// ── Main Filter Application & KPI Updates ────────────────────────────────────
 function applyFilters() {
     const q = (document.getElementById('vuln-search-input').value || '').toLowerCase().trim();
 
     if (currentTab === 'cves') {
-        let filtered = allFindings.filter(f => {
+        currentFilteredFindings = allFindings.filter(f => {
+            // Server filter check
+            let matchesServer = true;
+            if (selectedServers.size > 0) {
+                matchesServer = Array.from(selectedServers.values()).some(srv => {
+                    const sid = f.server_id;
+                    const sname = (f.server_name || '').toLowerCase();
+                    const sip = f.server_ip || '';
+                    return (sid && sid === srv.id) ||
+                           sname.includes((srv.hostname || '').toLowerCase()) ||
+                           sname.includes((srv.name || '').toLowerCase()) ||
+                           (sip && (sip === srv.ip || sip === srv.ip_address));
+                });
+            }
+
+            // Text search check
             const matchesQuery = !q || 
                 (f.cve_id && f.cve_id.toLowerCase().includes(q)) ||
                 (f.package_name && f.package_name.toLowerCase().includes(q)) ||
                 (f.server_name && f.server_name.toLowerCase().includes(q)) ||
                 (f.summary && f.summary.toLowerCase().includes(q));
 
+            // Severity check
             let matchesSev = true;
             if (activeSeverity === 'KEV') {
                 matchesSev = f.is_cisa_kev === true;
@@ -247,24 +473,165 @@ function applyFilters() {
                 matchesSev = f.severity.toUpperCase() === activeSeverity;
             }
 
-            return matchesQuery && matchesSev;
+            return matchesServer && matchesQuery && matchesSev;
         });
-        renderFindingsTable(filtered);
+
+        updateKPIsForSelection(currentFilteredFindings);
+        renderFindingsTable(currentFilteredFindings);
     } else {
         let filteredSrv = allServers.filter(s => {
-            return !q || 
+            const matchesQuery = !q || 
                 (s.hostname && s.hostname.toLowerCase().includes(q)) ||
                 (s.ip && s.ip.includes(q)) ||
                 (s.os_info && s.os_info.toLowerCase().includes(q));
+            let matchesSelected = true;
+            if (selectedServers.size > 0) {
+                matchesSelected = selectedServers.has(s.id);
+            }
+            return matchesQuery && matchesSelected;
         });
         renderServersTable(filteredSrv);
+    }
+}
+
+function updateKPIsForSelection(filteredFindings) {
+    if (!selectedServers.size) {
+        if (fleetSummary) {
+            document.getElementById('kpi-total-vulns').innerText = fleetSummary.total_vulnerabilities || 0;
+            document.getElementById('kpi-critical').innerText = fleetSummary.critical || 0;
+            document.getElementById('kpi-high').innerText = fleetSummary.high || 0;
+            document.getElementById('kpi-kev').innerText = fleetSummary.kev_count || 0;
+            document.getElementById('kpi-reboot').innerText = fleetSummary.reboot_pending_servers || 0;
+        }
+        document.querySelector('.vuln-stats-bar .vuln-stat-card:first-child .vuln-stat-lbl').innerText = 'Fleet Vulnerabilities';
+        document.getElementById('last-sync-label').innerText = `Fleet: ${allServers.length} Servers Monitored`;
+        document.getElementById('showing-summary-label').innerText = '';
+        updateScanButtonState(null);
+        return;
+    }
+
+    let crit = 0, high = 0, kev = 0;
+    filteredFindings.forEach(f => {
+        const s = (f.severity || '').toUpperCase();
+        if (s === 'CRITICAL') crit++;
+        else if (s === 'HIGH') high++;
+        if (f.is_cisa_kev) kev++;
+    });
+
+    let rebootCount = 0;
+    selectedServers.forEach(srv => {
+        if (srv.reboot_required) rebootCount++;
+    });
+
+    document.getElementById('kpi-total-vulns').innerText = filteredFindings.length;
+    document.getElementById('kpi-critical').innerText = crit;
+    document.getElementById('kpi-high').innerText = high;
+    document.getElementById('kpi-kev').innerText = kev;
+    document.getElementById('kpi-reboot').innerText = rebootCount;
+
+    const srvNames = Array.from(selectedServers.values()).map(s => s.hostname || s.name).join(', ');
+    document.querySelector('.vuln-stats-bar .vuln-stat-card:first-child .vuln-stat-lbl').innerText = (selectedServers.size === 1) ? 'Server Vulnerabilities' : 'Selected Vulnerabilities';
+    document.getElementById('showing-summary-label').innerText = `Showing: ${srvNames}`;
+    document.getElementById('last-sync-label').innerText = `Showing: ${selectedServers.size} of ${allServers.length} Servers Monitored`;
+
+    if (selectedServers.size === 1) {
+        const singleSrv = Array.from(selectedServers.values())[0];
+        updateScanButtonState(singleSrv);
+    } else {
+        updateScanButtonState(null);
+    }
+}
+
+function updateScanButtonState(singleServer) {
+    const btn = document.getElementById('btn-scan-fleet');
+    if (!btn) return;
+    if (singleServer) {
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Scan ${escapeHtml(singleServer.hostname || singleServer.name)}`;
+        btn.onclick = () => scanSingleServer(singleServer.id, singleServer.hostname || singleServer.name);
+    } else {
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polygon points="12 8 15 12 12 16 9 12 12 8"/></svg> Scan Fleet Now`;
+        btn.onclick = scanFleetNow;
+    }
+}
+
+async function scanSingleServer(serverId, serverName) {
+    const btn = document.getElementById('btn-scan-fleet');
+    btn.disabled = true;
+    btn.innerText = `Scanning ${serverName}...`;
+    try {
+        const res = await fetch(`/api/servers/${serverId}/scan`, { method: 'POST' }).then(r => r.json());
+        showToast(res.message || `Scan completed for ${serverName}`, 'success');
+        setTimeout(loadFleetData, 1500);
+    } catch (e) {
+        showToast(`Scan failed: ${e}`, 'error');
+    } finally {
+        btn.disabled = false;
+        const s = selectedServers.get(serverId);
+        updateScanButtonState(s);
+    }
+}
+
+function selectServerFromPosture(serverId) {
+    selectedServers.clear();
+    const s = allServers.find(srv => srv.id === serverId);
+    if (s) {
+        selectedServers.set(s.id, s);
+        renderServerChips();
+    }
+    switchVulnTab('cves');
+    applyFilters();
+    updatePersistence();
+}
+
+function updatePersistence() {
+    const ids = Array.from(selectedServers.keys());
+    if (ids.length) {
+        location.hash = `servers=${ids.join(',')}`;
+        sessionStorage.setItem('vuln_selected_servers', JSON.stringify(ids));
+    } else {
+        if (location.hash.startsWith('#servers=')) {
+            history.replaceState(null, null, ' ');
+        }
+        sessionStorage.removeItem('vuln_selected_servers');
+    }
+}
+
+function restorePersistence() {
+    let idsToRestore = [];
+    if (location.hash.startsWith('#servers=')) {
+        const raw = location.hash.replace('#servers=', '');
+        idsToRestore = raw.split(',').map(x => parseInt(x)).filter(x => !isNaN(x));
+    } else {
+        try {
+            const stored = sessionStorage.getItem('vuln_selected_servers');
+            if (stored) idsToRestore = JSON.parse(stored);
+        } catch (e) {}
+    }
+
+    if (idsToRestore.length && allServers.length) {
+        idsToRestore.forEach(id => {
+            const s = allServers.find(srv => srv.id === id);
+            if (s) selectedServers.set(s.id, s);
+        });
+        renderServerChips();
     }
 }
 
 function renderFindingsTable(findings) {
     const tbody = document.getElementById('vuln-table-body');
     if (!findings.length) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--text2)">No matching vulnerabilities found.</td></tr>`;
+        if (selectedServers.size > 0) {
+            const srvNames = Array.from(selectedServers.values()).map(s => s.hostname || s.name).join(', ');
+            const firstSrv = Array.from(selectedServers.values())[0];
+            const lastScan = firstSrv.last_vuln_scan;
+            const lastScanText = lastScan ? new Date(lastScan).toLocaleString() : 'Recent';
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:35px; color:var(--text2)">
+                <div style="font-size:14px; font-weight:700; color:var(--green); margin-bottom:6px">✔ No vulnerabilities found for ${escapeHtml(srvNames)}</div>
+                <div style="font-size:11px; color:var(--text3)">Last vulnerability scan: ${lastScanText}</div>
+            </td></tr>`;
+        } else {
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--text2)">No matching vulnerabilities found.</td></tr>`;
+        }
         return;
     }
 
@@ -301,16 +668,12 @@ function renderFindingsTable(findings) {
                     ${escapeHtml(f.summary || f.advisory_id || 'Security patch available')}
                 </div>
                 <div style="font-size:10px; color:var(--text3); font-family:monospace; margin-top:3px; display:flex; gap:8px; align-items:center;">
-                    <span>${escapeHtml(f.advisory_id || '')}</span>
-                    ${f.cvss_vector ? `<span style="color:var(--text3); font-size:10px" title="CVSS Vector">${escapeHtml(f.cvss_vector)}</span>` : ''}
+                    <span>Advisory: <strong>${escapeHtml(f.advisory_id || 'N/A')}</strong></span>
                 </div>
             </td>
-            <td style="text-align:right; white-space:nowrap;">
-                <button class="btn btn-primary" style="padding:4px 9px; font-size:11px; margin-right:4px;" onclick="openCveDetailModal('${escapeHtml(f.cve_id)}', '${escapeHtml(f.package_name)}')">
-                    Inspect
-                </button>
-                <button class="btn btn-glass" style="padding:4px 8px; font-size:11px" onclick="window.location.href='/servers?focus=${f.server_id}'" title="View Server Asset">
-                    Asset
+            <td style="text-align:right">
+                <button class="btn btn-glass" style="padding:4px 9px; font-size:11px" onclick="openCveDetailModal('${escapeHtml(f.cve_id)}', '${escapeHtml(f.package_name)}')">
+                    Details
                 </button>
             </td>
         </tr>`;
@@ -320,32 +683,24 @@ function renderFindingsTable(findings) {
 function renderServersTable(servers) {
     const tbody = document.getElementById('servers-table-body');
     if (!servers.length) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text2)">No servers found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text2)">No matching servers found.</td></tr>`;
         return;
     }
 
     tbody.innerHTML = servers.map(s => {
-        const agentVer = s.agent_version || '0.2';
-        const isOld = parseFloat(agentVer) < 1.6;
-        let riskHtml = '';
-
-        if (isOld) {
-            riskHtml = `<span style="color:var(--amber); font-size:11px">Agent v${agentVer}: update agent</span>`;
-        } else if (s.vuln_scan_status && s.vuln_scan_status.startsWith('No security data')) {
-            riskHtml = `<span style="color:var(--text3); font-size:11px">${escapeHtml(s.vuln_scan_status)}</span>`;
-        } else {
-            riskHtml = `
-            <span style="font-family:monospace; font-weight:700">
-                <span style="color:var(--red)">C ${s.vuln_critical || 0}</span> · 
-                <span style="color:var(--amber)">H ${s.vuln_high || 0}</span> · 
-                <span style="color:#eab308">M ${s.vuln_medium || 0}</span> · 
-                <span style="color:var(--cyan)">L ${s.vuln_low || 0}</span>
-            </span>`;
-        }
-
+        const isOld = (s.agent_version && s.agent_version.startsWith('0.'));
+        const agentVer = s.agent_version || '0.5';
         const rebootBadge = s.reboot_required 
             ? `<span class="vuln-badge vuln-badge-reboot">REBOOT PENDING</span>` 
-            : `<span style="color:var(--green); font-size:11px">Clean</span>`;
+            : `<span style="color:var(--green); font-size:11px; font-weight:600">Up to date</span>`;
+
+        let riskHtml = `
+            <div style="display:flex; gap:6px; font-family:monospace; font-size:11px; font-weight:700">
+                <span style="color:var(--red)">${s.critical_vulns || 0}C</span>
+                <span style="color:var(--amber)">${s.high_vulns || 0}H</span>
+                <span style="color:#eab308">${s.medium_vulns || 0}M</span>
+                <span style="color:var(--cyan)">${s.low_vulns || 0}L</span>
+            </div>`;
 
         return `
         <tr>
@@ -357,7 +712,10 @@ function renderServersTable(servers) {
             <td>${rebootBadge}</td>
             <td style="font-size:11px; color:var(--text3)">${s.last_vuln_scan ? new Date(s.last_vuln_scan).toLocaleString() : 'Never'}</td>
             <td style="text-align:right">
-                <button class="btn btn-glass" style="padding:3px 8px; font-size:10px" onclick="window.location.href='/servers?focus=${s.id}'">
+                <button class="btn btn-glass" style="padding:4px 9px; font-size:11px; color:var(--cyan); border-color:rgba(0,212,255,0.3); margin-right:4px;" onclick="selectServerFromPosture(${s.id})" title="Filter Affected Components tab to this server">
+                    Filter CVEs
+                </button>
+                <button class="btn btn-glass" style="padding:4px 9px; font-size:11px" onclick="window.location.href='/servers?focus=${s.id}'">
                     View Asset
                 </button>
             </td>
@@ -402,15 +760,21 @@ function escapeHtml(str) {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Export follows active filters strictly
 function exportFleetVulns(format) {
-    if (!allFindings.length) {
-        showToast('No vulnerability records to export', 'warning');
+    const targetDataset = currentFilteredFindings.length ? currentFilteredFindings : (selectedServers.size ? [] : allFindings);
+    if (!targetDataset.length) {
+        showToast('No vulnerability records to export for current filter', 'warning');
         return;
     }
-    const filename = `fleet_vulnerabilities_${new Date().toISOString().slice(0, 10)}`;
+    const filterTag = selectedServers.size === 1 
+        ? (Array.from(selectedServers.values())[0].hostname || 'server').replace(/[^a-zA-Z0-9_-]/g, '_')
+        : (selectedServers.size > 1 ? `selected_${selectedServers.size}_servers` : 'fleet');
+    const filename = `${filterTag}_vulnerabilities_${new Date().toISOString().slice(0, 10)}`;
+
     if (format === 'csv') {
         const headers = ["CVE ID", "Severity", "CVSS", "Server Hostname", "Server IP", "Component", "Installed Version", "Fixed Version", "CISA KEV", "Reboot Required", "Summary", "Advisory ID"];
-        const rows = allFindings.map(f => [
+        const rows = targetDataset.map(f => [
             `"${f.cve_id || ''}"`,
             `"${f.severity || ''}"`,
             `"${f.cvss_score || ''}"`,
@@ -426,11 +790,11 @@ function exportFleetVulns(format) {
         ]);
         const csvContent = headers.join(",") + "\n" + rows.map(r => r.join(",")).join("\n");
         downloadFile(csvContent, `${filename}.csv`, 'text/csv');
-        showToast(`Exported ${allFindings.length} findings as CSV`, 'success');
+        showToast(`Exported ${targetDataset.length} findings as CSV`, 'success');
     } else {
-        const jsonContent = JSON.stringify(allFindings, null, 2);
+        const jsonContent = JSON.stringify(targetDataset, null, 2);
         downloadFile(jsonContent, `${filename}.json`, 'application/json');
-        showToast(`Exported ${allFindings.length} findings as JSON`, 'success');
+        showToast(`Exported ${targetDataset.length} findings as JSON`, 'success');
     }
 }
 
@@ -447,6 +811,7 @@ function downloadFile(content, filename, mimeType) {
 }
 
 document.addEventListener('DOMContentLoaded', loadFleetData);
+
 
 // ── CVE DETAIL MODAL CONTROLLER ──
 let activeCveFinding = null;

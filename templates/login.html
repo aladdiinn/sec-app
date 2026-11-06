@@ -1092,7 +1092,11 @@ body {
       if (!res.ok) throw new Error(data.error || data.message || 'Authentication failed');
 
       // Store tokens
-      localStorage.setItem('sp_token', data.access_token || 'sp-token-session');
+      if (data.access_token) {
+        localStorage.setItem('sp_token', data.access_token);
+      } else {
+        localStorage.removeItem('sp_token');
+      }
       localStorage.setItem('sp_user', JSON.stringify(data.user || {
         id: data.user_id || 1, username: data.username || 'admin',
         full_name: data.full_name || 'System Administrator', is_admin: true,

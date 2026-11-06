@@ -7,218 +7,127 @@
 
 1. **Zero Secrets in Git**: No real `.env` file, database passwords, or cryptographic tokens exist in this repository.
 2. **Zero Secrets in Docker Images**: `.dockerignore` blocks `.env*`, `.pem`, and keys. Secrets are injected strictly at runtime via Docker Compose `env_file`.
-3. **Private Image Registry**: Images are built via GitHub Actions and published to GitHub Container Registry (`ghcr.io`).
-4. **Local Host Proxying**: The container binds only to `127.0.0.1:8001` on the loopback interface (preventing collision with existing host services like GitLab Dashboard on port 8000), shielding FastAPI and PostgreSQL from direct internet exposure.
+3. **Single Authoritative `.env`**: Exactly ONE configuration file located at `/application/Soc/.env`. No second copies inside git clones.
+4. **Private Image Registry**: Images are built via GitHub Actions and published to GitHub Container Registry (`ghcr.io`).
+5. **Local Host Proxying**: The container binds only to `127.0.0.1:8001` on the loopback interface (preventing collision with existing host services like GitLab Dashboard on port 8000), terminated by HAProxy on HTTPS port 3443 with SSL.
 
 ---
 
-## 2. Server Setup Commands (Run on Ubuntu 22.04 LTS)
+## 2. Recommended Production Directory Layout
 
-### Step 1: Create Host Directory Layout
-```bash
-# Create deployment directories
-sudo mkdir -p /application/Soc/logs /application/Soc/data
-cd /application/Soc
+The deployment host `/application/Soc` is an execution folder, NOT a development repository. It should contain only runtime orchestration files:
+
+```text
+/application/Soc/
+├── docker-compose.yml     # Multi-container stack (soc-app + soc-db)
+├── .env                   # Single production configuration (chmod 600 root:root)
+├── logs/                  # Persistent rotated security logs (/app/logs)
+├── data/                  # Offline MaxMind GeoIP database & local state (/app/data)
+└── SOC-DB/                # Dedicated isolated PostgreSQL 15 database volume
 ```
 
-### Step 2: Copy Docker Compose Configuration
-Copy [`docker-compose.yml`](file:///c:/Users/Test/Downloads/security-dash/docker-compose.yml) to `/application/Soc/docker-compose.yml`:
-```bash
-sudo curl -fsSL https://raw.githubusercontent.com/aladdiinn/sec-app/main/docker-compose.yml -o /application/Soc/docker-compose.yml
-# Or copy via SCP: scp docker-compose.yml user@server:/application/Soc/
-```
-
-### Step 3: Create `/application/Soc/.env` Manually
-Create `/application/Soc/.env` from `.env.example`:
-```bash
-sudo nano /application/Soc/.env
-```
-Populate the required secrets:
-```dotenv
-# ── Database Credentials ──
-DB_HOST=host.docker.internal
-DB_PORT=5432
-DB_NAME=bsmart_soc
-DB_USER=socadmin
-DB_PASSWORD=YOUR_STRONG_DATABASE_PASSWORD_HERE
-
-# ── Application Security ──
-# Generate with: openssl rand -hex 32
-SECRET_KEY=YOUR_64_CHAR_RANDOM_SECRET_KEY_HERE
-SECURE_COOKIES=true
-ENABLE_BCRYPT=true
-ADMIN_ALLOWED_IPS=
-TRUSTED_PROXIES=127.0.0.1,172.17.0.1,172.18.0.1
-PORT=8000
-ENVIRONMENT=production
-
-# ── Storage & Logging ──
-LOG_LEVEL=INFO
-LOG_FILE_PATH=/app/logs/app_security.log
-GEOIP_DB_PATH=/app/data/GeoLite2-City.mmdb
-```
-
-### Step 4: Lock Down Permissions (Root-only read)
-```bash
-sudo chown -R root:root /application/Soc
-sudo chmod 600 /application/Soc/.env
-sudo chmod 755 /application/Soc/logs /application/Soc/data
-```
-
-### Step 5: Log in to GitHub Container Registry (GHCR)
-Generate a GitHub Personal Access Token (Classic) with `read:packages` scope, then log in:
-```bash
-echo "YOUR_GHCR_PAT_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-```
-
-### Step 6: Start the SOC Container
+### Server Git Repository Cleanup Procedure
+If `/application/Soc` was initialized as a git clone that accidentally tracked `.env`:
 ```bash
 cd /application/Soc
-docker compose pull
-docker compose up -d
+
+# 1. Untrack .env from git index WITHOUT deleting the actual file on disk
+git rm --cached .env
+
+# 2. Verify git status (should show .env untracked / ignored)
+git status
+
+# 3. Check history to confirm what secret names were exposed (do not print values)
+git log -p -1 .env | grep -E "^[+-][A-Z_]+=" | awk -F'=' '{print $1}' | sort -u
 ```
 
-### Step 7: Verify Running State
-```bash
-# Check container status
-docker compose ps
+### Secrets to Rotate Immediately
+If `.env` was committed or pushed to any shared repository, immediately rotate:
+1. `GEMINI_API_KEY` (Revoke and regenerate in Google AI Studio)
+2. `SES_AWS_SECRET_ACCESS_KEY` (Deactivate IAM access key in AWS IAM and issue a new one)
+3. `AWS_S3_SECRET_ACCESS_KEY` (Deactivate IAM access key in AWS IAM and issue a new one)
+4. `SECRET_KEY` (Regenerate new 64-char key: `openssl rand -hex 32`)
+5. `DB_PASSWORD` (Change PostgreSQL password and update `/application/Soc/.env`)
 
-# View live application security log
-docker compose logs -f soc
+---
 
-# Verify local healthcheck
-curl -f http://127.0.0.1:8001/api/version
+## 3. AWS SES Prerequisites & Setup
+
+### A. Region Alignment
+- The AWS IAM credentials and `SES_AWS_REGION` MUST match the region where your sender email/domain identity is verified (e.g. `ap-south-1` or `us-east-1`).
+- If using separate regions for S3 and SES:
+  - `SES_AWS_REGION=ap-south-1`
+  - `AWS_S3_REGION=us-east-1`
+
+### B. Sandbox vs Production Mode
+- **SES Sandbox**: If your AWS account is in the SES Sandbox, **EVERY recipient address** in `SES_RECIPIENT_EMAIL` must be individually verified in AWS SES Console.
+- **Production Mode**: Submit a standard "Request Production Access" in AWS SES Console (typically approved within 24h) to send to unverified recipient emails.
+
+### C. Minimal IAM Policy for SES
+Attach this least-privilege IAM policy to the user specified in `SES_AWS_ACCESS_KEY_ID`:
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowSESSending",
+            "Effect": "Allow",
+            "Action": [
+                "ses:SendEmail",
+                "ses:SendRawEmail",
+                "ses:GetSendQuota",
+                "ses:GetIdentityVerificationAttributes"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
 ```
 
 ---
 
-## 3. Database Connectivity from Container
+## 4. Applying Changes & Restarting Services
 
-### When PostgreSQL runs on the host server:
-1. `DB_HOST=host.docker.internal` allows the container to communicate with the host via `extra_hosts: ["host.docker.internal:host-gateway"]`.
-2. Configure PostgreSQL to listen on the Docker bridge gateway (`172.17.0.1`):
-   Edit `/etc/postgresql/14/main/postgresql.conf`:
-   ```ini
-   listen_addresses = 'localhost, 172.17.0.1'
-   ```
-3. Allow container subnet access in `/etc/postgresql/14/main/pg_hba.conf`:
-   ```
-   # Allow Docker bridge network to connect to bsmart_soc
-   host    bsmart_soc    socadmin    172.17.0.0/16    scram-sha-256
-   ```
-4. Reload PostgreSQL: `sudo systemctl reload postgresql`.
+Whenever `/application/Soc/.env` is edited, you MUST force Docker Compose to recreate the container so the new environment variables are loaded:
+
+```bash
+cd /application/Soc
+
+# Recreate container with updated environment variables
+docker compose up -d --force-recreate soc
+
+# Test SES connection and list available models
+docker compose exec soc python check_gemini_models.py
+docker compose exec soc python test_ses.py
+```
 
 ---
 
-## 4. Reverse Proxy Options on Host (Port 80/443 Termination)
+## 5. Reverse Proxy Setup (HAProxy on Port 3443)
 
-Because your server already runs a reverse proxy managing existing services, route traffic to `http://127.0.0.1:8001` using either option below.
-
-### Option A: Using Nginx on the Host
-Create `/etc/nginx/sites-available/soc.conf`:
-```nginx
-server {
-    listen 80;
-    server_name soc.yourdomain.com;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name soc.yourdomain.com;
-
-    ssl_certificate /etc/letsencrypt/live/soc.yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/soc.yourdomain.com/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-
-    # Security Headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-
-    location / {
-        proxy_pass http://127.0.0.1:8001;
-        proxy_http_version 1.1;
-
-        # WebSocket & SSE Streaming Support
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-
-        # Proxy IP Headers
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-Enable and reload:
-```bash
-sudo ln -s /etc/nginx/sites-available/soc.conf /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-### Option B: Using Existing Host HAProxy
-If you already have HAProxy running on the host, append this snippet to `/etc/haproxy/haproxy.cfg`:
+The SOC container listens on loopback `127.0.0.1:8001`. HAProxy terminates HTTPS on port `3443`:
 
 ```haproxy
-frontend https_in
-    # Existing bind ...
-    acl is_soc hdr(host) -i soc.yourdomain.com
-    use_backend soc_backend if is_soc
+frontend https_frontend_3443
+    bind 192.168.10.201:3443 ssl crt /etc/haproxy/bsmartone.pem
+    mode http
+    option httplog
+    option forwardfor
+    acl is_bsmartsoc hdr_beg(host) -i bsmartsoc.bsmartone.com
+    use_backend bsmartsoc_backend if is_bsmartsoc
+    default_backend bsmartsoc_backend
 
-backend soc_backend
+backend bsmartsoc_backend
     mode http
     option forwardfor
     timeout tunnel 3600s
     http-request set-header X-Forwarded-Proto https
+    http-request set-header X-Forwarded-Port 3443
     http-request set-header X-Real-IP %[src]
     server soc_app 127.0.0.1:8001 check inter 5s rise 2 fall 3
 ```
+
 Reload HAProxy:
 ```bash
 sudo systemctl reload haproxy
-```
-
----
-
-## 5. Instant Rollback Procedure
-
-Every build pushed by GitHub Actions is tagged with the short commit SHA (e.g. `ghcr.io/aladdiinn/sec-app:sha-1b05f8d`).
-
-To roll back immediately to a known stable build:
-```bash
-# Set image to specific commit SHA tag in /application/Soc/.env
-echo "DOCKER_IMAGE=ghcr.io/aladdiinn/sec-app:sha-4e804d0" | sudo tee -a /application/Soc/.env
-
-# Pull and restart
-cd /application/Soc
-docker compose pull soc
-docker compose up -d
-```
-
----
-
-## 6. Optional Enterprise Upgrade: AWS SSM Parameter Store
-
-To avoid maintaining `/application/Soc/.env` manually, store secrets in AWS SSM Parameter Store under path `/soc/production/`:
-- `/soc/production/DB_PASSWORD` (SecureString)
-- `/soc/production/SECRET_KEY` (SecureString)
-
-Attach an IAM Role with `ssm:GetParametersByPath` to the EC2 instance, then generate `/application/Soc/.env` automatically during deployment:
-
-```bash
-#!/usr/bin/env bash
-# /application/Soc/fetch_env_from_ssm.sh
-aws ssm get-parameters-by-path \
-  --path "/soc/production/" \
-  --with-decryption \
-  --query "Parameters[*].[Name,Value]" \
-  --output text | awk '{split($1,a,"/"); print a[4]"="$2}' > /application/Soc/.env
-
-chmod 600 /application/Soc/.env
 ```

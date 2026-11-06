@@ -42,7 +42,12 @@ jobs:
             find . -maxdepth 2 -name ".env*" ! -name ".env.example"
             exit 1
           fi
-          echo "[PASS] No .env files present in build context."
+          echo "Checking git index for tracked secrets or .env files..."
+          if git ls-files | grep -E "^\.env$|^\.env\..*"; then
+            echo "CRITICAL ERROR: .env file is tracked in git index!"
+            exit 1
+          fi
+          echo "[PASS] No .env files present or tracked in build context."
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5

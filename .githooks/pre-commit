@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# BSmart SOC — Pre-Commit Security Hook
+# Blocks committing .env files, certificates, or exposed private credentials
+# ==============================================================================
+
+echo "Running pre-commit security checks..."
+
+# 1. Check if .env or secret config is staged
+STAGED_ENV=$(git diff --cached --name-only | grep -E "^\.env$|^\.env\..*")
+if [ -n "$STAGED_ENV" ]; then
+    echo "======================================================================"
+    echo "❌ COMMIT REJECTED: Attempting to commit environment secret file:"
+    echo "   $STAGED_ENV"
+    echo "   Secrets must NEVER be committed to git."
+    echo "   Run: git rm --cached $STAGED_ENV"
+    echo "======================================================================"
+    exit 1
+fi
+
+# 2. Check for private keys and certificates
+STAGED_CERTS=$(git diff --cached --name-only | grep -E "\.(pem|key|pfx|crt)$")
+if [ -n "$STAGED_CERTS" ]; then
+    echo "======================================================================"
+    echo "❌ COMMIT REJECTED: Attempting to commit cryptographic certificate/key:"
+    echo "   $STAGED_CERTS"
+    echo "======================================================================"
+    exit 1
+fi
+
+echo "✅ [PASS] Pre-commit security check passed."
+exit 0

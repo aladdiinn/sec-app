@@ -8,7 +8,10 @@
   'use strict';
 
   var token = localStorage.getItem('sp_token');
-  if (!token) return;  // Not authenticated — skip
+  if (!token || token === 'sp-token-session') {
+    localStorage.removeItem('sp_token');
+    return;  // Not authenticated with valid per-user signed token — skip
+  }
 
   // Connect with token as query param (SocketIO doesn't support custom headers)
   var socket = io({
