@@ -619,7 +619,9 @@ def run_collector():
                         )
                         is_sec_signal = any(k in line_lower for k in (
                             "fatal", "panic", "error", "drop table", "alter table", "truncate",
-                            "create table", "grant", "revoke", "statement:", "audit:", "duration:", "connection authorized"
+                            "create table", "grant", "revoke", "statement:", "audit:", "duration:", "connection authorized",
+                            "login failed", "no such user", "auth failed", "closing because", "pgbouncer", "no such database",
+                            "role", "does not exist", "authentication failed"
                         ))
                         if not has_db_match and not is_sec_signal:
                             continue
