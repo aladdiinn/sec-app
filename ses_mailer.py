@@ -501,7 +501,7 @@ def build_alert_html(alert_id: int, alert_title: str, alert_type: str, message: 
     <table width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
             <td align="center">
-                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 620px; background: #0c1424; border: 1px solid #1a2f4d; border-radius: 12px; overflow: hidden; box-shadow: 0 16px 45px rgba(0,0,0,0.65);">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; max-width: 920px; background: #0c1424; border: 1px solid #1a2f4d; border-radius: 12px; overflow: hidden; box-shadow: 0 16px 45px rgba(0,0,0,0.65);">
                     <!-- Brand Header -->
                     <tr>
                         <td style="padding: 0;">
@@ -511,7 +511,7 @@ def build_alert_html(alert_id: int, alert_title: str, alert_type: str, message: 
 
                     <!-- Incident Body Content -->
                     <tr>
-                        <td style="padding: 26px 28px;">
+                        <td style="padding: 28px 36px;">
                             <!-- Severity Pill & Incident Header -->
                             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 20px;">
                                 <tr>
@@ -541,7 +541,7 @@ def build_alert_html(alert_id: int, alert_title: str, alert_type: str, message: 
                                 </div>
                                 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size: 13px; color: #cbd5e1;">
                                     <tr>
-                                        <td style="padding: 6px 0; color: #64748b; width: 34%; font-weight: 600;">Target Asset / Node</td>
+                                        <td style="padding: 6px 0; color: #64748b; width: 26%; font-weight: 600;">Target Asset / Node</td>
                                         <td style="padding: 6px 0; font-weight: 700; color: #ffffff;">
                                             {safe_host} <span style="font-family: 'Consolas', monospace; color: #38bdf8; font-weight: 600;">({safe_ip})</span>
                                         </td>
@@ -681,7 +681,7 @@ def build_test_email_html(sender: str, rcpt: str, region: str, timestamp: str, d
     <table width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
             <td align="center">
-                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 620px; background: #0c1424; border: 1px solid #1a2f4d; border-radius: 12px; overflow: hidden; box-shadow: 0 16px 45px rgba(0,0,0,0.65);">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; max-width: 920px; background: #0c1424; border: 1px solid #1a2f4d; border-radius: 12px; overflow: hidden; box-shadow: 0 16px 45px rgba(0,0,0,0.65);">
                     <!-- Brand Header -->
                     <tr>
                         <td style="padding: 0;">
@@ -691,7 +691,7 @@ def build_test_email_html(sender: str, rcpt: str, region: str, timestamp: str, d
 
                     <!-- Test Body Content -->
                     <tr>
-                        <td style="padding: 26px 28px;">
+                        <td style="padding: 28px 36px;">
                             <!-- Verified Success Badge -->
                             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 20px;">
                                 <tr>
@@ -718,7 +718,7 @@ def build_test_email_html(sender: str, rcpt: str, region: str, timestamp: str, d
                                 </div>
                                 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size: 13px; color: #cbd5e1;">
                                     <tr>
-                                        <td style="padding: 6px 0; color: #64748b; width: 34%; font-weight: 600;">AWS Region</td>
+                                        <td style="padding: 6px 0; color: #64748b; width: 26%; font-weight: 600;">AWS Region</td>
                                         <td style="padding: 6px 0; font-family: 'Consolas', monospace; font-weight: 700; color: #38bdf8;">
                                             {safe_region}
                                         </td>
