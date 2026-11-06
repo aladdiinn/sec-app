@@ -72,5 +72,34 @@ class TestSesMailerComprehensive(unittest.TestCase):
                 self.assertTrue(res_test.get("disabled"))
                 mock_log.assert_called_once()
 
+    def test_brand_email_templates(self):
+        alert_html = ses_mailer.build_alert_html(
+            alert_id=537, alert_title="Suspicious Outbound Port Communication",
+            alert_type="DANGEROUS_PORT_SCAN", message="Raw log text",
+            severity="CRITICAL", timestamp="2026-11-06 14:00:00 UTC",
+            server_ip="192.168.10.201", hostname="soc-server",
+            llm_data={"analysis": "Analysis point", "risk": "Risk note", "recommendations": "Action note"}
+        )
+        self.assertIn("BSmart", alert_html)
+        self.assertIn("SOC", alert_html)
+        self.assertIn("BY BCITS SMARTER SOLUTIONS", alert_html)
+        self.assertIn("SYS_AUTH V2.4", alert_html)
+        self.assertIn("SECURE CONNECTION ESTABLISHED", alert_html)
+        self.assertIn("ENC: AES-256 | V2.4.1", alert_html)
+        self.assertIn("ACCESS INCIDENT IN SOC", alert_html)
+        self.assertIn("#INC-537", alert_html)
+
+        test_html = ses_mailer.build_test_email_html(
+            sender="team_cloudinfra@bcits.co.in",
+            rcpt="admin@bcits.co.in",
+            region="us-east-1",
+            timestamp="2026-11-06 15:00:00 UTC"
+        )
+        self.assertIn("BSmart", test_html)
+        self.assertIn("SOC", test_html)
+        self.assertIn("BY BCITS SMARTER SOLUTIONS", test_html)
+        self.assertIn("AWS SES INTEGRATION VERIFIED", test_html)
+        self.assertIn("ACCESS SOC COMMAND CENTER", test_html)
+
 if __name__ == '__main__':
     unittest.main()
