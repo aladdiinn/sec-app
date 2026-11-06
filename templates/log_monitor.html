@@ -914,7 +914,6 @@ async function updateLogFileSelectorForServer(serverId) {
             });
         }
 
-        const hasMainCatalina = files.some(f => (f.source || '').endsWith('catalina.out'));
         const uniqueFiles = [];
         const seen = new Set();
         for (const f of files) {
@@ -922,8 +921,11 @@ async function updateLogFileSelectorForServer(serverId) {
             const src = f.source;
             if (seen.has(src)) continue;
 
-            if (hasMainCatalina && /\.\d{4}-\d{2}-\d{2}\.log$/i.test(src)) continue;
-            if (hasMainCatalina && /localhost\.|manager\.|host-manager\./i.test(src)) continue;
+            const dir = src.substring(0, src.lastIndexOf('/') + 1);
+            const sameDirHasCatalinaOut = files.some(other => (other.source || '') === (dir + 'catalina.out'));
+
+            if (sameDirHasCatalinaOut && /\.\d{4}-\d{2}-\d{2}\.log$/i.test(src)) continue;
+            if (sameDirHasCatalinaOut && /localhost\.|manager\.|host-manager\./i.test(src)) continue;
 
             seen.add(src);
             uniqueFiles.push(f);

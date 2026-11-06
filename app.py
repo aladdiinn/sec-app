@@ -5539,10 +5539,26 @@ def auto_discover_log_paths():
 
     def is_rotated_archive(filepath):
         filename = os.path.basename(filepath)
-        if re.search(r'\\.\\d{{4}}-\\d{{2}}-\\d{{2}}\\.log$', filename, re.IGNORECASE): return True
-        if re.search(r'\\.\\d{{8}}\\.log$', filename, re.IGNORECASE): return True
-        if re.search(r'\\.(gz|bz2|zip|tar|1|2|3|4|5|bak|old|swp)$', filename, re.IGNORECASE): return True
-        if re.search(r'^(localhost|manager|host-manager)\\.', filename, re.IGNORECASE): return True
+        if re.search(r'\\.(gz|bz2|zip|tar|1|2|3|4|5|bak|old|swp)$', filename, re.IGNORECASE):
+            return True
+        # Keep active current-day log or recently updated log files
+        m = re.search(r'(\\d{{4}}-\\d{{2}}-\\d{{2}})', filename)
+        if m:
+            date_str = m.group(1)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            if date_str == today_str:
+                return False
+            try:
+                if (time.time() - os.path.getmtime(filepath)) < 14400:
+                    return False
+            except: pass
+            return True
+        if re.search(r'\\.\\d{{8}}\\.log$', filename, re.IGNORECASE):
+            try:
+                if (time.time() - os.path.getmtime(filepath)) < 14400:
+                    return False
+            except: pass
+            return True
         return False
 
     # OS Log Discovery (Ubuntu/Debian vs RHEL/CentOS/Rocky/Amazon Linux)
@@ -5570,14 +5586,36 @@ def auto_discover_log_paths():
 
     # Tomcat / Java / Application / nohup log discovery
     tomcat_candidates = [
+        "/application/*/apache-tomcat*/logs/catalina.out",
+        "/application/*/apache-tomcat*/logs/catalina*.log",
+        "/application/*/apache-tomcat*/logs/*.out",
+        "/application/*/apache-tomcat*/logs/*.log",
+        "/application/apache-tomcat*/logs/catalina.out",
+        "/application/apache-tomcat*/logs/catalina*.log",
+        "/application/*/logs/catalina.out",
+        "/application/*/logs/catalina*.log",
+        "/application/*/logs/*.out",
+        "/application/*/logs/*.log",
+        "/application/tomcat*/logs/*.out",
+        "/application/tomcat*/logs/*.log",
+        "/application/**/catalina.out",
+        "/data/*/apache-tomcat*/logs/catalina.out",
+        "/data/*/apache-tomcat*/logs/catalina*.log",
+        "/data/MDM/apache-tomcat*/logs/catalina.out",
+        "/data/MDM/apache-tomcat*/logs/catalina*.log",
+        "/data/apache-tomcat*/logs/catalina.out",
+        "/data/apache-tomcat*/logs/catalina*.log",
+        "/data/tomcat*/logs/catalina.out",
+        "/data/logs/catalina.out",
+        "/opt/*/apache-tomcat*/logs/catalina.out",
+        "/opt/*/apache-tomcat*/logs/catalina*.log",
         "/opt/tomcat/logs/catalina.out",
         "/opt/tomcat*/logs/catalina.out",
-        "/var/log/tomcat*/catalina.out",
-        "/usr/local/tomcat/logs/catalina.out",
+        "/opt/tomcat*/logs/catalina*.log",
         "/opt/apache-tomcat*/logs/catalina.out",
-        "/data/tomcat*/logs/catalina.out",
-        "/data/MDM/apache-tomcat*/logs/catalina.out",
-        "/data/logs/catalina.out",
+        "/var/log/tomcat*/catalina.out",
+        "/var/log/tomcat*/catalina*.log",
+        "/usr/local/tomcat/logs/catalina.out",
         "/var/log/catalina.out",
         "/home/*/tomcat/logs/catalina.out",
         "/home/*/catalina.out",
@@ -5591,20 +5629,29 @@ def auto_discover_log_paths():
             if os.path.exists(path) and not is_rotated_archive(path):
                 paths[path] = "tomcat"
 
-    # Find tomcat / Java / Spring / MDM from running processes
+    # Find all tomcat / Java / Spring / MDM instances from running processes
     try:
         out = subprocess.check_output(["ps", "aux"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
         for line in out.split("\\n"):
             line_l = line.lower()
             if "catalina" in line_l or "tomcat" in line_l:
+                dirs_to_check = []
                 m = re.search(r'-Dcatalina\\.home=([^\\s]+)', line)
-                if m:
-                    cat_log = os.path.join(m.group(1), "logs", "catalina.out")
-                    if os.path.exists(cat_log): paths[cat_log] = "tomcat"
+                if m: dirs_to_check.append(m.group(1).strip())
                 m_base = re.search(r'-Dcatalina\\.base=([^\\s]+)', line)
-                if m_base:
-                    cat_log = os.path.join(m_base.group(1), "logs", "catalina.out")
-                    if os.path.exists(cat_log): paths[cat_log] = "tomcat"
+                if m_base: dirs_to_check.append(m_base.group(1).strip())
+                for bdir in dirs_to_check:
+                    log_dir = os.path.join(bdir, "logs")
+                    if os.path.isdir(log_dir):
+                        c_out = os.path.join(log_dir, "catalina.out")
+                        if os.path.exists(c_out):
+                            paths[c_out] = "tomcat"
+                        for f in glob.glob(os.path.join(log_dir, "catalina*.log")):
+                            if not is_rotated_archive(f):
+                                paths[f] = "tomcat"
+                        for f in glob.glob(os.path.join(log_dir, "*.out")):
+                            if not is_rotated_archive(f):
+                                paths[f] = "tomcat"
                 m2 = re.search(r'-classpath\\s+([^\\s]+)', line)
                 if m2:
                     nohup_dir = os.path.dirname(m2.group(1))
@@ -5612,16 +5659,20 @@ def auto_discover_log_paths():
                     if os.path.exists(nohup_path): paths[nohup_path] = "tomcat"
     except: pass
 
-    # If no catalina.out found yet for tomcat, pick ONLY the single newest .log file in tomcat log directory
-    has_tomcat = any(lt == 'tomcat' for lt in paths.values())
-    if not has_tomcat:
-        fallback_globs = ["/data/MDM/apache-tomcat*/logs/*.log", "/opt/tomcat*/logs/*.log", "/var/log/tomcat*/*.log", "/data/logs/*.log"]
-        for fg in fallback_globs:
-            matches = [p for p in glob.glob(fg) if os.path.exists(p) and not is_rotated_archive(p)]
-            if matches:
-                matches.sort(key=os.path.getmtime, reverse=True)
-                paths[matches[0]] = "tomcat"
-                break
+    # Comprehensive fallback globs across application directories
+    fallback_globs = [
+        "/application/*/apache-tomcat*/logs/*.log",
+        "/application/*/logs/*.log",
+        "/data/MDM/apache-tomcat*/logs/*.log",
+        "/data/*/apache-tomcat*/logs/*.log",
+        "/opt/tomcat*/logs/*.log",
+        "/var/log/tomcat*/*.log",
+        "/data/logs/*.log"
+    ]
+    for fg in fallback_globs:
+        matches = [p for p in glob.glob(fg) if os.path.exists(p) and not is_rotated_archive(p)]
+        for m_log in matches:
+            paths[m_log] = "tomcat"
 
     # PostgreSQL log discovery: pick ONLY the single newest active PostgreSQL log file
     pg_candidates = [
@@ -5869,7 +5920,7 @@ def get_new_log_lines(max_lines_per_file=50):
             if pos is None:
                 # First start: seek to END of file — only push new real-time lines, not old history
                 # For small new files (< 10 KB) read last 50 lines as initial context
-                pos = size if size > 10240 else max(0, size - 5000)
+                pos = max(0, size - 15000)
             elif pos > size:
                 # File was rotated / truncated — restart from end of new file
                 pos = size
@@ -7611,6 +7662,21 @@ async def api_push_agent_logs(request: Request):
     hostname = (body.get("hostname") or "").strip()
     client_ip = request.client.host if request.client else None
     
+    if not server_id and config_id:
+        def _get_server_id_by_config():
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT server_id FROM server_log_configs WHERE id = %s LIMIT 1;", (config_id,))
+                        r = cur.fetchone()
+                        if r: return r["server_id"] if isinstance(r, dict) else r[0]
+                except Exception: pass
+                finally: conn.close()
+            return None
+        cfg_sid = await run_in_threadpool(_get_server_id_by_config)
+        if cfg_sid: server_id = cfg_sid
+
     if server_id:
         srv = await run_in_threadpool(db.get_server_by_id, server_id)
         if not srv: server_id = None
