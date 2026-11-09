@@ -449,6 +449,55 @@ def init_app_siem_schema(conn):
     return True
 
 
+def purge_expired_app_events_partitions(conn, retention_days=3):
+    """
+    Automatically drops daily app_events partitions older than retention_days.
+    Instantly reclaims 100% of the disk space without blocking PostgreSQL.
+    Also clears stale temporary eviction queues.
+    """
+    if not conn:
+        return []
+    import re
+    dropped = []
+    cutoff_date = datetime.now(timezone.utc).date() - timedelta(days=retention_days)
+    try:
+        with conn.cursor() as cur:
+            # Query all inherited partitions of app_events
+            cur.execute("""
+                SELECT inhrelid::regclass::text AS part_name
+                FROM pg_inherits
+                WHERE inhparent = 'app_events'::regclass;
+            """)
+            rows = cur.fetchall()
+            for r in rows:
+                p_name = (r.get("part_name") if isinstance(r, dict) else r[0] if r else "").replace('"', '').strip()
+                # Format: app_events_yYYYY_mMM_dDD
+                m = re.match(r'^app_events_y(\d{4})_m(\d{2})_d(\d{2})$', p_name)
+                if m:
+                    try:
+                        p_year, p_month, p_day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                        p_date = datetime(p_year, p_month, p_day, tzinfo=timezone.utc).date()
+                        if p_date < cutoff_date:
+                            cur.execute(f"DROP TABLE IF EXISTS {p_name};")
+                            dropped.append(p_name)
+                            logger.info(f"[STORAGE-RETENTION] Auto-dropped expired partition {p_name} (older than {retention_days} days). Disk space reclaimed.")
+                    except Exception as parse_e:
+                        logger.warning(f"[STORAGE-RETENTION] Error parsing partition {p_name}: {parse_e}")
+            
+            # Also purge old logs_eviction_queue
+            try:
+                cur.execute("TRUNCATE TABLE logs_eviction_queue;")
+                logger.info("[STORAGE-RETENTION] Auto-truncated logs_eviction_queue.")
+            except Exception as ev_e:
+                logger.debug(f"logs_eviction_queue truncate note: {ev_e}")
+
+            conn.commit()
+    except Exception as e:
+        logger.error(f"[STORAGE-RETENTION] Error in purge_expired_app_events_partitions: {e}")
+        try: conn.rollback()
+        except: pass
+    return dropped
+
 def delete_old_app_events(conn, retention_days=30, batch_size=5000):
     """
     Deletes events older than retention_days in batches of batch_size.

@@ -708,6 +708,12 @@ async def lifespan(app: FastAPI):
     # ----------------------------------
     
     try:
+        t_ret = threading.Thread(target=run_database_retention_loop, daemon=True)
+        t_ret.start()
+        logger.info("Storage & Partition Retention Worker started.")
+    except Exception as e:
+        logger.warning(f"Could not start Retention Worker: {e}")
+    try:
         t_s3 = threading.Thread(target=run_s3_archiver_loop, daemon=True)
         t_s3.start()
         logger.info("S3 Background Archiver started.")
