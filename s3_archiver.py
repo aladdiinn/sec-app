@@ -11,14 +11,14 @@ logger = logging.getLogger("s3_archiver")
 logger.setLevel(logging.INFO)
 
 # Default to a specific bucket name. You can override this via ENV variables.
-S3_BUCKET_NAME = os.environ.get("AWS_S3_BUCKET_NAME") or os.environ.get("S3_LOG_ARCHIVE_BUCKET", "securepulse-logs-archive-bucket-2026")
-AWS_REGION = os.environ.get("AWS_S3_REGION") or os.environ.get("AWS_REGION", "us-east-1")
+S3_BUCKET_NAME = os.environ.get("AWS_S3_BUCKET_NAME") or os.environ.get("S3_BUCKET_NAME") or os.environ.get("S3_LOG_ARCHIVE_BUCKET") or "bsmart-sentinel"
+AWS_REGION = os.environ.get("AWS_S3_REGION") or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "ap-south-1")
 
 def get_s3_client():
     """Initializes the boto3 S3 client supporting both AWS_S3_* and standard AWS_* env variables."""
     key_id = os.environ.get("AWS_S3_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
     secret_key = os.environ.get("AWS_S3_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY")
-    region = os.environ.get("AWS_S3_REGION") or os.environ.get("AWS_REGION", "us-east-1")
+    region = os.environ.get("AWS_S3_REGION") or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION", "ap-south-1")
     if key_id and secret_key:
         return boto3.client('s3', region_name=region, aws_access_key_id=key_id, aws_secret_access_key=secret_key)
     return boto3.client('s3', region_name=region)
@@ -90,17 +90,20 @@ def archive_logs_to_s3(db_conn):
                 if file_id.startswith("_"):
                     file_id = file_id[1:]
                 
-                cur.execute("SELECT ip, machine_id FROM servers WHERE id = %s", (server_id,))
+                import re as _re
+                cur.execute("SELECT ip, machine_id, name, hostname FROM servers WHERE id = %s", (server_id,))
                 server_row = cur.fetchone()
                 if server_row and isinstance(server_row, dict):
                     server_ip = server_row.get("ip") or f"unknown-ip-{server_id}"
-                    machine_id = server_row.get("machine_id") or f"unknown-machine-{server_id}"
+                    raw_name = server_row.get("name") or server_row.get("hostname") or server_row.get("machine_id") or f"server-{server_id}"
+                    machine_id = _re.sub(r'[^a-zA-Z0-9_\-\.]', '_', str(raw_name))
                 elif server_row:
                     server_ip = server_row[0] or f"unknown-ip-{server_id}"
-                    machine_id = server_row[1] or f"unknown-machine-{server_id}"
+                    raw_name = server_row[2] if len(server_row) > 2 and server_row[2] else server_row[1] if server_row[1] else f"server-{server_id}"
+                    machine_id = _re.sub(r'[^a-zA-Z0-9_\-\.]', '_', str(raw_name))
                 else:
                     server_ip = f"unknown-ip-{server_id}"
-                    machine_id = f"unknown-machine-{server_id}"
+                    machine_id = f"server-{server_id}"
 
                 # 2. Fetch the actual logs for this specific batch
                 cur.execute("""
