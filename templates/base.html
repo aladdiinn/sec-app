@@ -131,7 +131,7 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                         <span>ALERTS</span>
                     </div>
-                    <span id="sb-alerts-badge" class="badge" style="display:none; background:#ef4444; color:#fff; font-size:9.5px; font-weight:800; padding:1px 6px; border-radius:10px; font-family:var(--font-mono), monospace;">0</span>
+                    <span id="sb-alerts-badge" class="badge" style="display:none !important; background:#ef4444; color:#fff; font-size:9.5px; font-weight:800; padding:1px 6px; border-radius:10px; font-family:var(--font-mono), monospace;"></span>
                 </a>
 
                 <div class="sb-divider" title="Inventory"></div>
@@ -581,22 +581,22 @@
             _isUpdatingAlertsBadge = true;
             try {
                 const res = await apiFetch('/api/alerts/unread-count', { timeout: 5000 });
-                const cnt = res ? (res.unread_count ?? 0) : 0;
+                const cnt = res ? (res.unread_count ?? res.count ?? res.open_count ?? res.unread ?? 0) : 0;
                 const txt = cnt > 99 ? '99+' : String(cnt);
                 if (badge) {
+                    badge.innerText = txt;
                     if (cnt > 0) {
-                        badge.innerText = txt;
-                        badge.style.display = 'inline-block';
+                        badge.style.setProperty('display', 'inline-flex', 'important');
                     } else {
-                        badge.style.display = 'none';
+                        badge.style.setProperty('display', 'none', 'important');
                     }
                 }
                 if (notifBadge) {
                     if (cnt > 0) {
                         notifBadge.innerText = txt;
-                        notifBadge.style.display = 'block';
+                        notifBadge.style.setProperty('display', 'block', 'important');
                     } else {
-                        notifBadge.style.display = 'none';
+                        notifBadge.style.setProperty('display', 'none', 'important');
                     }
                 }
             } catch (e) {}

@@ -1736,13 +1736,38 @@ def get_server_details(server_id: int):
                     logger.debug(f"merge_duplicate_incidents_with_audit warning: {ex_m}")
                 
                 try:
-                    inc_data = get_incidents(status="all", server_id=server_id, limit=100)
-                    if inc_data and inc_data.get("items"):
-                        alerts = inc_data["items"]
-                    else:
-                        cur.execute("SELECT * FROM alerts WHERE server_id = %s ORDER BY created_at DESC LIMIT 50;", (server_id,))
-                        alerts = [dict(r) for r in cur.fetchall()]
-                except Exception:
+                    inc_data = get_incidents(status="all", server_id=server_id, limit=150)
+                    inc_items = inc_data.get("items") or []
+
+                    # Also fetch all alerts for this server from alerts table (e.g. warnings, system anomalies, resource spikes)
+                    cur.execute("""
+                        SELECT id, server_id, alert_type, severity, title, message as description, 
+                               is_resolved, created_at, created_at as first_seen, created_at as last_seen,
+                               1 as occurrences, FALSE as is_read
+                        FROM alerts 
+                        WHERE server_id = %s 
+                        ORDER BY created_at DESC LIMIT 100;
+                    """, (server_id,))
+                    raw_alerts = [dict(r) for r in cur.fetchall()]
+
+                    seen_titles = set()
+                    combined_alerts = []
+                    for inc in inc_items:
+                        t_norm = (inc.get("title") or "").strip().lower()
+                        if t_norm:
+                            seen_titles.add(t_norm)
+                        combined_alerts.append(inc)
+
+                    for al in raw_alerts:
+                        al_title = (al.get("title") or al.get("alert_type") or "").strip().lower()
+                        if al_title not in seen_titles:
+                            al["status"] = "closed" if al.get("is_resolved") else "open"
+                            combined_alerts.append(al)
+                            seen_titles.add(al_title)
+
+                    alerts = combined_alerts
+                except Exception as ex_a:
+                    logger.debug(f"Unified alerts error: {ex_a}")
                     cur.execute("SELECT * FROM alerts WHERE server_id = %s ORDER BY created_at DESC LIMIT 50;", (server_id,))
                     alerts = [dict(r) for r in cur.fetchall()]
 
@@ -2399,6 +2424,33 @@ def get_unread_alerts_count(project_id=None):
             return (row["count"] if isinstance(row, dict) else row[0]) if row else 0
     except Exception as e:
         logger.error(f"Error in get_unread_alerts_count: {e}")
+        return 0
+    finally:
+        conn.close()
+
+def get_open_incidents_count(project_id=None):
+    """Calculates open incidents count. Closed/resolved incidents do not count."""
+    conn = get_db_connection()
+    if not conn: return 0
+    try:
+        with conn.cursor() as cur:
+            query = """
+                SELECT COUNT(*) as count 
+                FROM incidents i 
+                LEFT JOIN servers s ON i.server_id = s.id 
+                WHERE i.status NOT IN ('closed', 'resolved', 'merged')
+            """
+            params = []
+            if project_id:
+                sql_clause, p_params = _build_pid_filter("s.project_id", project_id)
+                if sql_clause:
+                    query += sql_clause
+                    params.extend(p_params)
+            cur.execute(query, tuple(params))
+            row = cur.fetchone()
+            return (row["count"] if isinstance(row, dict) else row[0]) if row else 0
+    except Exception as e:
+        logger.error(f"Error in get_open_incidents_count: {e}")
         return 0
     finally:
         conn.close()

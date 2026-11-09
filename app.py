@@ -7138,8 +7138,15 @@ async def api_reject_request(app_id: int, request: Request):
 @app.get("/api/alerts/unread-count")
 def api_alerts_unread_count(request: Request):
     pid = get_effective_project_id(request)
-    count = db.get_unread_alerts_count(project_id=pid)
-    return {"unread": count, "count": count}
+    open_cnt = db.get_open_incidents_count(project_id=pid)
+    unread_cnt = db.get_unread_alerts_count(project_id=pid)
+    active_cnt = open_cnt if open_cnt > 0 else unread_cnt
+    return {
+        "unread_count": active_cnt,
+        "unread": unread_cnt,
+        "open_count": open_cnt,
+        "count": active_cnt
+    }
 
 @app.get("/api/incidents")
 async def api_get_incidents(
