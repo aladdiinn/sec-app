@@ -799,32 +799,91 @@ def init_db():
             ]:
                 try: cur.execute(f"ALTER TABLE alerts ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass
-            try: cur.execute("""
-                ALTER TABLE alerts ALTER COLUMN score DROP NOT NULL;
-                for col, ctype in [
-                    ("evidence_data", "JSONB DEFAULT '{}'::jsonb"),
-                    ("confidence", "VARCHAR(16) DEFAULT 'MEDIUM'"),
-                    ("verdict", "VARCHAR(32) DEFAULT 'unreviewed'"),
-                    ("verdict_reason", "TEXT"),
-                    ("verdict_by", "VARCHAR(100)"),
-                    ("verdict_at", "TIMESTAMPTZ")
-                ]:
-                    try: cur.execute(f"ALTER TABLE alerts ADD COLUMN IF NOT EXISTS {col} {ctype};")
-                    except Exception: pass
-                
-                for col, ctype in [
-                    ("is_shadow", "BOOLEAN DEFAULT FALSE"),
-                    ("shadow_until", "TIMESTAMPTZ"),
-                    ("status", "VARCHAR(32) DEFAULT 'healthy'"),
-                    ("required_fields", "JSONB DEFAULT '[]'::jsonb")
-                ]:
-                    try: cur.execute(f"ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS {col} {ctype};")
-                    except Exception: pass
-                ALTER TABLE alerts ALTER COLUMN score SET DEFAULT 0;
-                ALTER TABLE alerts ALTER COLUMN auto_promoted DROP NOT NULL;
-                ALTER TABLE alerts ALTER COLUMN auto_promoted SET DEFAULT FALSE;
-            """)
-            except: pass
+            try:
+                cur.execute("ALTER TABLE alerts ALTER COLUMN score DROP NOT NULL;")
+                cur.execute("ALTER TABLE alerts ALTER COLUMN score SET DEFAULT 0;")
+                cur.execute("ALTER TABLE alerts ALTER COLUMN auto_promoted DROP NOT NULL;")
+                cur.execute("ALTER TABLE alerts ALTER COLUMN auto_promoted SET DEFAULT FALSE;")
+                if hasattr(conn, 'commit'): conn.commit()
+            except Exception:
+                pass
+
+            # Alerts column migrations
+            for col, ctype in [
+                ("evidence_data", "JSONB DEFAULT '{}'::jsonb"),
+                ("confidence", "VARCHAR(16) DEFAULT 'MEDIUM'"),
+                ("verdict", "VARCHAR(32) DEFAULT 'unreviewed'"),
+                ("verdict_reason", "TEXT"),
+                ("verdict_by", "VARCHAR(100)"),
+                ("verdict_at", "TIMESTAMPTZ"),
+                ("is_read", "BOOLEAN DEFAULT FALSE"),
+                ("status", "VARCHAR(32) DEFAULT 'open'"),
+                ("closed_by", "VARCHAR(100)"),
+                ("closed_at", "TIMESTAMPTZ"),
+                ("closed_note", "TEXT"),
+                ("occurrences", "INT DEFAULT 1"),
+                ("first_seen", "TIMESTAMPTZ DEFAULT NOW()"),
+                ("last_seen", "TIMESTAMPTZ DEFAULT NOW()"),
+                ("dedup_key", "VARCHAR(255)")
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE alerts ADD COLUMN IF NOT EXISTS {col} {ctype};")
+                    if hasattr(conn, 'commit'): conn.commit()
+                except Exception:
+                    pass
+
+            # Incidents column migrations
+            for col, ctype in [
+                ("evidence_data", "JSONB DEFAULT '{}'::jsonb"),
+                ("confidence", "VARCHAR(16) DEFAULT 'MEDIUM'"),
+                ("verdict", "VARCHAR(32) DEFAULT 'unreviewed'"),
+                ("verdict_reason", "TEXT"),
+                ("verdict_by", "VARCHAR(100)"),
+                ("verdict_at", "TIMESTAMPTZ"),
+                ("is_read", "BOOLEAN DEFAULT FALSE"),
+                ("closed_by", "VARCHAR(100)"),
+                ("closed_at", "TIMESTAMPTZ"),
+                ("closed_note", "TEXT"),
+                ("occurrences", "INT DEFAULT 1"),
+                ("first_seen", "TIMESTAMPTZ DEFAULT NOW()"),
+                ("last_seen", "TIMESTAMPTZ DEFAULT NOW()"),
+                ("dedup_key", "VARCHAR(255)")
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE incidents ADD COLUMN IF NOT EXISTS {col} {ctype};")
+                    if hasattr(conn, 'commit'): conn.commit()
+                except Exception:
+                    pass
+
+            # Server Vulnerabilities column migrations
+            for col, ctype in [
+                ("closed_by", "VARCHAR(100)"),
+                ("closed_at", "TIMESTAMPTZ"),
+                ("close_reason", "VARCHAR(100)"),
+                ("close_note", "TEXT"),
+                ("risk_expiry_date", "DATE"),
+                ("risk_approver", "VARCHAR(100)"),
+                ("reopened_by", "VARCHAR(100)"),
+                ("reopened_at", "TIMESTAMPTZ")
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE server_vulnerabilities ADD COLUMN IF NOT EXISTS {col} {ctype};")
+                    if hasattr(conn, 'commit'): conn.commit()
+                except Exception:
+                    pass
+
+            # Detection Rules column migrations
+            for col, ctype in [
+                ("is_shadow", "BOOLEAN DEFAULT FALSE"),
+                ("shadow_until", "TIMESTAMPTZ"),
+                ("status", "VARCHAR(32) DEFAULT 'healthy'"),
+                ("required_fields", "JSONB DEFAULT '[]'::jsonb")
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS {col} {ctype};")
+                    if hasattr(conn, 'commit'): conn.commit()
+                except Exception:
+                    pass
             
             # Audit Logs Alter
             for col, col_type in [
@@ -1201,25 +1260,39 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
 
             is_new_incident = False
             try:
-                # Deduplication: Re-use active OPEN incident for the same server and issue instead of creating duplicate rows
+                # Canonical deduplication key for incidents and alerts
+                dedup_sub = ""
+                if "port" in (message or "").lower() or "port" in (alert_type or "").lower():
+                    import re as _re
+                    _mp = _re.search(r'port\s+(\d+)', message or "", _re.I) or _re.search(r'PORT_(\d+)', alert_type or "", _re.I)
+                    if _mp:
+                        dedup_sub = f"port_{_mp.group(1)}"
+                canonical_dedup_key = f"{valid_server_id}:{alert_type}:{dedup_sub}" if dedup_sub else f"{valid_server_id}:{alert_type}"
+
+                # Deduplication: Re-use active OPEN incident for the same server and key instead of creating duplicate rows
                 cur.execute("""
-                    SELECT id FROM incidents 
+                    SELECT id, occurrences, first_seen FROM incidents 
                     WHERE server_id = %s 
-                      AND title = %s 
+                      AND (dedup_key = %s OR (title = %s AND (description = %s OR description ILIKE %s)))
                       AND status = 'open'
-                      AND (description = %s OR description ILIKE %s)
                     ORDER BY id DESC LIMIT 1;
-                """, (valid_server_id, final_title, message, f"%{alert_type}%"))
+                """, (valid_server_id, canonical_dedup_key, final_title, message, f"%{alert_type}%"))
                 existing_inc = cur.fetchone()
                 if existing_inc:
                     inc_id = existing_inc["id"] if isinstance(existing_inc, dict) else existing_inc[0]
-                    cur.execute("UPDATE incidents SET updated_at = NOW() WHERE id = %s;", (inc_id,))
-                    logger.info(f"[INCIDENT DEDUP] Updated existing open incident #{inc_id} for server #{valid_server_id} ({final_title}). Suppressed duplicate incident row.")
+                    curr_occ = existing_inc.get("occurrences") if isinstance(existing_inc, dict) else existing_inc[1]
+                    new_occ = (curr_occ or 1) + 1
+                    cur.execute("""
+                        UPDATE incidents 
+                        SET occurrences = %s, last_seen = NOW(), updated_at = NOW(), dedup_key = %s
+                        WHERE id = %s;
+                    """, (new_occ, canonical_dedup_key, inc_id))
+                    logger.info(f"[INCIDENT DEDUP] Aggregated occurrence #{new_occ} into open incident #{inc_id} for server #{valid_server_id} ({final_title}). Suppressed duplicate incident row.")
                 else:
                     cur.execute("""
-                        INSERT INTO incidents (title, severity, description, status, assigned_to, server_id, created_at, updated_at)
-                        VALUES (%s, %s, %s, 'open', 'Unassigned', %s, NOW(), NOW());
-                    """, (final_title, severity, message, valid_server_id))
+                        INSERT INTO incidents (title, severity, description, status, assigned_to, server_id, dedup_key, occurrences, first_seen, last_seen, created_at, updated_at)
+                        VALUES (%s, %s, %s, 'open', 'Unassigned', %s, %s, 1, NOW(), NOW(), NOW(), NOW());
+                    """, (final_title, severity, message, valid_server_id, canonical_dedup_key))
                     is_new_incident = True
             except Exception as ex_inc:
                 logger.debug(f"Incident insert error: {ex_inc}")
@@ -2272,70 +2345,333 @@ def format_time_ago(dt):
 
 # ================= NEW DATABASE FUNCTIONS =================
 
-def get_incidents(status=None, severity=None, limit=100, project_id=None):
+def get_unread_alerts_count(project_id=None):
+    """Calculates unread alerts/incidents count. Closed alerts NEVER count."""
     conn = get_db_connection()
-    if not conn: return []
+    if not conn: return 0
     try:
         with conn.cursor() as cur:
-            query = "SELECT i.*, COALESCE(s.hostname, s.name) as hostname FROM incidents i LEFT JOIN servers s ON i.server_id = s.id WHERE 1=1"
+            query = """
+                SELECT COUNT(*) as count 
+                FROM incidents i 
+                LEFT JOIN servers s ON i.server_id = s.id 
+                WHERE i.status NOT IN ('closed', 'resolved', 'merged') 
+                  AND COALESCE(i.is_read, FALSE) = FALSE
+            """
             params = []
-            sql_clause, p_params = _build_pid_filter("s.project_id", project_id)
-            if sql_clause:
-                query += sql_clause
-                params.extend(p_params)
-            if status:
-                query += " AND i.status = %s"
-                params.append(status)
-            if severity:
-                query += " AND i.severity = %s"
-                params.append(severity)
-            query += " ORDER BY i.created_at DESC LIMIT %s"
-            params.append(limit)
+            if project_id:
+                sql_clause, p_params = _build_pid_filter("s.project_id", project_id)
+                if sql_clause:
+                    query += sql_clause
+                    params.extend(p_params)
             cur.execute(query, tuple(params))
-            incidents = cur.fetchall()
+            row = cur.fetchone()
+            return (row["count"] if isinstance(row, dict) else row[0]) if row else 0
+    except Exception as e:
+        logger.error(f"Error in get_unread_alerts_count: {e}")
+        return 0
+    finally:
+        conn.close()
 
+def bulk_incident_action(ids: list, action: str, username: str = "admin", note: str = "", assignee: str = "", reason: str = "", verdict: str = ""):
+    """Executes bulk incident/alert operations in a single transaction with audit logging."""
+    if not ids:
+        return {"ok": False, "message": "No incidents selected", "processed": 0, "skipped": 0}
+    conn = get_db_connection()
+    if not conn:
+        return {"ok": False, "message": "Database unavailable", "processed": 0, "skipped": 0}
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                processed = 0
+                skipped = 0
+                act = (action or "").lower().strip()
+                
+                if act == "mark_read":
+                    cur.execute("UPDATE incidents SET is_read = TRUE, updated_at = NOW() WHERE id = ANY(%s);", (ids,))
+                    processed = cur.rowcount
+                    try: cur.execute("UPDATE alerts SET is_read = TRUE WHERE id = ANY(%s);", (ids,))
+                    except Exception: pass
+                    msg = f"Marked {processed} incident(s) as read."
+                    audit_action = "BULK_INCIDENTS_MARK_READ"
 
-            if not incidents and not status:
-                try:
+                elif act == "mark_unread":
+                    cur.execute("UPDATE incidents SET is_read = FALSE, updated_at = NOW() WHERE id = ANY(%s);", (ids,))
+                    processed = cur.rowcount
+                    try: cur.execute("UPDATE alerts SET is_read = FALSE WHERE id = ANY(%s);", (ids,))
+                    except Exception: pass
+                    msg = f"Marked {processed} incident(s) as unread."
+                    audit_action = "BULK_INCIDENTS_MARK_UNREAD"
+
+                elif act == "close":
+                    cur.execute("SELECT COUNT(*) as cnt FROM incidents WHERE id = ANY(%s) AND status IN ('closed', 'resolved');", (ids,))
+                    r_skip = cur.fetchone()
+                    skipped = (r_skip["cnt"] if isinstance(r_skip, dict) else r_skip[0]) if r_skip else 0
+
+                    close_note = note or "Closed by analyst"
                     cur.execute("""
-                        SELECT a.id, a.title, a.severity, a.message as description,
-                               CASE WHEN a.is_resolved THEN 'resolved' ELSE 'open' END as status,
-                               'Unassigned' as assigned_to, a.server_id,
-                               COALESCE(s.hostname, 'ip-172-31-4-83') as hostname,
-                               a.evidence_data, a.confidence, a.verdict,
-                               a.created_at, a.created_at as updated_at
-                        FROM alerts a
-                        LEFT JOIN servers s ON a.server_id = s.id
-                        ORDER BY a.created_at DESC LIMIT %s;
-                    """, (limit,))
-                    incidents = cur.fetchall()
-                except Exception:
-                    pass
-
-            if not incidents and not status:
-                default_incidents = [
-                    ("Recursive Root Deletion Attempt", "critical", "Dangerous command (DESTRUCTIVE) executed by ubuntu: sudo rm -rf /tmp/test_danger", "open", "sec-analyst"),
-                    ("SSH Brute Force Attack", "critical", "Critical brute force detected: 12 failed logins for user root from 185.220.101.42", "open", "Unassigned"),
-                    ("Global Permission Modification", "warning", "Suspicious permission change (PERM_CHANGE): chmod 777 /etc/passwd", "investigating", "Unassigned")
-                ]
-                for inc_title, inc_sev, inc_desc, inc_st, inc_asg in default_incidents:
+                        UPDATE incidents 
+                        SET status = 'closed', closed_by = %s, closed_at = NOW(), closed_note = %s, is_read = TRUE, updated_at = NOW()
+                        WHERE id = ANY(%s) AND status NOT IN ('closed', 'resolved');
+                    """, (username, close_note, ids))
+                    processed = cur.rowcount
                     try:
                         cur.execute("""
-                            INSERT INTO incidents (title, severity, description, status, assigned_to, created_at, updated_at)
-                            VALUES (%s, %s, %s, %s, %s, NOW(), NOW());
-                        """, (inc_title, inc_sev, inc_desc, inc_st, inc_asg))
-                    except Exception:
-                        pass
-                try:
-                    cur.execute("SELECT i.*, 'ip-172-31-4-83' as hostname FROM incidents i ORDER BY i.created_at DESC LIMIT %s;", (limit,))
-                    incidents = cur.fetchall()
-                except Exception:
-                    pass
+                            UPDATE alerts 
+                            SET is_resolved = TRUE, status = 'closed', closed_by = %s, closed_at = NOW(), closed_note = %s, is_read = TRUE
+                            WHERE id = ANY(%s) AND status NOT IN ('closed', 'resolved');
+                        """, (username, close_note, ids))
+                    except Exception: pass
+                    msg = f"Closed {processed} incident(s)" + (f", skipped {skipped} already closed." if skipped else ".")
+                    audit_action = "BULK_INCIDENTS_CLOSE"
 
-            return incidents
+                elif act == "reopen":
+                    cur.execute("""
+                        UPDATE incidents 
+                        SET status = 'open', closed_by = NULL, closed_at = NULL, closed_note = NULL, is_read = FALSE, updated_at = NOW()
+                        WHERE id = ANY(%s);
+                    """, (ids,))
+                    processed = cur.rowcount
+                    try:
+                        cur.execute("""
+                            UPDATE alerts 
+                            SET is_resolved = FALSE, status = 'open', closed_by = NULL, closed_at = NULL, closed_note = NULL, is_read = FALSE
+                            WHERE id = ANY(%s);
+                        """, (ids,))
+                    except Exception: pass
+                    msg = f"Reopened {processed} incident(s)."
+                    audit_action = "BULK_INCIDENTS_REOPEN"
+
+                elif act in ("verdict", "true_positive", "false_positive"):
+                    v_val = verdict or act
+                    if v_val not in ("true_positive", "false_positive"):
+                        v_val = "true_positive"
+                    v_reason = reason or ("Confirmed True Positive by analyst" if v_val == "true_positive" else "Marked False Positive by analyst")
+                    new_status = "closed" if v_val == "false_positive" else "open"
+                    cur.execute("""
+                        UPDATE incidents 
+                        SET verdict = %s, verdict_by = %s, verdict_at = NOW(), verdict_reason = %s,
+                            status = CASE WHEN %s = 'closed' THEN 'closed' ELSE status END,
+                            closed_by = CASE WHEN %s = 'closed' THEN %s ELSE closed_by END,
+                            closed_at = CASE WHEN %s = 'closed' THEN NOW() ELSE closed_at END,
+                            closed_note = CASE WHEN %s = 'closed' THEN %s ELSE closed_note END,
+                            updated_at = NOW()
+                        WHERE id = ANY(%s);
+                    """, (v_val, username, v_reason, new_status, new_status, username, new_status, new_status, v_reason, ids))
+                    processed = cur.rowcount
+                    label = "True Positive" if v_val == "true_positive" else "False Positive"
+                    msg = f"Marked {processed} incident(s) as {label}."
+                    audit_action = f"BULK_INCIDENTS_VERDICT_{v_val.upper()}"
+
+                elif act == "assign":
+                    assign_to = assignee or username
+                    cur.execute("UPDATE incidents SET assigned_to = %s, updated_at = NOW() WHERE id = ANY(%s);", (assign_to, ids))
+                    processed = cur.rowcount
+                    msg = f"Assigned {processed} incident(s) to {assign_to}."
+                    audit_action = "BULK_INCIDENTS_ASSIGN"
+                else:
+                    return {"ok": False, "message": f"Unsupported action: {action}", "processed": 0, "skipped": 0}
+
+                # Single audit log entry with list of affected IDs
+                audit_detail = f"{msg} Affected IDs: {ids}"
+                if note: audit_detail += f" | Note: {note}"
+                if reason: audit_detail += f" | Reason: {reason}"
+                try:
+                    cur.execute("""
+                        INSERT INTO audit_logs (username, action, target_type, target_id, detail, timestamp)
+                        VALUES (%s, %s, 'incidents', %s, %s, NOW());
+                    """, (username, audit_action, ids[0] if ids else 0, audit_detail))
+                except Exception as audit_e:
+                    logger.debug(f"Audit log write note: {audit_e}")
+
+        unread_count = get_unread_alerts_count()
+        return {
+            "ok": True,
+            "action": act,
+            "processed": processed,
+            "skipped": skipped,
+            "message": msg,
+            "unread_count": unread_count
+        }
+    except Exception as e:
+        logger.error(f"Error in bulk_incident_action: {e}")
+        return {"ok": False, "message": str(e), "processed": 0, "skipped": 0}
+    finally:
+        conn.close()
+
+def bulk_vulnerability_action(ids: list, action: str, username: str = "admin", reason: str = "", note: str = "", expiry_date: str = None, approver: str = ""):
+    """Bulk update status for server_vulnerabilities rows with audit logging."""
+    if not ids:
+        return {"ok": False, "message": "No vulnerabilities selected", "processed": 0, "skipped": 0}
+    conn = get_db_connection()
+    if not conn:
+        return {"ok": False, "message": "Database unavailable", "processed": 0, "skipped": 0}
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                processed = 0
+                skipped = 0
+                act = (action or "").lower().strip()
+                
+                if act in ("close", "accept_risk", "false_positive"):
+                    close_reason = reason
+                    if act == "accept_risk": close_reason = "Accepted risk"
+                    elif act == "false_positive": close_reason = "Not affected / false positive"
+                    if not close_reason: close_reason = "Patched / Fixed version installed"
+                    
+                    cur.execute("""
+                        UPDATE server_vulnerabilities
+                        SET status = 'closed',
+                            closed_by = %s,
+                            closed_at = NOW(),
+                            close_reason = %s,
+                            close_note = %s,
+                            risk_expiry_date = %s,
+                            risk_approver = %s
+                        WHERE id = ANY(%s);
+                    """, (username, close_reason, note or "", expiry_date or None, approver or None, ids))
+                    processed = cur.rowcount
+                    msg = f"Closed {processed} vulnerability finding(s) with reason '{close_reason}'."
+                    audit_action = "BULK_VULN_CLOSE"
+
+                elif act == "reopen":
+                    cur.execute("""
+                        UPDATE server_vulnerabilities
+                        SET status = 'active',
+                            closed_by = NULL,
+                            closed_at = NULL,
+                            close_reason = NULL,
+                            close_note = NULL,
+                            risk_expiry_date = NULL,
+                            risk_approver = NULL,
+                            reopened_by = %s,
+                            reopened_at = NOW()
+                        WHERE id = ANY(%s);
+                    """, (username, ids))
+                    processed = cur.rowcount
+                    msg = f"Reopened {processed} vulnerability finding(s)."
+                    audit_action = "BULK_VULN_REOPEN"
+                else:
+                    return {"ok": False, "message": f"Unsupported action: {action}", "processed": 0, "skipped": 0}
+
+                # Single audit log entry
+                audit_detail = f"{msg} Affected IDs: {ids}"
+                if reason: audit_detail += f" | Reason: {reason}"
+                if note: audit_detail += f" | Note: {note}"
+                if approver: audit_detail += f" | Approver: {approver}"
+                try:
+                    cur.execute("""
+                        INSERT INTO audit_logs (username, action, target_type, target_id, detail, timestamp)
+                        VALUES (%s, %s, 'vulnerabilities', %s, %s, NOW());
+                    """, (username, audit_action, ids[0] if ids else 0, audit_detail))
+                except Exception as audit_e:
+                    logger.debug(f"Audit log write note: {audit_e}")
+
+        return {
+            "ok": True,
+            "action": act,
+            "processed": processed,
+            "skipped": skipped,
+            "message": msg
+        }
+    except Exception as e:
+        logger.error(f"Error in bulk_vulnerability_action: {e}")
+        return {"ok": False, "message": str(e), "processed": 0, "skipped": 0}
+    finally:
+        conn.close()
+
+def get_incidents(status=None, severity=None, limit=50, offset=0, project_id=None, read_status=None, server_id=None, q=None):
+    conn = get_db_connection()
+    if not conn: return {"items": [], "total": 0, "unread_count": 0}
+    try:
+        with conn.cursor() as cur:
+            where_clauses = ["1=1"]
+            params = []
+
+            sql_clause, p_params = _build_pid_filter("s.project_id", project_id)
+            if sql_clause:
+                where_clauses.append(sql_clause.replace("WHERE ", "").replace("AND ", ""))
+                params.extend(p_params)
+
+            # Status filter: default to open view
+            st_clean = (status or "").lower().strip()
+            if st_clean == "open" or not st_clean:
+                where_clauses.append("i.status IN ('open', 'investigating', 'active')")
+            elif st_clean == "closed":
+                where_clauses.append("i.status IN ('closed', 'resolved')")
+            elif st_clean != "all":
+                where_clauses.append("i.status = %s")
+                params.append(st_clean)
+
+            # Read status filter
+            rd_clean = (read_status or "").lower().strip()
+            if rd_clean == "unread":
+                where_clauses.append("COALESCE(i.is_read, FALSE) = FALSE")
+            elif rd_clean == "read":
+                where_clauses.append("i.is_read = TRUE")
+
+            # Severity filter
+            if severity and severity.lower() != "all":
+                where_clauses.append("i.severity = %s")
+                params.append(severity.lower())
+
+            # Server filter
+            if server_id:
+                where_clauses.append("i.server_id = %s")
+                params.append(int(server_id))
+
+            # Query filter (title, description, hostname, or ID)
+            if q and str(q).strip():
+                clean_q = str(q).strip()
+                digits = re.sub(r"[^\d]", "", clean_q)
+                if digits:
+                    where_clauses.append("(i.id = %s OR i.title ILIKE %s OR i.description ILIKE %s OR s.hostname ILIKE %s)")
+                    params.extend([int(digits), f"%{clean_q}%", f"%{clean_q}%", f"%{clean_q}%"])
+                else:
+                    where_clauses.append("(i.title ILIKE %s OR i.description ILIKE %s OR s.hostname ILIKE %s)")
+                    params.extend([f"%{clean_q}%", f"%{clean_q}%", f"%{clean_q}%"])
+
+            where_sql = " AND ".join(where_clauses)
+
+            # Total matching count
+            cur.execute(f"SELECT COUNT(*) as cnt FROM incidents i LEFT JOIN servers s ON i.server_id = s.id WHERE {where_sql};", tuple(params))
+            row_tot = cur.fetchone()
+            total_count = (row_tot["cnt"] if isinstance(row_tot, dict) else row_tot[0]) if row_tot else 0
+
+            # Items query
+            query = f"""
+                SELECT i.*, 
+                       COALESCE(s.hostname, s.name, 'server-' || i.server_id) as hostname,
+                       COALESCE(s.ip, s.ip_address) as server_ip,
+                       COALESCE(i.occurrences, 1) as occurrences,
+                       COALESCE(i.first_seen, i.created_at) as first_seen,
+                       COALESCE(i.last_seen, i.updated_at, i.created_at) as last_seen
+                FROM incidents i 
+                LEFT JOIN servers s ON i.server_id = s.id 
+                WHERE {where_sql}
+                ORDER BY 
+                    CASE LOWER(i.severity) WHEN 'critical' THEN 1 WHEN 'warning' THEN 2 WHEN 'high' THEN 2 ELSE 3 END,
+                    i.updated_at DESC, i.created_at DESC 
+                LIMIT %s OFFSET %s;
+            """
+            cur.execute(query, tuple(params + [limit, offset]))
+            items = cur.fetchall() or []
+            clean_items = []
+            for it in items:
+                d = dict(it) if isinstance(it, dict) else dict(zip([col[0] for col in cur.description], it))
+                d["created_at_ago"] = format_time_ago(d.get("created_at"))
+                d["last_seen_ago"] = format_time_ago(d.get("last_seen") or d.get("updated_at") or d.get("created_at"))
+                clean_items.append(d)
+
+            unread_count = get_unread_alerts_count(project_id)
+            return {
+                "items": clean_items,
+                "total": total_count,
+                "unread_count": unread_count
+            }
     except Exception as e:
         logger.error(f"Error in get_incidents: {e}")
-        return []
+        return {"items": [], "total": 0, "unread_count": 0}
     finally:
         conn.close()
 
@@ -2815,25 +3151,51 @@ def get_reports():
     finally:
         conn.close()
 
-def create_report(title, date_from, date_to):
+def create_report(title, date_from, date_to, severities=None):
     import json
     
     # Ensure full day coverage for the end date
     if len(date_from) <= 10: date_from = f"{date_from} 00:00:00"
     if len(date_to) <= 10: date_to = f"{date_to} 23:59:59"
-    
+
+    if severities is None:
+        severities = ["critical", "high", "medium", "warning", "low"]
+    clean_sevs = [str(s).lower().strip() for s in severities]
+    # expand warning to medium if needed
+    if "warning" in clean_sevs and "medium" not in clean_sevs:
+        clean_sevs.append("medium")
+    if "medium" in clean_sevs and "warning" not in clean_sevs:
+        clean_sevs.append("warning")
+
     conn = get_db_connection()
     if not conn: return None
     try:
         with conn.cursor() as cur:
-            # Query real data for report
-            cur.execute("SELECT COUNT(*) as total, SUM(CASE WHEN severity='critical' THEN 1 ELSE 0 END) as crit, SUM(CASE WHEN severity='warning' THEN 1 ELSE 0 END) as warn FROM alerts WHERE created_at >= %s AND created_at <= %s", (date_from, date_to))
+            # Query real data for report with severity levels filter in SQL
+            cur.execute("""
+                SELECT 
+                    COUNT(*) FILTER (WHERE LOWER(severity) = ANY(%s)) as total,
+                    COUNT(*) FILTER (WHERE LOWER(severity) = 'critical') as crit,
+                    COUNT(*) FILTER (WHERE LOWER(severity) IN ('warning', 'medium', 'high')) as warn,
+                    COUNT(*) FILTER (WHERE LOWER(severity) = 'low') as low,
+                    COUNT(*) FILTER (WHERE LOWER(severity) = 'info') as info,
+                    COUNT(*) FILTER (WHERE LOWER(severity) = 'info' AND NOT (LOWER(severity) = ANY(%s))) as info_excluded
+                FROM alerts 
+                WHERE created_at >= %s AND created_at <= %s;
+            """, (clean_sevs, clean_sevs, date_from, date_to))
             alert_stats = cur.fetchone()
             total_alerts = alert_stats.get('total', 0) if alert_stats else 0
             critical_count = alert_stats.get('crit', 0) if alert_stats else 0
             warning_count = alert_stats.get('warn', 0) if alert_stats else 0
+            info_excluded = alert_stats.get('info_excluded', 0) if alert_stats else 0
 
-            cur.execute("SELECT s.id, s.hostname, COUNT(a.id) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id WHERE a.created_at >= %s AND a.created_at <= %s GROUP BY s.id, s.hostname ORDER BY cnt DESC LIMIT 5", (date_from, date_to))
+            cur.execute("""
+                SELECT s.id, s.hostname, COUNT(a.id) as cnt 
+                FROM alerts a 
+                JOIN servers s ON a.server_id = s.id 
+                WHERE a.created_at >= %s AND a.created_at <= %s AND LOWER(a.severity) = ANY(%s)
+                GROUP BY s.id, s.hostname ORDER BY cnt DESC LIMIT 5;
+            """, (date_from, date_to, clean_sevs))
             top_servers = [{'server_id': r['id'], 'hostname': r['hostname'], 'alert_count': r['cnt']} for r in cur.fetchall()]
 
             cur.execute("SELECT command, COUNT(*) as cnt FROM commands WHERE executed_at >= %s AND executed_at <= %s GROUP BY command ORDER BY cnt DESC LIMIT 5", (date_from, date_to))
@@ -2847,6 +3209,7 @@ def create_report(title, date_from, date_to):
                 'total_alerts': total_alerts,
                 'critical_count': critical_count,
                 'warning_count': warning_count,
+                'info_events_excluded': info_excluded,
                 'top_servers': top_servers,
                 'top_commands': top_commands,
                 'failed_logins_total': failed_logins_total
@@ -2856,7 +3219,8 @@ def create_report(title, date_from, date_to):
                 INSERT INTO reports (title, date_from, date_to, content, created_at)
                 VALUES (%s, %s, %s, %s, NOW()) RETURNING id;
             """, (title, date_from, date_to, json.dumps(content)))
-            return cur.fetchone()['id']
+            rid = cur.fetchone()['id']
+            return {"id": rid, "content": content}
     except Exception as e:
         logger.error(f"Error in create_report: {e}")
         return None

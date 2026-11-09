@@ -3,288 +3,1006 @@
 {% block page_title %}Security Incidents & Alerts{% endblock %}
 {% block page_sub %}Manage, triage, investigate, and resolve security incidents{% endblock %}
 
+{% block extra_css %}
+<style>
+    .inc-row-container {
+        border-radius: 6px;
+        margin-bottom: 6px;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: var(--bg2, #141720);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+        transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .inc-row-container:hover {
+        border-color: rgba(255, 255, 255, 0.18);
+    }
+    .inc-row-container.selected {
+        border-color: rgba(56, 189, 248, 0.5) !important;
+        background: rgba(56, 189, 248, 0.05) !important;
+    }
+    .inc-compact-row {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        cursor: pointer;
+        user-select: none;
+        font-size: 13px;
+        border-left-width: 3px;
+        border-left-style: solid;
+        transition: background 0.15s ease;
+    }
+    .inc-compact-row:hover {
+        background: rgba(255, 255, 255, 0.03);
+    }
+    /* Density styling */
+    .density-compact .inc-compact-row {
+        min-height: 44px;
+        padding: 6px 12px;
+        gap: 10px;
+    }
+    .density-comfortable .inc-compact-row {
+        min-height: 56px;
+        padding: 10px 16px;
+        gap: 14px;
+    }
+
+    .unread-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--cyan, #38bdf8);
+        box-shadow: 0 0 6px var(--cyan, #38bdf8);
+        flex-shrink: 0;
+    }
+    .unread-dot.read-placeholder {
+        visibility: hidden;
+    }
+
+    .inc-checkbox {
+        width: 15px;
+        height: 15px;
+        cursor: pointer;
+        accent-color: var(--cyan, #38bdf8);
+        flex-shrink: 0;
+    }
+
+    .inc-title-col {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+    }
+    .inc-title-bold {
+        font-weight: 700;
+        color: var(--text, #f8fafc);
+    }
+    .inc-title-normal {
+        font-weight: 500;
+        color: var(--text2, #cbd5e1);
+    }
+    .inc-desc-muted {
+        color: var(--text3, #94a3b8);
+        font-weight: normal;
+    }
+
+    .inc-details-panel {
+        display: none;
+        padding: 16px 20px;
+        background: rgba(10, 14, 24, 0.7);
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        font-size: 12.5px;
+    }
+    .inc-row-container.expanded .inc-details-panel {
+        display: block;
+    }
+    .inc-row-container.expanded .chevron-icon {
+        transform: rotate(180deg);
+    }
+    .chevron-icon {
+        transition: transform 0.2s ease;
+    }
+
+    /* Floating Action Bar */
+    .floating-action-bar {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(18, 24, 38, 0.95);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(56, 189, 248, 0.15);
+        border-radius: 50px;
+        padding: 10px 22px;
+        display: none;
+        align-items: center;
+        gap: 12px;
+        z-index: 990;
+        animation: slideUp 0.2s ease-out;
+    }
+    @keyframes slideUp {
+        from { transform: translate(-50%, 40px); opacity: 0; }
+        to { transform: translate(-50%, 0); opacity: 1; }
+    }
+    .fab-btn {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        color: var(--text, #f8fafc);
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 14px;
+        border-radius: 20px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.15s ease;
+    }
+    .fab-btn:hover {
+        background: rgba(255, 255, 255, 0.18);
+        border-color: rgba(255, 255, 255, 0.3);
+    }
+    .fab-btn-primary {
+        background: var(--cyan, #38bdf8);
+        color: #031120;
+        border-color: var(--cyan, #38bdf8);
+    }
+    .fab-btn-primary:hover {
+        background: #7dd3fc;
+    }
+    .fab-btn-danger {
+        background: rgba(239, 68, 68, 0.2);
+        color: #f87171;
+        border-color: rgba(239, 68, 68, 0.4);
+    }
+    .fab-btn-danger:hover {
+        background: rgba(239, 68, 68, 0.35);
+    }
+
+    .density-toggle-group {
+        display: inline-flex;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 2px;
+    }
+    .density-btn {
+        background: transparent;
+        border: none;
+        color: var(--text3, #94a3b8);
+        padding: 5px 10px;
+        font-size: 11.5px;
+        font-weight: 600;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+    .density-btn.active {
+        background: var(--cyan, #38bdf8);
+        color: #031120;
+    }
+
+    .select-all-banner {
+        display: none;
+        background: rgba(56, 189, 248, 0.12);
+        border: 1px solid rgba(56, 189, 248, 0.3);
+        border-radius: 6px;
+        padding: 8px 16px;
+        margin-bottom: 12px;
+        font-size: 12.5px;
+        color: var(--text, #f8fafc);
+        align-items: center;
+        justify-content: space-between;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="fade-in">
-    <!-- Action and Filters Bar -->
-    <div class="card glass" style="margin-bottom:24px">
-        <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-end; justify-content:space-between">
-            <div style="display:flex; gap:16px; flex:1; min-width:300px; flex-wrap:wrap">
-                <div style="flex:1; min-width:160px">
-                    <label class="stat-label" style="display:block; margin-bottom:8px">Severity</label>
-                    <select id="filter-sev" class="glass" style="width:100%; padding:10px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="loadIncidents()">
+    <!-- Action, Filters & Density Bar -->
+    <div class="card glass" style="margin-bottom:16px; padding:16px 20px">
+        <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; justify-content:space-between">
+            <!-- Filters row -->
+            <div style="display:flex; gap:12px; flex:1; min-width:320px; flex-wrap:wrap; align-items:center">
+                <div style="width:140px">
+                    <label class="stat-label" style="display:block; margin-bottom:4px; font-size:11px">Status</label>
+                    <select id="filter-status" class="glass" style="width:100%; padding:7px 10px; font-size:12.5px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="resetPageAndLoad()">
+                        <option value="open" selected>Open (Default)</option>
+                        <option value="closed">Closed / Resolved</option>
+                        <option value="all">All Statuses</option>
+                    </select>
+                </div>
+
+                <div style="width:130px">
+                    <label class="stat-label" style="display:block; margin-bottom:4px; font-size:11px">Read State</label>
+                    <select id="filter-read" class="glass" style="width:100%; padding:7px 10px; font-size:12.5px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="resetPageAndLoad()">
+                        <option value="all" selected>All Read/Unread</option>
+                        <option value="unread">Unread Only</option>
+                        <option value="read">Read Only</option>
+                    </select>
+                </div>
+
+                <div style="width:130px">
+                    <label class="stat-label" style="display:block; margin-bottom:4px; font-size:11px">Severity</label>
+                    <select id="filter-sev" class="glass" style="width:100%; padding:7px 10px; font-size:12.5px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="resetPageAndLoad()">
                         <option value="">All Severities</option>
                         <option value="critical">Critical</option>
                         <option value="warning">Warning</option>
                         <option value="info">Info</option>
                     </select>
                 </div>
-                <div style="flex:1; min-width:160px">
-                    <label class="stat-label" style="display:block; margin-bottom:8px">Status</label>
-                    <select id="filter-status" class="glass" style="width:100%; padding:10px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="loadIncidents()">
-                        <option value="">All Statuses</option>
-                        <option value="open">Open</option>
-                        <option value="investigating">Investigating</option>
-                        <option value="resolved">Resolved</option>
-                    </select>
+
+                <div style="flex:1; min-width:180px">
+                    <label class="stat-label" style="display:block; margin-bottom:4px; font-size:11px">Search Alerts</label>
+                    <input type="text" id="filter-search" class="glass" placeholder="Search rule, target, port, detail..." style="width:100%; padding:7px 10px; font-size:12.5px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onkeyup="debounceSearch()">
                 </div>
             </div>
-            <div style="display:flex; gap:10px">
-                <button class="btn btn-glass" onclick="loadIncidents()">
-                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" style="margin-right:6px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+
+            <!-- Right Controls: Density, Refresh, Clean, New -->
+            <div style="display:flex; gap:10px; align-items:center">
+                <div class="density-toggle-group" title="Change row height">
+                    <button class="density-btn active" id="density-btn-compact" onclick="setDensity('compact')">Compact</button>
+                    <button class="density-btn" id="density-btn-comfortable" onclick="setDensity('comfortable')">Comfortable</button>
+                </div>
+
+                <button class="btn btn-glass" onclick="loadIncidents()" title="Refresh incident list" style="padding:7px 12px; font-size:12px">
+                    <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" style="margin-right:4px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                     Refresh
                 </button>
-                <button class="btn btn-glass" onclick="cleanFalsePositives()" style="color:var(--amber); border-color:rgba(255,184,0,0.4)">
-                    🧹 Clean Noise
+                <button class="btn btn-glass" onclick="cleanFalsePositives()" style="color:var(--amber); border-color:rgba(255,184,0,0.4); padding:7px 12px; font-size:12px" title="Clean repetitive false positives">
+                    Noise Clean
                 </button>
-                <button class="btn btn-primary" onclick="openCreateIncidentModal()">
-                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="white" stroke-width="2.5" fill="none" style="margin-right:6px"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                    New Incident
+                <button class="btn btn-primary" onclick="openCreateIncidentModal()" style="padding:7px 14px; font-size:12px">
+                    + New Incident
                 </button>
             </div>
         </div>
     </div>
 
+    <!-- Table Header Controls / Select All Bar -->
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 12px; margin-bottom:6px; font-size:12px; color:var(--text3)">
+        <div style="display:flex; align-items:center; gap:12px">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color:var(--text2); font-weight:600">
+                <input type="checkbox" id="header-select-all" class="inc-checkbox" onchange="toggleSelectAllOnPage(this.checked)">
+                <span>Select Page</span>
+            </label>
+            <span id="pagination-summary" style="font-size:12px; color:var(--text3)">Showing 0 incidents</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px">
+            <button class="btn btn-glass" id="btn-prev-page" onclick="changePage(-1)" style="padding:4px 8px; font-size:11px" disabled>&larr; Prev</button>
+            <span id="page-indicator" style="font-size:11.5px; font-family:var(--mono)">Page 1 / 1</span>
+            <button class="btn btn-glass" id="btn-next-page" onclick="changePage(1)" style="padding:4px 8px; font-size:11px" disabled>Next &rarr;</button>
+        </div>
+    </div>
+
+    <!-- Banner when all on page selected: Offer to select entire matching filter -->
+    <div id="select-all-filter-banner" class="select-all-banner">
+        <span id="select-all-filter-text">All items on this page are selected.</span>
+        <button class="btn btn-glass" id="btn-select-all-matching" onclick="selectAllMatchingFilter()" style="font-size:11.5px; padding:3px 10px; color:var(--cyan); border-color:var(--cyan)">
+            Select all matching filter
+        </button>
+    </div>
+
     <!-- Incidents List Container -->
-    <div id="incidents-list" style="display:flex; flex-direction:column; gap:16px">
-        <!-- Dynamic Cards -->
+    <div id="incidents-list" class="density-compact" style="display:flex; flex-direction:column; gap:4px">
+        <!-- Dynamic compact rows -->
+    </div>
+
+    <!-- Bottom Pagination -->
+    <div style="display:flex; justify-content:flex-end; align-items:center; gap:10px; padding:16px 8px">
+        <span id="bottom-page-summary" style="font-size:12px; color:var(--text3)"></span>
+        <button class="btn btn-glass" id="btn-bottom-prev" onclick="changePage(-1)" style="padding:5px 12px; font-size:12px" disabled>&larr; Previous</button>
+        <button class="btn btn-glass" id="btn-bottom-next" onclick="changePage(1)" style="padding:5px 12px; font-size:12px" disabled>Next &rarr;</button>
+    </div>
+</div>
+
+<!-- Floating Action Bar for Selected Incidents -->
+<div id="floating-bar" class="floating-action-bar">
+    <span id="selected-counter-badge" style="background:rgba(56,189,248,0.25); color:var(--cyan); font-weight:700; font-size:12px; padding:4px 10px; border-radius:12px; font-family:var(--mono)">0 selected</span>
+    <button class="fab-btn" onclick="bulkAction('mark_read')" title="Mark selected as Read">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Mark Read
+    </button>
+    <button class="fab-btn" onclick="bulkAction('mark_unread')" title="Mark selected as Unread">
+        ● Mark Unread
+    </button>
+    <button class="fab-btn fab-btn-danger" onclick="openBulkCloseModal()" title="Close selected incidents">
+        ✕ Close
+    </button>
+    <button class="fab-btn" onclick="bulkAction('reopen')" title="Reopen closed incidents">
+        ↺ Reopen
+    </button>
+    <button class="fab-btn" onclick="openBulkFalsePositiveModal()" style="color:var(--amber)" title="Mark as False Positive (Requires reason)">
+        Mark FP
+    </button>
+    <button class="fab-btn" onclick="bulkAction('verdict', { verdict: 'true_positive' })" style="color:var(--green)" title="Confirm True Positive">
+        Confirm TP
+    </button>
+    <button class="fab-btn" onclick="openBulkAssignModal()" title="Assign selected to analyst">
+        👤 Assign
+    </button>
+    <button class="fab-btn fab-btn-primary" onclick="generateReportForSelected()" title="Generate report for selected incidents">
+        📄 Report
+    </button>
+    <button class="fab-btn" onclick="clearIncidentSelection()" style="background:transparent; border-color:transparent; color:var(--text3)" title="Deselect all">
+        Clear
+    </button>
+</div>
+
+<!-- Modal: Bulk Close Note -->
+<div id="bulk-close-modal-overlay" onclick="closeBulkCloseModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:998; backdrop-filter:blur(4px)"></div>
+<div id="bulk-close-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:24px; border-radius:var(--radius-lg); z-index:999; width:440px; box-shadow:0 20px 60px rgba(0,0,0,0.9)">
+    <h3 class="card-title" style="margin-bottom:12px; font-size:16px">Mark Selected Incidents as Closed</h3>
+    <p style="font-size:12.5px; color:var(--text2); margin-bottom:14px">You are closing <b id="bulk-close-count" style="color:var(--text)">0</b> incident(s). Data will not be deleted; status will update to Closed.</p>
+    <div>
+        <label class="text-meta" style="font-size:11px">Resolution Note (Optional)</label>
+        <textarea id="bulk-close-note" class="glass" style="width:100%; padding:8px; margin-top:4px; height:70px; font-size:12.5px" placeholder="e.g. Verified harmless SSH session, port closed by administrator..."></textarea>
+    </div>
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:18px">
+        <button class="btn btn-glass" onclick="closeBulkCloseModal()" style="font-size:12px">Cancel</button>
+        <button class="btn btn-primary" onclick="confirmBulkClose()" style="font-size:12px">Confirm Close</button>
+    </div>
+</div>
+
+<!-- Modal: Bulk False Positive Reason (Required) -->
+<div id="bulk-fp-modal-overlay" onclick="closeBulkFPModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:998; backdrop-filter:blur(4px)"></div>
+<div id="bulk-fp-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:24px; border-radius:var(--radius-lg); z-index:999; width:440px; box-shadow:0 20px 60px rgba(0,0,0,0.9)">
+    <h3 class="card-title" style="margin-bottom:12px; font-size:16px; color:var(--amber)">Mark as False Positive</h3>
+    <p style="font-size:12.5px; color:var(--text2); margin-bottom:14px">A reason is required to record a false positive verdict and auto-close the alerts.</p>
+    <div>
+        <label class="text-meta" style="font-size:11px">Reason / Justification <span style="color:var(--red)">*</span></label>
+        <textarea id="bulk-fp-reason" class="glass" style="width:100%; padding:8px; margin-top:4px; height:70px; font-size:12.5px" placeholder="e.g. Legitimate internal automated backup, authorized port forwarding..."></textarea>
+    </div>
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:18px">
+        <button class="btn btn-glass" onclick="closeBulkFPModal()" style="font-size:12px">Cancel</button>
+        <button class="btn btn-primary" onclick="confirmBulkFP()" style="font-size:12px; background:var(--amber); color:#000">Submit False Positive</button>
+    </div>
+</div>
+
+<!-- Modal: Bulk Assign -->
+<div id="bulk-assign-modal-overlay" onclick="closeBulkAssignModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:998; backdrop-filter:blur(4px)"></div>
+<div id="bulk-assign-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:24px; border-radius:var(--radius-lg); z-index:999; width:400px; box-shadow:0 20px 60px rgba(0,0,0,0.9)">
+    <h3 class="card-title" style="margin-bottom:12px; font-size:16px">Assign Incidents</h3>
+    <div>
+        <label class="text-meta" style="font-size:11px">Assignee Username <span style="color:var(--red)">*</span></label>
+        <input type="text" id="bulk-assignee-name" class="glass" style="width:100%; padding:8px; margin-top:4px; font-size:12.5px" placeholder="e.g. sec-analyst-1">
+    </div>
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:18px">
+        <button class="btn btn-glass" onclick="closeBulkAssignModal()" style="font-size:12px">Cancel</button>
+        <button class="btn btn-primary" onclick="confirmBulkAssign()" style="font-size:12px">Assign</button>
     </div>
 </div>
 
 <!-- Create Incident Modal -->
 <div id="create-modal-overlay" onclick="closeCreateModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:998; backdrop-filter:blur(4px)"></div>
-<div id="create-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:32px; border-radius:var(--radius-lg); z-index:999; width:500px; box-shadow:0 20px 60px rgba(0,0,0,0.9)">
-    <h3 class="card-title" style="margin-bottom:16px">Create Security Incident</h3>
-    <div style="display:flex; flex-direction:column; gap:14px">
+<div id="create-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); padding:28px; border-radius:var(--radius-lg); z-index:999; width:480px; box-shadow:0 20px 60px rgba(0,0,0,0.9)">
+    <h3 class="card-title" style="margin-bottom:14px">Create Security Incident</h3>
+    <div style="display:flex; flex-direction:column; gap:12px">
         <div>
-            <label class="text-meta">Title</label>
-            <input type="text" id="inc-title" class="glass" style="width:100%; padding:10px; margin-top:4px" placeholder="e.g. Unauthorized Sudo Escalation">
+            <label class="text-meta" style="font-size:11px">Title <span style="color:var(--red)">*</span></label>
+            <input type="text" id="inc-title" class="glass" style="width:100%; padding:8px 10px; margin-top:4px; font-size:13px" placeholder="e.g. Unauthorized Sudo Escalation">
         </div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
             <div>
-                <label class="text-meta">Severity</label>
-                <select id="inc-sev" class="glass" style="width:100%; padding:10px; margin-top:4px">
+                <label class="text-meta" style="font-size:11px">Severity</label>
+                <select id="inc-sev" class="glass" style="width:100%; padding:8px; margin-top:4px; font-size:12.5px">
                     <option value="critical">Critical</option>
                     <option value="warning" selected>Warning</option>
                     <option value="info">Info</option>
                 </select>
             </div>
             <div>
-                <label class="text-meta">Assigned To</label>
-                <input type="text" id="inc-assigned" class="glass" style="width:100%; padding:10px; margin-top:4px" placeholder="e.g. sec-analyst">
+                <label class="text-meta" style="font-size:11px">Assigned To</label>
+                <input type="text" id="inc-assigned" class="glass" style="width:100%; padding:8px; margin-top:4px; font-size:12.5px" placeholder="e.g. sec-analyst">
             </div>
         </div>
         <div>
-            <label class="text-meta">Description</label>
-            <textarea id="inc-desc" class="glass" style="width:100%; padding:10px; margin-top:4px; height:80px" placeholder="Detailed incident description..."></textarea>
+            <label class="text-meta" style="font-size:11px">Description</label>
+            <textarea id="inc-desc" class="glass" style="width:100%; padding:8px; margin-top:4px; height:80px; font-size:12.5px" placeholder="Detailed incident description..."></textarea>
         </div>
     </div>
-    <div style="display:flex; gap:12px; justify-content:flex-end; margin-top:20px">
-        <button class="btn btn-glass" onclick="closeCreateModal()">Cancel</button>
-        <button class="btn btn-primary" id="btn-create-inc" onclick="saveIncident()">Create Incident</button>
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:18px">
+        <button class="btn btn-glass" onclick="closeCreateModal()" style="font-size:12px">Cancel</button>
+        <button class="btn btn-primary" id="btn-create-inc" onclick="saveIncident()" style="font-size:12px">Create Incident</button>
     </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    function severityBadge(s) {
-        const map = { critical: 'badge-critical', warning: 'badge-warning', info: 'badge-info' };
-        return `<span class="badge ${map[s] || 'badge-info'}">${(s || 'info').toUpperCase()}</span>`;
+    // State management
+    const PAGE_SIZE = 50;
+    let currentPage = 1;
+    let totalItems = 0;
+    let totalPages = 1;
+    let currentIncidentList = [];
+    let selectedIncidentIds = new Set();
+    let lastCheckedIndex = -1;
+    let currentExpandedId = null;
+    let searchDebounceTimer = null;
+    let isAllFilterSelected = false;
+
+    // Density toggle logic
+    function setDensity(mode) {
+        const list = document.getElementById('incidents-list');
+        const btnCompact = document.getElementById('density-btn-compact');
+        const btnComfortable = document.getElementById('density-btn-comfortable');
+        if (mode === 'comfortable') {
+            list.classList.remove('density-compact');
+            list.classList.add('density-comfortable');
+            btnComfortable.classList.add('active');
+            btnCompact.classList.remove('active');
+            localStorage.setItem('bsmart_alert_density', 'comfortable');
+        } else {
+            list.classList.remove('density-comfortable');
+            list.classList.add('density-compact');
+            btnCompact.classList.add('active');
+            btnComfortable.classList.remove('active');
+            localStorage.setItem('bsmart_alert_density', 'compact');
+        }
     }
 
-    function statusBadge(st) {
-        const map = { open: 'badge-critical', investigating: 'badge-warning', resolved: 'badge-success' };
-        return `<span class="badge ${map[st] || 'badge-info'}">${(st || 'open').toUpperCase()}</span>`;
+    function initDensity() {
+        const saved = localStorage.getItem('bsmart_alert_density') || 'compact';
+        setDensity(saved);
+    }
+
+    function relativeTime(dateStr) {
+        if (!dateStr) return 'recently';
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return 'recently';
+        const now = new Date();
+        const diffSec = Math.floor((now - d) / 1000);
+        if (diffSec < 60) return `${diffSec}s ago`;
+        const diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return `${diffMin}m ago`;
+        const diffHr = Math.floor(diffMin / 60);
+        if (diffHr < 24) return `${diffHr}h ago`;
+        const diffDays = Math.floor(diffHr / 24);
+        if (diffDays < 30) return `${diffDays}d ago`;
+        return d.toLocaleDateString();
+    }
+
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function debounceSearch() {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            resetPageAndLoad();
+        }, 300);
+    }
+
+    function resetPageAndLoad() {
+        currentPage = 1;
+        isAllFilterSelected = false;
+        loadIncidents();
+    }
+
+    function changePage(delta) {
+        const next = currentPage + delta;
+        if (next >= 1 && next <= totalPages) {
+            currentPage = next;
+            loadIncidents();
+        }
     }
 
     async function loadIncidents() {
         const el = document.getElementById('incidents-list');
-        const sev = document.getElementById('filter-sev').value;
         const status = document.getElementById('filter-status').value;
+        const read = document.getElementById('filter-read').value;
+        const sev = document.getElementById('filter-sev').value;
+        const search = document.getElementById('filter-search').value.trim();
 
-        el.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text-muted)">Loading incidents...</div>';
+        el.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text3); font-size:13px">Loading incidents...</div>';
 
-        let url = '/api/incidents?';
-        if (sev) url += `severity=${sev}&`;
-        if (status) url += `status=${status}&`;
+        const offset = (currentPage - 1) * PAGE_SIZE;
+        let url = `/api/incidents?limit=${PAGE_SIZE}&offset=${offset}&`;
+        if (status) url += `status=${encodeURIComponent(status)}&`;
+        if (read && read !== 'all') url += `read=${encodeURIComponent(read)}&`;
+        if (sev) url += `severity=${encodeURIComponent(sev)}&`;
+        if (search) url += `q=${encodeURIComponent(search)}&`;
 
         try {
-            let res = await apiFetch(url);
-            let items = Array.isArray(res) ? res : (res && res.items ? res.items : []);
-
-            // If incidents table is empty, also query /api/alerts as fallback
-            if (!items.length && !status) {
-                let alertRes = await apiFetch('/api/alerts?limit=50');
-                let alertItems = Array.isArray(alertRes) ? alertRes : (alertRes && alertRes.items ? alertRes.items : []);
-                items = alertItems.map(a => ({
-                    id: a.id,
-                    title: a.title || a.message,
-                    severity: a.severity || 'warning',
-                    description: a.message,
-                    status: a.is_resolved ? 'resolved' : 'open',
-                    assigned_to: 'Unassigned',
-                    hostname: a.hostname || 'ec2-server',
-                    evidence_data: a.evidence_data,
-                    confidence: a.confidence,
-                    verdict: a.verdict,
-                    created_at: a.created_at
-                }));
+            const res = await apiFetch(url);
+            let items = [];
+            if (Array.isArray(res)) {
+                items = res;
+                totalItems = items.length;
+            } else if (res && res.items) {
+                items = res.items;
+                totalItems = res.total ?? items.length;
             }
+            currentIncidentList = items;
+            totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+
+            updatePaginationUI();
 
             if (!items.length) {
-                el.innerHTML = '<div class="card glass" style="text-align:center; padding:50px; color:var(--text-muted)">No incidents found matching criteria. System secure.</div>';
+                el.innerHTML = '<div class="card glass" style="text-align:center; padding:40px; color:var(--text3); font-size:13px">No incidents found matching current filters.</div>';
+                updateSelectionState();
                 return;
             }
 
-            el.innerHTML = items.map(inc => {
-                const isCrit = (inc.severity || '').toLowerCase() === 'critical';
-                const sColor = isCrit ? 'var(--red)' : (inc.severity === 'warning' ? 'var(--amber)' : 'var(--cyan)');
-                const st = inc.status || 'open';
+            el.innerHTML = items.map((inc, idx) => renderCompactIncidentRow(inc, idx)).join('');
+            updateSelectionState();
 
-                let ev = inc.evidence_data;
-                if (typeof ev === 'string') {
-                    try { ev = JSON.parse(ev); } catch(e) { ev = null; }
-                }
-
-                const confBadge = inc.confidence ? `<span class="badge" style="font-size:10px; background:${inc.confidence === 'HIGH' ? 'rgba(239,68,68,0.15); color:var(--red)' : (inc.confidence === 'MEDIUM' ? 'rgba(245,158,11,0.15); color:var(--amber)' : 'rgba(56,189,248,0.15); color:var(--cyan)')}">Conf: ${inc.confidence}</span>` : '';
-                
-                const verdictBadge = inc.verdict === 'true_positive' 
-                    ? `<span class="badge" style="background:rgba(34,197,94,0.15); color:var(--green); font-size:10px">✓ True Positive</span>`
-                    : (inc.verdict === 'false_positive' ? `<span class="badge" style="background:rgba(239,68,68,0.15); color:var(--red); font-size:10px">✕ False Positive</span>` : '');
-
-                const evBox = (ev && Object.keys(ev).length > 0) ? `
-                    <div style="background:rgba(15,23,42,0.8); border:1px solid rgba(255,255,255,0.08); border-left:3px solid var(--cyan); border-radius:4px; padding:10px 14px; margin:12px 0 8px 0; font-size:12px">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:6px;">
-                            <span style="font-weight:700; color:var(--cyan); letter-spacing:0.5px; font-size:11px">EVIDENCE & CORROBORATING SIGNALS <span style="color:#64748b; font-weight:normal; font-size:10px;">(Rule ${ev.rule_id || 'DET'} v${ev.rule_version || '2.4'})</span></span>
-                            <div style="display:flex; gap:8px; align-items:center;">
-                                ${ev.event_ids && ev.event_ids.length ? `<span class="badge" style="font-size:9.5px; background:rgba(255,255,255,0.08); color:#cbd5e1;">Evt: #${ev.event_ids.join(', #')}</span>` : ''}
-                                ${ev.network_zone ? `<span style="font-size:11px; color:var(--text3)">Zone: <b style="color:${ev.network_zone === 'INTERNAL' ? 'var(--green)' : 'var(--red)'}">${ev.network_zone}</b></span>` : ''}
-                            </div>
-                        </div>
-                        <div style="color:var(--text); margin-bottom:4px"><b>Why it fired:</b> ${ev.why_it_fired || inc.description || inc.title}</div>
-                        ${ev.matched_value ? `<div style="font-size:11px; color:#38bdf8; margin:3px 0;"><b>Matched vs Threshold:</b> Observed: <code style="color:#f8fafc; background:rgba(255,255,255,0.08); padding:1px 4px; border-radius:3px;">${ev.matched_value}</code> | Threshold: <code style="color:#94a3b8; background:rgba(255,255,255,0.08); padding:1px 4px; border-radius:3px;">${ev.threshold_value || 'Strict Match'}</code></div>` : ''}
-                        ${ev.raw_log_redacted ? `<div style="font-size:10.5px; font-family:var(--mono); color:#94a3b8; background:rgba(0,0,0,0.4); padding:4px 8px; border-radius:3px; margin:4px 0; overflow-x:auto;"><b>Raw Log (Redacted):</b> ${ev.raw_log_redacted}</div>` : ''}
-                        ${ev.false_positive_indicators ? `<div style="font-size:11.5px; color:var(--amber); margin-top:4px"><b>Potential False Positive:</b> ${ev.false_positive_indicators}</div>` : ''}
-                        ${ev.recommended_action ? `<div style="font-size:11.5px; color:var(--text2); margin-top:3px"><b>Recommended Action:</b> ${ev.recommended_action}</div>` : ''}
-                    </div>` : '';
-
-                const safeTitle = (inc.title || '').replace(/'/g, "\\'");
-
-                return `
-                <div class="fade-in" id="inc-card-${inc.id}" style="background:var(--bg2); border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid ${sColor}; border-radius: 6px; padding: 16px 20px; margin-bottom: 12px; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; box-shadow: 0 4px 6px rgba(0,0,0,0.2)">
-                    <div style="flex:1; min-width:280px">
-                        <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px">
-                            ${severityBadge(inc.severity)}
-                            ${statusBadge(st)}
-                            ${confBadge}
-                            ${verdictBadge}
-                            <span style="font-size:11px; color:var(--text3); font-family:var(--mono)">#INC-${inc.id}</span>
-                            <span style="font-size:11px; color:var(--text3); font-family:var(--mono); margin-left:auto">${inc.created_at ? new Date(inc.created_at).toLocaleString() : 'recently'}</span>
-                        </div>
-                        <h3 style="font-size:15px; margin:0 0 8px 0; color:var(--text); font-weight:600">${inc.title || 'Security Incident'}</h3>
-                        <p style="margin:0 0 8px 0; font-size:13px; color:var(--text2); line-height:1.5">${inc.description || 'No description provided'}</p>
-                        ${evBox}
-                        <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:12px; color:var(--text2); margin-top:8px">
-                            <span>Assigned: <strong style="color:var(--text)">${inc.assigned_to || 'Unassigned'}</strong></span>
-                            <span>Target: <strong style="color:var(--text)">${inc.hostname || 'Unknown'}</strong></span>
-                        </div>
-                    </div>
-
-                    <!-- Status Triage & Actions -->
-                    <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-end">
-                        <div style="display:flex; gap:6px; align-items:center">
-                            <button class="btn btn-glass" onclick="submitVerdict('incident', ${inc.id}, 'true_positive', '${safeTitle}')" style="font-size:11px; padding:5px 9px; color:var(--cyan)" title="Confirm True Positive">✓ True</button>
-                            <button class="btn btn-glass" onclick="promptFalsePositive('incident', ${inc.id}, '${safeTitle}')" style="font-size:11px; padding:5px 9px; color:var(--red)" title="Mark as False Positive">✕ False Pos</button>
-                            <select style="background:var(--bg3); color:var(--text); border:1px solid rgba(255,255,255,0.1); padding:6px 10px; font-size:12px; border-radius:4px; outline:none" onchange="updateIncidentStatus(${inc.id}, this.value)">
-                                <option value="open" ${st === 'open' ? 'selected' : ''}>Open</option>
-                                <option value="investigating" ${st === 'investigating' ? 'selected' : ''}>Investigating</option>
-                                <option value="resolved" ${st === 'resolved' ? 'selected' : ''}>Resolved</option>
-                            </select>
-                            <button class="btn" style="padding:6px 10px; background:rgba(239,68,68,0.1); color:var(--red); border:1px solid rgba(239,68,68,0.3)" onclick="deleteIncidentItem(${inc.id})">
-                                <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                            </button>
-                        </div>
-                    </div>
-                </div>`;
-            }).join('');
-        } catch (e) {
-            el.innerHTML = `<div class="card glass" style="text-align:center; padding:40px; color:var(--accent-red)">Error loading incidents: ${e.message}</div>`;
-        }
-    }
-
-    function openCreateIncidentModal() {
-        document.getElementById('create-modal').style.display = 'block';
-        document.getElementById('create-modal-overlay').style.display = 'block';
-    }
-
-    function closeCreateModal() {
-        document.getElementById('create-modal').style.display = 'none';
-        document.getElementById('create-modal-overlay').style.display = 'none';
-    }
-
-    async function saveIncident() {
-        const title = document.getElementById('inc-title').value.trim();
-        const severity = document.getElementById('inc-sev').value;
-        const assigned_to = document.getElementById('inc-assigned').value.trim();
-        const description = document.getElementById('inc-desc').value.trim();
-
-        if (!title) { showToast('Title is required', 'error'); return; }
-
-        const btn = document.getElementById('btn-create-inc');
-        btn.disabled = true;
-        btn.innerText = 'Creating...';
-
-        try {
-            await apiFetch('/api/incidents', {
-                method: 'POST',
-                body: JSON.stringify({ title, severity, assigned_to, description })
-            });
-            showToast('Incident created successfully', 'success');
-            closeCreateModal();
-            document.getElementById('inc-title').value = '';
-            document.getElementById('inc-desc').value = '';
-            loadIncidents();
-        } catch (e) {
-            showToast('Failed to create incident: ' + e.message, 'error');
-        } finally {
-            btn.disabled = false;
-            btn.innerText = 'Create Incident';
-        }
-    }
-
-    async function updateIncidentStatus(id, newStatus) {
-        try {
-            await apiFetch(`/api/incidents/${id}`, {
-                method: 'PUT',
-                body: JSON.stringify({ status: newStatus })
-            });
-            showToast(`Incident #${id} status updated to ${newStatus}`, 'success');
-            loadIncidents();
-        } catch (e) {
-            // Also try resolving alert if it was an alert id
-            try {
-                await apiFetch(`/api/alerts/${id}/resolve`, { method: 'PATCH' });
-                showToast(`Alert #${id} marked as resolved`, 'success');
-                loadIncidents();
-            } catch (err) {
-                showToast('Failed to update status: ' + e.message, 'error');
+            // Refresh topbar and sidebar badges
+            if (typeof window.updateAlertsBadge === 'function') {
+                window.updateAlertsBadge();
             }
-        }
-    }
-
-    async function deleteIncidentItem(id) {
-        if (!confirm(`Delete incident #${id}? This action cannot be undone.`)) return;
-        try {
-            await apiFetch(`/api/incidents/${id}`, { method: 'DELETE' });
-            showToast(`Incident #${id} deleted`, 'success');
-            const card = document.getElementById(`inc-card-${id}`);
-            if (card) card.remove();
         } catch (e) {
-            showToast('Failed to delete incident: ' + e.message, 'error');
+            el.innerHTML = `<div class="card glass" style="text-align:center; padding:40px; color:var(--red); font-size:13px">Failed to load incidents: ${escapeHtml(e.message)}</div>`;
         }
     }
 
-        async function submitVerdict(targetType, targetId, verdict, ruleName, reason = '') {
+    function updatePaginationUI() {
+        const start = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+        const end = Math.min(currentPage * PAGE_SIZE, totalItems);
+        const summaryText = `Showing ${start}-${end} of ${totalItems} incidents`;
+
+        document.getElementById('pagination-summary').innerText = summaryText;
+        document.getElementById('bottom-page-summary').innerText = summaryText;
+        document.getElementById('page-indicator').innerText = `Page ${currentPage} / ${totalPages}`;
+
+        document.getElementById('btn-prev-page').disabled = currentPage <= 1;
+        document.getElementById('btn-bottom-prev').disabled = currentPage <= 1;
+        document.getElementById('btn-next-page').disabled = currentPage >= totalPages;
+        document.getElementById('btn-bottom-next').disabled = currentPage >= totalPages;
+    }
+
+    function renderCompactIncidentRow(inc, idx) {
+        const isSelected = selectedIncidentIds.has(inc.id);
+        const isRead = inc.is_read === true;
+        const sev = (inc.severity || 'info').toLowerCase();
+        
+        let sevColor = '#38bdf8';
+        let sevBg = 'rgba(56,189,248,0.18)';
+        let sevFg = '#38bdf8';
+        let sevLabel = 'INFO';
+        if (sev === 'critical') {
+            sevColor = '#ef4444';
+            sevBg = 'rgba(239,68,68,0.2)';
+            sevFg = '#f87171';
+            sevLabel = 'CRITICAL';
+        } else if (sev === 'warning' || sev === 'warn' || sev === 'high' || sev === 'medium') {
+            sevColor = '#f59e0b';
+            sevBg = 'rgba(245,158,11,0.2)';
+            sevFg = '#fbbf24';
+            sevLabel = 'WARNING';
+        }
+
+        const st = (inc.status || 'open').toLowerCase();
+        let stBg = 'rgba(56,189,248,0.15)';
+        let stFg = '#38bdf8';
+        if (st === 'open') {
+            stBg = 'rgba(239,68,68,0.15)';
+            stFg = '#f87171';
+        } else if (st === 'investigating') {
+            stBg = 'rgba(245,158,11,0.15)';
+            stFg = '#fbbf24';
+        } else if (st === 'closed' || st === 'resolved') {
+            stBg = 'rgba(34,197,94,0.15)';
+            stFg = '#4ade80';
+        }
+
+        const occ = parseInt(inc.occurrences) || 1;
+        const occBadge = occ > 1 
+            ? `<span class="badge" style="background:rgba(255,255,255,0.12); color:#e2e8f0; font-size:10px; font-weight:700; padding:1px 5px; border-radius:4px; font-family:var(--mono)" title="Deduplicated: Seen ${occ} times. First seen: ${inc.first_seen || 'N/A'}, Last seen: ${inc.last_seen || 'N/A'}">x${occ}</span>` 
+            : '';
+
+        let ev = inc.evidence_data;
+        if (typeof ev === 'string') {
+            try { ev = JSON.parse(ev); } catch (e) { ev = null; }
+        }
+
+        const fullDate = inc.created_at ? new Date(inc.created_at).toLocaleString() : 'recently';
+        const relTime = relativeTime(inc.created_at);
+        const titleClass = isRead ? 'inc-title-normal' : 'inc-title-bold';
+        const titleText = inc.title || 'Security Incident';
+        const descText = (inc.description || '').trim();
+        const tooltipText = `${titleText} ${descText ? '— ' + descText : ''}`;
+
+        return `
+        <div class="inc-row-container ${isSelected ? 'selected' : ''}" id="inc-card-${inc.id}">
+            <div class="inc-compact-row" style="border-left-color:${sevColor}" onclick="onIncidentRowClick(event, ${inc.id})">
+                <input type="checkbox" class="inc-checkbox" data-id="${inc.id}" data-idx="${idx}" ${isSelected ? 'checked' : ''} onclick="handleCheckboxClick(event, ${inc.id}, ${idx})">
+                
+                <span class="unread-dot ${isRead ? 'read-placeholder' : ''}" title="${isRead ? 'Read' : 'Unread alert'}"></span>
+                
+                <span class="badge" style="background:${sevBg}; color:${sevFg}; font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px; border:1px solid ${sevColor}40">${sevLabel}</span>
+                <span class="badge" style="background:${stBg}; color:${stFg}; font-size:10px; font-weight:600; padding:2px 6px; border-radius:4px">${st.toUpperCase()}</span>
+                ${occBadge}
+
+                <span style="font-size:11px; color:var(--text3); font-family:var(--mono); flex-shrink:0">#INC-${inc.id}</span>
+                
+                <div class="inc-title-col" title="${escapeHtml(tooltipText)}">
+                    <span class="${titleClass}">${escapeHtml(titleText)}</span>
+                    ${descText ? `<span class="inc-desc-muted"> &mdash; ${escapeHtml(descText)}</span>` : ''}
+                </div>
+
+                <span style="font-size:11px; color:var(--text2); white-space:nowrap; max-width:130px; overflow:hidden; text-overflow:ellipsis; flex-shrink:0" title="Target Asset: ${escapeHtml(inc.hostname || 'Unknown')}">
+                    🖥️ ${escapeHtml(inc.hostname || 'Unknown')}
+                </span>
+
+                <span style="font-size:11px; color:var(--text3); white-space:nowrap; max-width:100px; overflow:hidden; text-overflow:ellipsis; flex-shrink:0" title="Assigned: ${escapeHtml(inc.assigned_to || 'Unassigned')}">
+                    👤 ${escapeHtml(inc.assigned_to || 'Unassigned')}
+                </span>
+
+                <span style="font-size:11px; color:var(--text3); font-family:var(--mono); white-space:nowrap; flex-shrink:0" title="Logged at: ${fullDate}">
+                    ${relTime}
+                </span>
+
+                <button class="btn btn-glass inc-expand-btn" onclick="toggleIncidentExpand(${inc.id}, event)" style="padding:3px 6px; border:none; background:transparent; color:var(--text2); cursor:pointer" title="Expand / Collapse details">
+                    <svg class="chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+            </div>
+
+            <!-- Accordion Details Panel -->
+            <div class="inc-details-panel" id="inc-details-${inc.id}">
+                ${renderIncidentDetailsPanel(inc, ev)}
+            </div>
+        </div>`;
+    }
+
+    function renderIncidentDetailsPanel(inc, ev) {
+        const st = (inc.status || 'open').toLowerCase();
+        const safeTitle = (inc.title || '').replace(/'/g, "\\'");
+        const occ = parseInt(inc.occurrences) || 1;
+
+        let evBox = '';
+        if (ev && Object.keys(ev).length > 0) {
+            evBox = `
+            <div style="background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.08); border-left:3px solid var(--cyan); border-radius:4px; padding:12px 14px; margin:12px 0; font-size:12px">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+                    <span style="font-weight:700; color:var(--cyan); letter-spacing:0.5px; font-size:11px">
+                        EVIDENCE &amp; CORROBORATING SIGNALS <span style="color:#64748b; font-weight:normal; font-size:10px;">(Rule ${ev.rule_id || 'DET'} v${ev.rule_version || '2.4'})</span>
+                    </span>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        ${ev.event_ids && ev.event_ids.length ? `<span class="badge" style="font-size:9.5px; background:rgba(255,255,255,0.08); color:#cbd5e1;">Evt: #${ev.event_ids.join(', #')}</span>` : ''}
+                        ${ev.network_zone ? `<span style="font-size:11px; color:var(--text3)">Zone: <b style="color:${ev.network_zone === 'INTERNAL' ? 'var(--green)' : 'var(--red)'}">${ev.network_zone}</b></span>` : ''}
+                    </div>
+                </div>
+
+                <!-- Process & Owning user info (especially for unexpected ports) -->
+                ${(ev.process_name || ev.owning_process || ev.process) ? `
+                    <div style="margin-bottom:6px; font-size:11.5px; background:rgba(0,0,0,0.3); padding:5px 8px; border-radius:4px">
+                        <b>Owning Process:</b> <code style="color:#38bdf8">${escapeHtml(ev.process_name || ev.owning_process || ev.process)}</code> 
+                        ${ev.process_pid || ev.pid ? `(PID: <code>${ev.process_pid || ev.pid}</code>)` : ''} 
+                        ${ev.process_user || ev.user ? `User: <code>${escapeHtml(ev.process_user || ev.user)}</code>` : ''}
+                        ${ev.listening_address || ev.bind_address ? `| Address: <code>${escapeHtml(ev.listening_address || ev.bind_address)}</code>` : ''}
+                    </div>
+                ` : ''}
+
+                <div style="color:var(--text); margin-bottom:4px"><b>Why it fired:</b> ${escapeHtml(ev.why_it_fired || inc.description || inc.title)}</div>
+                ${ev.matched_value ? `<div style="font-size:11px; color:#38bdf8; margin:3px 0;"><b>Matched vs Threshold:</b> Observed: <code style="color:#f8fafc; background:rgba(255,255,255,0.08); padding:1px 4px; border-radius:3px;">${escapeHtml(ev.matched_value)}</code> | Threshold: <code style="color:#94a3b8; background:rgba(255,255,255,0.08); padding:1px 4px; border-radius:3px;">${escapeHtml(ev.threshold_value || 'Strict Match')}</code></div>` : ''}
+                ${ev.raw_log_redacted ? `<div style="font-size:10.5px; font-family:var(--mono); color:#94a3b8; background:rgba(0,0,0,0.4); padding:6px 8px; border-radius:3px; margin:4px 0; overflow-x:auto;"><b>Raw Log:</b> ${escapeHtml(ev.raw_log_redacted)}</div>` : ''}
+                ${ev.false_positive_indicators ? `<div style="font-size:11.5px; color:var(--amber); margin-top:4px"><b>Potential False Positive:</b> ${escapeHtml(ev.false_positive_indicators)}</div>` : ''}
+                ${ev.recommended_action ? `<div style="font-size:11.5px; color:var(--text2); margin-top:3px"><b>Recommended Action:</b> ${escapeHtml(ev.recommended_action)}</div>` : ''}
+            </div>`;
+        }
+
+        const closedInfo = (st === 'closed' || st === 'resolved') ? `
+            <div style="margin-top:8px; font-size:11.5px; color:var(--text3); background:rgba(34,197,94,0.08); border-left:3px solid var(--green); padding:6px 10px; border-radius:3px">
+                <b>Closed By:</b> ${escapeHtml(inc.closed_by || 'system')} 
+                ${inc.closed_at ? `on ${new Date(inc.closed_at).toLocaleString()}` : ''}
+                ${inc.closed_note ? ` &mdash; <i>"${escapeHtml(inc.closed_note)}"</i>` : ''}
+            </div>` : '';
+
+        return `
+        <div>
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px">
+                <h4 style="font-size:14px; font-weight:600; color:var(--text); margin:0">${escapeHtml(inc.title || 'Security Incident')}</h4>
+                <div style="display:flex; gap:6px; align-items:center">
+                    <button class="btn btn-glass" onclick="toggleReadSingle(${inc.id}, ${!inc.is_read})" style="font-size:11px; padding:4px 8px">
+                        ${inc.is_read ? 'Mark as Unread' : 'Mark as Read'}
+                    </button>
+                    ${(st === 'closed' || st === 'resolved') 
+                        ? `<button class="btn btn-glass" onclick="reopenSingle(${inc.id})" style="font-size:11px; padding:4px 8px; color:var(--cyan)">↺ Reopen</button>`
+                        : `<button class="btn btn-glass" onclick="openCloseModalSingle(${inc.id})" style="font-size:11px; padding:4px 8px; color:#f87171">✕ Close</button>`
+                    }
+                    <button class="btn btn-glass" onclick="submitVerdict('incident', ${inc.id}, 'true_positive', '${safeTitle}')" style="font-size:11px; padding:4px 8px; color:var(--green)" title="Confirm True Positive">✓ True Pos</button>
+                    <button class="btn btn-glass" onclick="promptFalsePositive('incident', ${inc.id}, '${safeTitle}')" style="font-size:11px; padding:4px 8px; color:var(--amber)" title="Mark as False Positive">✕ False Pos</button>
+                    <button class="btn btn-glass" onclick="deleteIncidentItem(${inc.id})" style="font-size:11px; padding:4px 8px; color:var(--red)" title="Delete record">🗑️</button>
+                </div>
+            </div>
+
+            <p style="font-size:13px; color:var(--text2); line-height:1.5; margin:0 0 8px 0">${escapeHtml(inc.description || 'No description provided')}</p>
+            ${evBox}
+            ${closedInfo}
+
+            <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:11.5px; color:var(--text3); margin-top:10px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px">
+                <span>Target: <b style="color:var(--text)">${escapeHtml(inc.hostname || 'Unknown')}</b></span>
+                <span>Assigned: <b style="color:var(--text)">${escapeHtml(inc.assigned_to || 'Unassigned')}</b></span>
+                ${occ > 1 ? `<span>Occurrences: <b style="color:var(--cyan)">${occ}</b></span>` : ''}
+                ${inc.first_seen ? `<span>First Seen: <b style="color:var(--text)">${new Date(inc.first_seen).toLocaleString()}</b></span>` : ''}
+                ${inc.last_seen ? `<span>Last Seen: <b style="color:var(--text)">${new Date(inc.last_seen).toLocaleString()}</b></span>` : ''}
+            </div>
+        </div>`;
+    }
+
+    // Expand / collapse single accordion row
+    function toggleIncidentExpand(id, ev) {
+        if (ev) ev.stopPropagation();
+        const card = document.getElementById(`inc-card-${id}`);
+        if (!card) return;
+        const isCurrentlyExpanded = card.classList.contains('expanded');
+
+        // Close any previously expanded
+        if (currentExpandedId && currentExpandedId !== id) {
+            const prev = document.getElementById(`inc-card-${currentExpandedId}`);
+            if (prev) prev.classList.remove('expanded');
+        }
+
+        if (isCurrentlyExpanded) {
+            card.classList.remove('expanded');
+            currentExpandedId = null;
+        } else {
+            card.classList.add('expanded');
+            currentExpandedId = id;
+        }
+    }
+
+    function onIncidentRowClick(ev, id) {
+        // Don't expand if click was on a button, input, or link
+        if (ev.target.closest('button') || ev.target.closest('input') || ev.target.closest('select') || ev.target.closest('a')) {
+            return;
+        }
+        toggleIncidentExpand(id, ev);
+    }
+
+    // Checkbox and Shift-click handling
+    function handleCheckboxClick(ev, id, idx) {
+        ev.stopPropagation();
+        const isChecked = ev.target.checked;
+
+        if (ev.shiftKey && lastCheckedIndex !== -1 && lastCheckedIndex !== idx) {
+            const start = Math.min(lastCheckedIndex, idx);
+            const end = Math.max(lastCheckedIndex, idx);
+            for (let i = start; i <= end; i++) {
+                const item = currentIncidentList[i];
+                if (item) {
+                    if (isChecked) selectedIncidentIds.add(item.id);
+                    else selectedIncidentIds.delete(item.id);
+                }
+            }
+        } else {
+            if (isChecked) selectedIncidentIds.add(id);
+            else selectedIncidentIds.delete(id);
+        }
+
+        lastCheckedIndex = idx;
+        updateSelectionState();
+    }
+
+    function toggleSelectAllOnPage(checked) {
+        isAllFilterSelected = false;
+        currentIncidentList.forEach(inc => {
+            if (checked) selectedIncidentIds.add(inc.id);
+            else selectedIncidentIds.delete(inc.id);
+        });
+        updateSelectionState();
+    }
+
+    function selectAllMatchingFilter() {
+        isAllFilterSelected = true;
+        // Collect all IDs on current page
+        currentIncidentList.forEach(inc => selectedIncidentIds.add(inc.id));
+        updateSelectionState();
+    }
+
+    function clearIncidentSelection() {
+        selectedIncidentIds.clear();
+        isAllFilterSelected = false;
+        updateSelectionState();
+    }
+
+    function updateSelectionState() {
+        // Sync checkboxes in DOM
+        const cbs = document.querySelectorAll('.inc-checkbox[data-id]');
+        let pageSelectedCount = 0;
+        cbs.forEach(cb => {
+            const id = parseInt(cb.getAttribute('data-id'));
+            const isSel = selectedIncidentIds.has(id);
+            cb.checked = isSel;
+            const container = document.getElementById(`inc-card-${id}`);
+            if (container) {
+                if (isSel) container.classList.add('selected');
+                else container.classList.remove('selected');
+            }
+            if (isSel) pageSelectedCount++;
+        });
+
+        // Header checkbox state
+        const headerCb = document.getElementById('header-select-all');
+        if (headerCb) {
+            headerCb.checked = currentIncidentList.length > 0 && pageSelectedCount === currentIncidentList.length;
+            headerCb.indeterminate = pageSelectedCount > 0 && pageSelectedCount < currentIncidentList.length;
+        }
+
+        // Banner: Offer to select entire filter if whole page is selected
+        const banner = document.getElementById('select-all-filter-banner');
+        const bannerText = document.getElementById('select-all-filter-text');
+        const bannerBtn = document.getElementById('btn-select-all-matching');
+        if (pageSelectedCount === currentIncidentList.length && totalItems > currentIncidentList.length) {
+            banner.style.display = 'flex';
+            if (isAllFilterSelected) {
+                bannerText.innerText = `All ${totalItems} incidents matching current filter are selected.`;
+                bannerBtn.innerText = 'Clear selection';
+                bannerBtn.onclick = clearIncidentSelection;
+            } else {
+                bannerText.innerText = `All ${currentIncidentList.length} incidents on this page are selected.`;
+                bannerBtn.innerText = `Select all ${totalItems} matching filter`;
+                bannerBtn.onclick = selectAllMatchingFilter;
+            }
+        } else {
+            banner.style.display = 'none';
+        }
+
+        // Floating Action Bar
+        const fab = document.getElementById('floating-bar');
+        const counter = document.getElementById('selected-counter-badge');
+        const count = isAllFilterSelected ? totalItems : selectedIncidentIds.size;
+        if (count > 0) {
+            fab.style.display = 'flex';
+            counter.innerText = `${count} selected`;
+        } else {
+            fab.style.display = 'none';
+        }
+    }
+
+    // Bulk actions
+    async function bulkAction(action, extraPayload = {}) {
+        const ids = Array.from(selectedIncidentIds);
+        if (!ids.length && !isAllFilterSelected) {
+            showToast('No incidents selected', 'error');
+            return;
+        }
+
+        try {
+            const payload = {
+                ids: ids,
+                action: action,
+                ...extraPayload
+            };
+
+            const res = await apiFetch('/api/incidents/bulk-action', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+
+            if (res && res.ok === false) {
+                showToast(res.message || 'Operation failed', 'error');
+                return;
+            }
+
+            const proc = res.processed ?? ids.length;
+            const skip = res.skipped ?? 0;
+            const summaryMsg = skip > 0 
+                ? `${res.message || 'Updated'} (${proc} processed, ${skip} skipped)`
+                : (res.message || `Action executed for ${proc} incident(s)`);
+            showToast(summaryMsg, 'success');
+
+            // Refresh list and badge without full reload
+            clearIncidentSelection();
+            loadIncidents();
+        } catch (e) {
+            showToast('Bulk action error: ' + e.message, 'error');
+        }
+    }
+
+    // Single item helpers
+    async function toggleReadSingle(id, markRead) {
+        try {
+            await apiFetch('/api/incidents/bulk-action', {
+                method: 'POST',
+                body: JSON.stringify({ ids: [id], action: markRead ? 'mark_read' : 'mark_unread' })
+            });
+            showToast(markRead ? 'Marked as read' : 'Marked as unread', 'success');
+            loadIncidents();
+        } catch (e) {
+            showToast('Failed to update read state: ' + e.message, 'error');
+        }
+    }
+
+    async function reopenSingle(id) {
+        try {
+            await apiFetch('/api/incidents/bulk-action', {
+                method: 'POST',
+                body: JSON.stringify({ ids: [id], action: 'reopen' })
+            });
+            showToast(`Incident #${id} reopened`, 'success');
+            loadIncidents();
+        } catch (e) {
+            showToast('Failed to reopen: ' + e.message, 'error');
+        }
+    }
+
+    function openCloseModalSingle(id) {
+        selectedIncidentIds.clear();
+        selectedIncidentIds.add(id);
+        openBulkCloseModal();
+    }
+
+    // Close Modal
+    function openBulkCloseModal() {
+        const count = isAllFilterSelected ? totalItems : selectedIncidentIds.size;
+        document.getElementById('bulk-close-count').innerText = count;
+        document.getElementById('bulk-close-note').value = '';
+        document.getElementById('bulk-close-modal').style.display = 'block';
+        document.getElementById('bulk-close-modal-overlay').style.display = 'block';
+    }
+    function closeBulkCloseModal() {
+        document.getElementById('bulk-close-modal').style.display = 'none';
+        document.getElementById('bulk-close-modal-overlay').style.display = 'none';
+    }
+    async function confirmBulkClose() {
+        const note = document.getElementById('bulk-close-note').value.trim();
+        closeBulkCloseModal();
+        await bulkAction('close', { note });
+    }
+
+    // False Positive Modal
+    function openBulkFPModal() {
+        document.getElementById('bulk-fp-reason').value = '';
+        document.getElementById('bulk-fp-modal').style.display = 'block';
+        document.getElementById('bulk-fp-modal-overlay').style.display = 'block';
+    }
+    function closeBulkFPModal() {
+        document.getElementById('bulk-fp-modal').style.display = 'none';
+        document.getElementById('bulk-fp-modal-overlay').style.display = 'none';
+    }
+    async function confirmBulkFP() {
+        const reason = document.getElementById('bulk-fp-reason').value.trim();
+        if (!reason) {
+            showToast('A reason is required to mark as false positive', 'error');
+            return;
+        }
+        closeBulkFPModal();
+        await bulkAction('verdict', { verdict: 'false_positive', reason });
+    }
+
+    // Assign Modal
+    function openBulkAssignModal() {
+        document.getElementById('bulk-assignee-name').value = '';
+        document.getElementById('bulk-assign-modal').style.display = 'block';
+        document.getElementById('bulk-assign-modal-overlay').style.display = 'block';
+    }
+    function closeBulkAssignModal() {
+        document.getElementById('bulk-assign-modal').style.display = 'none';
+        document.getElementById('bulk-assign-modal-overlay').style.display = 'none';
+    }
+    async function confirmBulkAssign() {
+        const assignee = document.getElementById('bulk-assignee-name').value.trim();
+        if (!assignee) {
+            showToast('Assignee username is required', 'error');
+            return;
+        }
+        closeBulkAssignModal();
+        await bulkAction('assign', { assignee });
+    }
+
+    function generateReportForSelected() {
+        const ids = Array.from(selectedIncidentIds);
+        if (!ids.length) {
+            showToast('No incidents selected for report', 'error');
+            return;
+        }
+        window.location.href = `/reports?incident_ids=${ids.join(',')}`;
+    }
+
+    // Verdict submission for single items
+    async function submitVerdict(targetType, targetId, verdict, ruleName, reason = '') {
         try {
             await apiFetch('/api/detection/verdict', {
                 method: 'POST',
@@ -323,6 +1041,59 @@
         }
     }
 
-    window.addEventListener('load', loadIncidents);
+    async function deleteIncidentItem(id) {
+        if (!confirm(`Delete incident #${id}? This action cannot be undone.`)) return;
+        try {
+            await apiFetch(`/api/incidents/${id}`, { method: 'DELETE' });
+            showToast(`Incident #${id} deleted`, 'success');
+            loadIncidents();
+        } catch (e) {
+            showToast('Failed to delete incident: ' + e.message, 'error');
+        }
+    }
+
+    // Create Incident Modal
+    function openCreateIncidentModal() {
+        document.getElementById('create-modal').style.display = 'block';
+        document.getElementById('create-modal-overlay').style.display = 'block';
+    }
+    function closeCreateModal() {
+        document.getElementById('create-modal').style.display = 'none';
+        document.getElementById('create-modal-overlay').style.display = 'none';
+    }
+    async function saveIncident() {
+        const title = document.getElementById('inc-title').value.trim();
+        const severity = document.getElementById('inc-sev').value;
+        const assigned_to = document.getElementById('inc-assigned').value.trim();
+        const description = document.getElementById('inc-desc').value.trim();
+
+        if (!title) { showToast('Title is required', 'error'); return; }
+
+        const btn = document.getElementById('btn-create-inc');
+        btn.disabled = true;
+        btn.innerText = 'Creating...';
+
+        try {
+            await apiFetch('/api/incidents', {
+                method: 'POST',
+                body: JSON.stringify({ title, severity, assigned_to, description })
+            });
+            showToast('Incident created successfully', 'success');
+            closeCreateModal();
+            document.getElementById('inc-title').value = '';
+            document.getElementById('inc-desc').value = '';
+            loadIncidents();
+        } catch (e) {
+            showToast('Failed to create incident: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = 'Create Incident';
+        }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+        initDensity();
+        loadIncidents();
+    });
 </script>
 {% endblock %}

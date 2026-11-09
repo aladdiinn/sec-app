@@ -1057,14 +1057,13 @@ function formatLocal(dateStr) {
                 if (!alerts.length) {
                     incList.innerHTML = '<div style="text-align:center; padding:30px; color:var(--green); font-weight:600">✅ No active incidents or alerts for this asset</div>';
                 } else {
-                    incList.innerHTML = alerts.map(a => {
+                    incList.innerHTML = alerts.map((a, idx) => {
                         const sev = (a.severity || 'warning').toLowerCase();
                         const isCrit = sev === 'critical';
-                        const isHigh = sev === 'high';
-                        const isMed = sev === 'medium' || sev === 'warning';
+                        const isHigh = sev === 'high' || sev === 'warning' || sev === 'medium';
 
                         let sevBorder = '#38bdf8';
-                        let sevBg = 'rgba(56,189,248,0.2)';
+                        let sevBg = 'rgba(56,189,248,0.18)';
                         let sevFg = '#38bdf8';
                         let sevLabel = 'INFO';
 
@@ -1073,7 +1072,7 @@ function formatLocal(dateStr) {
                             sevBg = 'rgba(239,68,68,0.2)';
                             sevFg = '#f87171';
                             sevLabel = 'CRITICAL';
-                        } else if (isHigh || isMed) {
+                        } else if (isHigh) {
                             sevBorder = '#f59e0b';
                             sevBg = 'rgba(245,158,11,0.2)';
                             sevFg = '#fbbf24';
@@ -1084,24 +1083,64 @@ function formatLocal(dateStr) {
                         const dateStr = a.created_at ? new Date(a.created_at).toLocaleString() : 'recently';
                         const targetName = escapeHtml(srv.hostname || srv.ip || a.server_name || a.target || 'This Asset');
                         const assigned = escapeHtml(a.assigned_to || 'Unassigned');
+                        const titleText = a.title || a.alert_type || 'Security Alert';
+                        const descText = (a.message || a.description || '').trim();
+                        const tooltipText = `${titleText} ${descText ? '— ' + descText : ''}`;
+                        const occ = parseInt(a.occurrences) || 1;
+                        const occBadge = occ > 1 ? `<span class="badge" style="background:rgba(255,255,255,0.12); color:#e2e8f0; font-size:10px; font-weight:700; padding:1px 5px; border-radius:4px; font-family:var(--font-mono, monospace)" title="Deduplicated: Seen ${occ} times">x${occ}</span>` : '';
+                        const isRead = a.is_read === true;
+
+                        let ev = a.evidence_data;
+                        if (typeof ev === 'string') {
+                            try { ev = JSON.parse(ev); } catch(e) { ev = null; }
+                        }
+
+                        let evBox = '';
+                        if (ev && Object.keys(ev).length > 0) {
+                            evBox = `
+                            <div style="background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.08); border-left:3px solid var(--cyan); border-radius:4px; padding:10px 14px; margin:10px 0; font-size:12px">
+                                <div style="font-weight:700; color:var(--cyan); font-size:11px; margin-bottom:4px">
+                                    EVIDENCE & CORROBORATING SIGNALS (Rule ${ev.rule_id || 'DET'})
+                                </div>
+                                ${(ev.process_name || ev.owning_process) ? `<div style="font-size:11.5px; margin-bottom:4px"><b>Owning Process:</b> <code>${escapeHtml(ev.process_name || ev.owning_process)}</code> ${ev.process_pid ? `(PID: ${ev.process_pid})` : ''} ${ev.listening_address ? `| Address: <code>${escapeHtml(ev.listening_address)}</code>` : ''}</div>` : ''}
+                                <div style="color:var(--text); margin-bottom:3px"><b>Why it fired:</b> ${escapeHtml(ev.why_it_fired || descText || titleText)}</div>
+                                ${ev.matched_value ? `<div style="font-size:11px; color:#38bdf8"><b>Observed:</b> <code>${escapeHtml(ev.matched_value)}</code></div>` : ''}
+                                ${ev.raw_log_redacted ? `<div style="font-size:10.5px; font-family:var(--font-mono, monospace); color:#94a3b8; background:rgba(0,0,0,0.4); padding:4px 8px; border-radius:3px; margin:4px 0; overflow-x:auto;"><b>Raw Log:</b> ${escapeHtml(ev.raw_log_redacted)}</div>` : ''}
+                            </div>`;
+                        }
 
                         return `
-                        <div class="i3-alert-item" id="alert-card-${a.id}" style="background:var(--card, #121316) !important; border:1px solid rgba(255,255,255,0.08) !important; border-left:4px solid ${sevBorder} !important; border-radius:6px !important; padding:16px 20px !important; margin-bottom:12px !important; box-shadow:0 4px 6px rgba(0,0,0,0.2) !important;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-                                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
-                                    <span style="background:${sevBg}; color:${sevFg}; border:1px solid ${sevBorder}; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:800; letter-spacing:0.5px; text-transform:uppercase">${sevLabel}</span>
-                                    <span style="background:rgba(239,68,68,0.12); color:#f87171; border:1px solid rgba(239,68,68,0.25); padding:2px 7px; border-radius:4px; font-size:10px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase">OPEN</span>
-                                    ${incNumber ? `<span style="font-size:11px; color:var(--text3); font-family:var(--font-mono, monospace); font-weight:600">${incNumber}</span>` : ''}
+                        <div class="srv-inc-container" id="srv-inc-${a.id}" style="border:1px solid rgba(255,255,255,0.08); border-radius:6px; margin-bottom:6px; background:var(--bg2, #141720); overflow:hidden;">
+                            <div class="srv-inc-row" onclick="window.toggleServerIncidentExpand(${a.id}, event)" style="display:flex; align-items:center; min-height:44px; padding:6px 12px; gap:10px; cursor:pointer; border-left:3px solid ${sevBorder}; user-select:none; font-size:13px; transition:background 0.15s ease;">
+                                <span class="badge" style="background:${sevBg}; color:${sevFg}; font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px; border:1px solid ${sevBorder}40">${sevLabel}</span>
+                                <span class="badge" style="background:rgba(239,68,68,0.15); color:#f87171; font-size:10px; font-weight:600; padding:2px 6px; border-radius:4px">OPEN</span>
+                                ${occBadge}
+                                ${incNumber ? `<span style="font-size:11px; color:var(--text3); font-family:var(--font-mono, monospace); flex-shrink:0">${incNumber}</span>` : ''}
+                                
+                                <div style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px;" title="${escapeHtml(tooltipText)}">
+                                    <span style="font-weight:${isRead ? '500' : '700'}; color:var(--text)">${escapeHtml(titleText)}</span>
+                                    ${descText ? `<span style="color:var(--text3); font-weight:normal"> &mdash; ${escapeHtml(descText)}</span>` : ''}
                                 </div>
-                                <div style="display:flex; align-items:center; gap:8px">
-                                    <span style="font-size:11px; color:var(--text3); font-family:var(--font-mono, monospace)">${dateStr}</span>
-                                </div>
+
+                                <span style="font-size:11px; color:var(--text2); white-space:nowrap; max-width:120px; overflow:hidden; text-overflow:ellipsis; flex-shrink:0" title="Assigned: ${assigned}">👤 ${assigned}</span>
+                                <span style="font-size:11px; color:var(--text3); font-family:var(--font-mono, monospace); white-space:nowrap; flex-shrink:0" title="${dateStr}">${dateStr}</span>
+                                
+                                <button class="btn btn-glass" onclick="window.toggleServerIncidentExpand(${a.id}, event)" style="padding:2px 6px; border:none; background:transparent; color:var(--text2); cursor:pointer">
+                                    <svg class="srv-inc-chev" id="srv-inc-chev-${a.id}" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition:transform 0.2s ease;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
                             </div>
-                            <h3 style="font-size:15px; margin:4px 0 8px 0; color:var(--text); font-weight:600; line-height:1.3">${escapeHtml(a.title || a.alert_type || 'Security Alert')}</h3>
-                            <p style="margin:0 0 12px 0; font-size:13px; color:var(--text2); line-height:1.5">${escapeHtml(a.message || a.description || '')}</p>
-                            <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:12px; color:var(--text2); padding-top:8px; border-top:1px solid rgba(255,255,255,0.05)">
-                                <span>Assigned: <strong style="color:var(--text)">${assigned}</strong></span>
-                                <span>Target: <strong style="color:var(--text)">${targetName}</strong></span>
+
+                            <div class="srv-inc-details-panel" id="srv-inc-details-${a.id}" style="display:none; padding:14px 18px; background:rgba(10,14,24,0.7); border-top:1px solid rgba(255,255,255,0.06); font-size:12.5px;">
+                                <h4 style="font-size:13.5px; font-weight:600; color:var(--text); margin:0 0 6px 0">${escapeHtml(titleText)}</h4>
+                                <p style="font-size:12.5px; color:var(--text2); line-height:1.5; margin:0 0 8px 0">${escapeHtml(descText || 'No description provided')}</p>
+                                ${evBox}
+                                <div style="display:flex; gap:16px; flex-wrap:wrap; font-size:11.5px; color:var(--text3); margin-top:8px; border-top:1px solid rgba(255,255,255,0.05); padding-top:6px">
+                                    <span>Target: <b style="color:var(--text)">${targetName}</b></span>
+                                    <span>Assigned: <b style="color:var(--text)">${assigned}</b></span>
+                                    ${occ > 1 ? `<span>Occurrences: <b style="color:var(--cyan)">${occ}</b></span>` : ''}
+                                    ${a.first_seen ? `<span>First Seen: <b style="color:var(--text)">${new Date(a.first_seen).toLocaleString()}</b></span>` : ''}
+                                    ${a.last_seen ? `<span>Last Seen: <b style="color:var(--text)">${new Date(a.last_seen).toLocaleString()}</b></span>` : ''}
+                                </div>
                             </div>
                         </div>
                         `;

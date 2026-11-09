@@ -2870,18 +2870,33 @@ def _check_unified_fim(server_id, data):
 def _check_port_scan(server_id, data):
     if not _is_rule_enabled('port_scan') and not _is_rule_enabled('New Open Port Detected'):
         return
-    """Phase 4: Port scan detection & unexpected open ports (including default infrastructure ports)."""
+    """Phase 4: Port scan detection & unexpected open ports (including SSH X11 loopback detection)."""
     open_ports = data.get("open_ports", [])
     if not open_ports:
         return
 
     current_ports = set()
+    ports_detail = {}
     for p in open_ports:
-        port_num = p.get("port") if isinstance(p, dict) else p
-        try:
-            current_ports.add(int(port_num))
-        except Exception:
-            pass
+        if isinstance(p, dict):
+            try:
+                pnum = int(p.get("port", 0))
+                current_ports.add(pnum)
+                ports_detail[pnum] = {
+                    "proc": str(p.get("process") or p.get("proc") or "unknown").lower(),
+                    "user": str(p.get("user") or "root"),
+                    "pid": p.get("pid"),
+                    "ip": str(p.get("ip") or p.get("address") or p.get("bind") or p.get("bind_address") or "0.0.0.0").strip()
+                }
+            except Exception:
+                pass
+        else:
+            try:
+                pnum = int(p)
+                current_ports.add(pnum)
+                ports_detail[pnum] = {"proc": "unknown", "user": "root", "pid": None, "ip": "0.0.0.0"}
+            except Exception:
+                pass
 
     dangerous_defaults = {
         21: "FTP", 23: "Telnet", 3389: "RDP", 5432: "PostgreSQL",
@@ -2910,10 +2925,11 @@ def _check_port_scan(server_id, data):
             _known_server_ports[server_id] = current_ports
             for p in current_ports:
                 if p in dangerous_defaults:
+                    p_info = ports_detail.get(p, {})
                     _create_alert_dedup(
                         server_id, f'DANGEROUS_PORT_{p}', 'critical',
-                        'Exposed Infrastructure Port',
-                        f'Detection Rule [Exposed Service]: Dangerous default port {p} ({dangerous_defaults[p]}) is open and exposed. This should not be publicly listening.'
+                        f'Exposed Infrastructure Port ({p})',
+                        f'Detection Rule [Exposed Service]: Dangerous default port {p} ({dangerous_defaults[p]}) is listening on {p_info.get("ip", "0.0.0.0")} owned by {p_info.get("proc", "unknown")} (User: {p_info.get("user", "root")}, PID: {p_info.get("pid")}). This should not be publicly listening.'
                     )
             return
 
@@ -2922,24 +2938,47 @@ def _check_port_scan(server_id, data):
 
     # Only alert when ports are NEWLY OPENED
     if new_ports:
-        # 1. Dangerous default ports that were newly opened
-        for p in new_ports:
-            if p in dangerous_defaults:
-                _create_alert_dedup(
-                    server_id, f'DANGEROUS_PORT_{p}', 'critical',
-                    'Exposed Infrastructure Port',
-                    f'Detection Rule [Exposed Service]: Dangerous default port {p} ({dangerous_defaults[p]}) is open and exposed. This should not be publicly listening.'
-                )
-
-        # 2. General unexpected ports that were newly opened
         whitelisted_public = [22, 80, 443, 8080, 8443, 8000, 5000]
-        suspicious_ports = [p for p in new_ports if p not in whitelisted_public and p not in dangerous_defaults]
+        for p in new_ports:
+            p_info = ports_detail.get(p, {})
+            proc_name = p_info.get("proc", "unknown")
+            user_name = p_info.get("user", "root")
+            pid_val = p_info.get("pid")
+            bind_ip = p_info.get("ip", "0.0.0.0")
+            is_loopback = bind_ip in ("127.0.0.1", "::1", "localhost") or bind_ip.startswith("127.")
 
-        if suspicious_ports:
+            # 1. Dangerous default infrastructure ports (5432, 3306, 6379, etc.)
+            if p in dangerous_defaults:
+                sev = "critical"
+                title = f"Exposed Infrastructure Port ({p})"
+                msg = f"Detection Rule [Exposed Service]: Dangerous default port {p} ({dangerous_defaults[p]}) is listening on {bind_ip} owned by {proc_name} (User: {user_name}, PID: {pid_val}). This should not be publicly listening."
+                _create_alert_dedup(
+                    server_id, f'DANGEROUS_PORT_{p}', sev, title, msg
+                )
+                continue
+
+            # Skip whitelisted standard public ports
+            if p in whitelisted_public:
+                continue
+
+            # 2. Check for SSH X11 Forwarding (ports 6010-6063 on loopback owned by sshd)
+            is_ssh_x11 = (6010 <= p <= 6063) and ("ssh" in proc_name or proc_name == "sshd") and is_loopback
+
+            if is_ssh_x11:
+                sev = "info"
+                title = f"SSH X11 Forwarding Port ({p})"
+                msg = f"Detection Rule [Authorized Service]: SSH X11 forwarding port {p} listening on loopback {bind_ip} owned by {proc_name} (User: {user_name}, PID: {pid_val}). Normal administrative interactive session."
+            elif is_loopback:
+                sev = "info"
+                title = f"Internal Loopback Port ({p})"
+                msg = f"Detection Rule [Loopback Service]: Service listening on internal loopback port {p} ({bind_ip}) owned by {proc_name} (User: {user_name}, PID: {pid_val})."
+            else:
+                sev = "warning"
+                title = f"Unexpected Port Opened ({p})"
+                msg = f"Detection Rule [Network Anomaly]: New unexpected open port {p} detected listening on non-loopback address {bind_ip} owned by {proc_name} (User: {user_name}, PID: {pid_val}). Possible backdoor or unauthorized service."
+
             _create_alert_dedup(
-                server_id, 'PORT_SCAN_DETECTED', 'warning',
-                'Unexpected Port Opened Alert',
-                f'Detection Rule [Network Anomaly]: New unexpected open port(s) detected: {suspicious_ports}. Possible backdoor or unauthorized service.'
+                server_id, f'PORT_SCAN_{p}', sev, title, msg
             )
 
     _known_server_ports[server_id] = current_ports
@@ -3678,13 +3717,33 @@ def api_get_vulns_summary():
 
 
 @app.get("/api/vulnerabilities/fleet-cves")
-def api_get_fleet_cves(severity: Optional[str] = None):
-    """Retrieve all active vulnerability findings fleet-wide with server metadata and full advisory details."""
+def api_get_fleet_cves(severity: Optional[str] = None, status: Optional[str] = "open", server_id: Optional[int] = None):
+    """Retrieve vulnerability findings fleet-wide with server metadata, status filters, and advisory details."""
     conn = db.get_db_connection()
     if not conn: return {"findings": []}
     try:
         with conn.cursor() as cur:
-            query = """
+            where_clauses = ["1=1"]
+            params = []
+            
+            st_clean = (status or "").lower().strip()
+            if st_clean == "open" or not st_clean:
+                where_clauses.append("v.status IN ('active', 'open')")
+            elif st_clean == "closed":
+                where_clauses.append("v.status = 'closed'")
+            elif st_clean != "all":
+                where_clauses.append("v.status = %s")
+                params.append(st_clean)
+
+            if severity and severity.upper() != 'ALL':
+                where_clauses.append("UPPER(v.severity) = %s")
+                params.append(severity.upper())
+                
+            if server_id:
+                where_clauses.append("v.server_id = %s")
+                params.append(int(server_id))
+
+            query = f"""
                 SELECT v.*, a.details, a.cvss_vector, a.source, s.name as server_name, s.hostname, s.ip as server_ip
                 FROM server_vulnerabilities v
                 JOIN servers s ON v.server_id = s.id
@@ -3693,12 +3752,8 @@ def api_get_fleet_cves(severity: Optional[str] = None):
                     FROM advisory_cves
                     ORDER BY cve_id, id DESC
                 ) a ON v.cve_id = a.cve_id
-                WHERE v.status = 'active'
+                WHERE {" AND ".join(where_clauses)}
             """
-            params = []
-            if severity and severity.upper() != 'ALL':
-                query += " AND UPPER(v.severity) = %s"
-                params.append(severity.upper())
             query += """
                 ORDER BY
                     CASE UPPER(v.severity)
@@ -7032,10 +7087,67 @@ async def api_reject_request(app_id: int, request: Request):
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Incidents
-@app.get("/api/incidents")
-async def api_get_incidents(request: Request, status: str = None, severity: str = None):
+@app.get("/api/alerts/unread-count")
+def api_alerts_unread_count(request: Request):
     pid = get_effective_project_id(request)
-    return db.get_incidents(status=status, severity=severity, project_id=pid)
+    count = db.get_unread_alerts_count(project_id=pid)
+    return {"unread": count, "count": count}
+
+@app.get("/api/incidents")
+async def api_get_incidents(
+    request: Request,
+    status: Optional[str] = "open",
+    severity: Optional[str] = None,
+    read: Optional[str] = None,
+    server_id: Optional[int] = None,
+    q: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+):
+    pid = get_effective_project_id(request)
+    return db.get_incidents(
+        status=status,
+        severity=severity,
+        limit=limit,
+        offset=offset,
+        project_id=pid,
+        read_status=read,
+        server_id=server_id,
+        q=q
+    )
+
+@app.post("/api/incidents/bulk-action")
+@app.post("/api/alerts/bulk-action")
+async def api_bulk_incident_action(request: Request):
+    user = get_session_user(request)
+    username = user.get("username", "admin") if user else "system"
+    body = await request.json()
+    ids = [int(x) for x in body.get("ids", [])]
+    action = body.get("action", "")
+    note = body.get("note", "")
+    assignee = body.get("assignee", "")
+    reason = body.get("reason", "")
+    verdict = body.get("verdict", "")
+    return db.bulk_incident_action(
+        ids=ids, action=action, username=username, note=note,
+        assignee=assignee, reason=reason, verdict=verdict
+    )
+
+@app.post("/api/vulnerabilities/bulk-action")
+async def api_bulk_vulnerability_action(request: Request):
+    user = get_session_user(request)
+    username = user.get("username", "admin") if user else "system"
+    body = await request.json()
+    ids = [int(x) for x in body.get("ids", [])]
+    action = body.get("action", "")
+    reason = body.get("reason", "")
+    note = body.get("note", "")
+    expiry_date = body.get("risk_expiry_date")
+    approver = body.get("risk_approver", "")
+    return db.bulk_vulnerability_action(
+        ids=ids, action=action, username=username, reason=reason,
+        note=note, expiry_date=expiry_date, approver=approver
+    )
 
 @app.post("/api/incidents/clean-false-positives")
 async def api_clean_false_positives():
@@ -7222,11 +7334,14 @@ async def api_generate_report(request: Request):
     title = body.get("title", "New Report")
     df = body.get("date_from")
     dt = body.get("date_to")
-    rid = db.create_report(title, df, dt)
-    if rid:
+    severities = body.get("severities", ["critical", "high", "medium", "warning", "low"])
+    report_data = db.create_report(title, df, dt, severities=severities)
+    if report_data:
+        rid = report_data.get("id") if isinstance(report_data, dict) else report_data
         uname = request.session.get('username', 'system')
         db.log_audit(uname, 'GENERATE_REPORT', 'report', rid, f"Generated report: {title}")
-        return {"ok": True, "id": rid}
+        content = report_data.get("content", {}) if isinstance(report_data, dict) else {}
+        return {"ok": True, "id": rid, **content}
     return JSONResponse(status_code=400, content={"ok": False})
 
 
@@ -11127,6 +11242,13 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
             total_users_in_db = 0
 
             # ── EVENTS ──
+            # Severity levels filtering (Default excludes INFO unless explicitly ticked)
+            req_severities = payload.get("severities")
+            if not req_severities:
+                req_severities = ["critical", "high", "medium", "low"]
+            req_severities_clean = [str(x).lower().strip() for x in req_severities]
+
+            info_events_excluded = 0
             if rep_type == "events" or (rep_type == "selected" and selected_type in ("event", "events")) or (rep_type not in ("selected", "events", "incidents", "users") and "events" in sections):
                 where_clauses = ["application_id = %s"]
                 params = [app_id]
@@ -11140,12 +11262,13 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                 else:
                     where_clauses.append("event_time >= %s AND event_time <= %s")
                     params.extend([start_dt, end_dt])
+                    
+                    # Apply severity levels filter directly in DB query
+                    if req_severities_clean:
+                        where_clauses.append("LOWER(severity) = ANY(%s)")
+                        params.append(req_severities_clean)
+
                     if apply_filters:
-                        if severity_filter == "security":
-                            where_clauses.append("severity IN ('medium', 'high', 'critical')")
-                        elif severity_filter != "all":
-                            where_clauses.append("severity = %s")
-                            params.append(severity_filter)
                         if query_filter:
                             where_clauses.append("(client_ip ILIKE %s OR user_name ILIKE %s OR url_path ILIKE %s OR method ILIKE %s OR node ILIKE %s)")
                             q_param = f"%{query_filter}%"
@@ -11154,6 +11277,15 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                             where_clauses.append("(status IS NULL OR status = 'open' OR status = '')")
                         elif status_filter == "closed":
                             where_clauses.append("status = 'closed'")
+
+                # Count excluded INFO events if Info was unticked
+                if "info" not in req_severities_clean and rep_type != "selected":
+                    try:
+                        cur.execute("SELECT COUNT(*) FROM app_events WHERE application_id = %s AND event_time >= %s AND event_time <= %s AND LOWER(severity) = 'info';", (app_id, start_dt, end_dt))
+                        r_info = cur.fetchone()
+                        info_events_excluded = (r_info["count"] if isinstance(r_info, dict) else r_info[0]) if r_info else 0
+                    except Exception:
+                        info_events_excluded = 0
 
                 cur.execute(f"SELECT COUNT(*) FROM app_events WHERE {' AND '.join(where_clauses)};", tuple(params))
                 total_events_in_db = get_scalar(cur.fetchone(), 0)
@@ -11336,6 +11468,8 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
             return {
                 "status": "ok",
                 "report_id": report_id,
+                "info_events_excluded": info_events_excluded,
+                "severity_levels": req_severities_clean,
                 "app": {
                     "id": app_data.get("id"),
                     "name": app_data.get("name"),

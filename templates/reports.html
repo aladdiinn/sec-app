@@ -136,6 +136,23 @@
                 <button type="button" class="btn btn-primary" id="btn-srv-gen" style="padding:9px 16px; font-size:12px; white-space:nowrap" onclick="generateServerReport(event, false)">Generate PDF</button>
             </div>
         </form>
+
+        <!-- Severity Levels Multi-Select -->
+        <div style="margin-top:14px; padding:10px 14px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+                <span class="text-meta" style="font-size:11px; font-weight:700; color:var(--text2)">Severity Levels:</span>
+                <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap">
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="critical" checked> <span style="color:#f87171; font-weight:600">Critical</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="high" checked> <span style="color:#fbbf24; font-weight:600">High</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="medium" checked> <span style="color:#fbbf24; font-weight:600">Medium</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="low" checked> <span style="color:#38bdf8; font-weight:600">Low</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="info"> <span style="color:#94a3b8; font-weight:600">Info</span></label>
+                </div>
+            </div>
+            <div style="font-size:11px; color:#94a3b8; margin-top:4px; font-style:italic">
+                * INFO events are excluded. Tick Info to include them.
+            </div>
+        </div>
     </div>
 
     <!-- NEW App Level Report -->
@@ -181,12 +198,29 @@
                     </label>
                 </div>
             </div>
+        </form>
+
+        <!-- App Severity Levels Multi-Select -->
+        <div style="margin-top:14px; padding:10px 14px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+                <span class="text-meta" style="font-size:11px; font-weight:700; color:var(--text2)">Severity Levels:</span>
+                <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap">
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="app-sev-cb" value="critical" checked> <span style="color:#f87171; font-weight:600">Critical</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="app-sev-cb" value="high" checked> <span style="color:#fbbf24; font-weight:600">High</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="app-sev-cb" value="medium" checked> <span style="color:#fbbf24; font-weight:600">Medium</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="app-sev-cb" value="low" checked> <span style="color:#38bdf8; font-weight:600">Low</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="app-sev-cb" value="info"> <span style="color:#94a3b8; font-weight:600">Info</span></label>
+                </div>
+            </div>
+            <div style="font-size:11px; color:#94a3b8; margin-top:4px; font-style:italic">
+                * INFO events are excluded. Tick Info to include them. (If ticked, PDF events table caps at 500 rows; use CSV for full export)
+            </div>
+        </div>
             <div style="display:flex; gap:8px;">
                 <button type="button" class="btn btn-glass" id="btn-app-prev" style="padding:9px 16px; font-size:12px; white-space:nowrap" onclick="generateAppLevelReport(event, true)">Preview</button>
                 <button type="button" class="btn btn-primary" id="btn-app-gen" style="padding:9px 16px; font-size:12px; white-space:nowrap" onclick="generateAppLevelReport(event, false)">Generate PDF</button>
                 <button type="button" class="btn btn-glass" id="btn-app-csv" title="Export Full Database Data to CSV" style="padding:9px 12px; font-size:12px; white-space:nowrap" onclick="exportAppLevelCSV(event)">⬇ CSV</button>
             </div>
-        </form>
     </div>
 
     <!-- Custom Date Range Executive Report Generator -->
@@ -212,6 +246,23 @@
                 <button type="button" class="btn btn-primary" id="btn-gen" style="padding:9px 16px; font-size:12px; white-space:nowrap" onclick="generateCustomReport(event, false)">Generate PDF</button>
             </div>
         </form>
+
+        <!-- Custom Executive Severity Levels Multi-Select -->
+        <div style="margin-top:14px; padding:10px 14px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+                <span class="text-meta" style="font-size:11px; font-weight:700; color:var(--text2)">Severity Levels:</span>
+                <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap">
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="custom-sev-cb" value="critical" checked> <span style="color:#f87171; font-weight:600">Critical</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="custom-sev-cb" value="high" checked> <span style="color:#fbbf24; font-weight:600">High</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="custom-sev-cb" value="medium" checked> <span style="color:#fbbf24; font-weight:600">Medium</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="custom-sev-cb" value="low" checked> <span style="color:#38bdf8; font-weight:600">Low</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="custom-sev-cb" value="info"> <span style="color:#94a3b8; font-weight:600">Info</span></label>
+                </div>
+            </div>
+            <div style="font-size:11px; color:#94a3b8; margin-top:4px; font-style:italic">
+                * INFO events are excluded. Tick Info to include them.
+            </div>
+        </div>
     </div>
 
 </div>
@@ -601,10 +652,12 @@
         btn.disabled = true;
         btn.innerText = 'Generating...';
         try {
+            const customSevs = getSelectedSeverities('custom');
             const payload = {
                 title: document.getElementById('title').value,
                 date_from: document.getElementById('date_from').value,
-                date_to: document.getElementById('date_to').value
+                date_to: document.getElementById('date_to').value,
+                severities: customSevs
             };
             const res = await apiFetch('/api/reports/generate', { method: 'POST', body: JSON.stringify(payload) });
             
@@ -666,6 +719,13 @@
         }
     }
 
+    
+    function getSelectedSeverities(prefix) {
+        const cbs = document.querySelectorAll('.' + prefix + '-sev-cb:checked');
+        if (!cbs.length) return ['critical', 'high', 'medium', 'low'];
+        return Array.from(cbs).map(cb => cb.value.toLowerCase());
+    }
+
     async function generateServerReport(e, isPreview=false) {
         e.preventDefault();
         const btn = document.getElementById(isPreview ? 'btn-srv-prev' : 'btn-srv-gen');
@@ -701,26 +761,48 @@
             const alertsRes = await apiFetch('/api/alerts?limit=500');
             const allAlerts = Array.isArray(alertsRes) ? alertsRes : (alertsRes.items || []);
             
+            const selectedSevs = getSelectedSeverities('srv');
             const cutoffTime = new Date(Date.now() - (hours * 3600 * 1000));
-            const serverAlerts = allAlerts.filter(a => a.server_id === server.id && new Date(a.created_at) >= cutoffTime);
-            
+            const serverAlertsUnfiltered = allAlerts.filter(a => a.server_id === server.id && new Date(a.created_at) >= cutoffTime);
+
+            const infoExcludedCount = serverAlertsUnfiltered.filter(a => (a.severity || 'info').toLowerCase() === 'info' && !selectedSevs.includes('info')).length;
+            const serverAlerts = serverAlertsUnfiltered.filter(a => selectedSevs.includes((a.severity || 'info').toLowerCase()));
+
+            let critCnt = 0, warnCnt = 0, infoCnt = 0, lowCnt = 0;
+            serverAlerts.forEach(a => {
+                const s = (a.severity || 'info').toLowerCase();
+                if (s === 'critical') critCnt++;
+                else if (s === 'warning' || s === 'high' || s === 'medium') warnCnt++;
+                else if (s === 'low') lowCnt++;
+                else if (s === 'info') infoCnt++;
+            });
+
             const content = `
                 <div class="pdf-section">
                     <h2 class="pdf-h2">Server Level Alerts Log</h2>
+                    <div class="pdf-card" style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px 18px">
+                        <div>
+                            <div style="font-weight:700; color:#0f172a; font-size:14px">Alerts by Severity</div>
+                            <div style="font-size:11.5px; color:#64748b; margin-top:2px">
+                                Critical: <b style="color:#dc2626">${critCnt}</b> | Warning: <b style="color:#d97706">${warnCnt}</b> | Low: <b style="color:#0284c7">${lowCnt}</b> | Info: <b style="color:#64748b">${infoCnt}</b>
+                            </div>
+                        </div>
+                        ${infoExcludedCount > 0 ? `<div style="font-size:11px; color:#d97706; background:#fffbeb; border:1px solid #fde68a; padding:4px 8px; border-radius:4px">ℹ️ ${infoExcludedCount} INFO events excluded</div>` : ''}
+                    </div>
                     <div class="pdf-card">
                         ${serverAlerts.length > 0 ? serverAlerts.map(a => `
                             <div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid #f1f5f9">
                                 <div style="display:flex; justify-content:space-between">
-                                    <div style="font-weight:bold; color:#0f172a; font-size:13px">${a.title || a.alert_type}</div>
+                                    <div style="font-weight:bold; color:#0f172a; font-size:13px">${escapeHtml(a.title || a.alert_type)}</div>
                                     <div style="font-size:11px; color:#64748b">${new Date(a.created_at).toLocaleString()}</div>
                                 </div>
-                                <div style="font-size:11px; margin-top:6px; color:#334155; padding:6px; background:#f8fafc; border-radius:4px; border:1px solid #e2e8f0">${a.message || a.detail || 'No additional details provided.'}</div>
+                                <div style="font-size:11px; margin-top:6px; color:#334155; padding:6px; background:#f8fafc; border-radius:4px; border:1px solid #e2e8f0">${escapeHtml(a.message || a.detail || 'No additional details provided.')}</div>
                                 <div style="font-size:11px; margin-top:6px">
                                     <span style="display:inline-block; padding:2px 6px; border-radius:4px; font-weight:bold; background:${a.severity==='critical'?'#fee2e2':a.severity==='warning'?'#fef3c7':'#e0f2fe'}; color:${a.severity==='critical'?'#dc2626':a.severity==='warning'?'#d97706':'#0284c7'};">${(a.severity||'info').toUpperCase()}</span>
-                                    ${a.mitre_tactic ? `<span style="display:inline-block; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; margin-left:6px">${a.mitre_tactic} (${a.mitre_technique || ''})</span>` : ''}
+                                    ${a.mitre_tactic ? `<span style="display:inline-block; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; margin-left:6px">${escapeHtml(a.mitre_tactic)} (${escapeHtml(a.mitre_technique || '')})</span>` : ''}
                                 </div>
                             </div>
-                        `).join('') : '<div style="font-size:13px; color:#64748b; padding:10px 0; text-align:center">No alerts triggered for this server in the selected timeframe.</div>'}
+                        `).join('') : '<div style="font-size:13px; color:#64748b; padding:20px; text-align:center">No events at the selected levels for this period.</div>'}
                     </div>
                 </div>
             `;
@@ -948,12 +1030,14 @@
             const fromDate = document.getElementById('app-date-from')?.value;
             const toDate = document.getElementById('app-date-to')?.value;
 
+            const appSevs = getSelectedSeverities('app');
             const payload = {
                 type: 'all',
                 timeframe: timeframe,
                 from_date: fromDate,
                 to_date: toDate,
                 sections: sections,
+                severities: appSevs,
                 format: 'json'
             };
 
@@ -1178,6 +1262,110 @@ Total Telemetry Queried: ${summary.total_events || 0} events from Database`;
     }
 
 
+
+    async function generateReportForSelectedIncidents(ids) {
+        if (!ids || !ids.length) return;
+        showToast(`Loading report for ${ids.length} selected incident(s)...`, 'info');
+        try {
+            const res = await apiFetch('/api/incidents?status=all&limit=500');
+            const all = Array.isArray(res) ? res : (res.items || []);
+            const idSet = new Set(ids);
+            const selected = all.filter(inc => idSet.has(inc.id));
+            
+            let critCnt = 0, warnCnt = 0, infoCnt = 0;
+            selected.forEach(a => {
+                const s = (a.severity || 'info').toLowerCase();
+                if (s === 'critical') critCnt++;
+                else if (s === 'warning' || s === 'high' || s === 'medium') warnCnt++;
+                else infoCnt++;
+            });
+
+            const content = `
+                <div class="pdf-section">
+                    <h2 class="pdf-h2">Selected Incidents Report (${selected.length} items)</h2>
+                    <div class="pdf-card" style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; background:#f8fafc; border:1px solid #e2e8f0; padding:12px 18px; border-radius:8px">
+                        <div>
+                            <div style="font-weight:700; color:#0f172a; font-size:14px">Breakdown</div>
+                            <div style="font-size:11.5px; color:#64748b; margin-top:2px">Critical: <b style="color:#dc2626">${critCnt}</b> | Warning: <b style="color:#d97706">${warnCnt}</b> | Info: <b style="color:#0284c7">${infoCnt}</b></div>
+                        </div>
+                        <div style="font-size:11px; color:#64748b; font-style:italic">Generated from direct selection (Exact rows)</div>
+                    </div>
+                    <div class="pdf-card">
+                        ${selected.length > 0 ? selected.map(inc => `
+                            <div style="margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid #f1f5f9">
+                                <div style="display:flex; justify-content:space-between; align-items:center">
+                                    <div style="font-weight:bold; color:#0f172a; font-size:13.5px">#INC-${inc.id}: ${escapeHtml(inc.title)}</div>
+                                    <span style="font-size:11px; color:#64748b">${inc.created_at ? new Date(inc.created_at).toLocaleString() : ''}</span>
+                                </div>
+                                <div style="font-size:12px; color:#334155; margin-top:4px">${escapeHtml(inc.description || '')}</div>
+                                <div style="display:flex; gap:12px; font-size:11px; color:#64748b; margin-top:6px">
+                                    <span>Severity: <b>${(inc.severity || 'info').toUpperCase()}</b></span>
+                                    <span>Status: <b>${(inc.status || 'open').toUpperCase()}</b></span>
+                                    <span>Target: <b>${escapeHtml(inc.hostname || 'Unknown')}</b></span>
+                                    <span>Assigned: <b>${escapeHtml(inc.assigned_to || 'Unassigned')}</b></span>
+                                </div>
+                            </div>
+                        `).join('') : '<div style="font-size:13px; color:#64748b; padding:20px; text-align:center">No matching selected incidents found.</div>'}
+                    </div>
+                </div>
+            `;
+
+            renderPDF('Security Incidents Selection Report', `Selected Records (${selected.length})`, `Generated: ${new Date().toISOString()}`, content, true);
+        } catch (e) {
+            showToast('Failed to load selected incidents report: ' + e.message, 'error');
+        }
+    }
+
+    async function generateReportForSelectedVulns(ids) {
+        if (!ids || !ids.length) return;
+        showToast(`Loading report for ${ids.length} selected vulnerability finding(s)...`, 'info');
+        try {
+            const res = await apiFetch('/api/vulnerabilities/fleet-cves?status=all');
+            const all = Array.isArray(res) ? res : (res.findings || []);
+            const idSet = new Set(ids);
+            const selected = all.filter(v => idSet.has(v.id));
+
+            const content = `
+                <div class="pdf-section">
+                    <h2 class="pdf-h2">Selected Vulnerabilities Audit (${selected.length} items)</h2>
+                    <div class="pdf-card">
+                        ${selected.length > 0 ? `
+                        <table style="width:100%; border-collapse:collapse; font-size:12px">
+                            <thead>
+                                <tr style="border-bottom:2px solid #e2e8f0; color:#475569; text-align:left">
+                                    <th style="padding:6px">CVE ID</th>
+                                    <th style="padding:6px">Severity</th>
+                                    <th style="padding:6px">Status</th>
+                                    <th style="padding:6px">Server</th>
+                                    <th style="padding:6px">Package</th>
+                                    <th style="padding:6px">Version</th>
+                                    <th style="padding:6px">Fixed In</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${selected.map(v => `
+                                    <tr style="border-bottom:1px solid #f1f5f9">
+                                        <td style="padding:6px; font-weight:700; color:#0284c7">${v.cve_id}</td>
+                                        <td style="padding:6px; font-weight:700">${v.severity}</td>
+                                        <td style="padding:6px">${(v.status || 'active').toUpperCase()}</td>
+                                        <td style="padding:6px">${escapeHtml(v.server_name || '')}</td>
+                                        <td style="padding:6px; font-weight:600">${escapeHtml(v.package_name || '')}</td>
+                                        <td style="padding:6px; color:#dc2626">${escapeHtml(v.installed_version || '')}</td>
+                                        <td style="padding:6px; color:#16a34a">${escapeHtml(v.fixed_version || 'None')}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>` : '<div style="font-size:13px; color:#64748b; padding:20px; text-align:center">No matching selected vulnerability records found.</div>'}
+                    </div>
+                </div>
+            `;
+
+            renderPDF('Vulnerability Findings Selection Report', `Selected CVE Records (${selected.length})`, `Generated: ${new Date().toISOString()}`, content, true);
+        } catch(e) {
+            showToast('Failed to load selected vulnerabilities report: ' + e.message, 'error');
+        }
+    }
+
     window.addEventListener('load', () => {
         const now = new Date();
         const thirtyDaysAgo = new Date(now - 30 * 86400000);
@@ -1185,6 +1373,18 @@ Total Telemetry Queried: ${summary.total_events || 0} events from Database`;
         document.getElementById('date_from').value = thirtyDaysAgo.toISOString().split('T')[0];
         loadKPIs();
         setupAppReportAutocomplete();
+
+        // Check for report-for-selected query parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const incParam = urlParams.get('incident_ids');
+        const vulnParam = urlParams.get('vuln_ids');
+        if (incParam) {
+            const incIds = incParam.split(',').map(x => parseInt(x.trim())).filter(Boolean);
+            generateReportForSelectedIncidents(incIds);
+        } else if (vulnParam) {
+            const vulnIds = vulnParam.split(',').map(x => parseInt(x.trim())).filter(Boolean);
+            generateReportForSelectedVulns(vulnIds);
+        }
     });
 </script>
 

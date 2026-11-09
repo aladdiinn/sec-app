@@ -274,50 +274,130 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
                                 "summary": f"{adv.get('summary', '')} (Found at {sw_path})"
                             })
 
-            # 3. Atomically update server_vulnerabilities table
-            cur.execute("DELETE FROM server_vulnerabilities WHERE server_id = %s;", (server_id,))
+            # 3. Intelligent state-preserving update of server_vulnerabilities table
+            # Fetch existing records for this server so manual closes, reasons, and notes are NEVER lost
+            cur.execute("""
+                SELECT id, cve_id, package_name, installed_version, status, close_reason, close_note, risk_expiry_date
+                FROM server_vulnerabilities
+                WHERE server_id = %s;
+            """, (server_id,))
+            existing_cves = {}
+            for r in cur.fetchall():
+                cve_key = (r["cve_id"], r["package_name"])
+                existing_cves[cve_key] = dict(r) if isinstance(r, dict) else {
+                    "id": r[0], "cve_id": r[1], "package_name": r[2], "installed_version": r[3],
+                    "status": r[4], "close_reason": r[5], "close_note": r[6], "risk_expiry_date": r[7]
+                }
+
+            scanned_keys = set()
             crit_cnt, high_cnt, med_cnt, low_cnt = 0, 0, 0, 0
 
             for f in findings:
                 sev = f["severity"].upper()
-                if sev == "CRITICAL": crit_cnt += 1
-                elif sev == "HIGH": high_cnt += 1
-                elif sev == "MEDIUM": med_cnt += 1
-                elif sev == "LOW": low_cnt += 1
+                cve_key = (f["cve_id"], f["package_name"])
+                scanned_keys.add(cve_key)
 
-                cur.execute("""
-                    INSERT INTO server_vulnerabilities (
-                        server_id, cve_id, package_name, installed_version, fixed_version,
-                        fix_state, severity, cvss_score, epss_score, is_cisa_kev,
-                        reboot_required, running_kernel_affected, advisory_id, summary,
-                        detected_at, status
-                    ) VALUES (%s, %s, %s, %s, %s, 'needed', %s, %s, %s, %s, %s, %s, %s, %s, NOW(), 'active')
-                    ON CONFLICT (server_id, cve_id, package_name) DO UPDATE SET
-                        installed_version = EXCLUDED.installed_version,
-                        fixed_version = EXCLUDED.fixed_version,
-                        severity = EXCLUDED.severity,
-                        cvss_score = EXCLUDED.cvss_score,
-                        epss_score = EXCLUDED.epss_score,
-                        is_cisa_kev = EXCLUDED.is_cisa_kev,
-                        reboot_required = EXCLUDED.reboot_required,
-                        running_kernel_affected = EXCLUDED.running_kernel_affected,
-                        summary = EXCLUDED.summary,
-                        status = 'active';
-                """, (
-                    server_id,
-                    f["cve_id"],
-                    f["package_name"],
-                    f["installed_version"],
-                    f["fixed_version"],
-                    sev,
-                    f["cvss_score"],
-                    f["epss_score"],
-                    f["is_cisa_kev"],
-                    f["reboot_required"],
-                    f["running_kernel_affected"],
-                    f["advisory_id"],
-                    f["summary"]
-                ))
+                existing = existing_cves.get(cve_key)
+                new_status = 'active'
+                reopened_by = None
+
+                if existing:
+                    old_status = existing.get("status")
+                    close_reason = (existing.get("close_reason") or "").strip().lower()
+                    risk_expiry = existing.get("risk_expiry_date")
+                    old_version = existing.get("installed_version") or ""
+                    
+                    if old_status == "closed":
+                        # Check close reason
+                        if "patch" in close_reason or "fix" in close_reason:
+                            # Do not trust manual close if the scan still finds vulnerable version!
+                            new_status = 'active'
+                            reopened_by = 'reopened by scan'
+                            # Audit log reopening
+                            try:
+                                cur.execute("""
+                                    INSERT INTO audit_logs (username, action, target_type, target_id, detail, timestamp)
+                                    VALUES ('system', 'VULN_REOPENED_BY_SCAN', 'vulnerabilities', %s, %s, NOW());
+                                """, (existing["id"], f"Vulnerability {f['cve_id']} on server #{server_id} ({f['package_name']} {f['installed_version']}) reopened by scan: vulnerable package still installed."))
+                            except Exception: pass
+                        elif "accepted risk" in close_reason or "accept" in close_reason:
+                            # Keep closed until expiry
+                            is_expired = False
+                            if risk_expiry:
+                                try:
+                                    if datetime.now().date() > risk_expiry:
+                                        is_expired = True
+                                except Exception: pass
+                            if is_expired:
+                                new_status = 'active'
+                                reopened_by = 'risk_expired'
+                            else:
+                                new_status = 'closed'
+                        elif "false positive" in close_reason or "not affected" in close_reason:
+                            # Keep closed unless installed version changed
+                            if old_version and old_version != f["installed_version"]:
+                                new_status = 'active'
+                                reopened_by = 'version_changed'
+                            else:
+                                new_status = 'closed'
+                        else:
+                            new_status = 'closed'
+
+                    # Update existing record
+                    if reopened_by:
+                        cur.execute("""
+                            UPDATE server_vulnerabilities SET
+                                installed_version = %s, fixed_version = %s, severity = %s,
+                                cvss_score = %s, epss_score = %s, is_cisa_kev = %s,
+                                reboot_required = %s, running_kernel_affected = %s, summary = %s,
+                                status = %s, reopened_by = %s, reopened_at = NOW()
+                            WHERE id = %s;
+                        """, (f["installed_version"], f["fixed_version"], sev, f["cvss_score"], f["epss_score"], f["is_cisa_kev"], f["reboot_required"], f["running_kernel_affected"], f["summary"], new_status, reopened_by, existing["id"]))
+                    else:
+                        cur.execute("""
+                            UPDATE server_vulnerabilities SET
+                                installed_version = %s, fixed_version = %s, severity = %s,
+                                cvss_score = %s, epss_score = %s, is_cisa_kev = %s,
+                                reboot_required = %s, running_kernel_affected = %s, summary = %s,
+                                status = %s
+                            WHERE id = %s;
+                        """, (f["installed_version"], f["fixed_version"], sev, f["cvss_score"], f["epss_score"], f["is_cisa_kev"], f["reboot_required"], f["running_kernel_affected"], f["summary"], new_status, existing["id"]))
+                else:
+                    # New finding
+                    cur.execute("""
+                        INSERT INTO server_vulnerabilities (
+                            server_id, cve_id, package_name, installed_version, fixed_version,
+                            fix_state, severity, cvss_score, epss_score, is_cisa_kev,
+                            reboot_required, running_kernel_affected, advisory_id, summary,
+                            detected_at, status
+                        ) VALUES (%s, %s, %s, %s, %s, 'needed', %s, %s, %s, %s, %s, %s, %s, %s, NOW(), 'active')
+                        ON CONFLICT (server_id, cve_id, package_name) DO UPDATE SET
+                            installed_version = EXCLUDED.installed_version,
+                            fixed_version = EXCLUDED.fixed_version,
+                            severity = EXCLUDED.severity,
+                            cvss_score = EXCLUDED.cvss_score,
+                            epss_score = EXCLUDED.epss_score,
+                            is_cisa_kev = EXCLUDED.is_cisa_kev,
+                            reboot_required = EXCLUDED.reboot_required,
+                            running_kernel_affected = EXCLUDED.running_kernel_affected,
+                            summary = EXCLUDED.summary;
+                    """, (
+                        server_id, f["cve_id"], f["package_name"], f["installed_version"], f["fixed_version"],
+                        sev, f["cvss_score"], f["epss_score"], f["is_cisa_kev"], f["reboot_required"],
+                        f["running_kernel_affected"], f["advisory_id"], f["summary"]
+                    ))
+
+                # Increment count ONLY for OPEN vulnerabilities
+                if new_status == 'active':
+                    if sev == "CRITICAL": crit_cnt += 1
+                    elif sev == "HIGH": high_cnt += 1
+                    elif sev == "MEDIUM": med_cnt += 1
+                    elif sev == "LOW": low_cnt += 1
+
+            # Mark findings no longer present on server as resolved
+            for old_key, old_rec in existing_cves.items():
+                if old_key not in scanned_keys and old_rec.get("status") == "active":
+                    cur.execute("UPDATE server_vulnerabilities SET status = 'resolved', resolved_at = NOW() WHERE id = %s;", (old_rec["id"],))
 
             # Update servers table summary
             cur.execute("""

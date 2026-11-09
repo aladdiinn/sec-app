@@ -457,12 +457,7 @@
                 const res = Array.isArray(raw) ? raw : (raw.notifications || []);
                 const unread = res.filter(n => !n.is_read);
                 
-                if (unread.length > 0) {
-                    notifBadge.style.display = 'block';
-                    notifBadge.innerText = unread.length;
-                } else {
-                    notifBadge.style.display = 'none';
-                }
+                // Unread notifications dropdown items populated; badge is driven by updateAlertsBadge
 
                 if (res.length > 0) {
                     notifList.innerHTML = res.map(n => `
@@ -581,22 +576,35 @@
         async function updateAlertsBadge() {
             if (_isUpdatingAlertsBadge) return;
             const badge = document.getElementById('sb-alerts-badge');
-            if (!badge) return;
+            const notifBadge = document.getElementById('notif-badge');
+            if (!badge && !notifBadge) return;
             _isUpdatingAlertsBadge = true;
             try {
-                const res = await apiFetch('/api/dashboard/counts', { timeout: 5000 });
-                const cnt = res ? (res.unresolved_alerts ?? 0) : 0;
-                if (cnt > 0) {
-                    badge.innerText = cnt > 99 ? '99+' : cnt;
-                    badge.style.display = 'inline-block';
-                } else {
-                    badge.style.display = 'none';
+                const res = await apiFetch('/api/alerts/unread-count', { timeout: 5000 });
+                const cnt = res ? (res.unread_count ?? 0) : 0;
+                const txt = cnt > 99 ? '99+' : String(cnt);
+                if (badge) {
+                    if (cnt > 0) {
+                        badge.innerText = txt;
+                        badge.style.display = 'inline-block';
+                    } else {
+                        badge.style.display = 'none';
+                    }
+                }
+                if (notifBadge) {
+                    if (cnt > 0) {
+                        notifBadge.innerText = txt;
+                        notifBadge.style.display = 'block';
+                    } else {
+                        notifBadge.style.display = 'none';
+                    }
                 }
             } catch (e) {}
             finally {
                 _isUpdatingAlertsBadge = false;
             }
         }
+        window.updateAlertsBadge = updateAlertsBadge;
 
         let _isUpdatingApprovalsBadge = false;
         async function updatePendingApprovalsBadge() {
