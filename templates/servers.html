@@ -2545,9 +2545,13 @@ function deduplicateAssetAlerts(alerts) {
         const fullText = `${title} ${desc}`;
 
         let portNum = null;
-        const portMatch = fullText.match(/port\s+(\d+)/i) || fullText.match(/\[(\d+)\]/) || (a.alert_type || '').match(/port_(\d+)/i);
-        if (portMatch) {
-            portNum = parseInt(portMatch[1]);
+        const isPortAlert = /\bport\b/i.test(fullText);
+        if (isPortAlert) {
+            const portMatch = fullText.match(/port\s*[:=\s]?\s*(\d+)/i) || fullText.match(/port[s]?\s*\[(\d+)\]/i) || (a.alert_type || '').match(/port_(\d+)/i);
+            if (portMatch) {
+                const parsed = parseInt(portMatch[1]);
+                if (parsed >= 1 && parsed <= 65535) portNum = parsed;
+            }
         }
 
         let key = portNum ? `port_${portNum}` : (a.rule_id ? `rule_${a.rule_id}` : title);

@@ -86,5 +86,85 @@ class TestAssetReadAndCompactIncidents(unittest.TestCase):
         self.assertEqual(res, 42)
         mock_conn.commit.assert_called()
 
+
+    def test_user_deletion_actor_attribution_never_unknown(self):
+        import app
+        from unittest.mock import patch
+
+        created_alerts = []
+        def mock_create_alert(server_id, alert_type, severity, title, message):
+            created_alerts.append({
+                "server_id": server_id,
+                "alert_type": alert_type,
+                "severity": severity,
+                "title": title,
+                "message": message
+            })
+
+        # Test Case 1: Correlated with sudo_events
+        with patch.object(app, '_create_alert_dedup', side_effect=mock_create_alert), \
+             patch.object(app, '_is_rule_enabled', return_value=True):
+            data = {
+                "log_lines": ["Nov 9 18:20:25 ubuntu-DEV userdel[400722]: delete user 'prajwal'"],
+                "sudo_events": [{"line": "sudo:   ubuntu : TTY=pts/0 ; PWD=/application/Soc ; USER=root ; COMMAND=/usr/sbin/userdel prajwal"}],
+                "commands": [],
+                "audit_events": []
+            }
+            app._check_sudo_misuse(1, data)
+            self.assertTrue(len(created_alerts) >= 1)
+            self.assertIn("ubuntu", created_alerts[0]["title"])
+            self.assertNotIn("Unknown", created_alerts[0]["title"])
+            self.assertIn("userdel prajwal", created_alerts[0]["message"])
+
+        # Test Case 2: Standalone userdel with root execution (no unprivileged user)
+        created_alerts.clear()
+        with patch.object(app, '_create_alert_dedup', side_effect=mock_create_alert), \
+             patch.object(app, '_is_rule_enabled', return_value=True):
+            data = {
+                "log_lines": ["Nov 9 18:20:25 ubuntu-DEV userdel[400722]: delete user 'prajwal'"],
+                "sudo_events": [],
+                "commands": [],
+                "audit_events": []
+            }
+            app._check_sudo_misuse(1, data)
+            self.assertTrue(len(created_alerts) >= 1)
+            self.assertIn("root", created_alerts[0]["title"])
+            self.assertNotIn("Unknown", created_alerts[0]["title"])
+
+    def test_process_pid_brackets_never_treated_as_port(self):
+        import database
+        from unittest.mock import MagicMock, patch
+
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+        
+        # Row with syslog PID in description
+        mock_cur.fetchall.return_value = [{
+            "id": 885,
+            "server_id": 1,
+            "title": "User Account Deletion — root",
+            "description": "User 'root' executed: userdel[400722]: delete user 'prajwal'",
+            "severity": "critical",
+            "status": "open",
+            "evidence_data": None,
+            "occurrences": 1,
+            "first_seen": "2026-11-09 18:20:25",
+            "last_seen": "2026-11-09 18:20:25",
+            "created_at": "2026-11-09 18:20:25"
+        }]
+
+        with patch.object(database, 'get_db_connection', return_value=mock_conn):
+            database.merge_duplicate_incidents_with_audit(1)
+            # Ensure UPDATE does NOT inject port 400722 into evidence
+            calls = [c[0] for c in mock_cur.execute.call_args_list]
+            for call_args in calls:
+                sql = call_args[0] if len(call_args) > 0 else ""
+                params = call_args[1] if len(call_args) > 1 else ()
+                if "UPDATE incidents" in sql and "evidence_data" in sql and len(params) > 4:
+                    ev_str = str(params[4])
+                    self.assertNotIn("400722", ev_str)
+                    self.assertNotIn("DET-NET-010", ev_str)
+
 if __name__ == '__main__':
     unittest.main()

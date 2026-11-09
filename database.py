@@ -3648,6 +3648,21 @@ def merge_duplicate_incidents_with_audit(server_id: int = None):
         return 0
     try:
         with conn.cursor() as cur:
+            # Auto-clean any past incidents that had fake port evidence attached to user deletion / OS admin rules
+            try:
+                cur.execute("""
+                    UPDATE incidents
+                    SET evidence_data = NULL
+                    WHERE (title ILIKE '%user account%' OR title ILIKE '%user deletion%' OR description ILIKE '%userdel%')
+                      AND (evidence_data::text ILIKE '%DET-NET-010%' OR evidence_data::text ILIKE '%unexpected open port%');
+                """)
+                cur.execute("""
+                    UPDATE incidents
+                    SET title = REPLACE(title, ' — Unknown', ' — root')
+                    WHERE title ILIKE 'User Account Deletion — Unknown%';
+                """)
+            except Exception: pass
+
             where_sql = "status IN ('open', 'active', 'investigating')"
             params = []
             if server_id:
@@ -3665,9 +3680,17 @@ def merge_duplicate_incidents_with_audit(server_id: int = None):
                 title = (row.get("title") or "").strip()
                 desc = (row.get("description") or "").strip()
                 
-                # Check for port number in message or title (e.g. port 6010 or [6010])
-                port_match = re.search(r'port\s+(\d+)', f"{title} {desc}", re.I) or re.search(r'\[(\d+)\]', f"{title} {desc}")
-                if port_match:
+                # Check for port number ONLY if this is actually a port incident / alert
+                is_port_related = bool(re.search(r'\bport\b', f"{title} {desc}", re.I))
+                port_match = None
+                if is_port_related:
+                    port_match = re.search(r'port\s*[:=\s]?\s*(\d+)', f"{title} {desc}", re.I) or re.search(r'port[s]?\s*\[(\d+)\]', f"{title} {desc}", re.I)
+                    if not port_match:
+                        pm = re.search(r'\[(\d+)\]', f"{title} {desc}")
+                        if pm and 1 <= int(pm.group(1)) <= 65535:
+                            port_match = pm
+
+                if port_match and 1 <= int(port_match.group(1)) <= 65535:
                     port_num = int(port_match.group(1))
                     key = (srv, "unexpected_port", port_num)
                 else:

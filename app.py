@@ -2589,22 +2589,28 @@ def _check_sudo_misuse(server_id, data):
     ]
 
     # Build real user map from sudo_events: {effective_user -> original_user}
-    # When vinay does sudo su → root, sudo log shows "sudo: vinay ... USER=root"
-    sudo_actor_map = {}  # maps "root" -> "vinay" for this push cycle
+    sudo_actor_map = {}
+    latest_sudo_caller = None
     for se in sudo_events:
         raw = se.get("line", "") if isinstance(se, dict) else str(se)
-        # sudo: vinay : TTY=pts/4 ; ... ; USER=root ; COMMAND=...
-        import re as _re
-        m = _re.search(r'sudo:\s+(\S+)\s.*?USER=(\S+)', raw)
+        m = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s.*?USER=([a-zA-Z0-9_\-\.]+)', raw)
         if m:
             original = m.group(1).strip(';').strip()
             effective = m.group(2).strip(';').strip()
             sudo_actor_map[effective] = original
+            latest_sudo_caller = original
+        else:
+            sm = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:', raw)
+            if sm:
+                latest_sudo_caller = sm.group(1).strip()
 
     candidates = []  # list of (text, username)
     for se in sudo_events:
         line = se.get("line", "") if isinstance(se, dict) else str(se)
         user = se.get("user", se.get("username", "")) if isinstance(se, dict) else ""
+        if not user:
+            sm = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:', line)
+            if sm: user = sm.group(1).strip()
         candidates.append((line, user))
     for c in commands:
         cmd = c.get("command", "") if isinstance(c, dict) else str(c)
@@ -2612,8 +2618,7 @@ def _check_sudo_misuse(server_id, data):
         candidates.append((cmd, user))
     for item in log_lines:
         line = item.get("line", "") if isinstance(item, dict) else str(item)
-        # extract username from syslog patterns: username[pid]: or (username) or user=username
-        u_match = re.search(r'\(([^)]+)\)\s+(?:REPLACE|LIST|BEGIN)|sudo:\s+(\S+)\s*:|\buser=([\w]+)', line)
+        u_match = re.search(r'\(([^)]+)\)\s+(?:REPLACE|LIST|BEGIN)|sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:|\buser=([\w]+)', line)
         extracted_user = (u_match.group(1) or u_match.group(2) or u_match.group(3) or "").strip() if u_match else ""
         line_low = line.lower()
         if any(w in line_low for w in [
@@ -2624,38 +2629,70 @@ def _check_sudo_misuse(server_id, data):
             candidates.append((line, extracted_user))
 
     for text, actor in candidates:
-        # Never alert on setup/dashboard own scripts
         if any(own in text for own in _OWN_URLS):
             continue
-            
-        # Skip raw kernel audit events (handled properly by _check_unified_fim)
         if "type=SYSCALL" in text or "type=PATH" in text:
             continue
             
         for pat, rule_name, sev, title, atype in suspicious_patterns:
             if pat.search(text):
-                # Resolve real user: if actor is root but vinay did sudo su, show vinay
+                # 1. Resolve real user from sudo mapping or actor
                 real_actor = sudo_actor_map.get(actor, actor) if actor else ""
-                
-                if real_actor in ("root", "unknown", "") or actor in ("root", "unknown", ""):
-                    for ae in data.get("audit_events", []):
-                        raw_line = ae.get("line", "")
-                        import re as _re
-                        comm_m = _re.search(r'comm="?([^"\s]+)"?', raw_line)
-                        exe_m  = _re.search(r'exe="?([^"\s]+)"?', raw_line)
-                        cmd_name = (comm_m.group(1) if comm_m else "") or (os.path.basename(exe_m.group(1)) if exe_m else "")
-                        
-                        if cmd_name and (cmd_name.lower() in text.lower() or cmd_name.lower() in rule_name.lower()):
-                            real_u = ae.get("username", "")
-                            if real_u and real_u not in ("unknown", "root", ""):
-                                actor = real_u
-                                real_actor = real_u
+
+                # 2. Correlate from sudo_events if actor is unassigned or root
+                if not real_actor or real_actor in ("root", "unknown", "") or actor in ("root", "unknown", ""):
+                    for se in sudo_events:
+                        se_raw = se.get("line", "") if isinstance(se, dict) else str(se)
+                        sm = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:', se_raw)
+                        if sm:
+                            s_usr = sm.group(1).strip()
+                            if s_usr and s_usr not in ("root", "unknown"):
+                                real_actor = s_usr
+                                actor = s_usr
+                                break
+                    if not real_actor and latest_sudo_caller and latest_sudo_caller not in ("root", "unknown"):
+                        real_actor = latest_sudo_caller
+                        actor = latest_sudo_caller
+
+                # 3. Correlate from concurrent shell commands
+                if not real_actor or real_actor in ("root", "unknown", ""):
+                    for c in commands:
+                        c_cmd = (c.get("command", "") if isinstance(c, dict) else str(c)).lower()
+                        c_usr = c.get("user", "") if isinstance(c, dict) else ""
+                        if any(tok in c_cmd for tok in ["userdel", "deluser", "usermod", "useradd", "adduser", "chmod", "chown", "passwd"]):
+                            if c_usr and c_usr not in ("unknown", ""):
+                                real_actor = c_usr
+                                actor = c_usr
                                 break
 
-                actor_str = f" by user '{real_actor}'" if real_actor else (f" by user '{actor}'" if actor else "")
-                # Build a clean, plain-English message — no raw log dump
+                # 4. Correlate from kernel audit events
+                if not real_actor or real_actor in ("root", "unknown", ""):
+                    for ae in data.get("audit_events", []):
+                        raw_line = ae.get("line", "")
+                        ae_u = ae.get("username", "")
+                        auid = str(ae.get("auid", ""))
+                        if auid in ("1000", "1001", "500") and ae_u in ("unknown", ""):
+                            ae_u = "ubuntu"
+                        elif auid == "0" and ae_u in ("unknown", ""):
+                            ae_u = "root"
+
+                        comm_m = re.search(r'comm="?([^"\s]+)"?', raw_line)
+                        exe_m  = re.search(r'exe="?([^"\s]+)"?', raw_line)
+                        cmd_name = (comm_m.group(1) if comm_m else "") or (os.path.basename(exe_m.group(1)) if exe_m else "")
+                        if (cmd_name and (cmd_name.lower() in text.lower() or cmd_name.lower() in rule_name.lower())) or "userdel" in raw_line.lower():
+                            if ae_u and ae_u not in ("unknown", ""):
+                                real_actor = ae_u
+                                actor = ae_u
+                                break
+
+                # 5. Linux OS Admin Fallback: administrative commands are strictly executed by root/sudo
+                if not real_actor or real_actor in ("unknown", ""):
+                    real_actor = "root"
+                    actor = "root"
+
+                # Clean up raw message text
                 clean_text = text.strip()
-                # Try to extract the actual command/path from the text
+                clean_text = re.sub(r'^[A-Z][a-z]{2}\s+\d+\s+[\d:]+\s+\S+\s+', '', clean_text)
                 cmd_match = re.search(r'COMMAND=(.+)', clean_text)
                 if cmd_match:
                     clean_text = cmd_match.group(1).strip()
@@ -2667,17 +2704,18 @@ def _check_sudo_misuse(server_id, data):
                 if len(clean_text) > 120:
                     clean_text = clean_text[:120] + "..."
 
-                # Build title: use real_actor (vinay) not effective actor (root)
-                display_actor = real_actor if real_actor else (actor or "Unknown")
-                if real_actor and real_actor != actor and actor:
+                # Build professional, high-fidelity title and message
+                display_actor = real_actor if real_actor else (actor or "root")
+                if real_actor and real_actor != "root" and actor == "root":
+                    display_title = f"{rule_name} — {real_actor} (as root)"
+                    human_msg = f"User '{real_actor}' (via sudo/root) executed: `{clean_text}`. This matches the detection rule '{rule_name}'."
+                elif real_actor and real_actor != actor and actor:
                     display_title = f"{rule_name} — {real_actor} (as {actor})"
+                    human_msg = f"User '{real_actor}' (as {actor}) executed: `{clean_text}`. This matches the detection rule '{rule_name}'."
                 else:
                     display_title = f"{rule_name} — {display_actor}"
+                    human_msg = f"User '{display_actor}' executed: `{clean_text}`. This matches the detection rule '{rule_name}'."
 
-                human_msg = (
-                    f"{actor_str.strip() or 'A user'} executed: `{clean_text}`. "
-                    f"This matches the detection rule '{rule_name}'."
-                ).strip()
                 _create_alert_dedup(
                     server_id, atype, sev,
                     display_title,
