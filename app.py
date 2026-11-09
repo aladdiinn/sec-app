@@ -507,6 +507,50 @@ try:
 except Exception:
     pass
 
+def run_database_retention_loop():
+    """Background worker to automatically drop expired daily app_events partitions and enforce storage limits for 200+ servers and 100+ app nodes."""
+    time.sleep(20)
+    logger.info("[STORAGE-RETENTION] Automated Database Storage & Partition Retention Worker initialized.")
+    while True:
+        try:
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    # 1. Purge expired daily partitions (default 2 days retention for raw events in PostgreSQL to protect disk)
+                    ret_days = int(os.getenv("APP_EVENTS_RETENTION_DAYS", "2"))
+                    import app_siem_db
+                    dropped = app_siem_db.purge_expired_app_events_partitions(conn, retention_days=ret_days)
+                    if dropped:
+                        logger.info(f"[STORAGE-RETENTION] Auto-dropped {len(dropped)} expired partition(s): {dropped}")
+                    
+                    # 2. Cleanup older auxiliary metrics & logs to cap database growth
+                    with conn.cursor() as cur:
+                        # Cap network traffic history to 14 days
+                        cur.execute("DELETE FROM network_traffic_history WHERE recorded_at < NOW() - INTERVAL '14 days';")
+                        # Cap command execution history to 30 days
+                        cur.execute("DELETE FROM commands WHERE executed_at < NOW() - INTERVAL '30 days';")
+                        # Cap login history to 30 days
+                        cur.execute("DELETE FROM login_history WHERE login_time < NOW() - INTERVAL '30 days';")
+                        # Safety cap on logs_eviction_queue: if > 25,000 rows, delete excess
+                        cur.execute("""
+                            DELETE FROM logs_eviction_queue 
+                            WHERE id NOT IN (
+                                SELECT id FROM logs_eviction_queue ORDER BY id DESC LIMIT 25000
+                            );
+                        """)
+                    conn.commit()
+                except Exception as inner_e:
+                    logger.warning(f"[STORAGE-RETENTION] Retention cycle note: {inner_e}")
+                    try: conn.rollback()
+                    except Exception: pass
+                finally:
+                    conn.close()
+        except Exception as e:
+            logger.error(f"[STORAGE-RETENTION] Error in retention loop: {e}")
+        
+        # Run every 1 hour (3600 seconds)
+        time.sleep(3600)
+
 def run_s3_archiver_loop():
     """Background thread to archive old logs to S3 every 5 minutes."""
     import database as __db
@@ -534,7 +578,7 @@ def run_s3_archiver_loop():
     while True:
         try:
             # Sleep first so it doesn't run immediately on boot while DB is starting
-            time.sleep(5 * 60)
+            time.sleep(60)
             conn = db.get_db_connection()
             if conn:
                 try:
@@ -9820,15 +9864,16 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                 continue
 
             if sev == "info" and ev_type in ("HTTP_ACCESS", "HTTP_REQUEST"):
-                has_user = bool(user and user not in ("-", "Anonymous", "null", "None"))
                 is_error_probe = bool(status_code and status_code >= 400)
-                if not has_user and not is_error_probe:
+                # Skip routine 2xx/3xx access hits from SQL database to preserve storage; full stream is archived to S3.
+                if not is_error_probe and status_code and status_code < 400:
                     continue
 
             user_val = user if user != "-" else None
+            payload_json = psycopg2.extras.Json(ev) if sev in ("medium", "high", "critical") else None
             bulk_events.append((
                 now_dt, actual_app_id, comp_id, node_name, source_type, ev_type,
-                c_ip, user_val, method, sanitized_path, status_code, bytes_sent, sev, psycopg2.extras.Json(ev),
+                c_ip, user_val, method, sanitized_path, status_code, bytes_sent, sev, payload_json,
                 None, None, None
             ))
 
@@ -9930,12 +9975,13 @@ def api_app_events(request: Request, payload: dict = Body(...)):
             ev_type = "APP_WARN"
             sev = "info"
 
-        if ev_type == "APP_LOG" and sev == "info" and not cat_user:
+        if ev_type in ("APP_LOG", "APP_WARN", "APP_EXCEPTION") and sev == "info" and not cat_user and not cat_ip:
             continue
 
+        payload_json = psycopg2.extras.Json(ev) if sev in ("medium", "high", "critical") else None
         bulk_events.append((
             now_dt, actual_app_id, comp_id, node_name, source_type, ev_type,
-            cat_ip, cat_user, None, url_path, status_code, 0, sev, psycopg2.extras.Json(ev),
+            cat_ip, cat_user, None, url_path, status_code, 0, sev, payload_json,
             None, None, None
         ))
 

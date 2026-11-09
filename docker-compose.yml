@@ -16,6 +16,11 @@ services:
       POSTGRES_DB: ${DB_NAME:-bsmart_soc}
       POSTGRES_USER: ${DB_USER:-socadmin}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-SocSecurePass2026_db}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     volumes:
       # Persistent host data storage (dedicated isolated database)
       - /application/Soc/SOC-DB:/var/lib/postgresql/data
@@ -41,6 +46,11 @@ services:
     depends_on:
       soc-db:
         condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     env_file:
       - /application/Soc/.env
     ports:

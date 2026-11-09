@@ -158,6 +158,18 @@ def archive_logs_to_s3(db_conn):
                 db_conn.commit()
                 logger.info(f"Successfully archived and deleted {len(log_dicts)} evicted logs for file {file_id}.")
 
+            # If eviction queue is now completely drained, TRUNCATE to reclaim 100% of table disk space
+            try:
+                cur.execute("SELECT COUNT(*) FROM logs_eviction_queue;")
+                cnt_row = cur.fetchone()
+                rem = cnt_row["count"] if isinstance(cnt_row, dict) else cnt_row[0] if cnt_row else 0
+                if rem == 0:
+                    cur.execute("TRUNCATE TABLE logs_eviction_queue;")
+                    db_conn.commit()
+                    logger.info("[S3-ARCHIVER] Queue fully drained. Truncated logs_eviction_queue to 0 bytes.")
+            except Exception as tr_e:
+                logger.debug(f"Queue truncate note: {tr_e}")
+
     except Exception as e:
         logger.error(f"Error during S3 archival: {e}")
         db_conn.rollback()
