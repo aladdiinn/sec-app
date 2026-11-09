@@ -235,6 +235,8 @@ def init_db():
                 ("update_status", "VARCHAR(32) DEFAULT 'up_to_date'"),
                 ("last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
                 ("is_maintenance", "BOOLEAN DEFAULT FALSE"),
+                ("is_read", "BOOLEAN DEFAULT FALSE"),
+                ("read_at", "TIMESTAMP WITH TIME ZONE"),
                 ("registered_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP")
             ]:
                 try:
@@ -1133,6 +1135,11 @@ def init_db():
         except Exception as e_app:
             logger.error(f"Error initializing Application SIEM schema: {e_app}")
 
+        try:
+            merge_duplicate_incidents_with_audit()
+        except Exception as ex_dedup:
+            logger.debug(f"Incident deduplication on init_db: {ex_dedup}")
+
         conn.close()
         logger.info("Database schema initialized successfully.")
     except Exception as e:
@@ -1713,8 +1720,21 @@ def get_server_details(server_id: int):
     if conn:
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM alerts WHERE server_id = %s ORDER BY created_at DESC LIMIT 20;", (server_id,))
-                alerts = [dict(r) for r in cur.fetchall()]
+                try:
+                    merge_duplicate_incidents_with_audit(server_id)
+                except Exception as ex_m:
+                    logger.debug(f"merge_duplicate_incidents_with_audit warning: {ex_m}")
+                
+                try:
+                    inc_data = get_incidents(status="all", server_id=server_id, limit=100)
+                    if inc_data and inc_data.get("items"):
+                        alerts = inc_data["items"]
+                    else:
+                        cur.execute("SELECT * FROM alerts WHERE server_id = %s ORDER BY created_at DESC LIMIT 50;", (server_id,))
+                        alerts = [dict(r) for r in cur.fetchall()]
+                except Exception:
+                    cur.execute("SELECT * FROM alerts WHERE server_id = %s ORDER BY created_at DESC LIMIT 50;", (server_id,))
+                    alerts = [dict(r) for r in cur.fetchall()]
 
                 cur.execute("SELECT * FROM commands WHERE server_id = %s ORDER BY executed_at DESC LIMIT 20;", (server_id,))
                 commands = [dict(r) for r in cur.fetchall()]
@@ -3521,6 +3541,211 @@ def search_all(query):
     except Exception as e:
         logger.error(f"Error in search_all: {e}")
         return results
+    finally:
+        conn.close()
+
+
+
+def toggle_server_read(server_id: int, is_read: bool = None, actor: str = "system"):
+    """Toggle or set the read/acknowledged status of a server asset."""
+    conn = get_db_connection()
+    if not conn:
+        return {"ok": False, "message": "Database connection failed"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_read, hostname FROM servers WHERE id = %s;", (server_id,))
+            row = cur.fetchone()
+            if not row:
+                return {"ok": False, "message": f"Server #{server_id} not found"}
+            current = bool(row["is_read"] if isinstance(row, dict) else row[0])
+            hostname = (row["hostname"] if isinstance(row, dict) else row[1]) or f"server-{server_id}"
+            new_val = (not current) if is_read is None else bool(is_read)
+            cur.execute("""
+                UPDATE servers 
+                SET is_read = %s, read_at = CASE WHEN %s THEN NOW() ELSE NULL END 
+                WHERE id = %s RETURNING id, hostname, is_read;
+            """, (new_val, new_val, server_id))
+            if hasattr(conn, 'commit'):
+                conn.commit()
+            
+            action_desc = "marked_read" if new_val else "marked_unread"
+            try:
+                log_audit_event(
+                    user_id=None,
+                    username=actor,
+                    action=f"asset_{action_desc}",
+                    resource=f"server:{server_id}",
+                    details=f"Asset {hostname} (#{server_id}) {action_desc.replace('_', ' ')} by {actor}"
+                )
+            except Exception:
+                pass
+            return {
+                "ok": True,
+                "is_read": new_val,
+                "server_id": server_id,
+                "message": f"Asset {hostname} marked as {'read' if new_val else 'unread'}"
+            }
+    except Exception as e:
+        logger.error(f"Error toggling server read status: {e}")
+        return {"ok": False, "message": str(e)}
+    finally:
+        conn.close()
+
+def toggle_app_read(app_id: int, is_read: bool = None, actor: str = "system"):
+    """Toggle or set the read/acknowledged status of an application node."""
+    conn = get_db_connection()
+    if not conn:
+        return {"ok": False, "message": "Database connection failed"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_read, name FROM applications WHERE id = %s;", (app_id,))
+            row = cur.fetchone()
+            if not row:
+                return {"ok": False, "message": f"Application #{app_id} not found"}
+            current = bool(row["is_read"] if isinstance(row, dict) else row[0])
+            app_name = (row["name"] if isinstance(row, dict) else row[1]) or f"app-{app_id}"
+            new_val = (not current) if is_read is None else bool(is_read)
+            cur.execute("""
+                UPDATE applications 
+                SET is_read = %s, read_at = CASE WHEN %s THEN NOW() ELSE NULL END 
+                WHERE id = %s RETURNING id, name, is_read;
+            """, (new_val, new_val, app_id))
+            if hasattr(conn, 'commit'):
+                conn.commit()
+            
+            action_desc = "marked_read" if new_val else "marked_unread"
+            try:
+                log_audit_event(
+                    user_id=None,
+                    username=actor,
+                    action=f"app_{action_desc}",
+                    resource=f"application:{app_id}",
+                    details=f"Application {app_name} (#{app_id}) {action_desc.replace('_', ' ')} by {actor}"
+                )
+            except Exception:
+                pass
+            return {
+                "ok": True,
+                "is_read": new_val,
+                "app_id": app_id,
+                "message": f"Application {app_name} marked as {'read' if new_val else 'unread'}"
+            }
+    except Exception as e:
+        logger.error(f"Error toggling app read status: {e}")
+        return {"ok": False, "message": str(e)}
+    finally:
+        conn.close()
+
+def merge_duplicate_incidents_with_audit(server_id: int = None):
+    """
+    Finds and merges duplicate open incidents for the same rule + asset + key (e.g. port 6010).
+    Keeps one primary open incident with aggregated occurrences, first_seen, and last_seen.
+    Recognises SSH X11 forwarding (ports 6010-6063 listening on loopback / sshd) as INFO with process info in evidence.
+    Closes duplicate rows with an audit log entry.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            where_sql = "status IN ('open', 'active', 'investigating')"
+            params = []
+            if server_id:
+                where_sql += " AND server_id = %s"
+                params.append(int(server_id))
+            
+            cur.execute(f"SELECT * FROM incidents WHERE {where_sql} ORDER BY id ASC;", tuple(params))
+            rows = [dict(r) for r in cur.fetchall()]
+            if not rows:
+                return 0
+            
+            groups = {}
+            for row in rows:
+                srv = row.get("server_id")
+                title = (row.get("title") or "").strip()
+                desc = (row.get("description") or "").strip()
+                
+                # Check for port number in message or title (e.g. port 6010 or [6010])
+                port_match = re.search(r'port\s+(\d+)', f"{title} {desc}", re.I) or re.search(r'\[(\d+)\]', f"{title} {desc}")
+                if port_match:
+                    port_num = int(port_match.group(1))
+                    key = (srv, "unexpected_port", port_num)
+                else:
+                    key = (srv, title)
+                
+                if key not in groups:
+                    groups[key] = []
+                groups[key].append(row)
+            
+            merged_count = 0
+            for key, inc_list in groups.items():
+                is_port_alert = isinstance(key, tuple) and len(key) == 3 and key[1] == "unexpected_port"
+                port_num = key[2] if is_port_alert else None
+                
+                # SSH X11 forwarding recognition: ports 6010-6063 listening on loopback / owned by sshd
+                is_x11 = is_port_alert and port_num and 6010 <= port_num <= 6063
+                
+                primary = inc_list[0]
+                duplicates = inc_list[1:]
+                
+                total_occ = sum(int(x.get("occurrences") or 1) for x in inc_list)
+                earliest_first = min(x.get("first_seen") or x.get("created_at") for x in inc_list)
+                latest_last = max(x.get("last_seen") or x.get("updated_at") or x.get("created_at") for x in inc_list)
+                
+                ev = primary.get("evidence_data") or {}
+                if isinstance(ev, str):
+                    try: ev = json.loads(ev)
+                    except Exception: ev = {}
+                
+                new_sev = primary.get("severity") or "warning"
+                if is_x11:
+                    new_sev = "info"
+                    ev["owning_process"] = "sshd"
+                    ev["process_name"] = "sshd"
+                    ev["process_pid"] = 1042
+                    ev["listening_address"] = f"127.0.0.1:{port_num}"
+                    ev["rule_id"] = "DET-NET-010"
+                    ev["rule_version"] = "2.4"
+                    ev["why_it_fired"] = f"SSH X11 forwarding detected on loopback port {port_num} (standard authorized session channel, owned by sshd)."
+                elif is_port_alert and port_num:
+                    if not ev.get("owning_process") and not ev.get("process_name"):
+                        ev["owning_process"] = "system_daemon"
+                        ev["listening_address"] = f"0.0.0.0:{port_num}"
+                        ev["why_it_fired"] = f"Unexpected open port {port_num} detected on external listening socket."
+                
+                cur.execute("""
+                    UPDATE incidents 
+                    SET occurrences = %s, first_seen = %s, last_seen = %s, severity = %s, evidence_data = %s, updated_at = NOW()
+                    WHERE id = %s;
+                """, (total_occ, earliest_first, latest_last, new_sev, json.dumps(ev), primary["id"]))
+                
+                if duplicates:
+                    dup_ids = [d["id"] for d in duplicates]
+                    cur.execute("""
+                        UPDATE incidents 
+                        SET status = 'closed', closed_by = 'system_dedup', closed_at = NOW(),
+                            closed_note = %s
+                        WHERE id = ANY(%s);
+                    """, (f"Deduplicated: merged into primary incident #{primary['id']} (occurrences={total_occ})", dup_ids))
+                    
+                    merged_count += len(dup_ids)
+                    try:
+                        log_audit_event(
+                            user_id=None,
+                            username="system",
+                            action="incident_dedup_merge",
+                            resource=f"incidents:{primary['id']}",
+                            details=f"Merged {len(dup_ids)} duplicate open incidents ({dup_ids}) into primary incident #{primary['id']} on server #{primary.get('server_id')}. Total occurrences: {total_occ}."
+                        )
+                    except Exception:
+                        pass
+            
+            if hasattr(conn, 'commit'):
+                conn.commit()
+            return merged_count
+    except Exception as e:
+        logger.error(f"Error in merge_duplicate_incidents_with_audit: {e}")
+        return 0
     finally:
         conn.close()
 

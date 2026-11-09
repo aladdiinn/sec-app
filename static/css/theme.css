@@ -3551,3 +3551,112 @@ input:-webkit-autofill:active {
   background: rgba(76, 141, 255, 0.12) !important;
   border-left-color: #4C8DFF !important;
 }
+
+
+/* Compact Alert / Incident Rows & Asset Triage Styles */
+.inc-row-container {
+    background: var(--card, #121316) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    overflow: hidden;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+.inc-row-container:hover {
+    border-color: rgba(255, 255, 255, 0.18) !important;
+}
+.inc-row-container.selected {
+    border-color: rgba(56, 189, 248, 0.5) !important;
+    background: rgba(56, 189, 248, 0.05) !important;
+}
+.inc-compact-row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    cursor: pointer;
+    user-select: none;
+    font-size: 13px;
+    border-left-width: 3px;
+    border-left-style: solid;
+    transition: background 0.15s ease;
+}
+.inc-compact-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.density-compact .inc-compact-row {
+    min-height: 44px;
+    padding: 6px 12px;
+    gap: 10px;
+}
+.density-comfortable .inc-compact-row {
+    min-height: 56px;
+    padding: 10px 16px;
+    gap: 14px;
+}
+.unread-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cyan, #38bdf8);
+    box-shadow: 0 0 6px var(--cyan, #38bdf8);
+    flex-shrink: 0;
+}
+.unread-dot.read-placeholder {
+    visibility: hidden;
+}
+.inc-checkbox {
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+    accent-color: var(--cyan, #38bdf8);
+    flex-shrink: 0;
+}
+.inc-title-col {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+}
+.inc-title-bold {
+    font-weight: 700;
+    color: var(--text, #f8fafc);
+}
+.inc-title-normal {
+    font-weight: 500;
+    color: var(--text2, #cbd5e1);
+}
+.inc-desc-muted {
+    color: var(--text3, #94a3b8);
+    font-weight: normal;
+}
+.inc-details-panel {
+    display: none;
+    padding: 16px 20px;
+    background: rgba(10, 14, 24, 0.7);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 12.5px;
+}
+.inc-row-container.expanded .inc-details-panel {
+    display: block;
+}
+.inc-row-container.expanded .chevron-icon {
+    transform: rotate(180deg);
+}
+.chevron-icon {
+    transition: transform 0.2s ease;
+}
+.badge-read-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: 4px;
+    padding: 2px 7px;
+    letter-spacing: 0.3px;
+}

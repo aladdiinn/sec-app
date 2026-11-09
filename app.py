@@ -7385,6 +7385,32 @@ async def api_toggle_maintenance(id: int, request: Request):
     db.log_audit(uname, 'TOGGLE_MAINTENANCE', 'server', id, f"Toggled maintenance for server {id} to {res}")
     return {"ok": True, "is_maintenance": res}
 
+# Asset read / acknowledge toggle
+@app.post("/api/assets/{id}/read")
+@app.post("/api/servers/{id}/read")
+async def api_toggle_server_read_endpoint(id: int, request: Request):
+    user = get_session_user(request)
+    uname = user.get("username", "admin") if user else "system"
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    is_read = body.get("is_read", None)
+    return db.toggle_server_read(server_id=id, is_read=is_read, actor=uname)
+
+# Application read / acknowledge toggle
+@app.post("/api/apps/{id}/read")
+@app.post("/api/applications/{id}/read")
+async def api_toggle_app_read_endpoint(id: int, request: Request):
+    user = get_session_user(request)
+    uname = user.get("username", "admin") if user else "system"
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    is_read = body.get("is_read", None)
+    return db.toggle_app_read(app_id=id, is_read=is_read, actor=uname)
+
 
 
 # Threat map endpoints

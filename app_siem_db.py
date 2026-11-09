@@ -42,7 +42,9 @@ def init_app_siem_schema(conn):
             ("settings", "JSONB DEFAULT '{}'::jsonb"),
             ("created_by", "VARCHAR(100)"),
             ("created_at", "TIMESTAMPTZ DEFAULT NOW()"),
-            ("updated_at", "TIMESTAMPTZ DEFAULT NOW()")
+            ("updated_at", "TIMESTAMPTZ DEFAULT NOW()"),
+            ("is_read", "BOOLEAN DEFAULT FALSE"),
+            ("read_at", "TIMESTAMPTZ")
         ]:
             try:
                 cur.execute(f"ALTER TABLE applications ADD COLUMN IF NOT EXISTS {col} {col_type};")
@@ -619,6 +621,7 @@ def get_applications(conn, project_id=None, status_filter=None):
             SELECT 
                 a.id, a.name, a.primary_url, a.environment, a.description, a.status,
                 a.project_id, a.settings, a.created_by, a.created_at, a.updated_at,
+                COALESCE(a.is_read, FALSE) as is_read, a.read_at,
                 p.name as project_name,
                 COUNT(c.id) as total_components,
                 COUNT(c.id) FILTER (WHERE c.last_seen >= NOW() - INTERVAL '10 minutes') as reporting_components,

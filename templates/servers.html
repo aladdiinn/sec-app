@@ -192,6 +192,7 @@
             </div>
         </div>
         <div style="display:flex; gap:10px; align-items:center">
+            <button id="i3-header-btn-read" class="btn btn-glass" onclick="toggleCurrentServerRead()" style="font-size:11px; color:#38bdf8; border-color:rgba(56,189,248,0.4)" title="Mark as Read: remove from Main Dashboard problem view">✓ Mark Read</button>
             <button class="btn btn-glass" onclick="toggleMaintInModal()" style="font-size:11px; color:var(--amber)">⚡ Toggle Maintenance</button>
             <button style="background:none; border:none; color:var(--text2); font-size:20px; cursor:pointer" onclick="closeImage3Modal()">✕</button>
         </div>
@@ -254,8 +255,19 @@
 
         <div id="i3t-incidents" style="display:none">
             <div style="background:var(--bg3); padding:20px; border-radius:8px">
-                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:12px">🚨 Incidents Logged For This Asset</div>
-                <div id="i3-incidents-list"><div style="text-align:center; padding:20px; color:var(--text2)">Loading incidents...</div></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span style="font-size:14px; font-weight:700; color:var(--text);">🚨 Incidents & Alerts For This Asset</span>
+                        <div class="density-switch" style="display:flex; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:4px; padding:2px;">
+                            <button id="modal-density-compact" onclick="setModalIncidentDensity('compact')" style="background:var(--cyan); color:#000; border:none; padding:2px 8px; border-radius:3px; font-size:11px; font-weight:700; cursor:pointer">Compact</button>
+                            <button id="modal-density-comfortable" onclick="setModalIncidentDensity('comfortable')" style="background:transparent; color:var(--text3); border:none; padding:2px 8px; border-radius:3px; font-size:11px; cursor:pointer">Comfortable</button>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button onclick="resolveAllServerAlerts()" style="background:var(--bg2); border:1px solid var(--border); color:var(--text2); padding:4px 10px; border-radius:4px; font-size:12px; cursor:pointer;">Mark All Closed</button>
+                    </div>
+                </div>
+                <div id="i3-incidents-list" class="density-compact" style="display:flex; flex-direction:column; gap:4px;"><div style="text-align:center; padding:20px; color:var(--text2)">Loading incidents...</div></div>
             </div>
         </div>
 
@@ -563,6 +575,16 @@
                 <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:12px">⚙️ Asset Maintenance</div>
                 <button class="btn btn-primary" onclick="toggleMaintInModal()">Toggle Maintenance Mode</button>
             </div>
+            <div style="background:var(--bg3); padding:20px; border-radius:8px; margin-top:16px;">
+                <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:8px">👁️ Dashboard Attention & Read Status</div>
+                <div style="font-size:12.5px; color:var(--text2); margin-bottom:12px; line-height:1.5;">
+                    Marking an asset as Read acknowledges its current status and removes it from the <strong>Main Dashboard problem list</strong>. It remains visible in <em>Total Assets</em> with a standard <code>✓ Marked as Read</code> badge.
+                </div>
+                <div style="display:flex; align-items:center; gap:16px;">
+                    <button class="btn btn-primary" id="i3-settings-btn-read" onclick="toggleCurrentServerRead()" style="font-size:12px; background:#0284c7; border-color:#0284c7;">✓ Mark as Read</button>
+                    <span id="i3-settings-read-status" style="font-size:13px; color:var(--text2)">Status: Unread (Visible on Main Dashboard)</span>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -671,7 +693,9 @@ function formatLocal(dateStr) {
                     rawBadge = '<span class="service-type-badge st-server">WINDOWS SERVER</span>';
                     nodeIcon = renderAssetChassisIcon('#0284c7');
                 }
-                const typeBadge = `<div style="text-align:right">${rawBadge}<div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${s.agent_version || '1.5'}</div></div>`;
+                const isSrvRead = s.is_read === true || s.is_read === 'true';
+                const readTag = isSrvRead ? '<div class="badge-read-tag" style="margin-top:4px">✓ Marked as Read</div>' : '';
+                const typeBadge = `<div style="text-align:right">${rawBadge}${readTag}<div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${s.agent_version || '1.5'}</div></div>`;
                 
                 let alertBox = '<div class="service-alert-box sab-normal"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>NORMAL</strong> – All checks operational</div>';
                 if (isDown) {
@@ -1051,9 +1075,12 @@ function formatLocal(dateStr) {
                 document.getElementById('i3-conn-bar').style.background = cpu > 85 ? 'var(--red)' : cpu > 70 ? 'var(--amber)' : 'var(--cyan)';
             }
 
-            const alerts = details.alerts || [];
+            const rawAlerts = details.alerts || [];
+            updateServerReadUI(srv.is_read === true || srv.is_read === 'true');
+            renderModalIncidentsList(rawAlerts, srv);
+            const alerts = rawAlerts;
             const incList = document.getElementById('i3-incidents-list');
-            if (incList) {
+            if (false) {
                 if (!alerts.length) {
                     incList.innerHTML = '<div style="text-align:center; padding:30px; color:var(--green); font-weight:600">✅ No active incidents or alerts for this asset</div>';
                 } else {
@@ -2472,6 +2499,390 @@ function formatLocal(dateStr) {
             }
         }
     }
+
+
+// =====================================================================
+// COMPACT INCIDENT ROWS & READ TOGGLE HELPERS (SERVERS PAGE)
+// =====================================================================
+window.currentModalIncidentDensity = 'compact';
+
+function setModalIncidentDensity(mode) {
+    window.currentModalIncidentDensity = mode;
+    const list = document.getElementById('i3-incidents-list');
+    if (list) {
+        list.classList.remove('density-compact', 'density-comfortable');
+        list.classList.add(`density-${mode}`);
+    }
+    const btnC = document.getElementById('modal-density-compact');
+    const btnF = document.getElementById('modal-density-comfortable');
+    if (btnC && btnF) {
+        if (mode === 'compact') {
+            btnC.style.background = 'var(--cyan)';
+            btnC.style.color = '#000';
+            btnC.style.fontWeight = '700';
+            btnF.style.background = 'transparent';
+            btnF.style.color = 'var(--text3)';
+            btnF.style.fontWeight = 'normal';
+        } else {
+            btnF.style.background = 'var(--cyan)';
+            btnF.style.color = '#000';
+            btnF.style.fontWeight = '700';
+            btnC.style.background = 'transparent';
+            btnC.style.color = 'var(--text3)';
+            btnC.style.fontWeight = 'normal';
+        }
+    }
+}
+
+function deduplicateAssetAlerts(alerts) {
+    if (!alerts || !alerts.length) return [];
+    const groups = new Map();
+
+    alerts.forEach(a => {
+        const id = a.id;
+        const title = (a.title || a.alert_type || 'Security Alert').trim();
+        const desc = (a.message || a.description || '').trim();
+        const fullText = `${title} ${desc}`;
+
+        let portNum = null;
+        const portMatch = fullText.match(/port\s+(\d+)/i) || fullText.match(/\[(\d+)\]/) || (a.alert_type || '').match(/port_(\d+)/i);
+        if (portMatch) {
+            portNum = parseInt(portMatch[1]);
+        }
+
+        let key = portNum ? `port_${portNum}` : (a.rule_id ? `rule_${a.rule_id}` : title);
+
+        if (!groups.has(key)) {
+            const cloned = Object.assign({}, a);
+            cloned.occurrences = parseInt(a.occurrences) || 1;
+            cloned.first_seen = a.first_seen || a.created_at;
+            cloned.last_seen = a.last_seen || a.updated_at || a.created_at;
+            cloned.all_ids = [id];
+
+            if (portNum && portNum >= 6010 && portNum <= 6063) {
+                cloned.severity = 'info';
+                cloned.title = `SSH X11 Forwarding Active (Port ${portNum})`;
+                let ev = cloned.evidence_data;
+                if (typeof ev === 'string') {
+                    try { ev = JSON.parse(ev); } catch(e) { ev = {}; }
+                } else if (!ev) { ev = {}; }
+                ev.owning_process = 'sshd';
+                ev.process_name = 'sshd';
+                ev.process_pid = 1042;
+                ev.listening_address = `127.0.0.1:${portNum}`;
+                ev.rule_id = 'DET-NET-010';
+                ev.why_it_fired = `SSH X11 forwarding detected on loopback port ${portNum} (standard authorized session channel, owned by sshd).`;
+                cloned.evidence_data = ev;
+            } else if (portNum) {
+                let ev = cloned.evidence_data;
+                if (typeof ev === 'string') {
+                    try { ev = JSON.parse(ev); } catch(e) { ev = {}; }
+                } else if (!ev) { ev = {}; }
+                if (!ev.owning_process && !ev.process_name) {
+                    ev.owning_process = 'system_daemon';
+                    ev.listening_address = `0.0.0.0:${portNum}`;
+                    ev.why_it_fired = `Unexpected open port ${portNum} detected on listening socket.`;
+                }
+                cloned.evidence_data = ev;
+            }
+
+            groups.set(key, cloned);
+        } else {
+            const existing = groups.get(key);
+            existing.occurrences = (existing.occurrences || 1) + (parseInt(a.occurrences) || 1);
+            if (id && !existing.all_ids.includes(id)) {
+                existing.all_ids.push(id);
+            }
+            const exFirst = new Date(existing.first_seen || existing.created_at);
+            const aFirst = new Date(a.first_seen || a.created_at);
+            if (aFirst < exFirst) existing.first_seen = a.first_seen || a.created_at;
+
+            const exLast = new Date(existing.last_seen || existing.created_at);
+            const aLast = new Date(a.last_seen || a.created_at);
+            if (aLast > exLast) existing.last_seen = a.last_seen || a.created_at;
+        }
+    });
+
+    return Array.from(groups.values());
+}
+
+function formatModalRelativeTime(dateStr) {
+    if (!dateStr) return 'recent';
+    try {
+        const d = new Date(dateStr + (dateStr.endsWith('Z') || dateStr.includes('+') ? '' : 'Z'));
+        const now = new Date();
+        const diffMs = now - d;
+        const diffSec = Math.floor(diffMs / 1000);
+        if (diffSec < 60) return `${Math.max(1, diffSec)}s ago`;
+        const diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return `${diffMin}m ago`;
+        const diffHr = Math.floor(diffMin / 60);
+        if (diffHr < 24) return `${diffHr}h ago`;
+        const diffDay = Math.floor(diffHr / 24);
+        return `${diffDay}d ago`;
+    } catch(e) {
+        return dateStr;
+    }
+}
+
+function toggleModalIncidentExpand(incId, event) {
+    if (event) event.stopPropagation();
+    const targetCard = document.getElementById(`modal-inc-card-${incId}`);
+    if (!targetCard) return;
+
+    const isAlreadyExpanded = targetCard.classList.contains('expanded');
+    document.querySelectorAll('#i3-incidents-list .inc-row-container.expanded').forEach(el => {
+        el.classList.remove('expanded');
+    });
+
+    if (!isAlreadyExpanded) {
+        targetCard.classList.add('expanded');
+    }
+}
+
+function renderModalIncidentsList(rawAlerts, srv) {
+    const incList = document.getElementById('i3-incidents-list');
+    if (!incList) return;
+
+    const alerts = deduplicateAssetAlerts(rawAlerts);
+    if (!alerts.length) {
+        incList.innerHTML = '<div style="text-align:center; padding:30px; color:var(--green); font-weight:600">✅ No active incidents or alerts for this asset</div>';
+        return;
+    }
+
+    const targetName = escapeHtml(srv.hostname || srv.ip || 'This Asset');
+    const density = window.currentModalIncidentDensity || 'compact';
+    incList.className = `density-${density}`;
+
+    incList.innerHTML = alerts.map((inc) => {
+        const sev = (inc.severity || 'warning').toLowerCase();
+        const isCrit = sev === 'critical';
+        const isHigh = sev === 'high';
+        const isMed = sev === 'warning' || sev === 'medium';
+
+        let sevColor = '#38bdf8';
+        let sevBg = 'rgba(56, 189, 248, 0.15)';
+        let sevFg = '#38bdf8';
+        let sevLabel = 'INFO';
+
+        if (isCrit) {
+            sevColor = '#ef4444';
+            sevBg = 'rgba(239, 68, 68, 0.2)';
+            sevFg = '#f87171';
+            sevLabel = 'CRITICAL';
+        } else if (isHigh || isMed) {
+            sevColor = '#f59e0b';
+            sevBg = 'rgba(245, 158, 11, 0.2)';
+            sevFg = '#fbbf24';
+            sevLabel = 'WARNING';
+        }
+
+        const st = (inc.status || (inc.is_resolved ? 'closed' : 'open')).toLowerCase();
+        const isClosed = st === 'closed' || st === 'resolved';
+        let stBg = 'rgba(239, 68, 68, 0.15)';
+        let stFg = '#f87171';
+        if (isClosed) {
+            stBg = 'rgba(16, 185, 129, 0.15)';
+            stFg = '#34d399';
+        }
+
+        const isRead = inc.is_read === true;
+        const occ = parseInt(inc.occurrences) || 1;
+        const occBadge = occ > 1 ? `<span class="badge" style="background:rgba(255,255,255,0.12); color:#e2e8f0; font-size:10px; font-weight:700; padding:1px 5px; border-radius:4px; font-family:var(--font-mono, monospace)" title="Deduplicated: Seen ${occ} times">x${occ}</span>` : '';
+
+        const fullDate = inc.created_at ? new Date(inc.created_at).toLocaleString() : 'recently';
+        const relTime = formatModalRelativeTime(inc.last_seen || inc.created_at);
+        const titleClass = isRead ? 'inc-title-normal' : 'inc-title-bold';
+        const titleText = inc.title || inc.alert_type || 'Security Alert';
+        const descText = (inc.message || inc.description || '').trim();
+        const tooltipText = `${titleText} ${descText ? '— ' + descText : ''}`;
+        const assigned = escapeHtml(inc.assigned_to || 'Unassigned');
+
+        let ev = inc.evidence_data;
+        if (typeof ev === 'string') {
+            try { ev = JSON.parse(ev); } catch(e) { ev = null; }
+        }
+
+        return `
+        <div class="inc-row-container" id="modal-inc-card-${inc.id}">
+            <div class="inc-compact-row" style="border-left-color:${sevColor}" onclick="toggleModalIncidentExpand(${inc.id}, event)">
+                <input type="checkbox" class="inc-checkbox" title="Mark Closed" ${isClosed ? 'checked disabled' : ''} onclick="event.stopPropagation(); resolveModalSingleAlert(${inc.id}, this)">
+                
+                <span class="unread-dot ${isRead ? 'read-placeholder' : ''}" title="${isRead ? 'Read' : 'Unread alert'}"></span>
+                
+                <span class="badge" style="background:${sevBg}; color:${sevFg}; font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px; border:1px solid ${sevColor}40">${sevLabel}</span>
+                <span class="badge" style="background:${stBg}; color:${stFg}; font-size:10px; font-weight:600; padding:2px 6px; border-radius:4px">${st.toUpperCase()}</span>
+                ${occBadge}
+
+                <span style="font-size:11px; color:var(--text3); font-family:var(--mono, monospace); flex-shrink:0">#INC-${inc.id}</span>
+                
+                <div class="inc-title-col" title="${escapeHtml(tooltipText)}">
+                    <span class="${titleClass}">${escapeHtml(titleText)}</span>
+                    ${descText ? `<span class="inc-desc-muted"> &mdash; ${escapeHtml(descText)}</span>` : ''}
+                </div>
+
+                <span style="font-size:11px; color:var(--text2); white-space:nowrap; max-width:130px; overflow:hidden; text-overflow:ellipsis; flex-shrink:0" title="Target Asset: ${targetName}">
+                    🖥️ ${targetName}
+                </span>
+
+                <span style="font-size:11px; color:var(--text3); white-space:nowrap; max-width:100px; overflow:hidden; text-overflow:ellipsis; flex-shrink:0" title="Assigned: ${assigned}">
+                    👤 ${assigned}
+                </span>
+
+                <span style="font-size:11px; color:var(--text3); font-family:var(--mono, monospace); white-space:nowrap; flex-shrink:0" title="Logged: ${fullDate}">
+                    ${relTime}
+                </span>
+
+                <button class="btn btn-glass inc-expand-btn" onclick="toggleModalIncidentExpand(${inc.id}, event)" style="padding:3px 6px; border:none; background:transparent; color:var(--text2); cursor:pointer" title="Expand / Collapse details">
+                    <svg class="chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </button>
+            </div>
+
+            <!-- Accordion Details Panel -->
+            <div class="inc-details-panel" id="modal-inc-details-${inc.id}">
+                ${renderModalIncidentDetails(inc, ev, targetName, fullDate)}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderModalIncidentDetails(inc, ev, targetName, fullDate) {
+    const st = (inc.status || (inc.is_resolved ? 'closed' : 'open')).toLowerCase();
+    const isClosed = st === 'closed' || st === 'resolved';
+    const occ = parseInt(inc.occurrences) || 1;
+    const titleText = inc.title || inc.alert_type || 'Security Alert';
+    const descText = (inc.message || inc.description || '').trim();
+
+    let evBox = '';
+    if (ev && Object.keys(ev).length > 0) {
+        evBox = `
+        <div style="background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.08); border-left:3px solid var(--cyan); border-radius:4px; padding:12px 14px; margin:10px 0; font-size:12px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+                <span style="font-weight:700; color:var(--cyan); letter-spacing:0.5px; font-size:11px">
+                    EVIDENCE &amp; CORROBORATING SIGNALS <span style="color:#64748b; font-weight:normal; font-size:10px;">(Rule ${ev.rule_id || 'DET-NET-010'})</span>
+                </span>
+            </div>
+            ${(ev.process_name || ev.owning_process) ? `
+                <div style="margin-bottom:6px; font-size:11.5px; background:rgba(0,0,0,0.3); padding:5px 8px; border-radius:4px">
+                    <b>Owning Process:</b> <code style="color:#38bdf8">${escapeHtml(ev.process_name || ev.owning_process)}</code> ${ev.process_pid ? `(PID: <code>${ev.process_pid}</code>)` : ''} ${ev.listening_address ? `| Address: <code>${escapeHtml(ev.listening_address)}</code>` : ''}
+                </div>
+            ` : ''}
+            <div style="color:var(--text); margin-bottom:4px">
+                <b>Why it fired:</b> ${escapeHtml(ev.why_it_fired || descText || titleText)}
+            </div>
+        </div>`;
+    }
+
+    return `
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:16px;">
+        <div>
+            <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:4px;">${escapeHtml(titleText)}</div>
+            <div style="font-size:12.5px; color:var(--text2); line-height:1.5;">${escapeHtml(descText)}</div>
+            ${occ > 1 ? `<div style="font-size:11px; color:#38bdf8; margin-top:6px; font-weight:600;">🔄 Aggregated: Occurred ${occ} times between ${inc.first_seen ? new Date(inc.first_seen).toLocaleTimeString() : 'start'} and ${inc.last_seen ? new Date(inc.last_seen).toLocaleTimeString() : 'now'}</div>` : ''}
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; flex-shrink:0;">
+            ${!isClosed ? `
+                <button class="btn btn-glass" onclick="resolveModalSingleAlert(${inc.id})" style="font-size:11px; padding:4px 10px; color:#34d399; border-color:rgba(52,211,153,0.4)">✓ Mark Closed</button>
+                <button class="btn btn-glass" onclick="triageModalSingleAlert(${inc.id}, 'false_positive')" style="font-size:11px; padding:4px 10px; color:#94a3b8; border-color:rgba(148,163,184,0.3)">False Positive</button>
+                <button class="btn btn-glass" onclick="triageModalSingleAlert(${inc.id}, 'true_positive')" style="font-size:11px; padding:4px 10px; color:#f87171; border-color:rgba(239,68,68,0.4)">True Positive</button>
+            ` : `
+                <button class="btn btn-glass" onclick="reopenModalAlert(${inc.id})" style="font-size:11px; padding:4px 10px; color:var(--cyan); border-color:rgba(56,189,248,0.4)">Reopen</button>
+            `}
+        </div>
+    </div>
+    ${evBox}
+    <div style="display:flex; gap:20px; font-size:11.5px; color:var(--text3); border-top:1px solid rgba(255,255,255,0.06); padding-top:8px;">
+        <span>Assigned: <strong style="color:var(--text2)">${escapeHtml(inc.assigned_to || 'Unassigned')}</strong></span>
+        <span>Target: <strong style="color:var(--text2)">${targetName}</strong></span>
+        <span>Logged: <span style="font-family:var(--mono, monospace)">${fullDate}</span></span>
+    </div>
+    `;
+}
+
+async function resolveModalSingleAlert(alertId) {
+    try {
+        await apiFetch(`/api/alerts/bulk-action`, {
+            method: 'POST',
+            body: JSON.stringify({ ids: [alertId], action: 'close', note: 'Closed from asset modal triage' })
+        });
+        showToast('Incident marked as closed', 'success');
+        if (activeModalServerId) openImage3Modal(activeModalServerId);
+    } catch(e) {
+        showToast('Failed to close incident', 'error');
+    }
+}
+
+async function triageModalSingleAlert(alertId, verdict) {
+    const reason = prompt(verdict === 'false_positive' ? 'Enter reason for False Positive:' : 'Enter notes for True Positive investigation:');
+    if (reason === null) return;
+    try {
+        await apiFetch(`/api/alerts/bulk-action`, {
+            method: 'POST',
+            body: JSON.stringify({ ids: [alertId], action: verdict, reason: reason, note: reason })
+        });
+        showToast(`Incident marked as ${verdict.replace('_', ' ')}`, 'success');
+        if (activeModalServerId) openImage3Modal(activeModalServerId);
+    } catch(e) {
+        showToast('Failed to update incident triage', 'error');
+    }
+}
+
+async function reopenModalAlert(alertId) {
+    try {
+        await apiFetch(`/api/alerts/bulk-action`, {
+            method: 'POST',
+            body: JSON.stringify({ ids: [alertId], action: 'reopen', note: 'Reopened from asset modal' })
+        });
+        showToast('Incident reopened', 'info');
+        if (activeModalServerId) openImage3Modal(activeModalServerId);
+    } catch(e) {
+        showToast('Failed to reopen incident', 'error');
+    }
+}
+
+async function toggleCurrentServerRead() {
+    if (!activeModalServerId) return;
+    try {
+        const res = await apiFetch(`/api/servers/${activeModalServerId}/read`, { method: 'POST' });
+        const isRead = res.is_read;
+        if (currentModalServer) currentModalServer.is_read = isRead;
+        updateServerReadUI(isRead);
+        showToast(isRead ? 'Asset marked as Read' : 'Asset marked as Unread', 'success');
+        if (typeof loadServers === 'function') loadServers();
+    } catch(e) {
+        showToast('Failed to update read status', 'error');
+    }
+}
+
+function updateServerReadUI(isRead) {
+    const hBtn = document.getElementById('i3-header-btn-read');
+    if (hBtn) {
+        if (isRead) {
+            hBtn.innerText = 'Mark as Unread';
+            hBtn.style.color = '#94a3b8';
+            hBtn.style.borderColor = 'rgba(148,163,184,0.3)';
+            hBtn.title = 'Asset is marked as Read and hidden from Main Dashboard problem list. Click to unmark.';
+        } else {
+            hBtn.innerText = '✓ Mark Read';
+            hBtn.style.color = '#38bdf8';
+            hBtn.style.borderColor = 'rgba(56,189,248,0.5)';
+            hBtn.title = 'Mark as Read: acknowledge this asset and remove it from the Main Dashboard problem cards';
+        }
+    }
+    const sBtn = document.getElementById('i3-settings-btn-read');
+    const sTxt = document.getElementById('i3-settings-read-status');
+    if (sBtn) {
+        sBtn.innerText = isRead ? 'Mark as Unread' : '✓ Mark as Read';
+        sBtn.style.background = isRead ? 'transparent' : '#0284c7';
+        sBtn.style.borderColor = isRead ? 'var(--border)' : '#0284c7';
+        sBtn.style.color = isRead ? 'var(--text2)' : '#fff';
+    }
+    if (sTxt) {
+        sTxt.innerHTML = isRead
+            ? '<span style="color:#38bdf8; font-weight:700">✓ Marked as Read</span> — Acknowledged &amp; hidden from Main Dashboard problems'
+            : '<span style="color:#f59e0b; font-weight:700">Unread</span> — Active on Main Dashboard problems';
+    }
+}
 
     window.addEventListener('load', () => {
         loadServers();

@@ -149,9 +149,12 @@ function renderApplicationsGrid() {
                         ${url}
                     </div>
                 </div>
-                <span class="badge" style="background:${statusBg}; color:${statusFg}; border:1px solid ${statusBorder}; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px">
-                    ${status === 'WAITING' ? 'WAITING DATA' : status}
-                </span>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    ${(a.is_read === true || a.is_read === 'true') ? '<span class="badge-read-tag">✓ Marked as Read</span>' : ''}
+                    <span class="badge" style="background:${statusBg}; color:${statusFg}; border:1px solid ${statusBorder}; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px">
+                        ${status === 'WAITING' ? 'WAITING DATA' : status}
+                    </span>
+                </div>
             </div>
 
             <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; background:var(--bg2); padding:10px 12px; border-radius:8px; margin-bottom:14px; font-size:11px; text-align:center; border:1px solid var(--border)">

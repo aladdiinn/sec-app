@@ -12,6 +12,7 @@
             <div style="font-size:12px; color:var(--text3); font-family:var(--font-mono), monospace; margin-top:4px" id="pop-app-url"></div>
         </div>
         <div style="display:flex; gap:8px">
+            <button class="btn btn-glass" id="pop-btn-read" onclick="toggleCurrentAppRead()" style="font-size:11px; padding:6px 12px; color:#38bdf8; border-color:rgba(56,189,248,0.4)" title="Mark as Read: remove from Main Dashboard problem view">✓ Mark Read</button>
             <button class="btn btn-glass" id="pop-btn-maint" onclick="toggleAppMaintenanceFromModal()" style="font-size:11px; padding:6px 12px">Toggle Maintenance</button>
             <button class="btn btn-ghost" onclick="closeAppDetailsModal()" style="padding:4px 10px; font-size:16px; color:var(--text2)">✕</button>
         </div>
@@ -546,6 +547,7 @@ async function openAppDetailsModal(id) {
             currentAppDetails = app;
             document.getElementById('pop-app-name').innerText = app.name || 'Application';
             document.getElementById('pop-app-url').innerText = app.primary_url || '';
+            updateAppReadUI(app.is_read === true || app.is_read === 'true');
             document.getElementById('pop-metric-comps').innerText = (app.components || []).length;
             document.getElementById('pop-metric-epm').innerText = app.events_per_min ?? 0;
             document.getElementById('pop-metric-inc').innerText = app.open_incidents ?? 0;
@@ -2334,4 +2336,70 @@ function promptFalsePositive(targetType, targetId, ruleName) {
     }
     submitVerdict(targetType, targetId, 'false_positive', ruleName, reason.trim());
 }
+</script>
+
+<script>
+
+async function toggleCurrentAppRead() {
+    if (!activeModalAppId) return;
+    try {
+        const res = await fetch(`/api/apps/${activeModalAppId}/read`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        const isRead = data.is_read;
+        if (typeof currentAppDetails !== 'undefined' && currentAppDetails) currentAppDetails.is_read = isRead;
+        updateAppReadUI(isRead);
+        if (typeof showAppToast === 'function') {
+            showAppToast(isRead ? 'Application marked as Read (removed from Main Dashboard problems)' : 'Application marked as Unread', 'success');
+        } else if (typeof showToast === 'function') {
+            showToast(isRead ? 'Application marked as Read (removed from Main Dashboard problems)' : 'Application marked as Unread', 'success');
+        }
+        if (typeof renderApplicationsGrid === 'function') {
+            const a = (typeof allApplications !== 'undefined' ? allApplications : []).find(x => x.id === activeModalAppId);
+            if (a) a.is_read = isRead;
+            renderApplicationsGrid();
+        }
+        if (typeof renderServicesGrid === 'function') {
+            const a = (typeof globalAppsList !== 'undefined' ? globalAppsList : []).find(x => x.id === activeModalAppId);
+            if (a) a.is_read = isRead;
+            renderServicesGrid();
+        }
+    } catch(e) {
+        if (typeof showAppToast === 'function') showAppToast('Failed to update app read status', 'error');
+        else if (typeof showToast === 'function') showToast('Failed to update app read status', 'error');
+    }
+}
+
+function updateAppReadUI(isRead) {
+    const btn = document.getElementById('pop-btn-read');
+    if (btn) {
+        if (isRead) {
+            btn.innerText = 'Mark as Unread';
+            btn.style.color = '#94a3b8';
+            btn.style.borderColor = 'rgba(148,163,184,0.3)';
+            btn.title = 'Application is marked as Read and hidden from Main Dashboard problem view';
+        } else {
+            btn.innerText = '✓ Mark Read';
+            btn.style.color = '#38bdf8';
+            btn.style.borderColor = 'rgba(56,189,248,0.5)';
+            btn.title = 'Mark as Read: acknowledge this application and remove it from Main Dashboard problems';
+        }
+    }
+    const sBtn = document.getElementById('pop-settings-btn-read');
+    const sTxt = document.getElementById('pop-settings-read-status');
+    if (sBtn) {
+        sBtn.innerText = isRead ? 'Mark as Unread' : '✓ Mark as Read';
+        sBtn.style.background = isRead ? 'transparent' : '#0284c7';
+        sBtn.style.borderColor = isRead ? 'var(--border)' : '#0284c7';
+        sBtn.style.color = isRead ? 'var(--text2)' : '#fff';
+    }
+    if (sTxt) {
+        sTxt.innerHTML = isRead
+            ? '<span style="color:#38bdf8; font-weight:700">✓ Marked as Read</span> — Acknowledged &amp; hidden from Main Dashboard problems'
+            : '<span style="color:#f59e0b; font-weight:700">Unread</span> — Active on Main Dashboard problems';
+    }
+}
+
 </script>
