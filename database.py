@@ -4472,45 +4472,42 @@ def push_log_entries(config_id=None, server_id=None, lines=None):
                         elif re.search(r'postgresql-[A-Za-z0-9_-]+\.log$', row_source, re.I):
                             row_source = re.sub(r'postgresql-[A-Za-z0-9_-]+\.log$', 'postgresql.log', row_source, flags=re.I)
 
-                    # ROUTINE LOG FILTERING: Stream 2xx/3xx access and repetitive app warnings directly to S3
-                    try:
-                        import s3_archiver
-                        is_routine, st_code, p_path = s3_archiver.is_routine_access_log(line_str)
-                        if is_routine:
-                            s3_archiver.enqueue_direct_log_to_s3(
-                                server_id=server_id,
-                                application_id=config_id,
-                                log_type=row_log_type or "access",
-                                source=row_source or "access.log",
-                                message=line_str,
-                                server_ip=srv_ip,
-                                hostname=srv_host
-                            )
-                            saved += 1
-                            if server_id:
+                    # ROUTINE LOG FILTERING: Stream asset-level 2xx/3xx access and repetitive warnings directly to S3 (Log Monitor assets only)
+                    if server_id:
+                        try:
+                            import s3_archiver
+                            is_routine, st_code, p_path = s3_archiver.is_routine_access_log(line_str)
+                            if is_routine:
+                                s3_archiver.enqueue_direct_log_to_s3(
+                                    server_id=server_id,
+                                    log_type=row_log_type or "access",
+                                    source=row_source or "access.log",
+                                    message=line_str,
+                                    server_ip=srv_ip,
+                                    hostname=srv_host
+                                )
+                                saved += 1
                                 try:
                                     cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
                                 except Exception: pass
-                            continue
-                    
-                        if s3_archiver.is_repetitive_app_warning(line_str, row_source, row_log_type):
-                            s3_archiver.enqueue_direct_log_to_s3(
-                                server_id=server_id,
-                                application_id=config_id,
-                                log_type=row_log_type or "tomcat",
-                                source=row_source or "catalina.out",
-                                message=line_str,
-                                server_ip=srv_ip,
-                                hostname=srv_host
-                            )
-                            saved += 1
-                            if server_id:
+                                continue
+                        
+                            if s3_archiver.is_repetitive_app_warning(line_str, row_source, row_log_type):
+                                s3_archiver.enqueue_direct_log_to_s3(
+                                    server_id=server_id,
+                                    log_type=row_log_type or "tomcat",
+                                    source=row_source or "catalina.out",
+                                    message=line_str,
+                                    server_ip=srv_ip,
+                                    hostname=srv_host
+                                )
+                                saved += 1
                                 try:
                                     cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online' WHERE id = %s;", (server_id,))
                                 except Exception: pass
-                            continue
-                    except Exception as s3_filter_err:
-                        logger.debug(f"Direct S3 filter error: {s3_filter_err}")
+                                continue
+                        except Exception as s3_filter_err:
+                            logger.debug(f"Direct S3 filter error: {s3_filter_err}")
                     cur.execute("""
                         INSERT INTO pushed_logs (config_id, server_id, log_level, source, log_type, message, created_at)
                         VALUES (%s, %s, %s, %s, %s, %s, NOW());

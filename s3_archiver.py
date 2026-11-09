@@ -158,20 +158,21 @@ def ensure_bucket_exists(s3_client):
         else:
             logger.debug(f"Bucket check note for {S3_BUCKET_NAME} (proceeding): {e}")
 
-def enqueue_direct_log_to_s3(server_id=None, application_id=None, log_type="system", source="unknown", message="", server_ip=None, hostname=None):
+def enqueue_direct_log_to_s3(server_id=None, log_type="system", source="unknown", message="", server_ip=None, hostname=None):
     """
-    Buffers routine logs (2xx/3xx access, repetitive warnings) in-memory to stream DIRECTLY to S3,
+    Buffers asset-level logs from Log Monitor in-memory to stream DIRECTLY to S3,
     completely bypassing PostgreSQL tables to prevent database disk exhaustion.
-    Note: S3 is strictly used for log streams (under /logs/ prefixes).
+    Note: S3 is strictly used for asset-level log streams (servers in Log Monitor under /{machine_id}/{server_ip}/logs/ prefixes).
+    App nodes do not stream to S3.
     """
-    global _s3_stream_buffer, _s3_flusher_thread_started
+    if not server_id:
+        return
     if not message:
         return
 
     now_iso = datetime.now(timezone.utc).isoformat()
     entry = {
         "server_id": server_id,
-        "application_id": application_id,
         "log_type": log_type or "system",
         "source": source or "unknown",
         "message": message,
@@ -212,10 +213,9 @@ def _start_flusher_thread():
     t.start()
 
 _SERVER_META_CACHE = {}
-_APP_META_CACHE = {}
 
 def get_server_meta(server_id):
-    """Fetches and caches (machine_id, server_ip) for a given server_id."""
+    """Fetches and caches (machine_id, server_ip) for a given asset server_id."""
     if not server_id:
         return None, None
     if server_id in _SERVER_META_CACHE:
@@ -240,36 +240,11 @@ def get_server_meta(server_id):
         pass
     return None, None
 
-def get_app_meta(application_id):
-    """Fetches and caches (app_name, app_key) for a given application_id."""
-    if not application_id:
-        return None, None
-    if application_id in _APP_META_CACHE:
-        return _APP_META_CACHE[application_id]
-    try:
-        import database as db
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT name FROM applications WHERE id = %s", (application_id,))
-                    row = cur.fetchone()
-                    if row:
-                        name = row.get("name") if isinstance(row, dict) else row[0]
-                        a_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', str(name or f"app-{application_id}"))
-                        _APP_META_CACHE[application_id] = (a_name, f"app-{application_id}")
-                        return _APP_META_CACHE[application_id]
-            finally:
-                conn.close()
-    except Exception:
-        pass
-    return None, None
-
 def flush_direct_s3_stream():
     """
-    Drains the in-memory log buffer, groups logs by server/app and stream,
+    Drains the in-memory log buffer, groups logs by server asset and stream,
     compresses into .jsonl.gz, and puts directly into S3. Zero SQL database writes!
-    Note: S3 is strictly used for log streams under /{machine_id}/{server_ip}/logs/...
+    Note: S3 is strictly used for asset-level log streams (Log Monitor) under /{machine_id}/{server_ip}/logs/...
     """
     global _s3_stream_buffer
     with _s3_stream_lock:
@@ -284,14 +259,16 @@ def flush_direct_s3_stream():
     except Exception:
         pass
 
-    # Group by (server_id, application_id, log_type, source)
+    # Group by (server_id, log_type, source)
     groups = {}
     for item in batch:
-        key = (item["server_id"], item["application_id"], item["log_type"], item["source"])
+        sid = item.get("server_id")
+        if not sid:
+            continue
+        key = (sid, item["log_type"], item["source"])
         if key not in groups:
             groups[key] = {
-                "server_id": item.get("server_id"),
-                "application_id": item.get("application_id"),
+                "server_id": sid,
                 "server_ip": item.get("server_ip"),
                 "hostname": item.get("hostname"),
                 "logs": []
@@ -307,7 +284,7 @@ def flush_direct_s3_stream():
 
     total_uploaded = 0
 
-    for (sid, app_id, l_type, src), grp in groups.items():
+    for (sid, l_type, src), grp in groups.items():
         logs_list = grp["logs"]
         if not logs_list:
             continue
@@ -317,22 +294,14 @@ def flush_direct_s3_stream():
         if file_id.startswith("_"):
             file_id = file_id[1:]
 
-        # Derive S3 prefix: S3 is strictly for logs
+        # Derive S3 prefix: strictly for asset-level logs in Log Monitor
         srv_ip = grp.get("server_ip")
         machine_id = grp.get("hostname")
 
         if not srv_ip or not machine_id:
-            if sid:
-                cached_mid, cached_ip = get_server_meta(sid)
-                machine_id = machine_id or cached_mid or f"server-{sid}"
-                srv_ip = srv_ip or cached_ip or f"server-{sid}"
-            elif app_id:
-                cached_app, cached_ip = get_app_meta(app_id)
-                machine_id = machine_id or cached_app or f"app-{app_id}"
-                srv_ip = srv_ip or cached_ip or f"app-{app_id}"
-            else:
-                machine_id = machine_id or "unknown-host"
-                srv_ip = srv_ip or "unknown-ip"
+            cached_mid, cached_ip = get_server_meta(sid)
+            machine_id = machine_id or cached_mid or f"server-{sid}"
+            srv_ip = srv_ip or cached_ip or f"server-{sid}"
 
         machine_id = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', str(machine_id))
         srv_ip = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', str(srv_ip))
@@ -355,7 +324,7 @@ def flush_direct_s3_stream():
             logger.debug(f"[S3-DIRECT-STREAM] PutObject note for {s3_key}: {up_err}")
 
     if total_uploaded > 0:
-        logger.info(f"[S3-DIRECT-STREAM] Streamed {total_uploaded} routine logs directly to S3 (0 bytes written to PostgreSQL).")
+        logger.info(f"[S3-DIRECT-STREAM] Streamed {total_uploaded} asset-level logs directly to S3 (0 bytes written to PostgreSQL).")
 
 def archive_logs_to_s3(db_conn):
     """

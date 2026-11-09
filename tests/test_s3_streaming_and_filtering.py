@@ -37,7 +37,7 @@ class TestS3StreamingAndFiltering(unittest.TestCase):
         self.assertFalse(is_routine)
 
     def test_repetitive_app_warning_filtering(self):
-        # Repetitive background warning without user/IP -> True (filter out of DB to S3)
+        # Repetitive background warning without user/IP -> True (filter out of DB)
         warn_log = "2026-11-09 10:15:00 WARN [org.springframework.cache] Cache evict threshold reached, refreshing background cache"
         self.assertTrue(s3_archiver.is_repetitive_app_warning(warn_log, source="catalina.out", log_type="tomcat"))
 
@@ -60,24 +60,35 @@ class TestS3StreamingAndFiltering(unittest.TestCase):
         auth_fail = "2026-11-09 10:15:00 WARN Authentication failed for invalid credentials"
         self.assertFalse(s3_archiver.is_repetitive_app_warning(auth_fail, source="catalina.out", log_type="tomcat"))
 
-    def test_s3_streaming_key_and_storage_constraint(self):
-        # Verify that S3 keys are strictly under /logs/ and never alerts/incidents
+    def test_s3_streaming_strictly_for_asset_level_logs(self):
+        # Verify that S3 is ONLY for asset-level logs (server_id present) and ignores non-asset calls
         mock_s3 = MagicMock()
         with patch.object(s3_archiver, 'get_s3_client', return_value=mock_s3), \
              patch.object(s3_archiver, 'ensure_bucket_exists'):
 
-            # Clear any leftover buffer
             with s3_archiver._s3_stream_lock:
                 s3_archiver._s3_stream_buffer.clear()
 
+            # 1. Attempt to enqueue non-asset / app node log (server_id=None) -> Must be dropped
             s3_archiver.enqueue_direct_log_to_s3(
-                server_id=1,
+                server_id=None,
+                log_type="catalina",
+                source="app/catalina.out",
+                message="2026-11-09 INFO app log",
+                hostname="app-node-1"
+            )
+            self.assertEqual(len(s3_archiver._s3_stream_buffer), 0)
+
+            # 2. Enqueue asset-level log from Log Monitor (server_id=10) -> Must be accepted
+            s3_archiver.enqueue_direct_log_to_s3(
+                server_id=10,
                 log_type="access",
                 source="access.log",
                 message='10.0.0.1 - - [09/Nov/2026:10:00:00] "GET /home HTTP/1.1" 200 100',
                 server_ip="192.168.1.100",
                 hostname="soc-server"
             )
+            self.assertEqual(len(s3_archiver._s3_stream_buffer), 1)
 
             s3_archiver.flush_direct_s3_stream()
 
@@ -86,7 +97,7 @@ class TestS3StreamingAndFiltering(unittest.TestCase):
             key = call_kwargs['Key']
             body_gz = call_kwargs['Body']
 
-            # S3 is strictly for logs: key must contain /logs/
+            # S3 is strictly for asset logs: key must be {machine_id}/{server_ip}/logs/...
             self.assertIn("/logs/", key)
             self.assertTrue(key.startswith("soc-server/192.168.1.100/logs/access/access.log/"))
             self.assertTrue(key.endswith(".jsonl.gz"))
@@ -97,7 +108,7 @@ class TestS3StreamingAndFiltering(unittest.TestCase):
             self.assertEqual(len(entries), 1)
             self.assertIn("GET /home HTTP/1.1", entries[0]["message"])
 
-    def test_database_push_log_entries_filters_routine_to_s3(self):
+    def test_database_push_log_entries_filters_asset_logs_to_s3(self):
         import database as db
 
         # Mock database connection and cursor
@@ -106,11 +117,11 @@ class TestS3StreamingAndFiltering(unittest.TestCase):
         mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
         lines = [
-            # Routine 200 OK access line -> should stream to S3, NOT execute INSERT INTO pushed_logs
+            # Routine 200 OK access line -> should stream asset log to S3, NOT execute INSERT INTO pushed_logs
             '10.0.0.1 - - [09/Nov/2026:12:00:00 +0000] "GET /api/status HTTP/1.1" 200 500',
             # Attack payload -> MUST execute INSERT INTO pushed_logs
             '10.0.0.1 - - [09/Nov/2026:12:00:00 +0000] "GET /login?id=1\' UNION SELECT password FROM users-- HTTP/1.1" 200 500',
-            # Generic warning without user/ip -> should stream to S3, NOT execute INSERT INTO pushed_logs
+            # Generic warning without user/ip -> should stream asset log to S3, NOT execute INSERT INTO pushed_logs
             '2026-11-09 12:00:00 WARN [org.apache.catalina.session] Expiring expired sessions',
             # Critical auth failure -> MUST execute INSERT INTO pushed_logs
             '2026-11-09 12:00:00 WARN Authentication failed for user admin'
@@ -124,7 +135,7 @@ class TestS3StreamingAndFiltering(unittest.TestCase):
             # All 4 items were processed
             self.assertEqual(saved, 4)
 
-            # Routine items (routine 200 and generic warning) were enqueued to S3 directly
+            # Asset-level routine items (routine 200 and generic warning) were enqueued to S3 directly
             self.assertEqual(mock_enqueue.call_count, 2)
 
             # Only the 2 non-routine / attack items were inserted into pushed_logs table
