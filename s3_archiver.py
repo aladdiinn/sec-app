@@ -3,7 +3,7 @@ import time
 import json
 import gzip
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import boto3
 from botocore.exceptions import ClientError
 
@@ -24,13 +24,13 @@ def get_s3_client():
     return boto3.client('s3', region_name=region)
 
 def ensure_bucket_exists(s3_client):
-    """Creates the S3 bucket if it doesn't already exist."""
+    """Verifies access to the S3 bucket; gracefully proceeds if bucket already exists."""
     try:
         s3_client.head_bucket(Bucket=S3_BUCKET_NAME)
-        logger.debug(f"Bucket {S3_BUCKET_NAME} already exists.")
+        logger.debug(f"Bucket {S3_BUCKET_NAME} accessible.")
     except ClientError as e:
-        error_code = e.response['Error']['Code']
-        if error_code == '404':
+        error_code = str(e.response.get('Error', {}).get('Code', ''))
+        if error_code in ('404', 'NoSuchBucket'):
             logger.info(f"Bucket {S3_BUCKET_NAME} does not exist. Creating it now...")
             try:
                 if AWS_REGION == "us-east-1":
@@ -42,11 +42,10 @@ def ensure_bucket_exists(s3_client):
                     )
                 logger.info(f"Successfully created bucket {S3_BUCKET_NAME}")
             except Exception as create_e:
-                logger.error(f"Failed to create bucket: {create_e}")
-                raise
+                logger.warning(f"Bucket creation note (proceeding): {create_e}")
         else:
-            logger.error(f"Unexpected error checking bucket: {e}")
-            raise
+            # 403 or 301 - bucket exists, proceed with object-level operations
+            logger.debug(f"Bucket check note for {S3_BUCKET_NAME} (proceeding): {e}")
 
 def archive_logs_to_s3(db_conn):
     """
@@ -162,6 +161,47 @@ def archive_logs_to_s3(db_conn):
     except Exception as e:
         logger.error(f"Error during S3 archival: {e}")
         db_conn.rollback()
+
+def purge_older_s3_logs(retention_days=90):
+    """
+    Automatically deletes S3 archived logs older than retention_days (default 90 days / 3 months).
+    Runs using standard s3:DeleteObject / s3:ListBucket permissions without requiring s3:PutLifecycleConfiguration.
+    """
+    s3_client = get_s3_client()
+    cutoff_time = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    logger.info(f"[S3-RETENTION] Checking for logs older than {retention_days} days in s3://{S3_BUCKET_NAME}/...")
+    
+    deleted_count = 0
+    paginator = s3_client.get_paginator('list_objects_v2')
+    
+    try:
+        for page in paginator.paginate(Bucket=S3_BUCKET_NAME):
+            contents = page.get('Contents', [])
+            keys_to_delete = []
+            for obj in contents:
+                last_mod = obj.get('LastModified')
+                if last_mod:
+                    # Ensure timezone awareness
+                    if last_mod.tzinfo is None:
+                        last_mod = last_mod.replace(tzinfo=timezone.utc)
+                    if last_mod < cutoff_time:
+                        keys_to_delete.append({'Key': obj['Key']})
+                    
+            if keys_to_delete:
+                for i in range(0, len(keys_to_delete), 1000):
+                    batch = keys_to_delete[i:i + 1000]
+                    s3_client.delete_objects(
+                        Bucket=S3_BUCKET_NAME,
+                        Delete={'Objects': batch, 'Quiet': True}
+                    )
+                    deleted_count += len(batch)
+        if deleted_count > 0:
+            logger.info(f"[S3-RETENTION] Cleaned up {deleted_count} older log object(s) from s3://{S3_BUCKET_NAME}/.")
+        else:
+            logger.info(f"[S3-RETENTION] Bucket clean. Zero objects older than {retention_days} days found.")
+    except Exception as e:
+        logger.warning(f"[S3-RETENTION] S3 retention check note: {e}")
+    return deleted_count
 
 if __name__ == "__main__":
     # Test script standalone

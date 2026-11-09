@@ -530,6 +530,7 @@ def run_s3_archiver_loop():
         logger.warning("s3_archiver module not found. S3 archival disabled.")
         return
         
+    _last_s3_purge = 0.0
     while True:
         try:
             # Sleep first so it doesn't run immediately on boot while DB is starting
@@ -538,6 +539,11 @@ def run_s3_archiver_loop():
             if conn:
                 try:
                     s3_archiver.archive_logs_to_s3(conn)
+                    now_ts = time.time()
+                    if now_ts - _last_s3_purge > 86400:
+                        _last_s3_purge = now_ts
+                        ret_days = int(os.getenv("S3_LOG_RETENTION_DAYS", "90"))
+                        s3_archiver.purge_older_s3_logs(retention_days=ret_days)
                 finally:
                     conn.close()
         except Exception as e:
