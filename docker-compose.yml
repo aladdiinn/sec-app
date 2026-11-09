@@ -40,7 +40,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${DOCKER_IMAGE:-mannan070/sooc-app:latest}
+    image: ${DOCKER_IMAGE:-mannan070/soc:latest}
     container_name: bsmart-soc-app
     restart: unless-stopped
     depends_on:

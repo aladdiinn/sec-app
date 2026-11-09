@@ -120,8 +120,7 @@ jobs:
           if [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
             DH_USER="${{ secrets.DOCKERHUB_USERNAME || 'mannan070' }}"
             IMAGES="${IMAGES}
-          ${DH_USER}/sooc-app
-          ${DH_USER}/soc-app"
+          ${DH_USER}/soc"
             echo "has_dockerhub=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_dockerhub=false" >> "$GITHUB_OUTPUT"
