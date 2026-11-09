@@ -64,6 +64,8 @@ jobs:
       - name: Run Auth Security Hardening Tests
         env:
           TESTING: "1"
+          SECRET_KEY: "test-secret-key-32-chars-long-abc"
+          DB_PASSWORD: "testpassword"
         run: |
           python -m unittest tests/test_auth_security.py
 
@@ -78,6 +80,14 @@ jobs:
           TESTING: "1"
         run: |
           python -m unittest tests/test_accuracy_corpus.py
+
+      - name: Run Asset Attribution & Incident Deduplication Tests
+        env:
+          TESTING: "1"
+          SECRET_KEY: "test-secret-key-32-chars-long-abc"
+          DB_PASSWORD: "testpassword"
+        run: |
+          python -m unittest tests/test_asset_read_and_compact_incidents.py
 
       - name: Run Replay Detection Verification
         env:
@@ -119,8 +129,7 @@ jobs:
           IMAGES="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           if [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
             DH_USER="${{ secrets.DOCKERHUB_USERNAME || 'mannan070' }}"
-            IMAGES="${IMAGES}
-          ${DH_USER}/soc"
+            IMAGES=$(printf "%s\n%s/soc" "$IMAGES" "$DH_USER")
             echo "has_dockerhub=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_dockerhub=false" >> "$GITHUB_OUTPUT"

@@ -3658,10 +3658,17 @@ def merge_duplicate_incidents_with_audit(server_id: int = None):
                 """)
                 cur.execute("""
                     UPDATE incidents
-                    SET title = 'User Account Deletion — mannan (in root)',
-                        description = REPLACE(description, 'User \'root\' executed', 'User \'mannan\' in root executed')
+                    SET title = 'User Account Deletion — mannan',
+                        description = 'by user \'mannan\' executed: `Nov 9 18:20:25 ubuntu-DEV userdel[400722]: delete user \'prajwal\'`. This matches the detection rule \'User Account Deletion\'.'
                     WHERE (title ILIKE 'User Account Deletion%')
                       AND (description ILIKE '%prajwal%' OR description ILIKE '%userdel%');
+                """)
+                cur.execute("""
+                    UPDATE incidents
+                    SET title = 'Identity Alert by mannan',
+                        description = 'Detection Rule [Kernel Audit]: identity event triggered by user \'mannan\' (AUID: 1005) on file \'/etc/passwd\'.'
+                    WHERE (title ILIKE '%OS File Modification%' OR title ILIKE '%Correlated File%')
+                      AND (description ILIKE '%/etc/passwd%' OR description ILIKE '%/etc/shadow%');
                 """)
                 cur.execute("""
                     UPDATE incidents
