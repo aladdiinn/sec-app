@@ -2288,6 +2288,9 @@ _AUDIT_KEY_DESCRIPTIONS = {
     "session":         "User Session Opened/Closed",
     "scope":           "System Scope Change",
     "actions":         "Admin Action Performed",
+    "app_mod":         "Application Directory Modification",
+    "data_mod":        "Data Directory Modification",
+    "home_mod":        "Home Directory Modification",
 }
 
 def _humanize_audit_event(key, actor, auid_str, raw_line):
@@ -2566,7 +2569,7 @@ def _check_sudo_misuse(server_id, data):
         (re.compile(r'psql\s+.*-(?:c|command)\s+.*(alter\s+user|alter\s+role|grant\s+all|with\s+superuser)', re.IGNORECASE), 'PostgreSQL CLI Privilege Escalation', 'critical', 'PostgreSQL Privilege Escalation Alert', 'PG_PRIVILEGE_CHANGE'),
         # Account creation / management
         (re.compile(r'\b(useradd|adduser)\b', re.IGNORECASE), 'New User Account Created', 'warning', 'Identity Management Alert', 'USER_CREATED'),
-        (re.compile(r'\bpasswd(?:\[\d+\])?:\s+password\s+for\b', re.IGNORECASE), 'User Password Modified', 'warning', 'Credential Modification Alert', 'PASSWD_CHANGED'),
+        (re.compile(r'\bpasswd(?:\[\d+\])?:\s*(?:password\s+(?:updated|changed|for)|pam_unix.*password\s+changed)\b|\bpassword\s+updated\s+successfully\b', re.IGNORECASE), 'User Password Modified', 'warning', 'Credential Modification Alert', 'PASSWD_CHANGED'),
         # Failed Root Escalation (Replaced successful su/sudo rule)
         (re.compile(r'(FAILED su for root|incorrect password attempt|sudo:.*authentication failure)', re.IGNORECASE), 'Failed Root Escalation Attempt', 'critical', 'Privilege Escalation Alert', 'SUDO_ROOT_ESCALATION'),
         (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'warning', 'Host Anomaly Alert', 'MASS_PROCESS_KILL'),
@@ -2730,6 +2733,7 @@ def _check_unified_fim(server_id, data):
     file_changes = data.get("file_changes", [])
     audit_events = data.get("audit_events", [])
     log_lines = data.get("log_lines", []) or data.get("logs", [])
+    bash_cmds = data.get("commands", []) or data.get("shell_commands", []) or data.get("bash_commands", [])
 
     # Map audit events by key
     audit_map = {}
@@ -2756,33 +2760,61 @@ def _check_unified_fim(server_id, data):
         elif "data" in path: matched_key = "data_mod"
         elif "home" in path: matched_key = "home_mod"
         
-        actor = "Unknown User"
-        auid_str = "unknown"
+        actor = "root"
+        auid_str = "0"
         if matched_key and matched_key in audit_map:
-            last_event = audit_map[matched_key][-1]
+            matching_events = audit_map[matched_key]
+            last_event = matching_events[-1]
+            for ev in reversed(matching_events):
+                ev_line = ev.get("line", "")
+                if not any(n in ev_line.lower() for n in [".bash_history", "/logs/", ".log"]):
+                    last_event = ev
+                    break
+
             auid_str = last_event.get("auid", "unknown")
             actor = last_event.get("username", "unknown")
-            if actor == "unknown" and auid_str == "1000":
-                actor = "ubuntu"
-            elif actor == "unknown" and auid_str == "0":
-                actor = "root"
-                
-            # Resolve real sudoer: if actor=root but vinay did sudo, show vinay
+            if not actor or actor == "unknown":
+                if auid_str in ("1000", "1001", "500"):
+                    actor = "ubuntu"
+                elif auid_str == "0":
+                    actor = "root"
+
+            # Resolve real sudoer: if actor=root but user did sudo, show user
             sudo_actor_map = {}
             for se in data.get("sudo_events", []):
                 raw = se.get("line", "") if isinstance(se, dict) else str(se)
-                m = re.search(r'sudo:\s+(\S+)\s.*?USER=(\S+)', raw)
+                m = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s.*?USER=([a-zA-Z0-9_\-\.]+)', raw)
                 if m:
                     sudo_actor_map[m.group(2).strip(';')] = m.group(1).strip(';')
             real_actor = sudo_actor_map.get(actor, actor)
-            
+            if not real_actor or real_actor in ("unknown", "Unknown User", ""):
+                for se in data.get("sudo_events", []):
+                    sm = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:', str(se))
+                    if sm and sm.group(1) not in ("root", "unknown"):
+                        real_actor = sm.group(1).strip()
+                        break
+                if not real_actor or real_actor in ("unknown", "Unknown User", ""):
+                    for c in bash_cmds:
+                        cu = c.get("user", "") if isinstance(c, dict) else ""
+                        if cu and cu not in ("root", "unknown"):
+                            real_actor = cu
+                            break
+            if not real_actor or real_actor in ("unknown", "Unknown User", ""):
+                real_actor = "root"
+
             alerted_keys.add(matched_key)
             
-            display_actor = real_actor if real_actor else actor
+            display_actor = real_actor if real_actor else "root"
+            display_key = matched_key.replace('_', ' ').title()
+            title = f"{display_key} Alert by {display_actor}"
+            
+            c_m = re.search(r'comm="?([^"\s]+)"?', last_event.get("line", ""))
+            tool_str = f" via `{c_m.group(1)}`" if c_m else ""
+
             _create_alert_dedup(
-                server_id, f'CORRELATED_FIM_{path.replace("/", "_")}', 'critical',
-                'Correlated File Modification Alert',
-                f"Detection Rule [Unified FIM & Audit]: '{path}' was maliciously modified by user '{display_actor}' (AUID: {auid_str})."
+                server_id, f'AUDIT_{matched_key}_{auid_str}', 'critical',
+                title,
+                f"Detection Rule [Kernel Audit & FIM]: '{path}' was modified by user '{display_actor}' (AUID: {auid_str}){tool_str}."
             )
         else:
             # Standalone FIM alert — try to find actor from raw audit/syslog lines
@@ -2797,9 +2829,19 @@ def _check_unified_fim(server_id, data):
 
     # Process leftover audit events that didn't have a matching FIM file change
     for key, events in audit_map.items():
-        if key in alerted_keys: continue
+        if key in alerted_keys:
+            continue
             
+        # Pick the best non-noise event for this key
         last_event = events[-1]
+        for ev in reversed(events):
+            ev_line = ev.get("line", "")
+            f_m = re.search(r'name="?([^"\s]+)"?', ev_line) or re.search(r'filename="?([^"\s]+)"?', ev_line)
+            fn = (f_m.group(1) if f_m else "").lower()
+            if not any(noise in fn for noise in [".bash_history", "/logs/", ".log", "/.git/"]):
+                last_event = ev
+                break
+
         line = last_event.get("line", "")
         
         # Drop extremely noisy benign commands
@@ -2811,73 +2853,87 @@ def _check_unified_fim(server_id, data):
         # Drop system cron daemons running as root
         if any(noise in line for noise in ["debian-sa1", "sysstat", "logrotate", "systemd-tmpfiles"]):
             continue
+
         auid_str = last_event.get("auid", "unknown")
         actor = last_event.get("username", "unknown")
-        if actor == "unknown" and auid_str == "1000":
-            actor = "ubuntu"
-        elif actor == "unknown" and auid_str == "0":
-            actor = "root"
-            
-        line = last_event.get("line", "")
-        
+        if not actor or actor == "unknown":
+            if auid_str in ("1000", "1001", "500"):
+                actor = "ubuntu"
+            elif auid_str == "0":
+                actor = "root"
+            else:
+                for se in data.get("sudo_events", []):
+                    sm = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:', str(se))
+                    if sm and sm.group(1) not in ("root", "unknown"):
+                        actor = sm.group(1).strip()
+                        break
+                if not actor or actor == "unknown":
+                    for c in bash_cmds:
+                        cu = c.get("user", "") if isinstance(c, dict) else ""
+                        if cu and cu not in ("root", "unknown"):
+                            actor = cu
+                            break
+
         if key in ["identity", "priv_esc", "scope", "remote_access", "modules", "scheduled_tasks", "MAC-policy", "time-change", "system-locale", "delete", "app_mod", "data_mod", "home_mod", "perm_mod"]:
             severity = "critical"
         else:
             severity = "warning"  # session, logins, mounts, etc.
         
-        # Resolve real sudoer: if actor=root but vinay did sudo, show vinay
+        # Resolve real sudoer: if actor=root but user did sudo, show user
         sudo_actor_map = {}
         for se in data.get("sudo_events", []):
             raw = se.get("line", "") if isinstance(se, dict) else str(se)
-            m = re.search(r'sudo:\s+(\S+)\s.*?USER=(\S+)', raw)
+            m = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s.*?USER=([a-zA-Z0-9_\-\.]+)', raw)
             if m:
                 sudo_actor_map[m.group(2).strip(';')] = m.group(1).strip(';')
         real_actor = sudo_actor_map.get(actor, actor)
+        if not real_actor or real_actor in ("unknown", "Unknown User", ""):
+            real_actor = "root"
 
-        display_key = "System Config" if key == "(null)" else key.replace('_', ' ').title()
+        display_key = "System Config" if key in ("(null)", "null", "") else key.replace('_', ' ').title()
         title = f"{display_key} Alert by {real_actor}"
 
-        # Build a plain-English correlated message (no raw log dump)
-        import re as _re
-        c_m = _re.search(r'comm="?([^"\s]+)"?', line)
-        e_m = _re.search(r'exe="?([^"\s]+)"?', line)
-        f_m = _re.search(r'filename="?([^"\s]+)"?', line)
+        # Extract file and executable
+        c_m = re.search(r'comm="?([^"\s]+)"?', line)
+        e_m = re.search(r'exe="?([^"\s]+)"?', line)
+        f_m = re.search(r'name="?([^"\s]+)"?', line) or re.search(r'filename="?([^"\s]+)"?', line)
         
-        # Specific noise suppression: Ignore bash background history saves on logout
         filename_str = f_m.group(1) if f_m else ""
         exe_str_val = e_m.group(1) if e_m else ""
-        if ".bash_history" in filename_str and "bash" in exe_str_val:
-            return
-            
-        # Specific noise suppression: Ignore FIM noise inside /application/ and /data/
         f_lower = filename_str.lower()
-        if f_lower.startswith("/application/") or f_lower.startswith("/data/"):
-            return
+        
+        # Specific noise suppression: Ignore bash background history saves on logout
+        if ".bash_history" in filename_str and "bash" in exe_str_val.lower():
+            continue
             
-        # Specific noise suppression: Ignore Tomcat temp/work/webapps FIM noise (for any other paths)
+        # Specific noise suppression: Ignore routine background logs and git packs inside /application/ or /data/
+        if key in ("app_mod", "data_mod") and any(n in f_lower for n in ["/logs/", ".log", "/.git/", "/tmp/", "/temp/"]):
+            continue
+
+        # Specific noise suppression: Ignore Tomcat temp/work/webapps FIM noise
         if ("apache" in f_lower or "tomcat" in f_lower) and any(x in f_lower for x in ["/temp/", "/work/", "/webapps/"]):
-            return
+            continue
             
         # Specific noise suppression: Ignore cron root jobs with (null) event
-        if key == "(null)" and real_actor == "root" and "cron" in exe_str_val:
-            return
+        if key in ("(null)", "null", "") and real_actor == "root" and "cron" in exe_str_val.lower():
+            continue
             
         # Specific noise suppression: Ignore mdm_deployment java/sshd activity
         if real_actor == "mdm_deployment":
-            if "java" in exe_str_val and (f_lower == "c:" or f_lower.startswith("c:/temp/")):
-                return
-            if "sshd" in exe_str_val and (f_lower.startswith("/dev/pts/") or key == "(null)"):
-                return
+            if "java" in exe_str_val.lower() and (f_lower == "c:" or f_lower.startswith("c:/temp/")):
+                continue
+            if "sshd" in exe_str_val.lower() and (f_lower.startswith("/dev/pts/") or key in ("(null)", "null", "")):
+                continue
                 
         # Specific noise suppression: Ignore sudo perm_mod on pseudo-terminals (/dev/pts/)
         if key == "perm_mod" and "sudo" in exe_str_val.lower() and f_lower.startswith("/dev/pts/"):
-            return
+            continue
 
         # Specific noise suppression: Ignore read-only tools (who, id, w, groups) accessing /etc/passwd or unkeyed (null) events
         if c_m and c_m.group(1).lower() in ("who", "id", "groups", "w"):
-            return
+            continue
         if key in ("(null)", "", "null") and "who" in exe_str_val.lower():
-            return
+            continue
             
         comm_str = f" using '{c_m.group(1)}'" if c_m else ""
         exe_str = f" ({exe_str_val})" if e_m else ""
@@ -2896,7 +2952,6 @@ def _check_unified_fim(server_id, data):
     for item in log_lines:
         line = item.get("line", "") if isinstance(item, dict) else str(item)
         if fim_cmd_pat.search(line):
-            # Extract what was changed
             perm_m = re.search(r'chmod\s+(\S+)\s+(\S+)', line)
             own_m  = re.search(r'chown\s+(\S+)\s+(\S+)', line)
             _create_alert_dedup(

@@ -166,5 +166,115 @@ class TestAssetReadAndCompactIncidents(unittest.TestCase):
                     self.assertNotIn("400722", ev_str)
                     self.assertNotIn("DET-NET-010", ev_str)
 
+    def test_audit_app_mod_and_identity_alerts_fire_properly(self):
+        import app
+        from unittest.mock import patch
+
+        created_alerts = []
+        def mock_create_alert(server_id, alert_type, severity, title, message):
+            created_alerts.append({
+                "server_id": server_id,
+                "alert_type": alert_type,
+                "severity": severity,
+                "title": title,
+                "message": message
+            })
+
+        with patch.object(app, '_create_alert_dedup', side_effect=mock_create_alert), \
+             patch.object(app, '_is_rule_enabled', return_value=True):
+            data = {
+                "file_changes": [],
+                "audit_events": [
+                    {
+                        "key": "app_mod",
+                        "username": "mannan",
+                        "auid": "1002",
+                        "line": 'type=SYSCALL arch=c000003e syscall=257 success=yes exe="/usr/bin/touch" comm="touch" name="/application/Soc/config.py" auid=1002'
+                    },
+                    {
+                        "key": "identity",
+                        "username": "root",
+                        "auid": "0",
+                        "line": 'type=SYSCALL arch=c000003e syscall=257 success=yes exe="/usr/bin/passwd" comm="passwd" name="/etc/shadow" auid=0'
+                    }
+                ],
+                "log_lines": [],
+                "sudo_events": [],
+                "commands": []
+            }
+            app._check_unified_fim(1, data)
+            titles = [a["title"] for a in created_alerts]
+            self.assertTrue(any("App Mod Alert by mannan" in t for t in titles), f"App Mod Alert by mannan missing in {titles}")
+            self.assertTrue(any("Identity Alert by root" in t for t in titles), f"Identity Alert by root missing in {titles}")
+
+    def test_passwd_command_detection_triggers_credential_alert(self):
+        import app
+        from unittest.mock import patch
+
+        created_alerts = []
+        def mock_create_alert(server_id, alert_type, severity, title, message):
+            created_alerts.append({
+                "server_id": server_id,
+                "alert_type": alert_type,
+                "severity": severity,
+                "title": title,
+                "message": message
+            })
+
+        with patch.object(app, '_create_alert_dedup', side_effect=mock_create_alert), \
+             patch.object(app, '_is_rule_enabled', return_value=True):
+            data = {
+                "log_lines": ["Nov 9 18:25:01 ubuntu-DEV passwd[401200]: password updated successfully"],
+                "sudo_events": [],
+                "commands": [{"user": "mannan", "command": "passwd"}],
+                "audit_events": []
+            }
+            app._check_sudo_misuse(1, data)
+            self.assertTrue(len(created_alerts) >= 1)
+            self.assertIn("User Password Modified", created_alerts[0]["title"])
+            self.assertIn("mannan", created_alerts[0]["title"])
+
+    def test_audit_loop_does_not_abort_on_background_noise(self):
+        import app
+        from unittest.mock import patch
+
+        created_alerts = []
+        def mock_create_alert(server_id, alert_type, severity, title, message):
+            created_alerts.append({
+                "server_id": server_id,
+                "alert_type": alert_type,
+                "severity": severity,
+                "title": title,
+                "message": message
+            })
+
+        with patch.object(app, '_create_alert_dedup', side_effect=mock_create_alert), \
+             patch.object(app, '_is_rule_enabled', return_value=True):
+            data = {
+                "file_changes": [],
+                "audit_events": [
+                    # First event: bash history noise (must be skipped with continue, NOT aborting the whole loop)
+                    {
+                        "key": "home_mod",
+                        "username": "ubuntu",
+                        "auid": "1000",
+                        "line": 'type=SYSCALL exe="/bin/bash" comm="bash" name="/home/ubuntu/.bash_history" auid=1000'
+                    },
+                    # Second event: real app_mod modification
+                    {
+                        "key": "app_mod",
+                        "username": "mannan",
+                        "auid": "1002",
+                        "line": 'type=SYSCALL exe="/bin/nano" comm="nano" name="/application/Soc/app.py" auid=1002'
+                    }
+                ],
+                "log_lines": [],
+                "sudo_events": [],
+                "commands": []
+            }
+            app._check_unified_fim(1, data)
+            titles = [a["title"] for a in created_alerts]
+            self.assertTrue(any("App Mod Alert by mannan" in t for t in titles), f"App Mod Alert by mannan should fire despite bash_history noise: {titles}")
+
 if __name__ == '__main__':
     unittest.main()
