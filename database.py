@@ -1140,12 +1140,6 @@ def init_db():
         except Exception as ex_dedup:
             logger.debug(f"Incident deduplication on init_db: {ex_dedup}")
 
-        try:
-            import app_siem_db
-            app_siem_db.auto_prune_and_compact_app_events(conn)
-        except Exception as ex_prune:
-            logger.debug(f"Initial startup prune note: {ex_prune}")
-
         conn.close()
         logger.info("Database schema initialized successfully.")
     except Exception as e:

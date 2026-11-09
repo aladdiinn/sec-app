@@ -509,7 +509,7 @@ except Exception:
 
 def run_database_retention_loop():
     """Background worker to automatically drop expired daily app_events partitions, purge routine events, and enforce storage limits for 200+ servers and 100+ app nodes."""
-    time.sleep(10)
+    time.sleep(45)
     logger.info("[STORAGE-RETENTION] Automated Database Storage & Partition Retention Worker initialized.")
     while True:
         try:
