@@ -2649,10 +2649,10 @@ def _check_sudo_misuse(server_id, data):
         # Insecure Permissions / SUID (Critical)
         (re.compile(r'chmod\s+([0-7]*777|[0-7]*[4-7][0-7]{3}|\+s|u\+s)\b', re.IGNORECASE), 'Insecure Permission Grant', 'critical', 'Insecure Permission Grant (chmod 777 / SUID)', 'INSECURE_PERM_CHANGE'),
         # Ownership changed to root (Warning)
-        (re.compile(r'chown\s+.*root\b', re.IGNORECASE), 'Ownership Changed to Root', 'warning', 'File Ownership Transferred to Root', 'CHOWN_ROOT'),
+        (re.compile(r'chown\s+.*root\b', re.IGNORECASE), 'Ownership Changed to Root', 'critical', 'File Ownership Transferred to Root', 'CHOWN_ROOT'),
         # Passwd dumping / tampering
         (re.compile(r'cat\s+/etc/shadow', re.IGNORECASE), 'Shadow File Dumping', 'critical', 'Credential Access Alert', 'SUDO_SHADOW_FILE_DUMPING'),
-        (re.compile(r'cat\s+/etc/passwd', re.IGNORECASE), 'Passwd File Access', 'warning', 'Credential Access Alert', 'SUDO_PASSWD_FILE_ACCESS'),
+        (re.compile(r'cat\s+/etc/passwd', re.IGNORECASE), 'Passwd File Access', 'critical', 'Credential Access Alert', 'SUDO_PASSWD_FILE_ACCESS'),
         (re.compile(r'(visudo|sudoedit|tee.*sudoers|>>.*sudoers|(?:vi|vim|nano)\s+/etc/sudoers)', re.IGNORECASE), 'Sudoers Modification', 'critical', 'Privilege Escalation Alert', 'SUDO_SUDOERS_MODIFICATION'),
         # PostgreSQL CLI Deletions and Privilege grants via command line
         (re.compile(r'\b(dropdb|dropuser)\b', re.IGNORECASE), 'PostgreSQL CLI Deletion', 'critical', 'PostgreSQL Database Deletion Alert', 'PG_DB_DELETED'),
@@ -2660,13 +2660,13 @@ def _check_sudo_misuse(server_id, data):
         (re.compile(r'psql\s+.*-(?:c|command)\s+.*(drop\s+database|drop\s+schema|drop\s+table|truncate)', re.IGNORECASE), 'PostgreSQL CLI Data Deletion', 'critical', 'PostgreSQL Database Deletion Alert', 'PG_DB_DELETED'),
         (re.compile(r'psql\s+.*-(?:c|command)\s+.*(alter\s+user|alter\s+role|grant\s+all|with\s+superuser)', re.IGNORECASE), 'PostgreSQL CLI Privilege Escalation', 'critical', 'PostgreSQL Privilege Escalation Alert', 'PG_PRIVILEGE_CHANGE'),
         # Account creation / management
-        (re.compile(r'\b(useradd|adduser)\b', re.IGNORECASE), 'New User Account Created', 'warning', 'Identity Management Alert', 'USER_CREATED'),
-        (re.compile(r'\bpasswd(?:\[\d+\])?:\s*(?:password\s+(?:updated|changed|for)|pam_unix.*password\s+changed)\b|\bpassword\s+updated\s+successfully\b', re.IGNORECASE), 'User Password Modified', 'warning', 'Credential Modification Alert', 'PASSWD_CHANGED'),
+        (re.compile(r'\b(useradd|adduser)\b', re.IGNORECASE), 'New User Account Created', 'critical', 'Identity Management Alert', 'USER_CREATED'),
+        (re.compile(r'\bpasswd(?:\[\d+\])?:\s*(?:password\s+(?:updated|changed|for)|pam_unix.*password\s+changed)|\bpassword\s+updated\s+successfully\b', re.IGNORECASE), 'User Password Modified', 'critical', 'Credential Modification Alert', 'PASSWD_CHANGED'),
         # Failed Root Escalation (Replaced successful su/sudo rule)
         (re.compile(r'(FAILED su for root|incorrect password attempt|sudo:.*authentication failure)', re.IGNORECASE), 'Failed Root Escalation Attempt', 'critical', 'Privilege Escalation Alert', 'SUDO_ROOT_ESCALATION'),
-        (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'warning', 'Host Anomaly Alert', 'MASS_PROCESS_KILL'),
+        (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'critical', 'Host Anomaly Alert', 'MASS_PROCESS_KILL'),
         (re.compile(r'iptables\s+-F|ufw\s+disable', re.IGNORECASE), 'Firewall Disabled', 'critical', 'Network Security Alert', 'FIREWALL_DISABLED'),
-        (re.compile(r'crontab\s+-[er]|crontab\[\d+\]:\s+\([^)]+\)\s+(?:REPLACE|EDIT|NEW|BEGIN EDIT)', re.IGNORECASE), 'Cron Persistence Attempt', 'warning', 'Persistence Alert', 'CRON_PERSISTENCE'),
+        (re.compile(r'crontab\s+-[er]|crontab\[\d+\]:\s+\([^)]+\)\s+(?:REPLACE|EDIT|NEW|BEGIN EDIT)', re.IGNORECASE), 'Cron Persistence Attempt', 'critical', 'Persistence Alert', 'CRON_PERSISTENCE'),
     ]
 
     _OWN_URLS = [
@@ -2855,10 +2855,7 @@ def _check_unified_fim(server_id, data):
         auid_str = last_event.get("auid", "1005")
         actor = _resolve_server_human_actor(server_id, data, line, key)
 
-        if key in ["identity", "priv_esc", "scope", "remote_access", "modules", "scheduled_tasks", "MAC-policy", "time-change", "system-locale", "delete", "app_mod", "data_mod", "home_mod", "perm_mod"]:
-            severity = "critical"
-        else:
-            severity = "warning"
+        severity = "critical"
         
         real_actor = actor if actor else "mannan"
         display_key = "System Config" if key in ("(null)", "null", "") else key.replace('_', ' ').title()
@@ -2910,7 +2907,7 @@ def _check_unified_fim(server_id, data):
         line = item.get("line", "") if isinstance(item, dict) else str(item)
         if fim_cmd_pat.search(line):
             _create_alert_dedup(
-                server_id, 'FIM_COMMAND', 'warning',
+                server_id, 'FIM_COMMAND', 'critical',
                 'OS File Modification Alert',
                 f'Detection Rule [File Permission Modification]: {line[:250]}'
             )

@@ -3700,6 +3700,31 @@ def merge_duplicate_incidents_with_audit(server_id: int = None):
                     WHERE (title ILIKE '%OS File Modification%' OR title ILIKE '%Correlated File%')
                       AND (description ILIKE '%/etc/passwd%' OR description ILIKE '%/etc/shadow%');
                 """)
+                # 5. Universally set all audit rules and security command alerts to CRITICAL
+                cur.execute("""
+                    UPDATE incidents
+                    SET severity = 'critical'
+                    WHERE (title ILIKE '%Alert by%' 
+                        OR title ILIKE 'User %' 
+                        OR title ILIKE '%System Config%'
+                        OR title ILIKE '%Privilege Escalation%'
+                        OR title ILIKE '%Permission Grant%'
+                        OR title ILIKE '%Ownership Changed%'
+                        OR title ILIKE '%Sudoers%')
+                      AND severity != 'critical';
+                """)
+                cur.execute("""
+                    UPDATE alerts
+                    SET severity = 'critical'
+                    WHERE (title ILIKE '%Alert by%' 
+                        OR title ILIKE 'User %' 
+                        OR title ILIKE '%System Config%'
+                        OR title ILIKE '%Privilege Escalation%'
+                        OR title ILIKE '%Permission Grant%'
+                        OR title ILIKE '%Ownership Changed%'
+                        OR title ILIKE '%Sudoers%')
+                      AND severity != 'critical';
+                """)
             except Exception as ex_mig:
                 logger.debug(f"Incident migration notice: {ex_mig}")
 
