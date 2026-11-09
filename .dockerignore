@@ -23,11 +23,18 @@ scratch/
 .system_generated/
 tmp*
 
-# Logs and databases
+# Persistent database storage & volume mounts (CRITICAL: Never copy host database into image)
+SOC-DB/
+SOC-APP/
+postgres/
+*.sql
+dump.sql
+data/
+
+# Logs and SQLite databases
 logs/
 *.log
 app.log
 securepulse.db
 *.db
 *.sqlite3
-data/GeoLite2-City.mmdb
