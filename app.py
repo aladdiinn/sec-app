@@ -1262,9 +1262,13 @@ async def auth_login(request: Request):
         logger.warning(f"Login throttled: per-IP lockout for {username} from {client_ip} ({remaining}s remaining)")
         return JSONResponse(status_code=429, content={"ok": False, "error": f"Too many failed login attempts from your IP. Account locked for {remaining} seconds."})
 
-    conn = db.get_db_connection()
+    try:
+        conn = db.get_db_connection()
+    except Exception as db_err:
+        logger.error(f"Login database connection failure: {db_err}")
+        return JSONResponse(status_code=503, content={"ok": False, "error": f"Database offline: {db_err}. Please ensure postgresql.service is running."})
     if not conn:
-        return JSONResponse(status_code=500, content={"ok": False, "error": "Database error"})
+        return JSONResponse(status_code=503, content={"ok": False, "error": "Database unavailable. Please ensure postgresql.service is running."})
     # Enforce Admin IP Allowlist if configured
     if not is_admin_ip_permitted(client_ip):
         logger.warning(f"Admin login blocked by IP allowlist for IP {client_ip}")

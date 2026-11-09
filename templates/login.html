@@ -1088,7 +1088,15 @@ body {
           password: document.getElementById('password').value,
         }),
       });
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        if (!res.ok) {
+          throw new Error('Database or backend service offline (HTTP ' + res.status + '). Please check postgresql service.');
+        }
+        throw new Error('Server returned unexpected response.');
+      }
       if (!res.ok) throw new Error(data.error || data.message || 'Authentication failed');
 
       // Store tokens
