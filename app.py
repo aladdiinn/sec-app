@@ -2560,7 +2560,7 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
     cache_key = (int(server_id) if server_id else 0, str(alert_type))
     now = time.time()
     last_time = _dedup_alerts_cache.get(cache_key, 0)
-    dedup_window = 86400 if 'DANGEROUS_PORT' in alert_type else 120
+    dedup_window = 86400 if 'DANGEROUS_PORT' in alert_type else 15
     if now - last_time < dedup_window:
         return
     _dedup_alerts_cache[cache_key] = now
@@ -2787,26 +2787,8 @@ def _check_unified_fim(server_id, data):
         elif "application" in path: matched_key = "app_mod"
         elif "data" in path: matched_key = "data_mod"
         elif "home" in path: matched_key = "home_mod"
-
-        # Check cross-engine deduplication against recent admin actions
-        last_action = _recent_admin_actions.get(server_id, {})
-        if time.time() - last_action.get("ts", 0) < 60:
-            act_text = last_action.get("text", "")
-            act_rule = last_action.get("rule_name", "")
-            if matched_key == "identity" and any(k in act_text or k in act_rule.lower() for k in ["user", "del", "pass", "pwd", "shadow", "account"]):
-                alerted_keys.add("identity")
-                continue
-            if matched_key == "scope" and any(k in act_text or k in act_rule.lower() for k in ["sudo", "scope"]):
-                alerted_keys.add("scope")
-                continue
-            if matched_key == "perm_mod" and any(k in act_text or k in act_rule.lower() for k in ["chmod", "chown", "perm"]):
-                alerted_keys.add("perm_mod")
-                continue
-            if matched_key == "scheduled_tasks" and any(k in act_text or k in act_rule.lower() for k in ["cron"]):
-                alerted_keys.add("scheduled_tasks")
-                continue
         
-        # Universally resolve human user
+        # Universally resolve human user (mannan/ubuntu)
         actor = _resolve_server_human_actor(server_id, data, path, matched_key or "")
         
         last_event = None
@@ -2850,20 +2832,6 @@ def _check_unified_fim(server_id, data):
     for key, events in audit_map.items():
         if key in alerted_keys:
             continue
-
-        # Check cross-engine deduplication against recent admin actions
-        last_action = _recent_admin_actions.get(server_id, {})
-        if time.time() - last_action.get("ts", 0) < 60:
-            act_text = last_action.get("text", "")
-            act_rule = last_action.get("rule_name", "")
-            if key == "identity" and any(k in act_text or k in act_rule.lower() for k in ["user", "del", "pass", "pwd", "shadow", "account"]):
-                continue
-            if key == "scope" and any(k in act_text or k in act_rule.lower() for k in ["sudo", "scope"]):
-                continue
-            if key == "perm_mod" and any(k in act_text or k in act_rule.lower() for k in ["chmod", "chown", "perm"]):
-                continue
-            if key == "scheduled_tasks" and any(k in act_text or k in act_rule.lower() for k in ["cron"]):
-                continue
             
         last_event = events[-1]
         for ev in reversed(events):

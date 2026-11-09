@@ -3691,19 +3691,7 @@ def merge_duplicate_incidents_with_audit(server_id: int = None):
                         description = 'by user \'mannan\' executed: `Nov 9 18:20:25 ubuntu-DEV userdel[400722]: delete user \'prajwal\'`. This matches the detection rule \'User Account Deletion\'.'
                     WHERE id = 805 OR (title ILIKE 'User Account Deletion%' AND description ILIKE '%400722%');
                 """)
-                # 3. Suppress and auto-close duplicate Identity Alerts (like #INC-814) if User Account Deletion exists
-                cur.execute("""
-                    UPDATE incidents
-                    SET status = 'closed', resolution_notes = 'Auto-deduplicated: Correlated into specific User Account Deletion incident'
-                    WHERE (title ILIKE 'Identity Alert%')
-                      AND EXISTS (
-                          SELECT 1 FROM incidents i2 
-                          WHERE i2.server_id = incidents.server_id 
-                            AND i2.title ILIKE 'User Account Deletion%'
-                            AND ABS(EXTRACT(EPOCH FROM (incidents.created_at - i2.created_at))) < 180
-                            AND i2.id != incidents.id
-                      );
-                """)
+
                 # 4. Monitored files like /etc/passwd that became OS File Modification Alert become Identity Alert
                 cur.execute("""
                     UPDATE incidents
