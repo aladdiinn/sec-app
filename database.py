@@ -90,6 +90,15 @@ class SQLiteConnectionWrapper:
 
 def get_db_connection():
     """Establish and return PostgreSQL connection. Strictly requires PostgreSQL database."""
+    if os.getenv("TESTING") == "1":
+        try:
+            db_path = os.path.join(os.path.dirname(__file__), "securepulse.db")
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            return SQLiteConnectionWrapper(conn)
+        except Exception as ex_t:
+            logger.error(f"SQLite testing connection error: {ex_t}")
+            return None
     require_postgres = os.getenv("REQUIRE_POSTGRES", "true").lower() in ("true", "1", "yes")
     try:
         if DATABASE_URL:
@@ -356,7 +365,30 @@ def init_db():
 
             # Audit Logs Table
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS audit_logs (
+                CREATE TABLE IF NOT EXISTS agent_tasks (
+                id SERIAL PRIMARY KEY,
+                server_id INT REFERENCES servers(id) ON DELETE CASCADE,
+                task_id VARCHAR(64) UNIQUE NOT NULL,
+                action VARCHAR(32) NOT NULL,
+                service_id VARCHAR(128) NOT NULL,
+                managed_by VARCHAR(32) NOT NULL DEFAULT 'systemd',
+                unit_name VARCHAR(128),
+                container_id VARCHAR(128),
+                restart_cmd TEXT,
+                run_user VARCHAR(64),
+                reason TEXT,
+                status VARCHAR(32) DEFAULT 'pending',
+                exit_code INT,
+                output TEXT,
+                duration_ms INT,
+                created_by VARCHAR(64),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP WITH TIME ZONE
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_tasks_server_status ON agent_tasks(server_id, status);
+            CREATE INDEX IF NOT EXISTS idx_agent_tasks_task_id ON agent_tasks(task_id);
+
+            CREATE TABLE IF NOT EXISTS audit_logs (
                     id SERIAL PRIMARY KEY,
                     user_id INT,
                     action VARCHAR(255) NOT NULL,
@@ -951,7 +983,9 @@ def init_db():
                 ('last_inventory_hash', 'VARCHAR(64)'),
                 ('last_inventory_scan', 'TIMESTAMP WITH TIME ZONE'),
                 ('last_vuln_scan', 'TIMESTAMP WITH TIME ZONE'),
-                ('vuln_scan_status', "VARCHAR(255) DEFAULT 'never_scanned'")
+                ('vuln_scan_status', "VARCHAR(255) DEFAULT 'never_scanned'"),
+                ('detected_services', "TEXT DEFAULT '[]'"),
+                ('stopped_services_count', "INT DEFAULT 0")
             ]:
                 try: cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass
@@ -6470,5 +6504,235 @@ def get_network_traffic_history(server_id: int, days: int = 7):
     except Exception as e:
         logger.error(f"Error fetching network traffic history: {e}")
         return []
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# AUTO-DETECTED SERVICES & AGENT TASK QUEUE
+# ══════════════════════════════════════════════════════════════════════════
+
+def get_detected_services(server_id: int):
+    """Retrieve auto-detected services list for a server."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT detected_services FROM servers WHERE id = %s;", (server_id,))
+            row = cur.fetchone()
+            if row:
+                ds = row.get("detected_services") if isinstance(row, dict) else row[0]
+                if ds:
+                    if isinstance(ds, str):
+                        try: return json.loads(ds)
+                        except Exception: return []
+                    elif isinstance(ds, list):
+                        return ds
+            return []
+    except Exception as e:
+        logger.error(f"Error in get_detected_services: {e}")
+        return []
+    finally:
+        conn.close()
+
+def save_detected_services(server_id: int, services_list: list):
+    """Save auto-detected services list and monitor pinned/managed services for unexpected outages."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        prev_detected = get_detected_services(server_id)
+        prev_map = {s.get("id") or s.get("name") or s.get("unit_name"): s for s in prev_detected}
+        curr_map = {s.get("id") or s.get("name") or s.get("unit_name"): s for s in services_list}
+
+        # Check pinned managed services
+        pinned_services = get_managed_services(server_id)
+        srv = get_server_by_id(server_id)
+        hostname = srv.get("hostname", f"Server {server_id}") if srv else f"Server {server_id}"
+        is_maintenance = bool(srv.get("is_maintenance")) if srv else False
+
+        stopped_pinned_count = 0
+
+        for pinned in pinned_services:
+            p_name = (pinned.get("name") or "").strip().lower()
+            p_path = (pinned.get("path") or "").strip().lower()
+            
+            curr_match = None
+            for s_id, s_data in curr_map.items():
+                s_name = (s_data.get("name") or "").strip().lower()
+                s_unit = (s_data.get("unit_name") or "").strip().lower()
+                if (p_name and (p_name == s_name or p_name in s_unit or s_name in p_name)) or                    (p_path and p_path in (s_data.get("cmdline") or "").lower()):
+                    curr_match = s_data
+                    break
+            
+            prev_match = None
+            for s_id, s_data in prev_map.items():
+                s_name = (s_data.get("name") or "").strip().lower()
+                s_unit = (s_data.get("unit_name") or "").strip().lower()
+                if (p_name and (p_name == s_name or p_name in s_unit or s_name in p_name)) or                    (p_path and p_path in (s_data.get("cmdline") or "").lower()):
+                    prev_match = s_data
+                    break
+            
+            is_currently_running = curr_match and curr_match.get("status") == "running"
+            was_previously_running = prev_match and prev_match.get("status") == "running"
+
+            if not is_currently_running:
+                stopped_pinned_count += 1
+
+            # Transition from running to stopped
+            if was_previously_running and not is_currently_running and not is_maintenance:
+                # Check if this stop was triggered intentionally from dashboard
+                intentional_stop = False
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            SELECT id FROM agent_tasks 
+                            WHERE server_id = %s 
+                              AND action = 'stop' 
+                              AND (service_id ILIKE %s OR unit_name ILIKE %s)
+                              AND created_at >= NOW() - INTERVAL '15 minutes'
+                            LIMIT 1;
+                        """, (server_id, f"%{p_name}%", f"%{p_name}%"))
+                        if cur.fetchone():
+                            intentional_stop = True
+                except Exception:
+                    pass
+                
+                if not intentional_stop:
+                    # Fire alert & incident
+                    title = f"Managed Service Stopped — {pinned.get('name')}"
+                    msg = f"Pinned managed service '{pinned.get('name')}' on {hostname} transitioned from running to stopped unexpectedly."
+                    log_alert(server_id=server_id, alert_type="service_stopped", message=msg, severity="critical", title=title)
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE servers 
+                SET detected_services = %s, stopped_services_count = %s
+                WHERE id = %s;
+            """, (json.dumps(services_list), stopped_pinned_count, server_id))
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error in save_detected_services: {e}")
+        return False
+    finally:
+        conn.close()
+
+def create_agent_task(server_id: int, action: str, service_id: str, managed_by: str = 'systemd',
+                      unit_name: str = None, container_id: str = None, restart_cmd: str = None,
+                      run_user: str = None, reason: str = None, created_by: str = 'admin'):
+    """Insert a new pending service action task into agent_tasks."""
+    import uuid
+    task_id = str(uuid.uuid4())
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO agent_tasks (
+                    server_id, task_id, action, service_id, managed_by, unit_name,
+                    container_id, restart_cmd, run_user, reason, status, created_by, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, NOW())
+                RETURNING task_id;
+            """, (server_id, task_id, action, service_id, managed_by, unit_name,
+                  container_id, restart_cmd, run_user, reason, created_by))
+            conn.commit()
+            return task_id
+    except Exception as e:
+        logger.error(f"Error in create_agent_task: {e}")
+        return None
+    finally:
+        conn.close()
+
+def get_pending_agent_tasks(server_id: int):
+    """Retrieve pending agent tasks for a server and set status to dispatched."""
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
+                       container_id, restart_cmd, run_user, reason, status, created_by, created_at
+                FROM agent_tasks
+                WHERE server_id = %s AND status = 'pending'
+                ORDER BY id ASC;
+            """, (server_id,))
+            rows = cur.fetchall()
+            tasks = [dict(r) for r in rows] if rows else []
+            if tasks:
+                tids = [t["task_id"] for t in tasks]
+                cur.execute("""
+                    UPDATE agent_tasks 
+                    SET status = 'dispatched' 
+                    WHERE task_id = ANY(%s);
+                """, (tids,))
+                conn.commit()
+            return tasks
+    except Exception as e:
+        logger.error(f"Error in get_pending_agent_tasks: {e}")
+        return []
+    finally:
+        conn.close()
+
+def update_agent_task_result(task_id: str, status: str, exit_code: int = None, output: str = None, duration_ms: int = None):
+    """Update agent task result after execution."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE agent_tasks
+                SET status = %s, exit_code = %s, output = %s, duration_ms = %s, completed_at = NOW()
+                WHERE task_id = %s;
+            """, (status, exit_code, output, duration_ms, task_id))
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error in update_agent_task_result: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_agent_task(task_id: str):
+    """Fetch an agent task by task_id."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
+                       container_id, restart_cmd, run_user, reason, status, exit_code,
+                       output, duration_ms, created_by, created_at, completed_at
+                FROM agent_tasks
+                WHERE task_id = %s
+                LIMIT 1;
+            """, (task_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"Error in get_agent_task: {e}")
+        return None
+    finally:
+        conn.close()
+
+def get_recent_service_action(server_id: int, service_id: str, seconds: int = 30):
+    """Check if a service action is already pending or was created within cooldown window."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, task_id, action, status, created_at
+                FROM agent_tasks
+                WHERE server_id = %s 
+                  AND service_id = %s
+                  AND (status IN ('pending', 'dispatched', 'running') OR created_at >= NOW() - INTERVAL '30 seconds')
+                ORDER BY id DESC
+                LIMIT 1;
+            """, (server_id, service_id))
+            row = cur.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"Error in get_recent_service_action: {e}")
+        return None
     finally:
         conn.close()

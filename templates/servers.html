@@ -758,7 +758,7 @@ function formatLocal(dateStr) {
                                 </div>
                                 <div style="font-family:monospace; font-size:11px; color:var(--cyan); margin-top:2px;">${ip}</div>
                             </div>
-                            ${typeBadge}
+                            ${typeBadge}${(s.stopped_services_count > 0 || s.service_down) ? '<span class="badge badge-critical" style="font-size:9px; padding:2px 6px; margin-left:6px; letter-spacing:0.5px">SERVICE DOWN</span>' : ''}
                         </div>
                         <div class="service-metrics">
                             <div class="service-metrics-item">
@@ -781,6 +781,12 @@ function formatLocal(dateStr) {
                         <div class="card-security-bar">
                             <span class="card-sec-label">SECURITY</span>
                             <div class="sec-badge-wrap">${vulnBadge}</div>
+                        </div>
+                        <div style="margin-top:10px; padding-top:8px; border-top:1px solid var(--border-glass, rgba(255,255,255,0.06)); display:flex; justify-content:flex-end;">
+                            <button class="btn btn-primary" style="width:100%; font-size:11px; padding:6px 12px; font-weight:600; display:flex; align-items:center; justify-content:center; gap:6px;" onclick="event.stopPropagation(); window.location.href='/servers/${id}?from=assets'">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+                                MANAGE ASSET
+                            </button>
                         </div>
                     </div>
                     ${alertBox}

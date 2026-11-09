@@ -108,7 +108,7 @@
                         </div>
                     </div>
                     <div style="display:flex; gap:10px">
-                        <button class="btn btn-primary" style="flex:1; font-size:11px" onclick="window.location.href='/servers/${s.id}'">Manage Asset</button>
+                        <button class="btn btn-primary" style="flex:1; font-size:11px" onclick="window.location.href='/servers/${s.id}?from=maintenance'">Manage Asset</button>
                         <button class="btn btn-glass" style="flex:1; border-color:var(--red); color:var(--red); font-size:11px" onclick="stopMaintenance(${s.id}, '${sName}')">Stop Maintenance</button>
                     </div>
                 </div>

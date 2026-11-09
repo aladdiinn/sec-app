@@ -3544,6 +3544,26 @@ async def api_agent_push(request: Request):
         finally:
             conn.close()
 
+    # ── INGEST AUTO-DETECTED SERVICES & TASK RESULTS ──
+    if server_id and "detected_services" in data:
+        try:
+            db.save_detected_services(server_id, data.get("detected_services") or [])
+        except Exception as e_ds:
+            logger.error(f"Error saving detected services: {e_ds}")
+
+    if server_id and "task_results" in data:
+        for tr in (data.get("task_results") or []):
+            try:
+                tid = tr.get("task_id")
+                st = tr.get("status", "completed")
+                code = tr.get("exit_code")
+                out = tr.get("output", "")
+                dur = tr.get("duration_ms", 0)
+                db.update_agent_task_result(tid, st, code, out, dur)
+                db.log_audit("agent", "SERVICE_ACTION_RESULT", "server", server_id, f"Agent task {tid} finished: {st} (code {code})", ip_address=client_ip)
+            except Exception as e_tr:
+                logger.error(f"Error updating task result: {e_tr}")
+
     res = {"status": "ok", "ok": True, "server_id": server_id, "message": "Agent telemetry ingested and analyzed"}
     if update_req:
         res["update_requested"] = True
@@ -3568,6 +3588,37 @@ async def api_agent_push(request: Request):
                 finally: conn.close()
     if needs_inventory:
         res["inventory_scan_requested"] = True
+
+    # ── ATTACH SIGNED PENDING SERVICE ACTION TASKS ──
+    if server_id:
+        try:
+            pending_tasks = db.get_pending_agent_tasks(server_id)
+            if pending_tasks:
+                signed = []
+                srv_obj = db.get_server_by_id(server_id) or {}
+                secret_tok = srv_obj.get("agent_token") or srv_obj.get("api_token") or SECRET_KEY
+                for t in pending_tasks:
+                    now_ts = int(time.time())
+                    nonce = uuid.uuid4().hex[:16]
+                    sig_payload = f"{t['task_id']}:{t['action']}:{t['service_id']}:{nonce}:{now_ts}"
+                    sig = hmac.new(secret_tok.encode('utf-8'), sig_payload.encode('utf-8'), hashlib.sha256).hexdigest()
+                    signed.append({
+                        "task_id": t["task_id"],
+                        "action": t["action"],
+                        "service_id": t["service_id"],
+                        "managed_by": t.get("managed_by", "systemd"),
+                        "unit_name": t.get("unit_name"),
+                        "container_id": t.get("container_id"),
+                        "restart_cmd": t.get("restart_cmd"),
+                        "run_user": t.get("run_user"),
+                        "nonce": nonce,
+                        "timestamp": now_ts,
+                        "signature": sig
+                    })
+                res["pending_tasks"] = signed
+        except Exception as e_pt:
+            logger.error(f"Error fetching pending agent tasks: {e_pt}")
+
     return res
 
 @app.post("/api/agent/status-update")
@@ -5197,7 +5248,7 @@ fi
 mkdir -p /opt/securepulse
 
 cat << PY_EOF > /opt/securepulse/node_push_agent.py
-import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threading, random, platform, zipfile
+import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threading, random, platform, zipfile, hmac
 import urllib.request, urllib.error
 from datetime import datetime
 
@@ -5205,16 +5256,409 @@ AGENT_VERSION = "1.6.2"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
+AGENT_TOKEN = "$TOKEN"
 ASSIGNED_SERVER_ID = int("$ASSIGNED_ID") if "$ASSIGNED_ID".isdigit() else {server_id or "None"}
 PUSH_INTERVAL = 15  # seconds (responsive real-time log ingestion)
 
-# ── VULNERABILITY INVENTORY STATE (Agent v1.6) ──
-last_package_hash = ""
-inventory_error = None
-inventory_in_progress = False
-scheduled_inventory_hour = 2
-scheduled_inventory_minute = random.randint(25, 35)
-daily_inventory_done_date = ""
+# ── AUTO-DETECTED SERVICES STATE & LOGIC ──
+known_services = {{}}
+seen_nonces = set()
+task_results_queue = []
+last_service_discovery = 0
+
+def mask_secrets(text):
+    if not text: return ""
+    return re.sub(r'(-p\s+|--password[=\s]+|--secret[=\s]+|--token[=\s]+|password=|secret=|token=|api[_-]?key=)[^\s]+', r'\1***', str(text), flags=re.IGNORECASE)
+
+def discover_services(force=False):
+    global known_services, last_service_discovery
+    now = time.time()
+    if not force and (now - last_service_discovery < 110) and known_services:
+        return list(known_services.values())
+    last_service_discovery = now
+
+    current_found = set()
+
+    # 1. Systemd units discovery
+    try:
+        out = subprocess.check_output(
+            ["systemctl", "list-units", "--type=service", "--all", "--no-pager", "--no-legend"],
+            stderr=subprocess.DEVNULL, timeout=8
+        ).decode("utf-8", errors="ignore")
+        for line in out.strip().split("\n"):
+            parts = line.split(None, 4)
+            if len(parts) < 4: continue
+            unit_name = parts[0].strip()
+            load_state = parts[1].strip()
+            active_state = parts[2].strip()
+            sub_state = parts[3].strip()
+            desc = parts[4].strip() if len(parts) > 4 else unit_name
+
+            if not unit_name.endswith(".service"): continue
+            base_name = unit_name[:-8]
+
+            status = "running" if (active_state == "active" and sub_state == "running") else ("failed" if active_state == "failed" else "stopped")
+
+            sType = "Other"
+            lower_name = base_name.lower()
+            if "tomcat" in lower_name or "catalina" in lower_name: sType = "Tomcat"
+            elif "nginx" in lower_name: sType = "Nginx"
+            elif "haproxy" in lower_name: sType = "HAProxy"
+            elif "postgres" in lower_name: sType = "PostgreSQL"
+            elif "mysql" in lower_name or "mariadb" in lower_name: sType = "MySQL"
+            elif "redis" in lower_name: sType = "Redis"
+            elif "docker" in lower_name: sType = "Docker container"
+            elif "node" in lower_name or "pm2" in lower_name: sType = "Node"
+            elif "python" in lower_name or "gunicorn" in lower_name or "uvicorn" in lower_name: sType = "Python app"
+            elif "java" in lower_name: sType = "Java app"
+
+            is_sys = True
+            whitelist_keys = ["tomcat", "catalina", "nginx", "haproxy", "postgres", "mysql", "mariadb", "redis", "docker", "node", "pm2", "python", "gunicorn", "uvicorn", "flask", "django", "fastapi", "apache2", "httpd", "mongodb", "elasticsearch", "kafka", "rabbitmq"]
+            if any(k in lower_name for k in whitelist_keys) or sType != "Other":
+                is_sys = False
+            if any(k in lower_name for k in ["ssh", "sshd", "securepulse", "auditd", "systemd", "cron", "dbus", "getty", "ufw", "iptables", "network"]):
+                is_sys = True
+
+            if is_sys and status != "running":
+                continue
+
+            sid = f"unit:{unit_name}"
+            current_found.add(sid)
+
+            prev = known_services.get(sid, {{}})
+            known_services[sid] = {{
+                "id": sid,
+                "name": base_name,
+                "type": sType,
+                "managed_by": "systemd",
+                "unit_name": unit_name,
+                "container_id": None,
+                "status": status,
+                "is_system": is_sys,
+                "description": desc,
+                "uptime": prev.get("uptime", "active"),
+                "ports": prev.get("ports", []),
+                "cpu_percent": prev.get("cpu_percent", 0.0),
+                "ram_percent": prev.get("ram_percent", 0.0),
+                "user": prev.get("user", "root"),
+                "cmdline": prev.get("cmdline", unit_name),
+                "working_dir": prev.get("working_dir", "")
+            }}
+    except Exception:
+        pass
+
+    # 2. Process inspection & Port correlation
+    try:
+        ports_by_pid = {{}}
+        for pinfo in get_open_ports():
+            pid_val = pinfo.get("pid")
+            port_num = pinfo.get("port")
+            if pid_val and port_num:
+                try: ports_by_pid.setdefault(int(pid_val), []).append(port_num)
+                except: pass
+
+        ps_out = subprocess.check_output(
+            ["ps", "-eo", "pid,user,etimes,%cpu,%mem,args", "--no-headers"],
+            stderr=subprocess.DEVNULL, timeout=8
+        ).decode("utf-8", errors="ignore")
+
+        for pline in ps_out.strip().split("\n"):
+            pparts = pline.split(None, 5)
+            if len(pparts) < 6: continue
+            pid_s, user_s, etime_s, cpu_s, mem_s, cmd_s = pparts
+            try:
+                pid_int = int(pid_s)
+                cpu_f = float(cpu_s)
+                mem_f = float(mem_s)
+                etime_i = int(etime_s)
+            except Exception:
+                continue
+
+            if cmd_s.startswith("[") and cmd_s.endswith("]"): continue
+
+            cmd_lower = cmd_s.lower()
+            pType = None
+            pName = None
+
+            if "catalina" in cmd_lower or "org.apache.catalina.startup.bootstrap" in cmd_lower or "tomcat" in cmd_lower:
+                pType = "Tomcat"
+                pName = "Tomcat"
+            elif "haproxy" in cmd_lower:
+                pType = "HAProxy"
+                pName = "HAProxy"
+            elif "nginx" in cmd_lower:
+                pType = "Nginx"
+                pName = "Nginx"
+            elif "postgres" in cmd_lower:
+                pType = "PostgreSQL"
+                pName = "PostgreSQL"
+            elif "mysqld" in cmd_lower or "mariadb" in cmd_lower:
+                pType = "MySQL"
+                pName = "MySQL"
+            elif "redis-server" in cmd_lower:
+                pType = "Redis"
+                pName = "Redis"
+            elif "gunicorn" in cmd_lower or "uvicorn" in cmd_lower or "python" in cmd_lower:
+                if any(x in cmd_lower for x in ["gunicorn", "uvicorn", "manage.py", "app.py", "main.py", "wsgi", "flask"]):
+                    pType = "Python app"
+                    pName = os.path.basename(cmd_s.split()[1]) if len(cmd_s.split()) > 1 else "Python app"
+            elif "node" in cmd_lower or "pm2" in cmd_lower:
+                pType = "Node"
+                pName = "Node app"
+            elif "java" in cmd_lower:
+                pType = "Java app"
+                pName = "Java app"
+
+            if pType:
+                listening = ports_by_pid.get(pid_int, [])
+                days = etime_i // 86400
+                hours = (etime_i % 86400) // 3600
+                mins = (etime_i % 3600) // 60
+                uptime_str = f"{days}d {hours}h" if days > 0 else (f"{hours}h {mins}m" if hours > 0 else f"{mins}m")
+
+                is_sys = False
+                if any(k in cmd_lower for k in ["securepulse", "node_push_agent", "auditd", "sshd"]):
+                    is_sys = True
+
+                cwd_val = ""
+                try: cwd_val = os.readlink(f"/proc/{pid_int}/cwd")
+                except: pass
+
+                matched_unit = None
+                for sid, sdata in known_services.items():
+                    if sdata.get("type") == pType and sdata.get("managed_by") == "systemd":
+                        matched_unit = sid
+                        break
+
+                if matched_unit:
+                    known_services[matched_unit]["pid"] = pid_int
+                    known_services[matched_unit]["cpu_percent"] = cpu_f
+                    known_services[matched_unit]["ram_percent"] = mem_f
+                    known_services[matched_unit]["uptime"] = uptime_str
+                    known_services[matched_unit]["user"] = user_s
+                    known_services[matched_unit]["ports"] = list(set(known_services[matched_unit].get("ports", []) + listening))
+                    known_services[matched_unit]["cmdline"] = mask_secrets(cmd_s[:300])
+                    known_services[matched_unit]["working_dir"] = cwd_val
+                else:
+                    proc_sid = f"proc:{pType.lower()}-{pName.lower().replace(' ', '-')}"
+                    current_found.add(proc_sid)
+                    known_services[proc_sid] = {{
+                        "id": proc_sid,
+                        "name": pName,
+                        "type": pType,
+                        "managed_by": "process",
+                        "unit_name": None,
+                        "container_id": None,
+                        "status": "running",
+                        "is_system": is_sys,
+                        "description": cmd_s[:80],
+                        "pid": pid_int,
+                        "cpu_percent": cpu_f,
+                        "ram_percent": mem_f,
+                        "uptime": uptime_str,
+                        "ports": listening,
+                        "user": user_s,
+                        "cmdline": mask_secrets(cmd_s[:300]),
+                        "working_dir": cwd_val
+                    }}
+    except Exception:
+        pass
+
+    # 3. Docker containers discovery
+    try:
+        docker_out = subprocess.check_output(
+            ["docker", "ps", "-a", "--format", "{{{{.ID}}}}\t{{{{.Names}}}}\t{{{{.Image}}}}\t{{{{.Status}}}}\t{{{{.Ports}}}}"],
+            stderr=subprocess.DEVNULL, timeout=8
+        ).decode("utf-8", errors="ignore")
+        for dline in docker_out.strip().split("\n"):
+            dparts = dline.split("\t")
+            if len(dparts) < 4: continue
+            cid = dparts[0].strip()
+            cname = dparts[1].strip()
+            cimg = dparts[2].strip()
+            cstatus = dparts[3].strip()
+            cports = dparts[4].strip() if len(dparts) > 4 else ""
+
+            is_up = "up" in cstatus.lower()
+            st_val = "running" if is_up else "stopped"
+            sid = f"docker:{cid}"
+            current_found.add(sid)
+
+            dports_list = []
+            for pm in re.findall(r':(\d+)->', cports):
+                try: dports_list.append(int(pm))
+                except: pass
+
+            known_services[sid] = {{
+                "id": sid,
+                "name": cname or cimg,
+                "type": "Docker container",
+                "managed_by": "docker",
+                "unit_name": None,
+                "container_id": cid,
+                "status": st_val,
+                "is_system": False,
+                "description": f"Container {cimg}",
+                "uptime": cstatus,
+                "ports": dports_list,
+                "cpu_percent": 0.0,
+                "ram_percent": 0.0,
+                "user": "root",
+                "cmdline": f"docker run {cimg}",
+                "working_dir": ""
+            }}
+    except Exception:
+        pass
+
+    # 4. Handle vanished services: mark as stopped instead of deleting
+    for sid, sdata in list(known_services.items()):
+        if sid not in current_found:
+            sdata["status"] = "stopped"
+            sdata["pid"] = None
+
+    return list(known_services.values())
+
+def execute_agent_tasks(tasks):
+    global AGENT_TOKEN, seen_nonces, task_results_queue
+    if not tasks: return
+
+    for task in tasks:
+        tid = task.get("task_id")
+        action = task.get("action", "").lower()
+        service_id = task.get("service_id", "")
+        managed_by = task.get("managed_by", "systemd")
+        unit_name = task.get("unit_name")
+        container_id = task.get("container_id")
+        restart_cmd = task.get("restart_cmd")
+        run_user = task.get("run_user") or "root"
+        nonce = task.get("nonce", "")
+        ts = task.get("timestamp", 0)
+        sig = task.get("signature", "")
+
+        t_start = time.time()
+
+        # 1. Replay & Expiry Check
+        now = int(time.time())
+        if abs(now - ts) > 60:
+            task_results_queue.append({{
+                "task_id": tid, "status": "failed", "exit_code": 401,
+                "output": "Task rejected: signature expired (replay protection).",
+                "duration_ms": int((time.time() - t_start) * 1000)
+            }})
+            continue
+
+        if nonce in seen_nonces:
+            task_results_queue.append({{
+                "task_id": tid, "status": "failed", "exit_code": 401,
+                "output": "Task rejected: duplicate nonce (replay protection).",
+                "duration_ms": int((time.time() - t_start) * 1000)
+            }})
+            continue
+        seen_nonces.add(nonce)
+        if len(seen_nonces) > 2000:
+            seen_nonces.clear()
+
+        # 2. HMAC Signature Verification
+        expected_payload = f"{{tid}}:{{action}}:{{service_id}}:{{nonce}}:{{ts}}"
+        expected_sig = hmac.new(AGENT_TOKEN.encode('utf-8'), expected_payload.encode('utf-8'), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected_sig):
+            task_results_queue.append({{
+                "task_id": tid, "status": "failed", "exit_code": 403,
+                "output": "Task rejected: invalid HMAC signature.",
+                "duration_ms": int((time.time() - t_start) * 1000)
+            }})
+            continue
+
+        # 3. Action: rescan
+        if action == "rescan":
+            discover_services(force=True)
+            task_results_queue.append({{
+                "task_id": tid, "status": "completed", "exit_code": 0,
+                "output": f"Service rescan completed: {{len(known_services)}} services detected.",
+                "duration_ms": int((time.time() - t_start) * 1000)
+            }})
+            continue
+
+        # 4. Protected Services Verification
+        target_check = (unit_name or service_id or "").lower()
+        if any(p in target_check for p in ["sshd", "ssh", "securepulse", "auditd", "systemd", "init", "dbus", "network"]):
+            task_results_queue.append({{
+                "task_id": tid, "status": "failed", "exit_code": 400,
+                "output": f"Refused: Service '{target_check}' is protected and cannot be modified.",
+                "duration_ms": int((time.time() - t_start) * 1000)
+            }})
+            continue
+
+        # 5. Shell character check
+        if any(c in (unit_name or '') for c in [';', '&', '|', '`', '$', '(', ')', '<', '>', '\n']) or any(c in (container_id or '') for c in [';', '&', '|', '`', '$', '(', ')', '<', '>', '\n']):
+            task_results_queue.append({{
+                "task_id": tid, "status": "failed", "exit_code": 400,
+                "output": "Refused: Illegal shell injection characters in target identifier.",
+                "duration_ms": int((time.time() - t_start) * 1000)
+            }})
+            continue
+
+        # 6. Execute Fixed Command
+        exit_code = 1
+        output = ""
+        try:
+            if managed_by == "systemd":
+                unit = unit_name or service_id.replace("unit:", "")
+                if not unit.endswith(".service"): unit += ".service"
+                cmd = ["systemctl", action, unit]
+                p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                exit_code = p.returncode
+                output = p.stdout + p.stderr
+                time.sleep(1)
+                chk = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True)
+                new_state = chk.stdout.strip()
+                output += f"\nVerification: Unit '{unit}' state is '{new_state}'."
+
+            elif managed_by == "docker":
+                cid = container_id or service_id.replace("docker:", "")
+                cmd = ["docker", action, cid]
+                p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                exit_code = p.returncode
+                output = p.stdout + p.stderr
+
+            elif managed_by == "process":
+                if action in ("restart", "start") and restart_cmd:
+                    p = subprocess.run(["su", "-", run_user, "-c", restart_cmd], capture_output=True, text=True, timeout=60)
+                    exit_code = p.returncode
+                    output = p.stdout + p.stderr
+                elif action == "stop":
+                    s_data = known_services.get(service_id, {{}})
+                    pid_val = s_data.get("pid")
+                    if pid_val:
+                        p = subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, text=True, timeout=10)
+                        exit_code = p.returncode
+                        output = f"Sent SIGTERM to PID {pid_val}."
+                    else:
+                        exit_code = 0
+                        output = "Process not actively running."
+            else:
+                exit_code = 400
+                output = f"Unknown managed_by type: {managed_by}"
+
+        except subprocess.TimeoutExpired:
+            exit_code = 124
+            output = "Execution timed out after 60 seconds."
+        except Exception as ex_exec:
+            exit_code = 1
+            output = f"Execution error: {str(ex_exec)}"
+
+        discover_services(force=True)
+
+        status_str = "completed" if exit_code == 0 else "failed"
+        dur_ms = int((time.time() - t_start) * 1000)
+
+        task_results_queue.append({{
+            "task_id": tid,
+            "status": status_str,
+            "exit_code": exit_code,
+            "output": mask_secrets(output),
+            "duration_ms": dur_ms
+        }})
 
 def get_hostname():
     try: return socket.gethostname()
@@ -6289,7 +6733,9 @@ def main():
                 "sudo_events": sudo_events,
                 "file_changes": file_changes,
                 "audit_events": audit_events,
-                "discovered_log_paths": list(discovered_paths.keys())
+                "discovered_log_paths": list(discovered_paths.keys()),
+                "detected_services": discover_services(),
+                "task_results": task_results_queue[:]
             }}
 
             data = json.dumps(payload).encode("utf-8")
@@ -6314,6 +6760,13 @@ def main():
                 # On-demand inventory scan requested from SOC ("Scan now" button)
                 if res_data.get("inventory_scan_requested"):
                     threading.Thread(target=collect_and_send_inventory, kwargs={{"force_full": True}}, daemon=True).start()
+
+                # Clear delivered task results
+                task_results_queue.clear()
+
+                # Process pending signed tasks from SOC Command Center
+                if res_data.get("pending_tasks"):
+                    threading.Thread(target=execute_agent_tasks, args=(res_data.get("pending_tasks"),), daemon=True).start()
 
             # Also push structured logs
             if log_lines:
@@ -7592,6 +8045,216 @@ async def api_reconnect_server(server_id: int, request: Request):
     db.log_audit(uname, 'RECONNECT_HOST', 'server', server_id, "Host connectivity restored")
     return {"ok": True, "message": "Host reconnected successfully"}
 
+# ══════════════════════════════════════════════════════════════════════════
+# MANAGED & DETECTED SERVICES ENDPOINTS (ADMIN-ONLY EXECUTION)
+# ══════════════════════════════════════════════════════════════════════════
+
+PROTECTED_SYSTEM_SERVICES = {
+    "sshd", "ssh", "securepulse", "agent", "systemd", "init", "auditd",
+    "dbus", "network", "networking", "systemd-networkd", "systemd-resolved"
+}
+
+def verify_server_project_scope(server_id: int, request: Request) -> tuple[bool, str]:
+    user = get_session_user(request)
+    if not user:
+        return False, "Not authenticated"
+    server = db.get_server_by_id(server_id)
+    if not server:
+        return False, "Server not found"
+    
+    role = (user.get("role") or "").lower()
+    is_global_admin = bool(user.get("is_admin") or role in ("superuser", "admin"))
+    server_project_id = server.get("project_id")
+    if server_project_id and not is_global_admin:
+        allowed = db.get_user_allowed_project_ids(user["id"])
+        if allowed and server_project_id not in allowed:
+            return False, "Access denied: Asset belongs to a project you do not administer."
+    return True, ""
+
+@app.get("/api/servers/{server_id}/detected-services")
+@app.get("/api/assets/{server_id}/detected-services")
+async def api_get_detected_services(server_id: int, request: Request):
+    has_access, err_msg = verify_server_project_scope(server_id, request)
+    if not has_access:
+        return JSONResponse(status_code=403, content={"ok": False, "message": err_msg})
+    services = db.get_detected_services(server_id)
+    return {"ok": True, "services": services}
+
+@app.post("/api/servers/{server_id}/services/action")
+@app.post("/api/assets/{server_id}/services/action")
+async def api_service_action(server_id: int, request: Request):
+    client_ip = request.client.host if request.client else None
+    user = get_session_user(request)
+    uname = user.get("username", "anonymous") if user else "anonymous"
+
+    if not is_admin_user(request):
+        db.log_audit(uname, "DENIED", "server", server_id, "Non-admin attempted service action", ip_address=client_ip)
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
+
+    has_access, err_msg = verify_server_project_scope(server_id, request)
+    if not has_access:
+        db.log_audit(uname, "DENIED", "server", server_id, f"Project boundary violation: {err_msg}", ip_address=client_ip)
+        return JSONResponse(status_code=403, content={"ok": False, "message": err_msg})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    service_id = (body.get("service_id") or "").strip()
+    action = (body.get("action") or "").strip().lower()
+    reason = (body.get("reason") or "").strip()
+
+    if action not in ("restart", "stop", "start"):
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Invalid action. Must be start, stop, or restart."})
+
+    if not service_id:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "service_id is required."})
+
+    # Shell injection defense: strict alphanumeric, colons, dots, underscores, dashes, at-signs
+    if re.search(r'[;&|`$()<>' + chr(10) + r'\s]', service_id):
+        db.log_audit(uname, "SECURITY_TAMPER_ATTEMPT", "server", server_id, f"Illegal characters in service_id: {service_id}", ip_address=client_ip)
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Invalid service identifier: Illegal shell characters detected."})
+
+    # Check protected services
+    service_id_lower = service_id.lower()
+    for protected in PROTECTED_SYSTEM_SERVICES:
+        if protected in service_id_lower:
+            return JSONResponse(status_code=400, content={
+                "ok": False,
+                "message": f"Protected system service '{service_id}' cannot be stopped or restarted from the dashboard."
+            })
+
+    # Stop action requires non-empty reason
+    if action == "stop" and not reason:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Reason is required before stopping a service."})
+
+    # Rate limiting: 1 pending action per service, 30s cooldown
+    recent = db.get_recent_service_action(server_id, service_id, seconds=30)
+    if recent:
+        return JSONResponse(status_code=429, content={
+            "ok": False,
+            "message": "Rate limit exceeded: A service action is already pending or was executed within the 30-second cooldown period."
+        })
+
+    # Resolve service attributes from detected or managed services
+    detected_list = db.get_detected_services(server_id)
+    managed_list = db.get_managed_services(server_id)
+
+    target_service = None
+    for s in detected_list:
+        if s.get("id") == service_id or s.get("unit_name") == service_id or s.get("name") == service_id:
+            target_service = s
+            break
+    if not target_service:
+        for s in managed_list:
+            if s.get("name") == service_id or s.get("unit_name") == service_id:
+                target_service = s
+                break
+
+    if not target_service:
+        return JSONResponse(status_code=400, content={"ok": False, "message": f"Service '{service_id}' not found in asset services inventory."})
+
+    managed_by = target_service.get("managed_by") or ("systemd" if target_service.get("unit_name") else "process")
+    unit_name = target_service.get("unit_name")
+    container_id = target_service.get("container_id")
+    restart_cmd = target_service.get("restart_cmd")
+    run_user = target_service.get("user") or target_service.get("run_user") or "root"
+
+    # Queue task
+    task_id = db.create_agent_task(
+        server_id=server_id,
+        action=action,
+        service_id=service_id,
+        managed_by=managed_by,
+        unit_name=unit_name,
+        container_id=container_id,
+        restart_cmd=restart_cmd,
+        run_user=run_user,
+        reason=reason,
+        created_by=uname
+    )
+
+    if not task_id:
+        return JSONResponse(status_code=500, content={"ok": False, "message": "Failed to queue agent task."})
+
+    db.log_audit(
+        uname, "SERVICE_ACTION_REQUESTED", "server", server_id,
+        f"Queued '{action}' for service '{service_id}'. Reason: {reason or 'N/A'}",
+        ip_address=client_ip
+    )
+
+    return {"ok": True, "task_id": task_id, "message": f"Service action '{action}' queued successfully."}
+
+@app.get("/api/servers/{server_id}/tasks/{task_id}")
+@app.get("/api/assets/{server_id}/tasks/{task_id}")
+async def api_get_task_status(server_id: int, task_id: str, request: Request):
+    has_access, err_msg = verify_server_project_scope(server_id, request)
+    if not has_access:
+        return JSONResponse(status_code=403, content={"ok": False, "message": err_msg})
+    task = db.get_agent_task(task_id)
+    if not task:
+        return JSONResponse(status_code=404, content={"ok": False, "message": "Task not found."})
+    return {"ok": True, "task": task}
+
+@app.post("/api/servers/{server_id}/services/rescan")
+@app.post("/api/assets/{server_id}/services/rescan")
+async def api_rescan_services(server_id: int, request: Request):
+    client_ip = request.client.host if request.client else None
+    user = get_session_user(request)
+    uname = user.get("username", "anonymous") if user else "anonymous"
+
+    if not is_admin_user(request):
+        db.log_audit(uname, "DENIED", "server", server_id, "Non-admin attempted service rescan", ip_address=client_ip)
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
+
+    has_access, err_msg = verify_server_project_scope(server_id, request)
+    if not has_access:
+        db.log_audit(uname, "DENIED", "server", server_id, f"Project boundary violation: {err_msg}", ip_address=client_ip)
+        return JSONResponse(status_code=403, content={"ok": False, "message": err_msg})
+
+    task_id = db.create_agent_task(
+        server_id=server_id,
+        action="rescan",
+        service_id="all",
+        managed_by="systemd",
+        created_by=uname
+    )
+    db.log_audit(uname, "SERVICE_RESCAN_REQUESTED", "server", server_id, "Triggered service discovery rescan", ip_address=client_ip)
+    return {"ok": True, "task_id": task_id, "message": "Service rescan dispatched to agent."}
+
+@app.post("/api/servers/{server_id}/services/pin")
+@app.post("/api/assets/{server_id}/services/pin")
+async def api_pin_service(server_id: int, request: Request):
+    client_ip = request.client.host if request.client else None
+    user = get_session_user(request)
+    uname = user.get("username", "anonymous") if user else "anonymous"
+
+    if not is_admin_user(request):
+        db.log_audit(uname, "DENIED", "server", server_id, "Non-admin attempted to pin service", ip_address=client_ip)
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
+
+    try: body = await request.json()
+    except Exception: body = {}
+    s_obj = body.get("service") or {}
+    s_name = s_obj.get("name") or s_obj.get("unit_name")
+    if not s_name:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Service details required."})
+
+    managed = db.get_managed_services(server_id)
+    managed = [s for s in managed if s.get("name", "").lower() != s_name.lower()]
+    managed.append({
+        "name": s_name,
+        "user": s_obj.get("user") or "root",
+        "path": s_obj.get("cmdline") or s_obj.get("unit_name") or "",
+        "unit_name": s_obj.get("unit_name"),
+        "managed_by": s_obj.get("managed_by", "systemd"),
+        "restart_cmd": s_obj.get("restart_cmd") or ""
+    })
+    db.save_managed_services(server_id, managed)
+    db.log_audit(uname, "PIN_MANAGED_SERVICE", "server", server_id, f"Pinned service '{s_name}' to managed playbook", ip_address=client_ip)
+    return {"ok": True, "services": managed, "message": f"Pinned '{s_name}' to managed services."}
+
 @app.get("/api/servers/{server_id}/services")
 @app.get("/api/assets/{server_id}/services")
 async def api_get_services(server_id: int):
@@ -7602,6 +8265,9 @@ async def api_get_services(server_id: int):
 @app.post("/api/assets/{server_id}/services")
 async def api_add_service(server_id: int, request: Request):
     if not is_admin_user(request):
+        uname = request.session.get('username', 'anonymous')
+        client_ip = request.client.host if request.client else None
+        db.log_audit(uname, 'DENIED', 'server', server_id, "Non-admin attempted to add managed service", ip_address=client_ip)
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     body = await request.json()
     name = body.get("name", "").strip()
@@ -7632,6 +8298,9 @@ async def api_add_service(server_id: int, request: Request):
 @app.delete("/api/assets/{server_id}/services/{service_name}")
 async def api_delete_service(server_id: int, service_name: str, request: Request):
     if not is_admin_user(request):
+        uname = request.session.get('username', 'anonymous')
+        client_ip = request.client.host if request.client else None
+        db.log_audit(uname, 'DENIED', 'server', server_id, f"Non-admin attempted to delete managed service '{service_name}'", ip_address=client_ip)
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     services = db.get_managed_services(server_id)
     services = [s for s in services if s.get("name", "").lower() != service_name.lower()]
@@ -7646,6 +8315,9 @@ async def api_delete_service(server_id: int, service_name: str, request: Request
 @app.post("/api/assets/{server_id}/restart-services")
 async def api_restart_all_services(server_id: int, request: Request):
     if not is_admin_user(request):
+        uname = request.session.get('username', 'anonymous')
+        client_ip = request.client.host if request.client else None
+        db.log_audit(uname, 'DENIED', 'server', server_id, "Non-admin attempted to run restart playbook", ip_address=client_ip)
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     results = db.restart_managed_services(server_id)
     uname = request.session.get('username', 'system')
@@ -7656,6 +8328,9 @@ async def api_restart_all_services(server_id: int, request: Request):
 @app.post("/api/assets/{server_id}/services/{service_name}/restart")
 async def api_restart_single_service(server_id: int, service_name: str, request: Request):
     if not is_admin_user(request):
+        uname = request.session.get('username', 'anonymous')
+        client_ip = request.client.host if request.client else None
+        db.log_audit(uname, 'DENIED', 'server', server_id, f"Non-admin attempted to restart service '{service_name}'", ip_address=client_ip)
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     results = db.restart_managed_services(server_id, service_name=service_name)
     return {"ok": True, "results": results}
