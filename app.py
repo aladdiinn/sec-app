@@ -9926,6 +9926,20 @@ def api_app_events(request: Request, payload: dict = Body(...)):
         m = TOMCAT_ACCESS_RE.match(raw_line)
         if m:
             if is_noise_tomcat_access_log(raw_line):
+                try:
+                    import s3_archiver
+                    c_ip = m.group("ip").split(",")[0].strip()
+                    s3_archiver.enqueue_direct_log_to_s3(
+                        server_id=None,
+                        application_id=actual_app_id,
+                        log_type="access",
+                        source=f"app_{actual_app_id}/tomcat_access",
+                        message=raw_line,
+                        server_ip=c_ip or client_ip,
+                        hostname=node_name or f"app-{actual_app_id}"
+                    )
+                except Exception:
+                    pass
                 continue
             c_ip = m.group("ip").split(",")[0].strip()
             user = m.group("user")
@@ -9982,6 +9996,19 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                 is_error_probe = bool(status_code and status_code >= 400)
                 # Skip routine 2xx/3xx access hits from SQL database to preserve storage; full stream is archived to S3.
                 if not is_error_probe and status_code and status_code < 400:
+                    try:
+                        import s3_archiver
+                        s3_archiver.enqueue_direct_log_to_s3(
+                            server_id=None,
+                            application_id=actual_app_id,
+                            log_type="access",
+                            source=f"app_{actual_app_id}/tomcat_access",
+                            message=raw_line,
+                            server_ip=c_ip or client_ip,
+                            hostname=node_name or f"app-{actual_app_id}"
+                        )
+                    except Exception:
+                        pass
                     continue
 
             user_val = user if user != "-" else None
@@ -10020,6 +10047,19 @@ def api_app_events(request: Request, payload: dict = Body(...)):
             "at org.apache.catalina", "at org.apache.coyote", "at org.apache.tomcat",
             "jar was scanned for tlds", "sessionlistener", "cookie processor"
         ]):
+            try:
+                import s3_archiver
+                s3_archiver.enqueue_direct_log_to_s3(
+                    server_id=None,
+                    application_id=actual_app_id,
+                    log_type="catalina",
+                    source=f"app_{actual_app_id}/catalina.out",
+                    message=raw_line,
+                    server_ip=client_ip,
+                    hostname=node_name or f"app-{actual_app_id}"
+                )
+            except Exception:
+                pass
             continue
 
         ev_type = "APP_LOG"
@@ -10082,6 +10122,19 @@ def api_app_events(request: Request, payload: dict = Body(...)):
             rule_title = "Application Runtime Exception"
         elif "exception" in cat_lower:
             if any(fw in cat_lower for fw in ("org.apache.", "java.lang.", "java.util.", "classnotfound")):
+                try:
+                    import s3_archiver
+                    s3_archiver.enqueue_direct_log_to_s3(
+                        server_id=None,
+                        application_id=actual_app_id,
+                        log_type="catalina",
+                        source=f"app_{actual_app_id}/catalina.out",
+                        message=raw_line,
+                        server_ip=client_ip,
+                        hostname=node_name or f"app-{actual_app_id}"
+                    )
+                except Exception:
+                    pass
                 continue
             ev_type = "APP_EXCEPTION"
             sev = "info"
@@ -10091,6 +10144,19 @@ def api_app_events(request: Request, payload: dict = Body(...)):
             sev = "info"
 
         if ev_type in ("APP_LOG", "APP_WARN", "APP_EXCEPTION") and sev == "info" and not cat_user and not cat_ip:
+            try:
+                import s3_archiver
+                s3_archiver.enqueue_direct_log_to_s3(
+                    server_id=None,
+                    application_id=actual_app_id,
+                    log_type="catalina",
+                    source=f"app_{actual_app_id}/catalina.out",
+                    message=raw_line,
+                    server_ip=client_ip,
+                    hostname=node_name or f"app-{actual_app_id}"
+                )
+            except Exception:
+                pass
             continue
 
         payload_json = psycopg2.extras.Json(ev) if sev in ("medium", "high", "critical") else None
