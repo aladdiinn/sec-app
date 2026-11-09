@@ -9784,8 +9784,14 @@ def evaluate_postgres_security_event(raw_line: str):
         return "DB_DESTRUCTIVE_DDL", "critical", "Destructive Database DDL Command (DROP/TRUNCATE)", "T1485 - Data Destruction", db_user, db_name, level
 
     # 3. Privilege Escalation / Superuser Grants
-    if re.search(r'statement:\s*(GRANT\s+ALL|ALTER\s+USER.*SUPERUSER|CREATE\s+USER.*SUPERUSER)', msg, re.IGNORECASE):
+    # True privilege escalation: altering/creating superusers, granting OS execution roles, or database takeover
+    if re.search(r'statement:\s*(?:ALTER|CREATE)\s+(?:USER|ROLE).*SUPERUSER', msg, re.IGNORECASE) or \
+       re.search(r'statement:\s*GRANT\s+(?:pg_execute_server_program|pg_read_server_files|pg_write_server_files)', msg, re.IGNORECASE) or \
+       re.search(r'statement:\s*GRANT\s+ALL\s+PRIVILEGES\s+ON\s+DATABASE', msg, re.IGNORECASE):
         return "DB_PRIVILEGE_ESCALATION", "critical", "Database Superuser Privilege Escalation", "T1078 - Valid Accounts", db_user, db_name, level
+    elif re.search(r'statement:\s*GRANT\s+ALL', msg, re.IGNORECASE):
+        # Routine internal maintenance (e.g. GRANT ALL ON ALL TABLES IN SCHEMA public TO app_user)
+        return "DB_MAINTENANCE", "info", "Routine Database Schema Permission Sync", "Benign Maintenance", db_user, db_name, level
 
     # 4. Connection pool starvation / DoS
     if "remaining connection slots are reserved" in msg_lower or "too many connections" in msg_lower:
