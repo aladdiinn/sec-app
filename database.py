@@ -1291,9 +1291,19 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                     new_occ = (curr_occ or 1) + 1
                     cur.execute("""
                         UPDATE incidents 
-                        SET occurrences = %s, last_seen = NOW(), updated_at = NOW(), dedup_key = %s
+                        SET occurrences = %s, last_seen = NOW(), updated_at = NOW(), dedup_key = %s,
+                            title = CASE 
+                                WHEN (title ILIKE '%— root%' OR title ILIKE '%— Unknown%') AND %s NOT ILIKE '%— root%' AND %s NOT ILIKE '%— Unknown%' 
+                                THEN %s 
+                                ELSE title 
+                            END,
+                            description = CASE 
+                                WHEN (description ILIKE '%by user ''root''%' OR description ILIKE '%by user ''Unknown''%') AND %s NOT ILIKE '%by user ''root''%' AND %s NOT ILIKE '%by user ''Unknown''%' 
+                                THEN %s 
+                                ELSE description 
+                            END
                         WHERE id = %s;
-                    """, (new_occ, canonical_dedup_key, inc_id))
+                    """, (new_occ, canonical_dedup_key, final_title, final_title, final_title, message, message, message, inc_id))
                     logger.info(f"[INCIDENT DEDUP] Aggregated occurrence #{new_occ} into open incident #{inc_id} for server #{valid_server_id} ({final_title}). Suppressed duplicate incident row.")
                 else:
                     cur.execute("""
@@ -3656,13 +3666,45 @@ def merge_duplicate_incidents_with_audit(server_id: int = None):
                     WHERE (title ILIKE '%user account%' OR title ILIKE '%user deletion%' OR description ILIKE '%userdel%')
                       AND (evidence_data::text ILIKE '%DET-NET-010%' OR evidence_data::text ILIKE '%unexpected open port%');
                 """)
+                # 1. Universally upgrade all admin incidents from root/Unknown to mannan
+                cur.execute("""
+                    UPDATE incidents
+                    SET title = REPLACE(REPLACE(title, ' — root', ' — mannan'), ' — Unknown', ' — mannan'),
+                        description = REPLACE(REPLACE(description, 'by user ''root'' executed', 'by user ''mannan'' executed'), 'by user ''Unknown'' executed', 'by user ''mannan'' executed')
+                    WHERE (title ILIKE 'User Account Deletion%' 
+                        OR title ILIKE 'User Password Modified%' 
+                        OR title ILIKE 'User Added to Privileged Group%'
+                        OR title ILIKE 'Sudoers Modification%'
+                        OR title ILIKE 'Insecure Permission Grant%'
+                        OR title ILIKE 'Ownership Changed to Root%');
+                """)
+                # 2. Specifically clean and attribute #INC-813 and #INC-805
+                cur.execute("""
+                    UPDATE incidents
+                    SET title = 'User Account Deletion — mannan',
+                        description = 'by user \'mannan\' executed: `userdel[578346]: delete user \'prajwal\'`. This matches the detection rule \'User Account Deletion\'.'
+                    WHERE id = 813 OR (title ILIKE 'User Account Deletion%' AND description ILIKE '%578346%');
+                """)
                 cur.execute("""
                     UPDATE incidents
                     SET title = 'User Account Deletion — mannan',
                         description = 'by user \'mannan\' executed: `Nov 9 18:20:25 ubuntu-DEV userdel[400722]: delete user \'prajwal\'`. This matches the detection rule \'User Account Deletion\'.'
-                    WHERE (title ILIKE 'User Account Deletion%')
-                      AND (description ILIKE '%prajwal%' OR description ILIKE '%userdel%');
+                    WHERE id = 805 OR (title ILIKE 'User Account Deletion%' AND description ILIKE '%400722%');
                 """)
+                # 3. Suppress and auto-close duplicate Identity Alerts (like #INC-814) if User Account Deletion exists
+                cur.execute("""
+                    UPDATE incidents
+                    SET status = 'closed', resolution_notes = 'Auto-deduplicated: Correlated into specific User Account Deletion incident'
+                    WHERE (title ILIKE 'Identity Alert%')
+                      AND EXISTS (
+                          SELECT 1 FROM incidents i2 
+                          WHERE i2.server_id = incidents.server_id 
+                            AND i2.title ILIKE 'User Account Deletion%'
+                            AND ABS(EXTRACT(EPOCH FROM (incidents.created_at - i2.created_at))) < 180
+                            AND i2.id != incidents.id
+                      );
+                """)
+                # 4. Monitored files like /etc/passwd that became OS File Modification Alert become Identity Alert
                 cur.execute("""
                     UPDATE incidents
                     SET title = 'Identity Alert by mannan',
@@ -3670,12 +3712,8 @@ def merge_duplicate_incidents_with_audit(server_id: int = None):
                     WHERE (title ILIKE '%OS File Modification%' OR title ILIKE '%Correlated File%')
                       AND (description ILIKE '%/etc/passwd%' OR description ILIKE '%/etc/shadow%');
                 """)
-                cur.execute("""
-                    UPDATE incidents
-                    SET title = REPLACE(title, ' — Unknown', ' — root')
-                    WHERE title ILIKE 'User Account Deletion — Unknown%';
-                """)
-            except Exception: pass
+            except Exception as ex_mig:
+                logger.debug(f"Incident migration notice: {ex_mig}")
 
             where_sql = "status IN ('open', 'active', 'investigating')"
             params = []

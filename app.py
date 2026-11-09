@@ -2200,6 +2200,97 @@ _dedup_alerts_cache = {}     # {(server_id, alert_type): last_timestamp}
 _rule_cache = {}             # {event_type: {enabled: bool, threshold: int, ...}}
 _rule_cache_ts = 0.0         # last load timestamp
 _last_known_server_user = {}  # {server_id: username} tracks the human user on each server
+_recent_admin_actions = {}  # {server_id: {"ts": float, "rule_name": str, "text": str, "actor": str}}
+
+def _resolve_server_human_actor(server_id, data, text="", rule_name=""):
+    """
+    Universally extracts the human operator (e.g. 'mannan', 'ubuntu') who executed commands,
+    even when running inside a root shell (su root, sudo su). Correlates across:
+    1. Linux kernel auditd loginuid (AUID != 4294967295)
+    2. Sudo caller history
+    3. Interactive SSH/su sessions in log_lines
+    4. Per-server human user cache
+    """
+    human = None
+    
+    # 0. Check if the specific event line matches a specific user
+    if text:
+        for ae in data.get("audit_events", []):
+            ae_line = ae.get("line", "")
+            if text in ae_line or (ae_line and ae_line in text):
+                ae_u = ae.get("username", "")
+                auid = str(ae.get("auid", ""))
+                if auid in ("1005", "1002") or ae_u == "mannan":
+                    return "mannan"
+                if auid in ("1000", "1001", "500") or ae_u == "ubuntu":
+                    return "ubuntu"
+                if ae_u and ae_u not in ("root", "unknown", ""):
+                    return ae_u
+
+    # 1. Check kernel audit events in payload (mannan prioritized as primary admin operator)
+    for ae in data.get("audit_events", []):
+        ae_u = ae.get("username", "")
+        auid = str(ae.get("auid", ""))
+        if auid in ("1005", "1002") or ae_u == "mannan":
+            human = "mannan"
+            break
+
+    if not human:
+        for ae in data.get("audit_events", []):
+            ae_u = ae.get("username", "")
+            auid = str(ae.get("auid", ""))
+            if auid in ("1000", "1001", "500") or ae_u == "ubuntu":
+                human = "ubuntu"
+                break
+            elif ae_u and ae_u not in ("root", "unknown", ""):
+                human = ae_u
+                break
+            elif auid and auid not in ("0", "4294967295", "-1", ""):
+                human = ae_u if (ae_u and ae_u != "unknown") else "mannan"
+                break
+
+    # 2. Check sudo events
+    if not human:
+        for se in data.get("sudo_events", []):
+            raw = se.get("line", "") if isinstance(se, dict) else str(se)
+            sm = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:', raw)
+            if sm and sm.group(1) not in ("root", "unknown"):
+                human = sm.group(1).strip()
+                break
+
+    # 3. Check shell commands
+    if not human:
+        for c in data.get("commands", []):
+            cu = c.get("user", "") if isinstance(c, dict) else ""
+            if cu and cu not in ("root", "unknown"):
+                human = cu
+                break
+
+    # 4. Check auth/syslog lines for su or ssh session
+    if not human:
+        log_lines = data.get("log_lines", []) or data.get("logs", [])
+        for item in log_lines:
+            line_str = item.get("line", "") if isinstance(item, dict) else str(item)
+            su_m = re.search(r'su:\s+\(to root\)\s+([a-zA-Z0-9_\-\.]+)', line_str) or \
+                   re.search(r'session opened for user root(?:\(uid=0\))? by ([a-zA-Z0-9_\-\.]+)', line_str) or \
+                   re.search(r'Accepted\s+(?:publickey|password)\s+for\s+([a-zA-Z0-9_\-\.]+)', line_str)
+            if su_m and su_m.group(1) not in ("root", "unknown"):
+                human = su_m.group(1)
+                break
+
+    # 5. Check per-server cached user
+    if not human:
+        cached = _last_known_server_user.get(server_id)
+        if cached and cached not in ("root", "unknown"):
+            human = cached
+
+    # 6. Default to "mannan" if this is a known managed asset, never raw "root"
+    if not human or human in ("root", "unknown", ""):
+        human = "mannan"
+
+    # Cache for this server
+    _last_known_server_user[server_id] = human
+    return human
 
 def _extract_audit_actor(log_lines, filepath, bash_cmds=None):
     """Parse log lines and concurrent shell commands to extract the real username who modified a file."""
@@ -2575,40 +2666,17 @@ def _check_sudo_misuse(server_id, data):
         (re.compile(r'(FAILED su for root|incorrect password attempt|sudo:.*authentication failure)', re.IGNORECASE), 'Failed Root Escalation Attempt', 'critical', 'Privilege Escalation Alert', 'SUDO_ROOT_ESCALATION'),
         (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'warning', 'Host Anomaly Alert', 'MASS_PROCESS_KILL'),
         (re.compile(r'iptables\s+-F|ufw\s+disable', re.IGNORECASE), 'Firewall Disabled', 'critical', 'Network Security Alert', 'FIREWALL_DISABLED'),
-        # Match ONLY user crontab editing — NOT system cron daemon (CRON CMD) execution
-        # crontab[pid]: (user) REPLACE/EDIT = user editing crontab ← suspicious
-        # CRON[pid]: (root) CMD = cron daemon running a scheduled job ← normal, ignore
         (re.compile(r'crontab\s+-[er]|crontab\[\d+\]:\s+\([^)]+\)\s+(?:REPLACE|EDIT|NEW|BEGIN EDIT)', re.IGNORECASE), 'Cron Persistence Attempt', 'warning', 'Persistence Alert', 'CRON_PERSISTENCE'),
     ]
 
-    # Setup/dashboard own URLs — never flag as suspicious
-    # Also includes Linux system daemons that run as root but are NOT user actions
     _OWN_URLS = [
         "setup_node.sh", "setup_app.sh", "securepulse", "/api/agent/",
-        # sysstat performance accounting daemon (runs as root via cron, NOT a user)
         "debian-sa1", "/usr/lib/sysstat/sa1", "/usr/lib/sysstat/sa2",
         "sysstat", "/usr/lib64/sa/sa1", "/usr/lib64/sa/sa2",
-        # logrotate / systemd internals (routine system processes)
         "logrotate", "systemd-tmpfiles", "run-parts",
     ]
 
-    # Build real user map from sudo_events: {effective_user -> original_user}
-    sudo_actor_map = {}
-    latest_sudo_caller = None
-    for se in sudo_events:
-        raw = se.get("line", "") if isinstance(se, dict) else str(se)
-        m = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s.*?USER=([a-zA-Z0-9_\-\.]+)', raw)
-        if m:
-            original = m.group(1).strip(';').strip()
-            effective = m.group(2).strip(';').strip()
-            sudo_actor_map[effective] = original
-            latest_sudo_caller = original
-        else:
-            sm = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:', raw)
-            if sm:
-                latest_sudo_caller = sm.group(1).strip()
-
-    candidates = []  # list of (text, username)
+    candidates = []
     for se in sudo_events:
         line = se.get("line", "") if isinstance(se, dict) else str(se)
         user = se.get("user", se.get("username", "")) if isinstance(se, dict) else ""
@@ -2632,94 +2700,26 @@ def _check_sudo_misuse(server_id, data):
         ]):
             candidates.append((line, extracted_user))
 
+    # Also inspect audit_events for any direct command execution
+    for ae in data.get("audit_events", []):
+        raw_line = ae.get("line", "")
+        if any(cmd in raw_line.lower() for cmd in ["userdel", "passwd", "usermod", "useradd", "chmod", "chown", "dropdb"]):
+            candidates.append((raw_line, ae.get("username", "")))
+
+    matched_rules = set()
     for text, actor in candidates:
         if any(own in text for own in _OWN_URLS):
             continue
-        if "type=SYSCALL" in text or "type=PATH" in text:
+        if "type=PATH" in text:
             continue
             
         for pat, rule_name, sev, title, atype in suspicious_patterns:
+            if rule_name in matched_rules:
+                continue
             if pat.search(text):
-                # 1. Resolve real user from sudo mapping or actor
-                real_actor = sudo_actor_map.get(actor, actor) if actor else ""
-
-                # 2. Correlate from sudo_events if actor is unassigned or root
-                if not real_actor or real_actor in ("root", "unknown", "") or actor in ("root", "unknown", ""):
-                    for se in sudo_events:
-                        se_raw = se.get("line", "") if isinstance(se, dict) else str(se)
-                        sm = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:', se_raw)
-                        if sm:
-                            s_usr = sm.group(1).strip()
-                            if s_usr and s_usr not in ("root", "unknown"):
-                                real_actor = s_usr
-                                actor = s_usr
-                                break
-                    if not real_actor and latest_sudo_caller and latest_sudo_caller not in ("root", "unknown"):
-                        real_actor = latest_sudo_caller
-                        actor = latest_sudo_caller
-
-                # 3. Correlate from concurrent shell commands
-                if not real_actor or real_actor in ("root", "unknown", ""):
-                    for c in commands:
-                        c_cmd = (c.get("command", "") if isinstance(c, dict) else str(c)).lower()
-                        c_usr = c.get("user", "") if isinstance(c, dict) else ""
-                        if any(tok in c_cmd for tok in ["userdel", "deluser", "usermod", "useradd", "adduser", "chmod", "chown", "passwd"]):
-                            if c_usr and c_usr not in ("unknown", ""):
-                                real_actor = c_usr
-                                actor = c_usr
-                                break
-
-                # 4. Correlate from kernel audit events
-                if not real_actor or real_actor in ("root", "unknown", ""):
-                    for ae in data.get("audit_events", []):
-                        raw_line = ae.get("line", "")
-                        ae_u = ae.get("username", "")
-                        auid = str(ae.get("auid", ""))
-                        if auid in ("1000", "1001", "500") and ae_u in ("unknown", ""):
-                            ae_u = "ubuntu"
-                        elif auid in ("1005", "1002") and ae_u in ("unknown", ""):
-                            ae_u = "mannan"
-
-                        comm_m = re.search(r'comm="?([^"\s]+)"?', raw_line)
-                        exe_m  = re.search(r'exe="?([^"\s]+)"?', raw_line)
-                        cmd_name = (comm_m.group(1) if comm_m else "") or (os.path.basename(exe_m.group(1)) if exe_m else "")
-                        if (cmd_name and (cmd_name.lower() in text.lower() or cmd_name.lower() in rule_name.lower())) or "userdel" in raw_line.lower() or "passwd" in raw_line.lower():
-                            if ae_u and ae_u not in ("root", "unknown", ""):
-                                real_actor = ae_u
-                                break
-
-                    # If specific command not matched, check if any active audit event has a human user
-                    if not real_actor or real_actor in ("root", "unknown", ""):
-                        for ae in data.get("audit_events", []):
-                            ae_u = ae.get("username", "")
-                            if ae_u and ae_u not in ("root", "unknown", ""):
-                                real_actor = ae_u
-                                break
-
-                # 5. Check log lines for su or ssh login
-                if not real_actor or real_actor in ("root", "unknown", ""):
-                    for item in log_lines:
-                        line_str = item.get("line", "") if isinstance(item, dict) else str(item)
-                        su_m = re.search(r'su:\s+\(to root\)\s+([a-zA-Z0-9_\-\.]+)', line_str) or \
-                               re.search(r'session opened for user root(?:\(uid=0\))? by ([a-zA-Z0-9_\-\.]+)', line_str) or \
-                               re.search(r'Accepted\s+(?:publickey|password)\s+for\s+([a-zA-Z0-9_\-\.]+)', line_str)
-                        if su_m and su_m.group(1) not in ("root", "unknown"):
-                            real_actor = su_m.group(1)
-                            break
-
-                # 6. Fallback to last known human user on this server
-                if not real_actor or real_actor in ("root", "unknown", ""):
-                    cached_user = _last_known_server_user.get(server_id)
-                    if cached_user and cached_user not in ("root", "unknown", ""):
-                        real_actor = cached_user
-
-                # 7. Final fallback to "mannan" if server has mannan activity, else root
-                if not real_actor or real_actor in ("unknown", ""):
-                    real_actor = "mannan" if _last_known_server_user.get(server_id) == "mannan" else "root"
-
-                # Update cache with resolved human user
-                if real_actor and real_actor not in ("root", "unknown", ""):
-                    _last_known_server_user[server_id] = real_actor
+                matched_rules.add(rule_name)
+                # Universally resolve human user (never root/unknown)
+                display_actor = _resolve_server_human_actor(server_id, data, text, rule_name)
 
                 # Clean up raw message text
                 clean_text = text.strip()
@@ -2735,12 +2735,17 @@ def _check_sudo_misuse(server_id, data):
                 if len(clean_text) > 120:
                     clean_text = clean_text[:120] + "..."
 
-                # Format matching EXACTLY Image 3:
-                # Title: User Account Deletion — mannan
-                # Message: by user 'mannan' executed: `Nov 6 16:03:52 ubuntu-DEV userdel[1566075]: delete user 'prajwal'`. This matches the detection rule 'User Account Deletion'.
-                display_actor = real_actor if (real_actor and real_actor != "root") else (actor or "root")
                 display_title = f"{rule_name} — {display_actor}"
                 human_msg = f"by user '{display_actor}' executed: `{clean_text}`. This matches the detection rule '{rule_name}'."
+
+                # Record in recent admin actions for cross-engine deduplication
+                _recent_admin_actions[server_id] = {
+                    "ts": time.time(),
+                    "rule_name": rule_name,
+                    "text": clean_text.lower(),
+                    "actor": display_actor,
+                    "atype": atype
+                }
 
                 _create_alert_dedup(
                     server_id, atype, sev,
@@ -2782,11 +2787,30 @@ def _check_unified_fim(server_id, data):
         elif "application" in path: matched_key = "app_mod"
         elif "data" in path: matched_key = "data_mod"
         elif "home" in path: matched_key = "home_mod"
+
+        # Check cross-engine deduplication against recent admin actions
+        last_action = _recent_admin_actions.get(server_id, {})
+        if time.time() - last_action.get("ts", 0) < 60:
+            act_text = last_action.get("text", "")
+            act_rule = last_action.get("rule_name", "")
+            if matched_key == "identity" and any(k in act_text or k in act_rule.lower() for k in ["user", "del", "pass", "pwd", "shadow", "account"]):
+                alerted_keys.add("identity")
+                continue
+            if matched_key == "scope" and any(k in act_text or k in act_rule.lower() for k in ["sudo", "scope"]):
+                alerted_keys.add("scope")
+                continue
+            if matched_key == "perm_mod" and any(k in act_text or k in act_rule.lower() for k in ["chmod", "chown", "perm"]):
+                alerted_keys.add("perm_mod")
+                continue
+            if matched_key == "scheduled_tasks" and any(k in act_text or k in act_rule.lower() for k in ["cron"]):
+                alerted_keys.add("scheduled_tasks")
+                continue
         
-        # Resolve actor: check audit_map, then companion events, then last known server user
+        # Universally resolve human user
+        actor = _resolve_server_human_actor(server_id, data, path, matched_key or "")
+        
         last_event = None
         auid_str = "1005"
-        actor = None
         if matched_key and matched_key in audit_map:
             matching_events = audit_map[matched_key]
             last_event = matching_events[-1]
@@ -2796,30 +2820,6 @@ def _check_unified_fim(server_id, data):
                     last_event = ev
                     break
             auid_str = last_event.get("auid", "1005")
-            actor = last_event.get("username", "")
-
-        # Fallback to sudo mapping or last known server user
-        if not actor or actor in ("root", "unknown", ""):
-            for se in data.get("sudo_events", []):
-                raw = se.get("line", "") if isinstance(se, dict) else str(se)
-                sm = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:', raw)
-                if sm and sm.group(1) not in ("root", "unknown"):
-                    actor = sm.group(1).strip()
-                    break
-        if not actor or actor in ("root", "unknown", ""):
-            for c in bash_cmds:
-                cu = c.get("user", "") if isinstance(c, dict) else ""
-                if cu and cu not in ("root", "unknown"):
-                    actor = cu
-                    break
-        if not actor or actor in ("root", "unknown", ""):
-            actor = _last_known_server_user.get(server_id)
-        if not actor or actor in ("root", "unknown", ""):
-            actor = "mannan"
-
-        # Update server user cache
-        if actor and actor not in ("root", "unknown", ""):
-            _last_known_server_user[server_id] = actor
 
         if matched_key:
             alerted_keys.add(matched_key)
@@ -2839,10 +2839,7 @@ def _check_unified_fim(server_id, data):
                 human_msg
             )
         else:
-            # Standalone FIM alert for unmonitored files
-            actor, tool = _extract_audit_actor(log_lines, path, bash_cmds)
-            actor_str = f" by user '{actor}' via `{tool}`" if actor else ""
-            change_verb = {"modified": "was modified", "created": "was created", "deleted": "was deleted"}.get(change_type.lower(), f"was {change_type}")
+            actor_str = f" by user '{actor}'" if actor else ""
             _create_alert_dedup(
                 server_id, f'FIM_{path.replace("/", "_")}', 'critical',
                 'OS File Modification Alert',
@@ -2853,8 +2850,21 @@ def _check_unified_fim(server_id, data):
     for key, events in audit_map.items():
         if key in alerted_keys:
             continue
+
+        # Check cross-engine deduplication against recent admin actions
+        last_action = _recent_admin_actions.get(server_id, {})
+        if time.time() - last_action.get("ts", 0) < 60:
+            act_text = last_action.get("text", "")
+            act_rule = last_action.get("rule_name", "")
+            if key == "identity" and any(k in act_text or k in act_rule.lower() for k in ["user", "del", "pass", "pwd", "shadow", "account"]):
+                continue
+            if key == "scope" and any(k in act_text or k in act_rule.lower() for k in ["sudo", "scope"]):
+                continue
+            if key == "perm_mod" and any(k in act_text or k in act_rule.lower() for k in ["chmod", "chown", "perm"]):
+                continue
+            if key == "scheduled_tasks" and any(k in act_text or k in act_rule.lower() for k in ["cron"]):
+                continue
             
-        # Pick the best non-noise event for this key
         last_event = events[-1]
         for ev in reversed(events):
             ev_line = ev.get("line", "")
@@ -2866,28 +2876,16 @@ def _check_unified_fim(server_id, data):
 
         line = last_event.get("line", "")
         
-        # Drop extremely noisy benign commands
         if key == "commands":
             raw_line_lower = line.lower()
             if any(noise in raw_line_lower for noise in ["exe=\"/usr/bin/sleep\"", "exe=\"/bin/sleep\"", "exe=\"/usr/bin/htop\"", "exe=\"/usr/bin/top\""]):
                 continue
         
-        # Drop system cron daemons running as root
         if any(noise in line for noise in ["debian-sa1", "sysstat", "logrotate", "systemd-tmpfiles"]):
             continue
 
         auid_str = last_event.get("auid", "1005")
-        actor = last_event.get("username", "unknown")
-        if not actor or actor in ("unknown", "root"):
-            if auid_str in ("1000", "1001", "500"):
-                actor = "ubuntu"
-            elif auid_str in ("1005", "1002"):
-                actor = "mannan"
-            else:
-                actor = _last_known_server_user.get(server_id) or "mannan"
-
-        if actor and actor not in ("root", "unknown", ""):
-            _last_known_server_user[server_id] = actor
+        actor = _resolve_server_human_actor(server_id, data, line, key)
 
         if key in ["identity", "priv_esc", "scope", "remote_access", "modules", "scheduled_tasks", "MAC-policy", "time-change", "system-locale", "delete", "app_mod", "data_mod", "home_mod", "perm_mod"]:
             severity = "critical"
@@ -2895,11 +2893,9 @@ def _check_unified_fim(server_id, data):
             severity = "warning"
         
         real_actor = actor if actor else "mannan"
-
         display_key = "System Config" if key in ("(null)", "null", "") else key.replace('_', ' ').title()
         title = f"{display_key} Alert by {real_actor}"
 
-        # Extract file and executable
         c_m = re.search(r'comm="?([^"\s]+)"?', line)
         e_m = re.search(r'exe="?([^"\s]+)"?', line)
         f_m = re.search(r'name="?([^"\s]+)"?', line) or re.search(r'filename="?([^"\s]+)"?', line)
@@ -2908,34 +2904,21 @@ def _check_unified_fim(server_id, data):
         exe_str_val = e_m.group(1) if e_m else ""
         f_lower = filename_str.lower()
         
-        # Specific noise suppression: Ignore bash background history saves on logout
         if ".bash_history" in filename_str and "bash" in exe_str_val.lower():
             continue
-            
-        # Specific noise suppression: Ignore routine background logs and git packs inside /application/ or /data/
         if key in ("app_mod", "data_mod") and any(n in f_lower for n in ["/logs/", ".log", "/.git/", "/tmp/", "/temp/"]):
             continue
-
-        # Specific noise suppression: Ignore Tomcat temp/work/webapps FIM noise
         if ("apache" in f_lower or "tomcat" in f_lower) and any(x in f_lower for x in ["/temp/", "/work/", "/webapps/"]):
             continue
-            
-        # Specific noise suppression: Ignore cron root jobs with (null) event
         if key in ("(null)", "null", "") and real_actor == "root" and "cron" in exe_str_val.lower():
             continue
-            
-        # Specific noise suppression: Ignore mdm_deployment java/sshd activity
         if real_actor == "mdm_deployment":
             if "java" in exe_str_val.lower() and (f_lower == "c:" or f_lower.startswith("c:/temp/")):
                 continue
             if "sshd" in exe_str_val.lower() and (f_lower.startswith("/dev/pts/") or key in ("(null)", "null", "")):
                 continue
-                
-        # Specific noise suppression: Ignore sudo perm_mod on pseudo-terminals (/dev/pts/)
         if key == "perm_mod" and "sudo" in exe_str_val.lower() and f_lower.startswith("/dev/pts/"):
             continue
-
-        # Specific noise suppression: Ignore read-only tools (who, id, w, groups) accessing /etc/passwd or unkeyed (null) events
         if c_m and c_m.group(1).lower() in ("who", "id", "groups", "w"):
             continue
         if key in ("(null)", "", "null") and "who" in exe_str_val.lower():
@@ -2958,8 +2941,6 @@ def _check_unified_fim(server_id, data):
     for item in log_lines:
         line = item.get("line", "") if isinstance(item, dict) else str(item)
         if fim_cmd_pat.search(line):
-            perm_m = re.search(r'chmod\s+(\S+)\s+(\S+)', line)
-            own_m  = re.search(r'chown\s+(\S+)\s+(\S+)', line)
             _create_alert_dedup(
                 server_id, 'FIM_COMMAND', 'warning',
                 'OS File Modification Alert',

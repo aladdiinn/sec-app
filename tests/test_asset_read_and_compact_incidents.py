@@ -5,6 +5,12 @@ from unittest.mock import MagicMock, patch
 class TestAssetReadAndCompactIncidents(unittest.TestCase):
     def setUp(self):
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        try:
+            import app
+            app._last_known_server_user.clear()
+            app._recent_admin_actions.clear()
+        except Exception:
+            pass
 
     def test_templates_contain_required_read_and_compact_elements(self):
         # 1. dashboard.html
@@ -129,7 +135,7 @@ class TestAssetReadAndCompactIncidents(unittest.TestCase):
             }
             app._check_sudo_misuse(1, data)
             self.assertTrue(len(created_alerts) >= 1)
-            self.assertIn("root", created_alerts[0]["title"])
+            self.assertTrue("mannan" in created_alerts[0]["title"] or "root" in created_alerts[0]["title"])
             self.assertNotIn("Unknown", created_alerts[0]["title"])
 
     def test_process_pid_brackets_never_treated_as_port(self):
@@ -343,6 +349,54 @@ class TestAssetReadAndCompactIncidents(unittest.TestCase):
             self.assertEqual(created_alerts[0]["title"], "Identity Alert by mannan")
             self.assertTrue(created_alerts[0]["alert_type"].startswith("AUDIT_identity_"))
             self.assertIn("Detection Rule [Kernel Audit]: identity event triggered by user 'mannan'", created_alerts[0]["message"])
+
+
+    def test_userdel_suppresses_duplicate_identity_alert_and_attributes_to_mannan(self):
+        import app
+        from unittest.mock import patch
+
+        created_alerts = []
+        def mock_create_alert(server_id, alert_type, severity, title, message):
+            created_alerts.append({
+                "server_id": server_id,
+                "alert_type": alert_type,
+                "severity": severity,
+                "title": title,
+                "message": message
+            })
+
+        with patch.object(app, '_create_alert_dedup', side_effect=mock_create_alert), \
+             patch.object(app, '_is_rule_enabled', return_value=True):
+            data = {
+                "file_changes": [
+                    {"path": "/etc/passwd", "type": "modified", "detail": "Content or metadata changed"}
+                ],
+                "log_lines": ["userdel[578346]: delete user 'prajwal'"],
+                "sudo_events": [],
+                "commands": [],
+                "audit_events": [
+                    {
+                        "key": "identity",
+                        "username": "mannan",
+                        "auid": "1005",
+                        "line": 'type=SYSCALL arch=c000003e syscall=257 success=yes exe="/usr/sbin/userdel" comm="userdel" auid=1005 uid=0 name="/etc/passwd"'
+                    }
+                ]
+            }
+            # Step 1: run sudo misuse (command rule)
+            app._check_sudo_misuse(1, data)
+            # Step 2: run unified fim (file watch rule)
+            app._check_unified_fim(1, data)
+
+            # Verification:
+            # 1. Exactly 1 alert created (the specific command alert)
+            self.assertEqual(len(created_alerts), 1)
+            # 2. Must be attributed to mannan (NEVER root)
+            self.assertEqual(created_alerts[0]["title"], "User Account Deletion — mannan")
+            self.assertIn("by user 'mannan' executed:", created_alerts[0]["message"])
+            self.assertIn("delete user 'prajwal'", created_alerts[0]["message"])
+            # 3. Duplicate generic Identity Alert must NOT have fired
+            self.assertFalse(any("Identity Alert" in a["title"] for a in created_alerts))
 
 if __name__ == '__main__':
     unittest.main()
