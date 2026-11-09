@@ -500,6 +500,60 @@ def purge_expired_app_events_partitions(conn, retention_days=3):
         except: pass
     return dropped
 
+
+def auto_prune_and_compact_app_events(conn):
+    """
+    Automatically purges routine INFO access lines (HTTP 2xx/3xx, DB_LOG)
+    from active app_events partitions and compacts tables.
+    Runs automatically in the background so PostgreSQL never accumulates bloat.
+    """
+    if not conn: return 0
+    deleted_count = 0
+    try:
+        with conn.cursor() as cur:
+            # 1. Prune routine INFO access logs from app_events
+            cur.execute("""
+                DELETE FROM app_events
+                WHERE severity = 'info'
+                  AND (status_code IS NULL OR status_code < 400)
+                  AND event_type IN ('HTTP_ACCESS', 'HTTP_REQUEST', 'DB_LOG');
+            """)
+            try: deleted_count = cur.rowcount if hasattr(cur, 'rowcount') and cur.rowcount > 0 else 0
+            except Exception: pass
+
+            # 2. Keep pushed_logs capped to recent records (7 days)
+            try:
+                cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '7 days';")
+            except Exception: pass
+
+            # 3. Truncate stale eviction queue
+            try:
+                cur.execute("TRUNCATE TABLE logs_eviction_queue;")
+            except Exception: pass
+
+            conn.commit()
+
+        # 4. Automatic non-blocking VACUUM to reclaim disk pages
+        old_autocommit = getattr(conn, 'autocommit', False)
+        try:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("VACUUM (ANALYZE) app_events;")
+                cur.execute("VACUUM (ANALYZE) pushed_logs;")
+        except Exception as v_err:
+            logger.debug(f"[STORAGE-RETENTION] Auto-vacuum notice: {v_err}")
+        finally:
+            try: conn.autocommit = old_autocommit
+            except Exception: pass
+
+        if deleted_count > 0:
+            logger.info(f"[STORAGE-RETENTION] Automated cleanup freed {deleted_count} routine event rows and vacuumed tables.")
+    except Exception as e:
+        logger.error(f"[STORAGE-RETENTION] Error in auto_prune_and_compact_app_events: {e}")
+        try: conn.rollback()
+        except Exception: pass
+    return deleted_count
+
 def delete_old_app_events(conn, retention_days=30, batch_size=5000):
     """
     Deletes events older than retention_days in batches of batch_size.

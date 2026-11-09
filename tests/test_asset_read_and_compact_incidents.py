@@ -47,6 +47,8 @@ class TestAssetReadAndCompactIncidents(unittest.TestCase):
         self.assertIn("pop-btn-read", modal_content)
         self.assertIn("pop-settings-btn-read", modal_content)
         self.assertIn("toggleCurrentAppRead", modal_content)
+        self.assertIn("pop-settings-read-status", modal_content)
+        self.assertIn("Dashboard Attention &amp; Read Status", modal_content)
 
         # 5. theme.css
         theme_path = os.path.join(self.base_dir, "static", "css", "theme.css")
@@ -69,6 +71,20 @@ class TestAssetReadAndCompactIncidents(unittest.TestCase):
         routes = [r.path for r in app.app.routes]
         self.assertIn("/api/servers/{id}/read", routes)
         self.assertIn("/api/apps/{id}/read", routes)
+
+
+    def test_auto_prune_and_compact_app_events(self):
+        import app_siem_db
+        self.assertTrue(hasattr(app_siem_db, 'auto_prune_and_compact_app_events'))
+        from unittest.mock import MagicMock
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+        mock_cur.rowcount = 42
+
+        res = app_siem_db.auto_prune_and_compact_app_events(mock_conn)
+        self.assertEqual(res, 42)
+        mock_conn.commit.assert_called()
 
 if __name__ == '__main__':
     unittest.main()

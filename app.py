@@ -508,30 +508,30 @@ except Exception:
     pass
 
 def run_database_retention_loop():
-    """Background worker to automatically drop expired daily app_events partitions and enforce storage limits for 200+ servers and 100+ app nodes."""
-    time.sleep(20)
+    """Background worker to automatically drop expired daily app_events partitions, purge routine events, and enforce storage limits for 200+ servers and 100+ app nodes."""
+    time.sleep(10)
     logger.info("[STORAGE-RETENTION] Automated Database Storage & Partition Retention Worker initialized.")
     while True:
         try:
             conn = db.get_db_connection()
             if conn:
                 try:
-                    # 1. Purge expired daily partitions (default 2 days retention for raw events in PostgreSQL to protect disk)
-                    ret_days = int(os.getenv("APP_EVENTS_RETENTION_DAYS", "2"))
                     import app_siem_db
+                    
+                    # 1. Automatically prune routine INFO events (2xx/3xx) from active partitions & compact tables
+                    app_siem_db.auto_prune_and_compact_app_events(conn)
+
+                    # 2. Purge expired daily partitions (default 2 days retention for raw events in PostgreSQL to protect disk)
+                    ret_days = int(os.getenv("APP_EVENTS_RETENTION_DAYS", "2"))
                     dropped = app_siem_db.purge_expired_app_events_partitions(conn, retention_days=ret_days)
                     if dropped:
                         logger.info(f"[STORAGE-RETENTION] Auto-dropped {len(dropped)} expired partition(s): {dropped}")
                     
-                    # 2. Cleanup older auxiliary metrics & logs to cap database growth
+                    # 3. Cleanup older auxiliary metrics & logs to cap database growth
                     with conn.cursor() as cur:
-                        # Cap network traffic history to 14 days
                         cur.execute("DELETE FROM network_traffic_history WHERE recorded_at < NOW() - INTERVAL '14 days';")
-                        # Cap command execution history to 30 days
                         cur.execute("DELETE FROM commands WHERE executed_at < NOW() - INTERVAL '30 days';")
-                        # Cap login history to 30 days
                         cur.execute("DELETE FROM login_history WHERE login_time < NOW() - INTERVAL '30 days';")
-                        # Safety cap on logs_eviction_queue: if > 25,000 rows, delete excess
                         cur.execute("""
                             DELETE FROM logs_eviction_queue 
                             WHERE id NOT IN (
@@ -548,8 +548,8 @@ def run_database_retention_loop():
         except Exception as e:
             logger.error(f"[STORAGE-RETENTION] Error in retention loop: {e}")
         
-        # Run every 1 hour (3600 seconds)
-        time.sleep(3600)
+        # Automatically run every 30 minutes (1800s) to keep database compact without manual intervention
+        time.sleep(1800)
 
 def run_s3_archiver_loop():
     """Background thread to archive old logs to S3 every 5 minutes."""

@@ -349,6 +349,18 @@
                 </div>
             </div>
 
+            <!-- Dashboard Attention / Read Status Card -->
+            <div style="border-top:1px solid var(--border); padding-top:16px; margin-bottom:18px;">
+                <h4 style="margin:0 0 8px 0; font-size:14px; font-weight:700; color:var(--text)">👁️ Dashboard Attention &amp; Read Status</h4>
+                <div style="font-size:12px; color:var(--text3); margin-bottom:12px; line-height:1.5;">
+                    Marking an application node as Read acknowledges its active alerts and removes it from the <strong>Main Dashboard problem list</strong>. It remains visible under <em>Total Apps</em> with a standard <code>✓ Marked as Read</code> badge.
+                </div>
+                <div style="display:flex; align-items:center; gap:14px;">
+                    <button class="btn btn-primary" id="pop-settings-btn-read" onclick="toggleCurrentAppRead()" style="font-size:12px; background:#0284c7; border-color:#0284c7;">✓ Mark as Read</button>
+                    <span id="pop-settings-read-status" style="font-size:12px; color:var(--text2)">Status: Unread (Visible on Main Dashboard)</span>
+                </div>
+            </div>
+
             <div style="border-top:1px solid var(--border); padding-top:16px; display:flex; justify-content:space-between; align-items:center">
                 <div>
                     <strong style="color:var(--red); font-size:13px">Danger Zone</strong>
@@ -649,6 +661,9 @@ function switchModalTab(tabName) {
         const pane = document.getElementById(`pop-tab-${t}`);
         const btn = document.getElementById(`tab-btn-${t}`);
         if (pane) pane.style.display = (t === tabName) ? 'block' : 'none';
+        if (tabName === 'settings' && typeof currentAppDetails !== 'undefined' && currentAppDetails) {
+            updateAppReadUI(currentAppDetails.is_read === true || currentAppDetails.is_read === 'true');
+        }
         if (btn) {
             if (t === tabName) {
                 btn.style.color = 'var(--cyan)';
