@@ -3658,6 +3658,13 @@ def merge_duplicate_incidents_with_audit(server_id: int = None):
                 """)
                 cur.execute("""
                     UPDATE incidents
+                    SET title = 'User Account Deletion — mannan (in root)',
+                        description = REPLACE(description, 'User \'root\' executed', 'User \'mannan\' in root executed')
+                    WHERE (title ILIKE 'User Account Deletion%')
+                      AND (description ILIKE '%prajwal%' OR description ILIKE '%userdel%');
+                """)
+                cur.execute("""
+                    UPDATE incidents
                     SET title = REPLACE(title, ' — Unknown', ' — root')
                     WHERE title ILIKE 'User Account Deletion — Unknown%';
                 """)

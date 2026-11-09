@@ -2199,6 +2199,7 @@ _dedup_alerts_cache = {}     # {(server_id, alert_type): last_timestamp}
 # ── Rule state cache (loaded from detection_rules table every 60s) ──
 _rule_cache = {}             # {event_type: {enabled: bool, threshold: int, ...}}
 _rule_cache_ts = 0.0         # last load timestamp
+_last_known_server_user = {}  # {server_id: username} tracks the human user on each server
 
 def _extract_audit_actor(log_lines, filepath, bash_cmds=None):
     """Parse log lines and concurrent shell commands to extract the real username who modified a file."""
@@ -2682,16 +2683,41 @@ def _check_sudo_misuse(server_id, data):
                         comm_m = re.search(r'comm="?([^"\s]+)"?', raw_line)
                         exe_m  = re.search(r'exe="?([^"\s]+)"?', raw_line)
                         cmd_name = (comm_m.group(1) if comm_m else "") or (os.path.basename(exe_m.group(1)) if exe_m else "")
-                        if (cmd_name and (cmd_name.lower() in text.lower() or cmd_name.lower() in rule_name.lower())) or "userdel" in raw_line.lower():
-                            if ae_u and ae_u not in ("unknown", ""):
+                        if (cmd_name and (cmd_name.lower() in text.lower() or cmd_name.lower() in rule_name.lower())) or "userdel" in raw_line.lower() or "passwd" in raw_line.lower():
+                            if ae_u and ae_u not in ("root", "unknown", ""):
                                 real_actor = ae_u
-                                actor = ae_u
                                 break
 
-                # 5. Linux OS Admin Fallback: administrative commands are strictly executed by root/sudo
+                    # If specific command not matched, check if any active audit event has a human user
+                    if not real_actor or real_actor in ("root", "unknown", ""):
+                        for ae in data.get("audit_events", []):
+                            ae_u = ae.get("username", "")
+                            if ae_u and ae_u not in ("root", "unknown", ""):
+                                real_actor = ae_u
+                                break
+
+                # 5. Check log lines for su or ssh login
+                if not real_actor or real_actor in ("root", "unknown", ""):
+                    for item in log_lines:
+                        line_str = item.get("line", "") if isinstance(item, dict) else str(item)
+                        su_m = re.search(r'su:\s+\(to root\)\s+([a-zA-Z0-9_\-\.]+)', line_str) or                                re.search(r'session opened for user root(?:\(uid=0\))? by ([a-zA-Z0-9_\-\.]+)', line_str) or                                re.search(r'Accepted\s+(?:publickey|password)\s+for\s+([a-zA-Z0-9_\-\.]+)', line_str)
+                        if su_m and su_m.group(1) not in ("root", "unknown"):
+                            real_actor = su_m.group(1)
+                            break
+
+                # 6. Fallback to last known human user on this server
+                if not real_actor or real_actor in ("root", "unknown", ""):
+                    cached_user = _last_known_server_user.get(server_id)
+                    if cached_user and cached_user not in ("root", "unknown", ""):
+                        real_actor = cached_user
+
+                # 7. Final fallback for pure system/root action
                 if not real_actor or real_actor in ("unknown", ""):
                     real_actor = "root"
-                    actor = "root"
+
+                # Update cache with resolved human user
+                if real_actor and real_actor not in ("root", "unknown", ""):
+                    _last_known_server_user[server_id] = real_actor
 
                 # Clean up raw message text
                 clean_text = text.strip()
@@ -2708,16 +2734,17 @@ def _check_sudo_misuse(server_id, data):
                     clean_text = clean_text[:120] + "..."
 
                 # Build professional, high-fidelity title and message
-                display_actor = real_actor if real_actor else (actor or "root")
-                if real_actor and real_actor != "root" and actor == "root":
-                    display_title = f"{rule_name} — {real_actor} (as root)"
-                    human_msg = f"User '{real_actor}' (via sudo/root) executed: `{clean_text}`. This matches the detection rule '{rule_name}'."
+                # If command is an OS admin command (userdel, passwd, etc.) executed in root shell by a human user
+                is_admin_cmd = any(w in text.lower() for w in ["userdel", "deluser", "usermod", "useradd", "adduser", "passwd", "chmod", "chown", "dropdb", "dropuser"])
+                if real_actor and real_actor != "root" and (actor in ("root", "", None) or is_admin_cmd):
+                    display_title = f"{rule_name} — {real_actor} (in root)"
+                    human_msg = f"User '{real_actor}' in root executed: `{clean_text}`. This matches the detection rule '{rule_name}'."
                 elif real_actor and real_actor != actor and actor:
                     display_title = f"{rule_name} — {real_actor} (as {actor})"
                     human_msg = f"User '{real_actor}' (as {actor}) executed: `{clean_text}`. This matches the detection rule '{rule_name}'."
                 else:
-                    display_title = f"{rule_name} — {display_actor}"
-                    human_msg = f"User '{display_actor}' executed: `{clean_text}`. This matches the detection rule '{rule_name}'."
+                    display_title = f"{rule_name} — {real_actor}"
+                    human_msg = f"User '{real_actor}' executed: `{clean_text}`. This matches the detection rule '{rule_name}'."
 
                 _create_alert_dedup(
                     server_id, atype, sev,

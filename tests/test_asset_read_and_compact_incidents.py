@@ -276,5 +276,40 @@ class TestAssetReadAndCompactIncidents(unittest.TestCase):
             titles = [a["title"] for a in created_alerts]
             self.assertTrue(any("App Mod Alert by mannan" in t for t in titles), f"App Mod Alert by mannan should fire despite bash_history noise: {titles}")
 
+    def test_user_deletion_correlated_with_audit_user_in_root(self):
+        import app
+        from unittest.mock import patch
+
+        created_alerts = []
+        def mock_create_alert(server_id, alert_type, severity, title, message):
+            created_alerts.append({
+                "server_id": server_id,
+                "alert_type": alert_type,
+                "severity": severity,
+                "title": title,
+                "message": message
+            })
+
+        with patch.object(app, '_create_alert_dedup', side_effect=mock_create_alert), \
+             patch.object(app, '_is_rule_enabled', return_value=True):
+            data = {
+                "log_lines": ["Nov 9 18:20:25 ubuntu-DEV userdel[400722]: delete user 'prajwal'"],
+                "sudo_events": [],
+                "commands": [],
+                "audit_events": [
+                    {
+                        "key": "identity",
+                        "username": "mannan",
+                        "auid": "1002",
+                        "line": 'type=SYSCALL arch=c000003e syscall=257 success=yes exe="/usr/sbin/userdel" comm="userdel" auid=1002 uid=0 name="/etc/shadow"'
+                    }
+                ]
+            }
+            app._check_sudo_misuse(1, data)
+            self.assertTrue(len(created_alerts) >= 1)
+            self.assertEqual(created_alerts[0]["title"], "User Account Deletion — mannan (in root)")
+            self.assertIn("User 'mannan' in root executed", created_alerts[0]["message"])
+            self.assertIn("delete user 'prajwal'", created_alerts[0]["message"])
+
 if __name__ == '__main__':
     unittest.main()
