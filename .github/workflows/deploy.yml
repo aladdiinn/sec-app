@@ -75,6 +75,12 @@ jobs:
         run: |
           python -m unittest tests/test_cross_log_correlation.py
 
+      - name: Run Auditd Pipeline & Attribution Acceptance Tests
+        env:
+          TESTING: "1"
+        run: |
+          python -m unittest tests/test_auditd_pipeline.py
+
       - name: Run Accuracy Corpus Benchmark Suite
         env:
           TESTING: "1"
