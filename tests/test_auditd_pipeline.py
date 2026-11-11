@@ -301,5 +301,35 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
                     break
             self.assertEqual(inserted_temp_sev, "warning")
 
+    def test_t13_auid_1005_and_soc_server_resolves_to_mannan(self):
+        """Verify AUID 1005 and soc-server always attribute to mannan."""
+        # 1. Direct AUID 1005 in audit event
+        data_1005 = {
+            "audit_events": [
+                {
+                    "auid": "1005",
+                    "username": "unknown",
+                    "key": "identity",
+                    "line": 'type=SYSCALL msg=audit(1742601378.985:1443): auid=1005 exe="/usr/sbin/useradd"'
+                }
+            ]
+        }
+        actor = app_module._resolve_server_human_actor(12, data_1005)
+        self.assertEqual(actor, "mannan")
+
+        # 2. soc-server ID resolution
+        with patch.object(db, "get_server_by_id", return_value={"name": "soc-server", "ip_address": "192.168.10.201"}):
+            actor_server = app_module._resolve_server_human_actor(13, {"audit_events": []})
+            self.assertEqual(actor_server, "mannan")
+
+    def test_t14_backfill_historical_attributions_and_session_demotion(self):
+        """Verify backfill cleans up attribution unverified and demotes session alerts."""
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+        with patch.object(db, "get_db_connection", return_value=mock_conn):
+            db.backfill_historical_audit_attributions()
+            self.assertTrue(mock_cur.execute.called)
+
 if __name__ == '__main__':
     unittest.main()

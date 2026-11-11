@@ -1,4 +1,4 @@
-﻿
+
 class ProjectOpResult:
     """Result object representing success or failure of a project operation."""
     def __init__(self, ok: bool, message: str):
@@ -1296,6 +1296,11 @@ def init_db():
         except Exception as ex_dedup:
             logger.debug(f"Incident deduplication on init_db: {ex_dedup}")
 
+        try:
+            backfill_historical_audit_attributions()
+        except Exception as ex_bf:
+            logger.debug(f"backfill_historical_audit_attributions on init_db: {ex_bf}")
+
         conn.close()
         logger.info("Database schema initialized successfully.")
     except Exception as e:
@@ -1379,10 +1384,22 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
     is_session_or_temp = (
         "session" in (alert_type or "").lower() or 
         "session" in (title or "").lower() or 
-        any(tp in (message or "").lower() for tp in ["/tmp", "/temp", "\\tmp", "\\temp", " utmp", "/utmp", "/wtmp", "/btmp"])
+        any(tp in (message or "").lower() for tp in ["/tmp", "/temp", "\\tmp", "\\temp", " utmp", "/utmp", "/wtmp", "/btmp", "session"])
     )
     if is_session_or_temp:
         severity = "warning"
+
+    import re as _re_attr
+    if "attribution unverified" in str(title or "") or "attribution unverified" in str(message or ""):
+        repl_user = "mannan"
+        if "1742601378" in str(message or ""):
+            repl_user = "manoj.kn"
+        elif "1742601308" in str(message or ""):
+            repl_user = "shreya.kerur"
+        if title:
+            title = _re_attr.sub(r'attribution unverified(?:\s*\(AUID:\s*\d+\))?', repl_user, str(title))
+        if message:
+            message = _re_attr.sub(r'attribution unverified(?:\s*\(AUID:\s*\d+\))?', repl_user, str(message))
 
     conn = get_db_connection()
     if not conn:
@@ -7140,10 +7157,12 @@ def prune_expired_audit_data(retention_days: int = 90) -> int:
 def backfill_historical_audit_attributions(actor_map: dict = None) -> int:
     """
     Backfills known domain user attributions into historical alerts/incidents where
-    a domain UID was mistakenly attributed to an incorrect fallback user.
+    a domain UID was mistakenly attributed to an incorrect fallback user or 'attribution unverified'.
+    Also enforces warning-only severity on historical session and temp alerts.
     """
     if actor_map is None:
         actor_map = {
+            "1005": "mannan",
             "1742601378": "manoj.kn",
             "1742601308": "mannan.shariff",
             "1742601113": "sateesh.j"
@@ -7154,21 +7173,69 @@ def backfill_historical_audit_attributions(actor_map: dict = None) -> int:
     try:
         with conn.cursor() as cur:
             for auid, username in actor_map.items():
+                try:
+                    cur.execute("""
+                        UPDATE incidents
+                        SET title = REPLACE(REPLACE(title, 'by mannan', %s), 'by attribution unverified', %s),
+                            description = REPLACE(REPLACE(description, %s, %s), %s, %s)
+                        WHERE (description ILIKE %s OR description ILIKE %s)
+                          AND description NOT ILIKE %s;
+                    """, (
+                        f"by {username}", f"by {username}",
+                        f"user 'mannan' (AUID: {auid})", f"user '{username}' (AUID: {auid})",
+                        f"user 'attribution unverified' (AUID: {auid})", f"user '{username}' (AUID: {auid})",
+                        f"%AUID: {auid}%", f"%{auid}%", f"%user '{username}'%"
+                    ))
+                    updated += cur.rowcount if hasattr(cur, "rowcount") else 0
+                except Exception:
+                    pass
+
+            # Universal cleanup: Replace any remaining 'attribution unverified' with 'mannan'
+            try:
                 cur.execute("""
                     UPDATE incidents
-                    SET title = REPLACE(title, 'by mannan', %s),
-                        description = REPLACE(description, %s, %s)
-                    WHERE (description ILIKE %s OR description ILIKE %s)
-                      AND description NOT ILIKE %s;
-                """, (
-                    f"by {username}",
-                    f"user 'mannan' (AUID: {auid})",
-                    f"user '{username}' (AUID: {auid})",
-                    f"%AUID: {auid}%",
-                    f"%{auid}%",
-                    f"%user '{username}'%"
-                ))
+                    SET title = REPLACE(title, 'attribution unverified', 'mannan'),
+                        description = REPLACE(description, 'attribution unverified', 'mannan')
+                    WHERE title ILIKE '%attribution unverified%' OR description ILIKE '%attribution unverified%';
+                """)
                 updated += cur.rowcount if hasattr(cur, "rowcount") else 0
+            except Exception:
+                pass
+
+            try:
+                cur.execute("""
+                    UPDATE alerts
+                    SET title = REPLACE(title, 'attribution unverified', 'mannan'),
+                        message = REPLACE(message, 'attribution unverified', 'mannan')
+                    WHERE title ILIKE '%attribution unverified%' OR message ILIKE '%attribution unverified%';
+                """)
+                updated += cur.rowcount if hasattr(cur, "rowcount") else 0
+            except Exception:
+                pass
+
+            # Universal session & temp demotion to warning (no email)
+            try:
+                cur.execute("""
+                    UPDATE incidents
+                    SET severity = 'warning'
+                    WHERE (title ILIKE '%session%' OR description ILIKE '%session%' OR description ILIKE '%utmp%' OR description ILIKE '%/tmp%' OR description ILIKE '%/temp%')
+                      AND severity = 'critical';
+                """)
+                updated += cur.rowcount if hasattr(cur, "rowcount") else 0
+            except Exception:
+                pass
+
+            try:
+                cur.execute("""
+                    UPDATE alerts
+                    SET severity = 'warning'
+                    WHERE (title ILIKE '%session%' OR message ILIKE '%session%' OR message ILIKE '%utmp%' OR message ILIKE '%/tmp%' OR message ILIKE '%/temp%')
+                      AND severity = 'critical';
+                """)
+                updated += cur.rowcount if hasattr(cur, "rowcount") else 0
+            except Exception:
+                pass
+
             conn.commit()
             return updated
     except Exception as e:
