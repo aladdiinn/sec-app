@@ -257,6 +257,10 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
         self.assertIn(b"#!/bin/bash", res.body)
         self.assertIn(b"node_push_agent.py", res.body)
         self.assertNotIn(b"Internal Server Error", res.body)
+        # Verify no unescaped backticks exist inside the heredoc block that would trigger bash command substitution
+        py_eof_start = res.body.find(b"cat << PY_EOF")
+        py_eof_end = res.body.find(b"\nPY_EOF", py_eof_start)
+        self.assertNotIn(b"`", res.body[py_eof_start:py_eof_end], "No unescaped backticks allowed in agent heredoc")
 
 if __name__ == '__main__':
     unittest.main()

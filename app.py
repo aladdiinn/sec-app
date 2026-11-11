@@ -5685,7 +5685,8 @@ def execute_agent_tasks(tasks):
             continue
 
         # 5. Shell character check
-        if any(c in (unit_name or '') for c in [';', '&', '|', '`', '$', '(', ')', '<', '>', chr(10)]) or any(c in (container_id or '') for c in [';', '&', '|', '`', '$', '(', ')', '<', '>', chr(10)]):
+        bad_chars = [';', '&', '|', chr(96), chr(36), '(', ')', '<', '>', chr(10)]
+        if any(c in (unit_name or '') for c in bad_chars) or any(c in (container_id or '') for c in bad_chars):
             task_results_queue.append({{
                 "task_id": tid, "status": "failed", "exit_code": 400,
                 "output": "Refused: Illegal shell injection characters in target identifier.",
