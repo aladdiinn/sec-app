@@ -264,6 +264,9 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
         self.assertIn(b"send_agent_request", res.body)
         self.assertIn(b"_ssl_ctx", res.body)
         self.assertIn(b"192.168.10.201", res.body)
+        self.assertIn(b"daily_inventory_done_date", res.body)
+        self.assertIn(b"inventory_in_progress", res.body)
+        self.assertIn(b"scheduled_inventory_hour", res.body)
 
     def test_t12_session_and_temp_alerts_warning_only(self):
         """Verify session alerts and /tmp/ operations are strictly forced to WARNING and never sent via email."""

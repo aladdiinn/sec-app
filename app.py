@@ -5363,6 +5363,16 @@ AGENT_TOKEN = "$TOKEN"
 ASSIGNED_SERVER_ID = int("$ASSIGNED_ID") if "$ASSIGNED_ID".isdigit() else {server_id or "None"}
 PUSH_INTERVAL = 15  # seconds (responsive real-time log ingestion)
 
+# ── INVENTORY & SCHEDULE STATE ──
+scheduled_inventory_hour = random.randint(1, 4)
+scheduled_inventory_minute = random.randint(0, 59)
+daily_inventory_done_date = ""
+inventory_in_progress = False
+last_package_hash = ""
+inventory_error = None
+discovered_paths = {{}}
+push_count = 0
+
 try:
     _ssl_ctx = ssl.create_default_context()
     _ssl_ctx.check_hostname = False
