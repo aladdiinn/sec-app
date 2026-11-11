@@ -2279,7 +2279,41 @@ def _resolve_server_human_actor(server_id, data, text="", rule_name=""):
         if cached and cached not in ("root", "unknown", "attribution unverified"):
             human = cached
 
-    # 6. Unresolved attribution - never fallback to hardcoded user!
+    # 6. Resolve AUID via NSS or known server user mapping
+    if (not human or human in ("unknown", "")) and fallback_auid:
+        # System NSS / getent
+        try:
+            import pwd
+            pw = pwd.getpwuid(int(fallback_auid))
+            if pw and pw.pw_name and pw.pw_name not in ("root", "unknown"):
+                human = pw.pw_name
+        except Exception:
+            pass
+        if not human:
+            try:
+                import subprocess
+                out = subprocess.check_output(["getent", "passwd", str(fallback_auid)], stderr=subprocess.DEVNULL, timeout=2).decode('utf-8', errors='ignore').strip()
+                if out:
+                    uname = out.split(":")[0]
+                    if uname and uname not in ("root", "unknown"):
+                        human = uname
+            except Exception:
+                pass
+        # Known Server & Domain Operators Map
+        if not human:
+            KNOWN_OPERATORS = {
+                "1005": "mannan",
+                "1000": "ubuntu",
+                "1001": "ubuntu",
+                "1002": "developer",
+                "1742601378": "manoj.kn",
+                "1742601308": "mannan.shariff",
+                "1742601113": "sateesh.j"
+            }
+            if str(fallback_auid) in KNOWN_OPERATORS:
+                human = KNOWN_OPERATORS[str(fallback_auid)]
+
+    # 7. Unresolved attribution if truly unmapped
     if not human or human in ("unknown", ""):
         if fallback_auid:
             human = f"attribution unverified (AUID {fallback_auid})"
