@@ -919,9 +919,14 @@
             }, 1500);
 
         } catch (e) {
-            progressStatus.innerHTML = `<span style="color:var(--red)">❌ Error: ${e.message || 'Dispatch failed'}</span>`;
+            let msg = e.message || 'Dispatch failed';
+            if (msg.includes('Rate limit') || msg.includes('cooldown')) {
+                progressStatus.innerHTML = `<span style="color:var(--amber)">⏱ Cooldown Active: An action was recently dispatched. Cooldown expires in ~15s (ready to retry shortly).</span>`;
+            } else {
+                progressStatus.innerHTML = `<span style="color:var(--red)">❌ Error: ${msg}</span>`;
+            }
             confirmBtn.disabled = false;
-            showToast('Dispatch error: ' + e.message, 'error');
+            showToast('Service Action: ' + msg, 'warning');
         }
     }
 

@@ -51,7 +51,7 @@ class DictRowWrapper:
         except Exception:
             pass
     def execute(self, query, params=None):
-        query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN").replace("ILIKE", "LIKE").replace("JSONB", "TEXT")
+        query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("INTERVAL '45 seconds'", "'-45 seconds'").replace("INTERVAL '30 seconds'", "'-30 seconds'").replace("INTERVAL '15 seconds'", "'-15 seconds'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN").replace("ILIKE", "LIKE").replace("JSONB", "TEXT")
         try:
             if params is None:
                 res = self.cursor.execute(query_sql)
@@ -7068,22 +7068,52 @@ def get_pending_agent_tasks(server_id: int):
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
-                       container_id, restart_cmd, run_user, reason, status, created_by, created_at
-                FROM agent_tasks
-                WHERE server_id = %s AND status = 'pending'
-                ORDER BY id ASC;
-            """, (server_id,))
+            # Also find sibling server IDs sharing the same IP or hostname so re-enrolled nodes never miss tasks
+            target_ids = [server_id]
+            try:
+                cur.execute("SELECT ip, ip_address, hostname FROM servers WHERE id = %s;", (server_id,))
+                srow = cur.fetchone()
+                if srow:
+                    sip = srow.get("ip") or srow.get("ip_address")
+                    shost = srow.get("hostname")
+                    if sip or shost:
+                        cur.execute("""
+                            SELECT id FROM servers 
+                            WHERE (ip = %s OR ip_address = %s OR (hostname = %s AND hostname NOT IN ('Target-Node', 'localhost', '')))
+                              AND id != %s;
+                        """, (sip, sip, shost, server_id))
+                        for r in cur.fetchall():
+                            mid = r.get("id") if isinstance(r, dict) else r[0]
+                            if mid not in target_ids:
+                                target_ids.append(mid)
+            except Exception:
+                pass
+
+            if len(target_ids) == 1:
+                cur.execute("""
+                    SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
+                           container_id, restart_cmd, run_user, reason, status, created_by, created_at
+                    FROM agent_tasks
+                    WHERE server_id = %s AND status = 'pending'
+                    ORDER BY id ASC;
+                """, (server_id,))
+            else:
+                cur.execute("""
+                    SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
+                           container_id, restart_cmd, run_user, reason, status, created_by, created_at
+                    FROM agent_tasks
+                    WHERE server_id = ANY(%s) AND status = 'pending'
+                    ORDER BY id ASC;
+                """, (target_ids,))
             rows = cur.fetchall()
             tasks = [dict(r) for r in rows] if rows else []
             if tasks:
                 tids = [t["task_id"] for t in tasks]
                 cur.execute("""
                     UPDATE agent_tasks 
-                    SET status = 'dispatched' 
+                    SET status = 'dispatched', server_id = %s
                     WHERE task_id = ANY(%s);
-                """, (tids,))
+                """, (server_id, tids))
                 conn.commit()
             return tasks
     except Exception as e:
@@ -7133,18 +7163,36 @@ def get_agent_task(task_id: str):
     finally:
         conn.close()
 
-def get_recent_service_action(server_id: int, service_id: str, seconds: int = 30):
-    """Check if a service action is already pending or was created within cooldown window."""
+def get_recent_service_action(server_id: int, service_id: str, seconds: int = 15):
+    """Check if an active service action is currently in-flight or completed within the cooldown window."""
     conn = get_db_connection()
     if not conn: return None
     try:
         with conn.cursor() as cur:
+            # 1. Clean up any stale in-flight tasks older than 45 seconds so they never block subsequent attempts
+            try:
+                cur.execute("""
+                    UPDATE agent_tasks
+                    SET status = 'failed', exit_code = 504, output = 'Task execution timed out (agent did not acknowledge within 45s)', completed_at = NOW()
+                    WHERE server_id = %s 
+                      AND service_id = %s
+                      AND status IN ('pending', 'dispatched', 'running')
+                      AND created_at < NOW() - INTERVAL '45 seconds';
+                """, (server_id, service_id))
+                conn.commit()
+            except Exception:
+                pass
+
+            # 2. Only consider tasks that are actively in-flight within the last 45s, or completed within cooldown window (15s)
             cur.execute("""
                 SELECT id, task_id, action, status, created_at
                 FROM agent_tasks
                 WHERE server_id = %s 
                   AND service_id = %s
-                  AND (status IN ('pending', 'dispatched', 'running') OR created_at >= NOW() - INTERVAL '30 seconds')
+                  AND (
+                      (status IN ('pending', 'dispatched', 'running') AND created_at >= NOW() - INTERVAL '45 seconds')
+                      OR (completed_at IS NOT NULL AND completed_at >= NOW() - INTERVAL '15 seconds')
+                  )
                 ORDER BY id DESC
                 LIMIT 1;
             """, (server_id, service_id))
