@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% set active = 'servers' %}
+{% set can_manage_services = is_admin or session.get('user_role') in ('superuser', 'admin', 'operator') %}
 {% block title %}Server Detail — {{ server.hostname }}{% endblock %}
 {% block page_title %}<span class="mono">{{ server.hostname }}</span> <span class="badge {{ 'badge-green' if server.status == 'online' else 'badge-red' }}" style="margin-left:8px; vertical-align:middle; font-size:10px">{{ server.status.upper() }}</span>{% endblock %}
 {% block page_sub %}IP Address: {{ server.ip_address }} · Server ID: {{ server.id }}{% endblock %}
@@ -30,7 +31,7 @@
         </svg>
         Export Report
     </button>
-    {% if session.get('user_role') != 'normal' %}
+    {% if can_manage_services %}
     <button class="btn btn-glass" onclick="openDeleteServerModal()"
         style="border-color:var(--red); color:var(--red); display:flex; align-items:center; gap:7px; padding:7px 14px">
         <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2">
@@ -184,7 +185,7 @@
                             <h4 style="color:var(--cyan); font-size:14px; letter-spacing:1px; margin:0">PINNED SERVICES (RESTART PLAYBOOK)</h4>
                             <p class="text-sub" style="font-size:11px; margin:2px 0 0 0">Services pinned to automated sequential restart playbook</p>
                         </div>
-                        {% if session.get('user_role') == 'admin' %}
+                        {% if can_manage_services %}
                         <button type="button" class="btn btn-primary" id="btn-run-playbook" style="padding:4px 12px; font-size:11px" onclick="restartServices()">
                             ▶ Run Restart Playbook
                         </button>
@@ -278,24 +279,24 @@
             <div style="background:rgba(0,200,255,0.02); border:1px dashed var(--border); padding:16px; border-radius:6px">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
                     <p class="text-meta" style="margin:0; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:var(--cyan)">Add Manual Service Fallback (For unlisted custom processes)</p>
-                    {% if session.get('user_role') != 'admin' %}
+                    {% if not can_manage_services %}
                     <span class="badge badge-gray" style="font-size:9px">Admin only</span>
                     {% endif %}
                 </div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px">
-                    <input type="text" id="new-service-name" placeholder="Service Name (e.g. Tomcat-1)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if session.get('user_role') != 'admin' %}disabled{% endif %}>
-                    <input type="text" id="new-service-user" placeholder="Run as User (e.g. tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if session.get('user_role') != 'admin' %}disabled{% endif %}>
+                    <input type="text" id="new-service-name" placeholder="Service Name (e.g. Tomcat-1)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if not can_manage_services %}disabled{% endif %}>
+                    <input type="text" id="new-service-user" placeholder="Run as User (e.g. tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if not can_manage_services %}disabled{% endif %}>
                 </div>
                 <div style="margin-bottom:10px">
-                    <input type="text" id="new-service-path" placeholder="Binary/Startup Path (e.g. /opt/tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if session.get('user_role') != 'admin' %}disabled{% endif %}>
+                    <input type="text" id="new-service-path" placeholder="Binary/Startup Path (e.g. /opt/tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if not can_manage_services %}disabled{% endif %}>
                 </div>
                 <div style="margin-bottom:12px">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
                         <label class="text-meta" style="font-size:10px">Optional Restart Command (Admin only · Executed on target host · Secrets masked)</label>
                     </div>
-                    <input type="text" id="new-service-restart-cmd" placeholder="e.g. pkill -f tomcat && sudo -u mannan sh /app/apache-tomcat/bin/startup.sh" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if session.get('user_role') != 'admin' %}disabled{% endif %}>
+                    <input type="text" id="new-service-restart-cmd" placeholder="e.g. pkill -f tomcat && sudo -u mannan sh /app/apache-tomcat/bin/startup.sh" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if not can_manage_services %}disabled{% endif %}>
                 </div>
-                {% if session.get('user_role') == 'admin' %}
+                {% if can_manage_services %}
                 <button type="button" class="btn btn-ghost" style="width:100%; font-size:11px; padding:7px; border-color:var(--cyan)" onclick="addService()">+ Add Managed Service</button>
                 {% else %}
                 <div class="text-meta" style="font-size:10px; text-align:center; color:var(--text-muted)">Manual service additions require Administrator privileges.</div>
@@ -440,7 +441,7 @@
 <script>
     const serverId = {{ server.id }};
     const CURRENT_USER_ROLE = "{{ session.get('user_role', 'normal') }}";
-    const IS_ADMIN = {{ 'true' if session.get('user_role') == 'admin' else 'false' }};
+    const IS_ADMIN = {{ 'true' if can_manage_services else 'false' }};
 
     let managedServices = [];
     let detectedServicesList = [];

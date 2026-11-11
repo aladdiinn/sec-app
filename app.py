@@ -1034,7 +1034,7 @@ def is_admin_user(request: Request) -> bool:
     if not user:
         return False
     role = (user.get("role") or "").lower()
-    return bool(user.get("is_admin") or role in ("superuser", "admin"))
+    return bool(user.get("is_admin") or role in ("superuser", "admin", "operator"))
 
 
 def get_effective_project_id(request: Request):
@@ -5829,13 +5829,22 @@ def execute_agent_tasks(tasks):
                 output = p.stdout + p.stderr
 
             elif managed_by == "process":
+                s_data = known_services.get(service_id, {{}})
+                pid_val = s_data.get("pid")
+                if action == "restart" and pid_val:
+                    try:
+                        subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, timeout=5)
+                        time.sleep(1)
+                    except Exception:
+                        pass
                 if action in ("restart", "start") and restart_cmd:
-                    p = subprocess.run(["su", "-", run_user, "-c", restart_cmd], capture_output=True, text=True, timeout=60)
+                    if run_user and run_user != "root":
+                        p = subprocess.run(["su", "-", run_user, "-c", restart_cmd], capture_output=True, text=True, timeout=60)
+                    else:
+                        p = subprocess.run(["sh", "-c", restart_cmd], capture_output=True, text=True, timeout=60)
                     exit_code = p.returncode
                     output = p.stdout + p.stderr
                 elif action == "stop":
-                    s_data = known_services.get(service_id, {{}})
-                    pid_val = s_data.get("pid")
                     if pid_val:
                         p = subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, text=True, timeout=10)
                         exit_code = p.returncode
@@ -5843,6 +5852,9 @@ def execute_agent_tasks(tasks):
                     else:
                         exit_code = 0
                         output = "Process not actively running."
+                else:
+                    exit_code = 400
+                    output = "No restart command specified for process."
             else:
                 exit_code = 400
                 output = "Unknown managed_by type: " + str(managed_by)
@@ -8576,7 +8588,7 @@ async def api_service_action(server_id: int, request: Request):
     managed_by = target_service.get("managed_by") or ("systemd" if target_service.get("unit_name") else "process")
     unit_name = target_service.get("unit_name")
     container_id = target_service.get("container_id")
-    restart_cmd = target_service.get("restart_cmd")
+    restart_cmd = target_service.get("restart_cmd") or target_service.get("cmdline")
     run_user = target_service.get("user") or target_service.get("run_user") or "root"
 
     # Queue task
