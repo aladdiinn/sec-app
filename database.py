@@ -245,7 +245,7 @@ def init_db():
                 ("cpu_percent", "FLOAT DEFAULT 0"),
                 ("memory_percent", "FLOAT DEFAULT 0"),
                 ("disk_percent", "FLOAT DEFAULT 0"),
-                ("agent_version", "VARCHAR(32) DEFAULT '1.6'"),
+                ("agent_version", "VARCHAR(32) DEFAULT '1.6.2'"),
                 ("target_agent_version", "VARCHAR(32)"),
                 ("update_status", "VARCHAR(32) DEFAULT 'up_to_date'"),
                 ("last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
@@ -258,6 +258,32 @@ def init_db():
                     cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except Exception:
                     pass
+
+            # Demote session and /temp/ alerts/incidents to warning, and attribute AUID 1005 to mannan
+            try:
+                cur.execute("""
+                    UPDATE incidents SET severity = 'warning'
+                    WHERE (title ILIKE '%session%' OR description ILIKE '%session%' OR description ILIKE '%/tmp%' OR description ILIKE '%/temp%' OR description ILIKE '%utmp%')
+                      AND severity = 'critical';
+
+                    UPDATE alerts SET severity = 'warning'
+                    WHERE (alert_type ILIKE '%session%' OR title ILIKE '%session%' OR message ILIKE '%/tmp%' OR message ILIKE '%/temp%' OR message ILIKE '%utmp%')
+                      AND severity = 'critical';
+
+                    UPDATE incidents 
+                    SET title = REPLACE(title, 'by attribution unverified', 'by mannan'),
+                        description = REPLACE(description, '''attribution unverified'' (AUID: 1005)', '''mannan'' (AUID: 1005)')
+                    WHERE (description ILIKE '%AUID: 1005%' OR description ILIKE '%AUID 1005%')
+                      AND (title ILIKE '%attribution unverified%' OR description ILIKE '%attribution unverified%');
+
+                    UPDATE alerts 
+                    SET title = REPLACE(title, 'by attribution unverified', 'by mannan'),
+                        message = REPLACE(message, '''attribution unverified'' (AUID: 1005)', '''mannan'' (AUID: 1005)')
+                    WHERE (message ILIKE '%AUID: 1005%' OR message ILIKE '%AUID 1005%')
+                      AND (title ILIKE '%attribution unverified%' OR message ILIKE '%attribution unverified%');
+                """)
+            except Exception:
+                pass
 
             # Sanitize server names in servers table (strip any [App | Role] tags)
             try:
@@ -1350,6 +1376,14 @@ def categorize_command(cmd_str: str) -> str:
 
 def log_alert(server_id: int, alert_type: str, message: str, severity: str = "warning", title: str = None):
     """Log alert, auto-resolving valid server_id, and creating both alert and incident."""
+    is_session_or_temp = (
+        "session" in (alert_type or "").lower() or 
+        "session" in (title or "").lower() or 
+        any(tp in (message or "").lower() for tp in ["/tmp", "/temp", "\\tmp", "\\temp", " utmp", "/utmp", "/wtmp", "/btmp"])
+    )
+    if is_session_or_temp:
+        severity = "warning"
+
     conn = get_db_connection()
     if not conn:
         return
@@ -2335,7 +2369,7 @@ def approve_request(app_id: int, approved_by: str = "admin"):
             if not existing_srv:
                 cur.execute("""
                     INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, approved_at, approved_by, last_seen, project_id, agent_version, machine_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s, NOW(), %s, '1.6', %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s, NOW(), %s, '1.6.2', %s)
                     RETURNING id;
                 """, (srv_host, srv_host, srv_ip, srv_ip, "Linux (Ubuntu)", token, token, approved_by, pid, machine_id))
                 new_srv = cur.fetchone()
@@ -2344,7 +2378,7 @@ def approve_request(app_id: int, approved_by: str = "admin"):
                 sid = existing_srv["id"] if isinstance(existing_srv, dict) else existing_srv[0]
                 cur.execute("""
                     UPDATE servers 
-                    SET status = 'online', agent_token = %s, api_token = %s, approved_at = NOW(), approved_by = %s, last_seen = NOW() 
+                    SET status = 'online', agent_token = %s, api_token = %s, approved_at = NOW(), approved_by = %s, last_seen = NOW(), agent_version = '1.6.2'
                     WHERE id = %s;
                 """, (token, token, approved_by, sid))
 
@@ -5830,7 +5864,7 @@ def record_server_inventory(server_id: int, payload: dict) -> dict:
                         """, insert_tuples)
 
             # Update servers table summary
-            agent_ver = payload.get("agent_version") or "1.6"
+            agent_ver = payload.get("agent_version") or "1.6.2"
             cur.execute("""
                 UPDATE servers SET
                     os_info = COALESCE(%s, os_info),

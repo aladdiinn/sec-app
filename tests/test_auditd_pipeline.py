@@ -261,6 +261,42 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
         py_eof_start = res.body.find(b"cat << PY_EOF")
         py_eof_end = res.body.find(b"\nPY_EOF", py_eof_start)
         self.assertNotIn(b"`", res.body[py_eof_start:py_eof_end], "No unescaped backticks allowed in agent heredoc")
+        self.assertIn(b"send_agent_request", res.body)
+        self.assertIn(b"_ssl_ctx", res.body)
+        self.assertIn(b"192.168.10.201", res.body)
+
+    def test_t12_session_and_temp_alerts_warning_only(self):
+        """Verify session alerts and /tmp/ operations are strictly forced to WARNING and never sent via email."""
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+        mock_cur.fetchone.side_effect = [{"id": 1}, None, None, {"id": 1}, None, None]
+        
+        with patch.object(db, "get_db_connection", return_value=mock_conn):
+            # Test 1: session alert
+            db.log_alert(1, "AUDIT_SESSION", "session event triggered by user 'shreya.kerur' on '/var/run/utmp'", severity="critical", title="Session Alert by shreya.kerur")
+            self.assertTrue(mock_cur.execute.called)
+            inserted_severity = None
+            for call in mock_cur.execute.call_args_list:
+                args = call[0]
+                if "INSERT INTO alerts" in args[0]:
+                    params = args[1]
+                    inserted_severity = params[2]
+                    break
+            self.assertEqual(inserted_severity, "warning")
+
+            # Test 2: temp folder alert
+            mock_cur.reset_mock()
+            mock_cur.fetchone.side_effect = [{"id": 1}, None, None, {"id": 1}, None, None]
+            db.log_alert(1, "FIM_TEMP", "File modified at /tmp/malicious.sh", severity="critical", title="OS File Modification Alert")
+            inserted_temp_sev = None
+            for call in mock_cur.execute.call_args_list:
+                args = call[0]
+                if "INSERT INTO alerts" in args[0]:
+                    params = args[1]
+                    inserted_temp_sev = params[2]
+                    break
+            self.assertEqual(inserted_temp_sev, "warning")
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,3 +1,8 @@
+import os
+os.environ['TESTING'] = '1'
+os.environ['SECRET_KEY'] = 'test-secret-key-32-chars-long-abc'
+os.environ['DB_PASSWORD'] = 'testpassword'
+
 import unittest
 import asyncio
 import json

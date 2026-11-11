@@ -2588,6 +2588,14 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
         
     if _is_suppressed(server_id, alert_type, message):
         return  # Silently suppress based on allowlist rules
+
+    is_session_or_temp = (
+        "session" in str(alert_type).lower() or 
+        "session" in str(title or "").lower() or 
+        any(tp in str(message or "").lower() for tp in ["/tmp", "/temp", "\tmp", "\temp", " utmp", "/utmp", "/wtmp", "/btmp"])
+    )
+    if is_session_or_temp:
+        severity = "warning"
         
     cache_key = (int(server_id) if server_id else 0, str(alert_type))
     now = time.time()
@@ -3531,8 +3539,8 @@ async def api_agent_push(request: Request):
     if conn:
         try:
             with conn.cursor() as cur:
-                update_q = "UPDATE servers SET last_seen = NOW(), status = 'online'"
-                params = []
+                update_q = "UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s"
+                params = [agent_version]
                 if machine_id:
                     update_q += ", machine_id = CASE WHEN machine_id IS NULL OR machine_id = '' THEN %s ELSE machine_id END"
                     params.append(machine_id)
@@ -5187,7 +5195,7 @@ PAYLOAD_JSON=$(cat << JSON_EOF
 JSON_EOF
 )
 
-REQ_RES=$(curl -s -X POST "{base_url}/api/approvals/request" \\
+REQ_RES=$(curl -s -k -X POST "{base_url}/api/approvals/request" \\
     -H "Content-Type: application/json" \\
     -d "$PAYLOAD_JSON" || echo '{{"ok": false}}')
 
@@ -5209,7 +5217,7 @@ ASSIGNED_ID=""
 while ([ "$STATUS" = "pending" ] || ([ "$STATUS" = "approved" ] && [ -z "$ASSIGNED_ID" ])) && [ $WAITED -lt $MAX_WAIT ]; do
     sleep 3
     WAITED=$((WAITED+3))
-    CHECK_RES=$(curl -s -G "{base_url}/api/agent/status" --data-urlencode "token=$TOKEN" --data-urlencode "hostname=$NODE_NAME" --data-urlencode "ip=$NODE_IP" || echo '{{"status":"pending"}}')
+    CHECK_RES=$(curl -s -k -G "{base_url}/api/agent/status" --data-urlencode "token=$TOKEN" --data-urlencode "hostname=$NODE_NAME" --data-urlencode "ip=$NODE_IP" || echo '{{"status":"pending"}}')
     STATUS=$(echo "$CHECK_RES" | grep -oE '"status"[[:space:]]*:[[:space:]]*"[^"]+"' | sed -E 's/.*:[[:space:]]*"([^"]+)".*/\\1/' || echo "pending")
     if [ -z "$STATUS" ] && command -v python3 >/dev/null 2>&1; then
         STATUS=$(echo "$CHECK_RES" | python3 -c "import sys, json; print(json.load(sys.stdin).get('status','pending'))" 2>/dev/null || echo "pending")
@@ -5343,7 +5351,7 @@ fi
 mkdir -p /opt/securepulse
 
 cat << PY_EOF > /opt/securepulse/node_push_agent.py
-import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threading, random, platform, zipfile, hmac
+import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threading, random, platform, zipfile, hmac, ssl
 import urllib.request, urllib.error
 from datetime import datetime
 
@@ -5354,6 +5362,36 @@ TARGET_NAME = "$NODE_NAME"
 AGENT_TOKEN = "$TOKEN"
 ASSIGNED_SERVER_ID = int("$ASSIGNED_ID") if "$ASSIGNED_ID".isdigit() else {server_id or "None"}
 PUSH_INTERVAL = 15  # seconds (responsive real-time log ingestion)
+
+try:
+    _ssl_ctx = ssl.create_default_context()
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = ssl.CERT_NONE
+except Exception:
+    _ssl_ctx = None
+
+CANDIDATE_SOC_URLS = [SOC_URL]
+for _candidate in ["https://192.168.10.201:3443", "https://127.0.0.1:3443", "http://127.0.0.1:8000"]:
+    if _candidate not in CANDIDATE_SOC_URLS:
+        CANDIDATE_SOC_URLS.append(_candidate)
+
+def send_agent_request(endpoint, data=None, headers=None, timeout=10):
+    global SOC_URL
+    hdrs = headers or {{"Content-Type": "application/json"}}
+    ordered = [SOC_URL] + [u for u in CANDIDATE_SOC_URLS if u != SOC_URL]
+    last_err = None
+    for base in ordered:
+        url = base.rstrip("/") + endpoint
+        try:
+            req = urllib.request.Request(url, data=data, headers=hdrs)
+            with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx) as resp:
+                res_bytes = resp.read()
+                SOC_URL = base
+                return res_bytes
+        except Exception as e:
+            last_err = e
+            continue
+    raise last_err
 
 # ── AUTO-DETECTED SERVICES STATE & LOGIC ──
 known_services = {{}}
@@ -5772,14 +5810,13 @@ def check_assigned_server_id():
     if ASSIGNED_SERVER_ID is not None:
         return ASSIGNED_SERVER_ID
     try:
-        url = f"{{SOC_URL}}/api/agent/status?ip={{TARGET_IP}}&hostname={{get_hostname()}}"
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=5) as r:
-            res = json.loads(r.read().decode())
-            sid = res.get("server_id")
-            if sid:
-                ASSIGNED_SERVER_ID = int(sid)
-                return ASSIGNED_SERVER_ID
+        q_path = f"/api/agent/status?ip={{TARGET_IP}}&hostname={{get_hostname()}}"
+        res_bytes = send_agent_request(q_path, timeout=5)
+        res = json.loads(res_bytes.decode())
+        sid = res.get("server_id")
+        if sid:
+            ASSIGNED_SERVER_ID = int(sid)
+            return ASSIGNED_SERVER_ID
     except: pass
     return ASSIGNED_SERVER_ID
 
@@ -6109,17 +6146,12 @@ def collect_and_send_inventory(force_full=False):
                 "X-Machine-ID": get_machine_id()
             }}
 
-        req = urllib.request.Request(
-            f"{{SOC_URL}}/api/agent/inventory",
-            data=data_to_send,
-            headers=headers
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            resp_data = json.loads(resp.read().decode())
-            if resp_data.get("full_inventory_required") and send_hash_only:
-                collect_and_send_inventory(force_full=True)
-                return
-            last_package_hash = pkg_hash
+        resp_bytes = send_agent_request("/api/agent/inventory", data=data_to_send, headers=headers, timeout=60)
+        resp_data = json.loads(resp_bytes.decode())
+        if resp_data.get("full_inventory_required") and send_hash_only:
+            collect_and_send_inventory(force_full=True)
+            return
+        last_package_hash = pkg_hash
     except Exception as e:
         inventory_error = f"inventory_error: {{e}}"
     finally:
@@ -7041,39 +7073,38 @@ def main():
             }}
 
             data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                SOC_URL + "/api/agent/push",
+            res_bytes = send_agent_request(
+                "/api/agent/push",
                 data=data,
-                headers={{"Content-Type": "application/json"}}
+                headers={{"Content-Type": "application/json"}},
+                timeout=10
             )
-            with urllib.request.urlopen(req, timeout=10) as r:
-                res_data = json.loads(r.read().decode())
-                # Commit audit checkpoint ONLY on successful HTTP 200 response
+            res_data = json.loads(res_bytes.decode())
+            # Commit audit checkpoint ONLY on successful HTTP 200 response
+            try:
+                commit_audit_checkpoint()
+            except:
+                pass
+            if res_data.get("update_requested"):
+                dl_url = res_data.get("update_cmd_url")
                 try:
-                    commit_audit_checkpoint()
-                except:
-                    pass
-                if res_data.get("update_requested"):
-                    dl_url = res_data.get("update_cmd_url")
-                    try:
-                        ureq = urllib.request.Request(f"{{SOC_URL}}/api/agent/status-update", data=json.dumps({{"server_id": sid, "status": "updating"}}).encode('utf-8'), headers={{"Content-Type": "application/json"}})
-                        urllib.request.urlopen(ureq, timeout=5)
-                    except: pass
-                    
-                    cmd = f"curl -s {{dl_url}} -d 'name={{TARGET_NAME}}&ip={{TARGET_IP}}' | bash"
-                    subprocess.Popen(["bash", "-c", cmd])
-                    sys.exit(0)
+                    send_agent_request("/api/agent/status-update", data=json.dumps({{"server_id": sid, "status": "updating"}}).encode('utf-8'), timeout=5)
+                except: pass
+                
+                cmd = f"curl -s -k {{dl_url}} -d 'name={{TARGET_NAME}}&ip={{TARGET_IP}}' | bash"
+                subprocess.Popen(["bash", "-c", cmd])
+                sys.exit(0)
 
-                # On-demand inventory scan requested from SOC ("Scan now" button)
-                if res_data.get("inventory_scan_requested"):
-                    threading.Thread(target=collect_and_send_inventory, kwargs={{"force_full": True}}, daemon=True).start()
+            # On-demand inventory scan requested from SOC ("Scan now" button)
+            if res_data.get("inventory_scan_requested"):
+                threading.Thread(target=collect_and_send_inventory, kwargs={{"force_full": True}}, daemon=True).start()
 
-                # Clear delivered task results
-                task_results_queue.clear()
+            # Clear delivered task results
+            task_results_queue.clear()
 
-                # Process pending signed tasks from SOC Command Center
-                if res_data.get("pending_tasks"):
-                    threading.Thread(target=execute_agent_tasks, args=(res_data.get("pending_tasks"),), daemon=True).start()
+            # Process pending signed tasks from SOC Command Center
+            if res_data.get("pending_tasks"):
+                threading.Thread(target=execute_agent_tasks, args=(res_data.get("pending_tasks"),), daemon=True).start()
 
             # Also push structured logs
             if log_lines:
@@ -7084,12 +7115,8 @@ def main():
                     "lines": log_lines[:200]
                 }}
                 ldata = json.dumps(log_payload).encode("utf-8")
-                lreq = urllib.request.Request(
-                    SOC_URL + "/api/agent/push-logs",
-                    data=ldata,
-                    headers={{"Content-Type": "application/json"}}
-                )
-                try: urllib.request.urlopen(lreq, timeout=10)
+                try:
+                    send_agent_request("/api/agent/push-logs", data=ldata, timeout=10)
                 except: pass
 
             push_count += 1
