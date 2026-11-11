@@ -5380,7 +5380,7 @@ def discover_services(force=False):
             ["systemctl", "list-units", "--type=service", "--all", "--no-pager", "--no-legend"],
             stderr=subprocess.DEVNULL, timeout=8
         ).decode("utf-8", errors="ignore")
-        for line in out.strip().split("\n"):
+        for line in out.strip().splitlines():
             parts = line.split(None, 4)
             if len(parts) < 4: continue
             unit_name = parts[0].strip()
@@ -5417,7 +5417,7 @@ def discover_services(force=False):
             if is_sys and status != "running":
                 continue
 
-            sid = f"unit:{unit_name}"
+            sid = "unit:" + str(unit_name)
             current_found.add(sid)
 
             prev = known_services.get(sid, {{}})
@@ -5457,7 +5457,7 @@ def discover_services(force=False):
             stderr=subprocess.DEVNULL, timeout=8
         ).decode("utf-8", errors="ignore")
 
-        for pline in ps_out.strip().split("\n"):
+        for pline in ps_out.strip().splitlines():
             pparts = pline.split(None, 5)
             if len(pparts) < 6: continue
             pid_s, user_s, etime_s, cpu_s, mem_s, cmd_s = pparts
@@ -5509,14 +5509,14 @@ def discover_services(force=False):
                 days = etime_i // 86400
                 hours = (etime_i % 86400) // 3600
                 mins = (etime_i % 3600) // 60
-                uptime_str = f"{days}d {hours}h" if days > 0 else (f"{hours}h {mins}m" if hours > 0 else f"{mins}m")
+                uptime_str = (str(days) + "d " + str(hours) + "h") if days > 0 else ((str(hours) + "h " + str(mins) + "m") if hours > 0 else (str(mins) + "m"))
 
                 is_sys = False
                 if any(k in cmd_lower for k in ["securepulse", "node_push_agent", "auditd", "sshd"]):
                     is_sys = True
 
                 cwd_val = ""
-                try: cwd_val = os.readlink(f"/proc/{pid_int}/cwd")
+                try: cwd_val = os.readlink("/proc/" + str(pid_int) + "/cwd")
                 except: pass
 
                 matched_unit = None
@@ -5535,7 +5535,7 @@ def discover_services(force=False):
                     known_services[matched_unit]["cmdline"] = mask_secrets(cmd_s[:300])
                     known_services[matched_unit]["working_dir"] = cwd_val
                 else:
-                    proc_sid = f"proc:{pType.lower()}-{pName.lower().replace(' ', '-')}"
+                    proc_sid = "proc:" + pType.lower() + "-" + pName.lower().replace(" ", "-")
                     current_found.add(proc_sid)
                     known_services[proc_sid] = {{
                         "id": proc_sid,
@@ -5565,8 +5565,8 @@ def discover_services(force=False):
             ["docker", "ps", "-a", "--format", "{{{{.ID}}}}\t{{{{.Names}}}}\t{{{{.Image}}}}\t{{{{.Status}}}}\t{{{{.Ports}}}}"],
             stderr=subprocess.DEVNULL, timeout=8
         ).decode("utf-8", errors="ignore")
-        for dline in docker_out.strip().split("\n"):
-            dparts = dline.split("\t")
+        for dline in docker_out.strip().splitlines():
+            dparts = dline.split(chr(9))
             if len(dparts) < 4: continue
             cid = dparts[0].strip()
             cname = dparts[1].strip()
@@ -5576,7 +5576,7 @@ def discover_services(force=False):
 
             is_up = "up" in cstatus.lower()
             st_val = "running" if is_up else "stopped"
-            sid = f"docker:{cid}"
+            sid = "docker:" + str(cid)
             current_found.add(sid)
 
             dports_list = []
@@ -5593,13 +5593,13 @@ def discover_services(force=False):
                 "container_id": cid,
                 "status": st_val,
                 "is_system": False,
-                "description": f"Container {cimg}",
+                "description": "Container " + str(cimg),
                 "uptime": cstatus,
                 "ports": dports_list,
                 "cpu_percent": 0.0,
                 "ram_percent": 0.0,
                 "user": "root",
-                "cmdline": f"docker run {cimg}",
+                "cmdline": "docker run " + str(cimg),
                 "working_dir": ""
             }}
     except Exception:
@@ -5679,13 +5679,13 @@ def execute_agent_tasks(tasks):
         if any(p in target_check for p in ["sshd", "ssh", "securepulse", "auditd", "systemd", "init", "dbus", "network"]):
             task_results_queue.append({{
                 "task_id": tid, "status": "failed", "exit_code": 400,
-                "output": f"Refused: Service '{target_check}' is protected and cannot be modified.",
+                "output": "Refused: Service '" + str(target_check) + "' is protected and cannot be modified.",
                 "duration_ms": int((time.time() - t_start) * 1000)
             }})
             continue
 
         # 5. Shell character check
-        if any(c in (unit_name or '') for c in [';', '&', '|', '`', '$', '(', ')', '<', '>', '\n']) or any(c in (container_id or '') for c in [';', '&', '|', '`', '$', '(', ')', '<', '>', '\n']):
+        if any(c in (unit_name or '') for c in [';', '&', '|', '`', '$', '(', ')', '<', '>', chr(10)]) or any(c in (container_id or '') for c in [';', '&', '|', '`', '$', '(', ')', '<', '>', chr(10)]):
             task_results_queue.append({{
                 "task_id": tid, "status": "failed", "exit_code": 400,
                 "output": "Refused: Illegal shell injection characters in target identifier.",
@@ -5707,7 +5707,7 @@ def execute_agent_tasks(tasks):
                 time.sleep(1)
                 chk = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True)
                 new_state = chk.stdout.strip()
-                output += f"\nVerification: Unit '{unit}' state is '{new_state}'."
+                output += chr(10) + "Verification: Unit '" + str(unit) + "' state is '" + str(new_state) + "'."
 
             elif managed_by == "docker":
                 cid = container_id or service_id.replace("docker:", "")
@@ -5727,20 +5727,20 @@ def execute_agent_tasks(tasks):
                     if pid_val:
                         p = subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, text=True, timeout=10)
                         exit_code = p.returncode
-                        output = f"Sent SIGTERM to PID {pid_val}."
+                        output = "Sent SIGTERM to PID " + str(pid_val) + "."
                     else:
                         exit_code = 0
                         output = "Process not actively running."
             else:
                 exit_code = 400
-                output = f"Unknown managed_by type: {managed_by}"
+                output = "Unknown managed_by type: " + str(managed_by)
 
         except subprocess.TimeoutExpired:
             exit_code = 124
             output = "Execution timed out after 60 seconds."
         except Exception as ex_exec:
             exit_code = 1
-            output = f"Execution error: {str(ex_exec)}"
+            output = "Execution error: " + str(ex_exec)
 
         discover_services(force=True)
 
@@ -6751,7 +6751,7 @@ def get_auditd_events():
                         "rate_count": 100,
                         "auid": sc.get("auid"),
                         "username": resolve_uid_to_user(sc.get("auid") or sc.get("uid")),
-                        "line": f"Key '{key}' exceeded 100 events/min rate limit (Aggregated Summary)"
+                        "line": "Key '" + str(key) + "' exceeded 100 events/min rate limit (Aggregated Summary)"
                     }})
                 continue
 

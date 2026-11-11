@@ -233,5 +233,30 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
             app_module._check_unified_fim(11, data_temp)
             self.assertEqual(created_alerts[-1]["severity"], "warning", "Temp folder operations must be WARNING only")
 
+    # -------------------------------------------------------------------------
+    # T11: Setup Script Generation (Zero 500 Errors, Valid Script Output)
+    # -------------------------------------------------------------------------
+    def test_t11_setup_script_generation(self):
+        """Verify /setup_node.sh generates valid bash script with embedded python agent without NameError/SyntaxError."""
+        class MockRequest:
+            method = "GET"
+            base_url = "https://soc.bsmartone.com:3443/"
+            query_params = {
+                "node_name": "soc-server -1",
+                "ip": "192.168.10.201"
+            }
+        req = MockRequest()
+        coro = app_module.setup_script(req)
+        try:
+            coro.send(None)
+            res = None
+        except StopIteration as e:
+            res = e.value
+        self.assertIsNotNone(res)
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b"#!/bin/bash", res.body)
+        self.assertIn(b"node_push_agent.py", res.body)
+        self.assertNotIn(b"Internal Server Error", res.body)
+
 if __name__ == '__main__':
     unittest.main()
