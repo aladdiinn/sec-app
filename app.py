@@ -2204,50 +2204,45 @@ _recent_admin_actions = {}  # {server_id: {"ts": float, "rule_name": str, "text"
 
 def _resolve_server_human_actor(server_id, data, text="", rule_name=""):
     """
-    Universally extracts the human operator (e.g. 'mannan', 'ubuntu') who executed commands,
+    Universally extracts the human operator (e.g. 'manoj.kn', 'mannan.shariff', 'ubuntu') who executed commands,
     even when running inside a root shell (su root, sudo su). Correlates across:
-    1. Linux kernel auditd loginuid (AUID != 4294967295)
+    1. Linux kernel auditd loginuid (AUID != 4294967295) with NSS domain resolution
     2. Sudo caller history
     3. Interactive SSH/su sessions in log_lines
     4. Per-server human user cache
+    NEVER hardcodes fallbacks to any specific user.
+    If actor is unresolved, returns 'attribution unverified' (with AUID if available).
     """
     human = None
-    
-    # 0. Check if the specific event line matches a specific user
+    fallback_auid = None
+
+    # 0. Check if the specific event line matches a specific audit event
     if text:
         for ae in data.get("audit_events", []):
             ae_line = ae.get("line", "")
             if text in ae_line or (ae_line and ae_line in text):
                 ae_u = ae.get("username", "")
                 auid = str(ae.get("auid", ""))
-                if auid in ("1005", "1002") or ae_u == "mannan":
-                    return "mannan"
-                if auid in ("1000", "1001", "500") or ae_u == "ubuntu":
-                    return "ubuntu"
-                if ae_u and ae_u not in ("root", "unknown", ""):
+                if auid and auid not in ("0", "4294967295", "-1", "unset", ""):
+                    fallback_auid = auid
+                    if ae_u and ae_u not in ("unknown", "root", ""):
+                        return ae_u
+                elif ae_u and ae_u not in ("root", "unknown", ""):
                     return ae_u
 
-    # 1. Check kernel audit events in payload (mannan prioritized as primary admin operator)
+    # 1. Check kernel audit events in payload
     for ae in data.get("audit_events", []):
         ae_u = ae.get("username", "")
         auid = str(ae.get("auid", ""))
-        if auid in ("1005", "1002") or ae_u == "mannan":
-            human = "mannan"
-            break
-
-    if not human:
-        for ae in data.get("audit_events", []):
-            ae_u = ae.get("username", "")
-            auid = str(ae.get("auid", ""))
-            if auid in ("1000", "1001", "500") or ae_u == "ubuntu":
-                human = "ubuntu"
-                break
-            elif ae_u and ae_u not in ("root", "unknown", ""):
+        if auid and auid not in ("0", "4294967295", "-1", "unset", ""):
+            if not fallback_auid:
+                fallback_auid = auid
+            if ae_u and ae_u not in ("unknown", "root", ""):
                 human = ae_u
                 break
-            elif auid and auid not in ("0", "4294967295", "-1", ""):
-                human = ae_u if (ae_u and ae_u != "unknown") else "mannan"
-                break
+        elif ae_u and ae_u not in ("root", "unknown", ""):
+            human = ae_u
+            break
 
     # 2. Check sudo events
     if not human:
@@ -2281,15 +2276,18 @@ def _resolve_server_human_actor(server_id, data, text="", rule_name=""):
     # 5. Check per-server cached user
     if not human:
         cached = _last_known_server_user.get(server_id)
-        if cached and cached not in ("root", "unknown"):
+        if cached and cached not in ("root", "unknown", "attribution unverified"):
             human = cached
 
-    # 6. Default to "mannan" if this is a known managed asset, never raw "root"
-    if not human or human in ("root", "unknown", ""):
-        human = "mannan"
+    # 6. Unresolved attribution - never fallback to hardcoded user!
+    if not human or human in ("unknown", ""):
+        if fallback_auid:
+            human = f"attribution unverified (AUID {fallback_auid})"
+        else:
+            human = "attribution unverified"
 
-    # Cache for this server
-    _last_known_server_user[server_id] = human
+    if human and not human.startswith("attribution unverified"):
+        _last_known_server_user[server_id] = human
     return human
 
 def _extract_audit_actor(log_lines, filepath, bash_cmds=None):
@@ -2816,7 +2814,7 @@ def _check_unified_fim(server_id, data):
             human_msg = f"Detection Rule [Kernel Audit]: {matched_key} event triggered by user '{actor}' (AUID: {auid_str}){tool_str}{exe_str} on file '{path}'."
 
             _create_alert_dedup(
-                server_id, f'AUDIT_{matched_key}_{auid_str}', 'critical',
+                server_id, f'AUDIT_{matched_key.upper()}', 'critical',
                 title,
                 human_msg
             )
@@ -2831,6 +2829,9 @@ def _check_unified_fim(server_id, data):
     # Process leftover audit events that didn't have a matching FIM file change
     for key, events in audit_map.items():
         if key in alerted_keys:
+            continue
+        # Unkeyed kernel events (null key) are non-actionable; filter out from alert engine
+        if key in ("(null)", "null", "", None):
             continue
             
         last_event = events[-1]
@@ -2857,7 +2858,7 @@ def _check_unified_fim(server_id, data):
 
         severity = "critical"
         
-        real_actor = actor if actor else "mannan"
+        real_actor = actor if (actor and actor not in ("unknown", "")) else "attribution unverified"
         display_key = "System Config" if key in ("(null)", "null", "") else key.replace('_', ' ').title()
         title = f"{display_key} Alert by {real_actor}"
 
@@ -2895,8 +2896,41 @@ def _check_unified_fim(server_id, data):
         
         human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}){comm_str}{exe_str}{file_str}."
 
+        # Canonical rule name (Key-only, never contains AUID)
+        rule_name = f'AUDIT_{key.upper()}'
+
+        # Shadow-mode severity evaluation
+        policy = db.get_audit_severity_policy(key)
+        shadow_sev = policy.get("default_severity", "info")
+        reason = f"Policy default for key '{key}'"
+
+        # Check active timed change window (safe maintenance with expiry & tamper protection)
+        tw = db.get_active_timed_change_window(server_id)
+        if tw:
+            expected_tools = ("apt", "dpkg", "useradd", "usermod", "passwd", "visudo", "systemd")
+            comm_val = (c_m.group(1) if c_m else "").lower()
+            if any(t in comm_val for t in expected_tools) or any(t in exe_str_val.lower() for t in expected_tools):
+                shadow_sev = "info"
+                reason = f"Inside active timed change window #{tw['id']} '{tw['title']}': expected maintenance tool demoted to INFO"
+            elif key in ("identity", "scope") or any(f in filename_str for f in ["/etc/shadow", "/etc/sudoers"]):
+                shadow_sev = "critical"
+                reason = f"CRITICAL TAMPER ATTEMPT: Protected file '{filename_str}' modified by unexpected tool '{comm_val}'"
+
+        # Record shadow evaluation for 7-day shadow collection & before/after report
+        try:
+            serial_val = last_event.get("serial", 0)
+            epoch_val = last_event.get("epoch", 0.0)
+            db.record_shadow_audit_evaluation(
+                server_id, serial_val, epoch_val, key,
+                original_sev="critical", shadow_sev=shadow_sev,
+                reason=reason, actor=real_actor,
+                target_path=filename_str, exe=exe_str_val
+            )
+        except Exception:
+            pass
+
         _create_alert_dedup(
-            server_id, f'AUDIT_{key}_{auid_str}', severity,
+            server_id, rule_name, severity,
             title,
             human_msg
         )
@@ -3504,6 +3538,25 @@ async def api_agent_push(request: Request):
                 )
         except Exception as ex_disc:
             logger.debug(f"Auto-config discovered paths error: {ex_disc}")
+
+    # Phase 2: Ingestion Idempotency & Raw Forensic Store
+    raw_audit = data.get("audit_events", [])
+    if server_id and raw_audit:
+        deduped_audit = []
+        for ae in raw_audit:
+            s_num = ae.get("serial")
+            e_num = ae.get("epoch")
+            if s_num and e_num:
+                if db.is_audit_event_ingested(server_id, s_num, e_num):
+                    continue
+                db.record_audit_event_ingested(server_id, s_num, e_num)
+            deduped_audit.append(ae)
+        data["audit_events"] = deduped_audit
+        if deduped_audit:
+            try:
+                db.record_raw_audit_events(server_id, deduped_audit)
+            except Exception as e_raw:
+                logger.debug(f"Error recording raw audit events: {e_raw}")
 
     # Run real-time SIEM / IDS / IPS Detection Engine
     try:
@@ -6436,6 +6489,48 @@ def check_fim():
                 
     return changes
 
+_USER_CACHE = {{}}
+_USER_CACHE_TS = {{}}
+
+def resolve_uid_to_user(uid_val):
+    if not uid_val or str(uid_val) in ("4294967295", "-1", "unset"):
+        return "unknown"
+    try:
+        u_int = int(uid_val)
+    except:
+        return "unknown"
+    now_ts = time.time()
+    if u_int in _USER_CACHE and (now_ts - _USER_CACHE_TS.get(u_int, 0) < 60):
+        return _USER_CACHE[u_int]
+    uname = "unknown"
+    try:
+        import pwd
+        pw = pwd.getpwuid(u_int)
+        if pw and pw.pw_name:
+            uname = pw.pw_name
+    except:
+        pass
+    if uname == "unknown":
+        try:
+            out = subprocess.check_output(["getent", "passwd", str(u_int)], stderr=subprocess.DEVNULL, timeout=2).decode('utf-8', errors='ignore').strip()
+            if out:
+                uname = out.split(":")[0]
+        except:
+            pass
+    if uname == "unknown":
+        try:
+            with open("/etc/passwd", "r") as pf:
+                for pline in pf:
+                    parts = pline.strip().split(":")
+                    if len(parts) > 2 and parts[2] == str(u_int):
+                        uname = parts[0]
+                        break
+        except:
+            pass
+    _USER_CACHE[u_int] = uname
+    _USER_CACHE_TS[u_int] = now_ts
+    return uname
+
 def get_user_mapping():
     mapping = {{}}
     try:
@@ -6447,55 +6542,219 @@ def get_user_mapping():
     except: pass
     return mapping
 
-# Auditd event tracking
-audit_log_positions = {{}}
+# Persistent Checkpoint State
+CHECKPOINT_FILE = "/opt/securepulse/audit_checkpoint.json"
+_checkpoint_state = {{"device": 0, "inode": 0, "offset": 0, "last_serial": 0, "last_epoch": 0.0}}
+_last_audit_events_sent = None
+
+def load_audit_checkpoint():
+    global _checkpoint_state
+    if os.path.exists(CHECKPOINT_FILE):
+        try:
+            with open(CHECKPOINT_FILE, "r") as cf:
+                _checkpoint_state = json.load(cf)
+        except:
+            pass
+
+def commit_audit_checkpoint():
+    global _checkpoint_state, _last_audit_events_sent
+    if not _last_audit_events_sent:
+        return
+    pos, dev, ino, last_s, last_e = _last_audit_events_sent
+    _checkpoint_state = {{
+        "device": dev,
+        "inode": ino,
+        "offset": pos,
+        "last_serial": last_s,
+        "last_epoch": last_e
+    }}
+    try:
+        os.makedirs(os.path.dirname(CHECKPOINT_FILE), exist_ok=True)
+        with open(CHECKPOINT_FILE + ".tmp", "w") as cf:
+            json.dump(_checkpoint_state, cf)
+        os.replace(CHECKPOINT_FILE + ".tmp", CHECKPOINT_FILE)
+    except:
+        pass
+    _last_audit_events_sent = None
+
+# Rate limiter for noisy keys (e.g. app_mod > 100/min)
+_key_rate_counters = {{}}
+_key_rate_window_start = time.time()
+
 def get_auditd_events():
+    global _last_audit_events_sent, _key_rate_window_start, _key_rate_counters
     events = []
     path = "/var/log/audit/audit.log"
-    if not os.path.exists(path): return events
+    if not os.path.exists(path):
+        return events
+
     try:
-        user_mapping = get_user_mapping()
-        size = os.path.getsize(path)
-        pos = audit_log_positions.get(path, max(0, size - 8000))
-        if size < pos: pos = 0
+        load_audit_checkpoint()
+        st = os.stat(path)
+        cur_dev = st.st_dev
+        cur_ino = st.st_ino
+        cur_size = st.st_size
+
+        saved_dev = _checkpoint_state.get("device", 0)
+        saved_ino = _checkpoint_state.get("inode", 0)
+        saved_pos = _checkpoint_state.get("offset", 0)
+
+        # Check for rotation (inode change)
+        rotated_path = "/var/log/audit/audit.log.1"
+        files_to_read = []
+        if saved_ino and saved_ino != cur_ino and os.path.exists(rotated_path):
+            try:
+                rot_st = os.stat(rotated_path)
+                if rot_st.st_ino == saved_ino:
+                    files_to_read.append((rotated_path, saved_pos, rot_st.st_size, rot_st.st_dev, rot_st.st_ino))
+                    saved_pos = 0
+            except:
+                pass
         
-        parsed_syscalls = {{}}
-        paths = {{}}
-        
-        with open(path, 'r', errors='ignore') as f:
-            f.seek(pos)
-            for line in f:
-                msg_id_m = re.search(r'msg=audit\\(([\\d\\.:]+)\\)', line)
-                if not msg_id_m: continue
-                msg_id = msg_id_m.group(1)
-                
-                if "type=PATH" in line:
-                    name_m = re.search(r'name="?([^"\\s]+)"?', line)
-                    if name_m:
-                        paths[msg_id] = name_m.group(1)
-                        
-                elif "type=SYSCALL" in line:
-                    auid_m = re.search(r'auid=(\\d+)', line)
-                    uid_m  = re.search(r'\\buid=(\\d+)', line)
-                    key_m  = re.search(r'key="?([^"\\s]+)"?', line)
-                    auid = auid_m.group(1) if auid_m else None
-                    uid  = uid_m.group(1) if uid_m else None
-                    actor_id = auid if (auid and auid != "4294967295") else uid
-                    if actor_id:
-                        uname = user_mapping.get(actor_id, "unknown")
-                        key = key_m.group(1) if key_m else "unknown"
-                        if key != "unknown":
-                            parsed_syscalls[msg_id] = {{"auid": actor_id, "username": uname, "key": key, "line": line.strip()[:2000]}}
-                            
-            # Correlate paths into syscalls
-            for msg_id, sys_event in parsed_syscalls.items():
-                if msg_id in paths:
-                    sys_event["line"] += f" filename={{paths[msg_id]}}"
-                events.append(sys_event)
-                
-            audit_log_positions[path] = f.tell()
-    except: pass
-    return events[-200:]
+        pos = saved_pos if (saved_ino == cur_ino and saved_pos <= cur_size) else max(0, cur_size - 16000)
+        files_to_read.append((path, pos, cur_size, cur_dev, cur_ino))
+
+        records_by_id = {{}}
+        final_dev = cur_dev
+        final_ino = cur_ino
+        final_pos = cur_size
+
+        for fpath, seek_pos, fsize, fdev, fino in files_to_read:
+            with open(fpath, 'r', errors='ignore') as f:
+                f.seek(seek_pos)
+                for line in f:
+                    msg_m = re.search(r'msg=audit\\(([\\d\\.]+):(\\d+)\\)', line)
+                    if not msg_m:
+                        continue
+                    epoch_str = msg_m.group(1)
+                    serial_str = msg_m.group(2)
+                    msg_id = f"{{epoch_str}}:{{serial_str}}"
+                    
+                    if msg_id not in records_by_id:
+                        records_by_id[msg_id] = {{
+                            "epoch": float(epoch_str),
+                            "serial": int(serial_str),
+                            "lines": [],
+                            "syscall": {{}},
+                            "paths": [],
+                            "cwd": ""
+                        }}
+                    records_by_id[msg_id]["lines"].append(line.strip())
+
+                    if "type=SYSCALL" in line:
+                        auid_m = re.search(r'\\bauid=(\\d+)', line)
+                        uid_m  = re.search(r'\\buid=(\\d+)', line)
+                        euid_m = re.search(r'\\beuid=(\\d+)', line)
+                        key_m  = re.search(r'key="?([^"\\s]+)"?', line)
+                        comm_m = re.search(r'comm="?([^"\\s]+)"?', line)
+                        exe_m  = re.search(r'exe="?([^"\\s]+)"?', line)
+                        ses_m  = re.search(r'\\bses=(\\d+)', line)
+                        pid_m  = re.search(r'\\bpid=(\\d+)', line)
+                        ppid_m = re.search(r'\\bppid=(\\d+)', line)
+
+                        key_val = key_m.group(1) if key_m else None
+                        if key_val in ("(null)", "null", ""):
+                            key_val = None
+
+                        records_by_id[msg_id]["syscall"] = {{
+                            "auid": auid_m.group(1) if auid_m else None,
+                            "uid": uid_m.group(1) if uid_m else None,
+                            "euid": euid_m.group(1) if euid_m else None,
+                            "key": key_val,
+                            "comm": comm_m.group(1) if comm_m else "",
+                            "exe": exe_m.group(1) if exe_m else "",
+                            "ses": ses_m.group(1) if ses_m else None,
+                            "pid": pid_m.group(1) if pid_m else None,
+                            "ppid": ppid_m.group(1) if ppid_m else None,
+                            "line": line.strip()[:1000]
+                        }}
+                    elif "type=PATH" in line:
+                        name_m = re.search(r'name="?([^"\\s]+)"?', line)
+                        if name_m:
+                            p_name = name_m.group(1)
+                            if p_name not in ("(null)", "null"):
+                                records_by_id[msg_id]["paths"].append(p_name)
+                    elif "type=CWD" in line:
+                        cwd_m = re.search(r'cwd="?([^"\\s]+)"?', line)
+                        if cwd_m:
+                            records_by_id[msg_id]["cwd"] = cwd_m.group(1)
+
+                final_pos = f.tell()
+                final_dev = fdev
+                final_ino = fino
+
+        # Rate window reset
+        now_time = time.time()
+        if now_time - _key_rate_window_start >= 60.0:
+            _key_rate_counters.clear()
+            _key_rate_window_start = now_time
+
+        # Build joined events
+        last_s = 0
+        last_e = 0.0
+        for msg_id, rec in records_by_id.items():
+            sc = rec["syscall"]
+            key = sc.get("key")
+            if not key:
+                continue
+
+            _key_rate_counters[key] = _key_rate_counters.get(key, 0) + 1
+            if _key_rate_counters[key] > 100:
+                if _key_rate_counters[key] == 101:
+                    events.append({{
+                        "serial": rec["serial"],
+                        "epoch": rec["epoch"],
+                        "key": key,
+                        "rate_limited": True,
+                        "rate_count": 100,
+                        "auid": sc.get("auid"),
+                        "username": resolve_uid_to_user(sc.get("auid") or sc.get("uid")),
+                        "line": f"Key '{key}' exceeded 100 events/min rate limit (Aggregated Summary)"
+                    }})
+                continue
+
+            actor_id = sc.get("auid") if (sc.get("auid") and sc.get("auid") not in ("4294967295", "-1", "unset", "0")) else sc.get("uid")
+            username = resolve_uid_to_user(actor_id)
+            eff_user = resolve_uid_to_user(sc.get("euid") or sc.get("uid"))
+
+            comm = sc.get("comm", "")
+            exe = sc.get("exe", "")
+            is_daemon = False
+            daemon_desc = ""
+            known_daemons = ("java", "postgres", "mysqld", "redis-server", "haproxy", "nginx", "docker", "containerd")
+            if any(comm.lower().startswith(d) for d in known_daemons) or sc.get("ppid") == "1":
+                is_daemon = True
+                daemon_desc = f"{{comm}} daemon (started in session of {{username}})"
+
+            target_path = rec["paths"][-1] if rec["paths"] else ""
+            full_line = " ".join(rec["lines"])[:2500]
+
+            events.append({{
+                "serial": rec["serial"],
+                "epoch": rec["epoch"],
+                "key": key,
+                "auid": sc.get("auid"),
+                "username": username,
+                "effective_user": eff_user,
+                "comm": comm,
+                "exe": exe,
+                "ses": sc.get("ses"),
+                "pid": sc.get("pid"),
+                "ppid": sc.get("ppid"),
+                "path": target_path,
+                "is_daemon": is_daemon,
+                "daemon_desc": daemon_desc,
+                "line": full_line
+            }})
+            last_s = rec["serial"]
+            last_e = rec["epoch"]
+
+        _last_audit_events_sent = (final_pos, final_dev, final_ino, last_s, last_e)
+
+    except Exception as ex_audit:
+        pass
+
+    return events[-250:]
 
 # Auth failure tracking
 auth_log_positions = {{}}
@@ -6746,6 +7005,11 @@ def main():
             )
             with urllib.request.urlopen(req, timeout=10) as r:
                 res_data = json.loads(r.read().decode())
+                # Commit audit checkpoint ONLY on successful HTTP 200 response
+                try:
+                    commit_audit_checkpoint()
+                except:
+                    pass
                 if res_data.get("update_requested"):
                     dl_url = res_data.get("update_cmd_url")
                     try:
@@ -7280,7 +7544,7 @@ async def api_execute_playbook(pb_id: int, alert_id: Optional[str] = None, reque
         if target_ip in ["127.0.0.1", "0.0.0.0"]: target_ip = "185.220.101.42"
 
         user_match = re.search(r'\buser\s+([a-zA-Z0-9_\-]+)\b', alert_text, re.IGNORECASE)
-        target_user = user_match.group(1) if user_match else ("mannan" if "mannan" in alert_text.lower() else "root")
+        target_user = user_match.group(1) if user_match else ("root" if "root" in alert_text.lower() else "attribution unverified")
 
         playbooks = await asyncio.to_thread(db.get_playbooks)
         pb = next((p for p in playbooks if p.get("id") == pb_id), None)
@@ -10198,7 +10462,7 @@ def is_ip_internal(ip_str: str, project_id: Optional[int] = None) -> bool:
     except Exception:
         return False
 
-def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str, raw_line: str = "", bytes_sent: int = 0, project_id: Optional[int] = None, event_id: Optional[int] = None):
+def evaluate_web_security_event(method: str, path: str, status: int, user: str, ip: str, raw_line: str = "", bytes_sent: int = 0, project_id: Optional[int] = None, event_id: Optional[int] = None, app_id: Optional[int] = None):
     """
     Real-time high-fidelity heuristics detecting confirmed web attacks with structured URL parsing,
     multi-signal corroboration, internal/external context, and complete evidence generation.
@@ -10255,8 +10519,16 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
             # Check cross-log buffer for any DB error within +/- 10s on the node/application
             correlated_db_err = False
             with _cross_log_lock:
-                for t_err, r_err, app_err_id in _recent_cross_log_db_errors:
-                    if abs(now_t - t_err) <= 10.0:
+                for item in _recent_cross_log_db_errors:
+                    t_err = item[0]
+                    r_err = item[1]
+                    app_err_id = item[2] if len(item) > 2 else None
+                    # Enforce strict correlation: same application/node AND actual database error syntax
+                    # Never correlate unrelated OS daemons (snapd, systemd) or cross-application noise
+                    is_same_app = (app_id is not None and app_err_id is not None and app_err_id == app_id) or (app_id is None)
+                    r_lower = r_err.lower()
+                    is_real_db_error = any(kw in r_lower for kw in ("syntax error", "psycopg2", "org.postgresql", "sqlexception", "ora-", "mysql_error"))
+                    if is_same_app and is_real_db_error and abs(now_t - t_err) <= 10.0:
                         correlated_db_err = True
                         break
 
@@ -10489,6 +10761,10 @@ POSTGRES_LOG_RE = re.compile(
 
 def evaluate_postgres_security_event(raw_line: str):
     """Real-time heuristics detecting database threats from PostgreSQL logs."""
+    # Guard: Must be PostgreSQL log or contain PostgreSQL identifiers
+    is_pg = bool(POSTGRES_LOG_RE.match(raw_line)) or any(k in raw_line.lower() for k in ("postgres", "psql", "pg_", "statement:", "org.postgresql"))
+    if not is_pg:
+        return "NON_PG_LOG", "info", None, None, None, None, "INFO"
     m = POSTGRES_LOG_RE.match(raw_line)
     db_user = None
     db_name = None
@@ -10717,7 +10993,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
             with _cross_log_lock:
                 _recent_cross_log_web_events.append((time.time(), actual_app_id, c_ip, raw_path))
             eval_res = evaluate_web_security_event(
-                method, raw_path, status_code, user, c_ip, raw_line=raw_line, bytes_sent=bytes_sent
+                method, raw_path, status_code, user, c_ip, raw_line=raw_line, bytes_sent=bytes_sent, app_id=actual_app_id
             )
             if len(eval_res) == 5:
                 ev_type, sev, rule_title, mitre_tag, evidence_dict = eval_res
@@ -12514,3 +12790,33 @@ async def api_rollback_cleanup(request: Request):
         return JSONResponse(status_code=403, content={"ok": False, "message": "Admin privileges required."})
     res = db.rollback_cleanup_migration()
     return res
+
+# --- AUDIT PIPELINE & USER ATTRIBUTION API ENDPOINTS ---
+
+@app.get("/api/servers/{server_id}/user-activity")
+async def api_server_user_activity(server_id: int, request: Request, limit: int = 50):
+    """Returns chronological audit trail of user actions for asset detail UI."""
+    data = db.get_server_user_activity(server_id, limit=limit)
+    return {"ok": True, "server_id": server_id, "items": data}
+
+@app.get("/api/servers/{server_id}/audit-health")
+async def api_server_audit_health(server_id: int, request: Request):
+    """Returns audit subsystem health, NSS resolution check, and retention posture."""
+    data = db.get_server_audit_health(server_id)
+    return {"ok": True, "health": data}
+
+@app.post("/api/servers/{server_id}/timed-change-window")
+async def api_create_timed_change_window(server_id: int, request: Request):
+    """Creates a timed change window with automatic expiry and tamper protection."""
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Admin privileges required."})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    title = body.get("title", "Scheduled Maintenance")
+    duration = int(body.get("duration_hours", 4))
+    user = get_session_user(request)
+    uname = user.get("username", "admin") if user else "admin"
+    wid = db.create_timed_change_window(server_id, title, duration_hours=duration, created_by=uname)
+    return {"ok": bool(wid), "window_id": wid, "message": f"Timed change window '{title}' active for {duration}h"}

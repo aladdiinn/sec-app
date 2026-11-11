@@ -489,6 +489,14 @@ def build_alert_html(alert_id: int, alert_title: str, alert_type: str, message: 
     if not rec_content or not str(rec_content).strip():
         rec_content = f"<li>Inspect active network connections and daemon processes on target node {safe_ip}.</li><li>Verify firewall ingress/egress policies and review auditd event logs.</li><li>Acknowledge and assign incident #{safe_id} in BSmart SOC dashboard.</li>"
 
+    # Decoupled AI Assessment Conflict Detection
+    is_ai_low_risk = any(kw in str(risk_content).lower() or kw in str(analysis_content).lower() 
+                         for kw in ["low", "false positive", "benign", "unlikely", "not validate", "misconfiguration"])
+    conflict_banner = ""
+    if safe_sev == "CRITICAL" and is_ai_low_risk:
+        conflict_banner = '<div style="background:rgba(239, 68, 68, 0.18); border:1px solid #ef4444; border-radius:6px; padding:10px 14px; margin-bottom:14px; font-family:-apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; font-size:12px; font-weight:800; color:#f87171; letter-spacing:0.5px; text-transform:uppercase;">&#9888; [ASSESSMENT CONFLICT: Engine Critical vs AI Low Risk / False Positive]</div>'
+
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -601,6 +609,7 @@ def build_alert_html(alert_id: int, alert_title: str, alert_type: str, message: 
                                     </tr>
                                 </table>
 
+                                {conflict_banner}
                                 <div style="font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">
                                     Incident Analysis & Observations
                                 </div>
@@ -824,14 +833,18 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
     rule_key = str(alert_type).upper()
     now = time.time()
 
-    # 1. Deduplication for Critical Alerts (15 Minutes)
+    # 1. Deduplication for Critical Alerts (15 Minutes per rule, server, actor)
+    actor_m = re.search(r"user '([^']+)'", message) or re.search(r"by ([a-zA-Z0-9_\-\.]+)", alert_title)
+    actor_key = actor_m.group(1).strip() if actor_m else "unknown"
+    dedup_tuple = (rule_key, str(server_ip), actor_key)
+
     if not force and str(severity).lower() == "critical":
         with _DEDUP_LOCK:
-            last_sent = _CRITICAL_EMAIL_DEDUP.get((rule_key, str(server_ip)), 0)
+            last_sent = _CRITICAL_EMAIL_DEDUP.get(dedup_tuple, 0)
             if now - last_sent < 900: # 15 minutes = 900 seconds
-                logger.info(f"[SES DEDUP] Suppressing duplicate Critical email for {rule_key} on {server_ip} (Sent {int(now - last_sent)}s ago)")
+                logger.info(f"[SES DEDUP] Suppressing duplicate Critical email for {rule_key} on {server_ip} for {actor_key} (Sent {int(now - last_sent)}s ago)")
                 return False
-            _CRITICAL_EMAIL_DEDUP[(rule_key, str(server_ip))] = now
+            _CRITICAL_EMAIL_DEDUP[dedup_tuple] = now
 
     # 2. Get LLM Analysis (Safe fallback if Gemini missing)
     llm_data = generate_alert_analysis(alert_title, alert_type, message, server_ip)

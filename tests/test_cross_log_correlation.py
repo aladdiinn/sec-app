@@ -60,5 +60,32 @@ class TestCrossLogCorrelation(unittest.TestCase):
         )
         self.assertEqual(res[1], "medium", "SQLi 500 without correlated DB error must remain MEDIUM")
 
+
+    def test_snapd_log_does_not_correlate_or_trigger_postgres_alert(self):
+        # Negative test for Evidence Case: snapd OS error line must NOT correlate with database alerts
+        snapd_line = 'Nov 10 13:26:41 jaidcplcpncms02 snapd[1120]: mkdir /no: permission denied'
+        
+        # 1. evaluate_postgres_security_event must reject snapd line
+        pg_res = app_module.evaluate_postgres_security_event(snapd_line)
+        self.assertEqual(pg_res[0], 'NON_PG_LOG', 'snapd syslog line must be identified as NON_PG_LOG')
+        self.assertEqual(pg_res[1], 'info', 'snapd syslog line must evaluate to INFO, never critical')
+
+        # 2. Even if snapd error is present in cross_log_db_errors buffer, it must NOT escalate web SQLi
+        with app_module._cross_log_lock:
+            app_module._recent_cross_log_db_errors.append((time.time(), snapd_line, 1))
+
+        web_access_line = '198.51.100.90 - - [05/Nov/2026:11:00:00 +0530] "GET /items?id=1\' OR 1=1-- HTTP/1.1" 500 512'
+        res = app_module.evaluate_web_security_event(
+            "GET",
+            "/items?id=1' OR 1=1--",
+            500,
+            "-",
+            "198.51.100.90",
+            raw_line=web_access_line,
+            bytes_sent=512,
+            app_id=1
+        )
+        self.assertEqual(res[1], "medium", "snapd error must NOT escalate web SQLi to critical")
+
 if __name__ == '__main__':
     unittest.main()

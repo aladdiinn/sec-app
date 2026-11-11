@@ -584,10 +584,11 @@
                 const cnt = res ? (res.unread_count ?? res.count ?? res.open_count ?? res.unread ?? 0) : 0;
                 const txt = cnt > 99 ? '99+' : String(cnt);
                 if (badge) {
-                    badge.innerText = txt;
                     if (cnt > 0) {
+                        badge.innerText = txt;
                         badge.style.setProperty('display', 'inline-flex', 'important');
                     } else {
+                        badge.innerText = '';
                         badge.style.setProperty('display', 'none', 'important');
                     }
                 }

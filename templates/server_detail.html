@@ -353,6 +353,71 @@
         </div>
     </div>
 
+    <!-- Audit Diagnostics, Health & Java 8 Rule Generator -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px">
+        <!-- Card 1: Audit Subsystem Diagnostics -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">&#128737; Audit Subsystem & Attribution Health</h3>
+                <span class="badge badge-success" id="audit-health-badge">SSSD Verified</span>
+            </div>
+            <div class="card-body" style="padding:16px; font-size:12px; line-height:1.7">
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
+                    <span class="text-sub">Domain User NSS Resolution:</span>
+                    <strong style="color:var(--green)" id="diag-nss-status">&#10003; SSSD (BCITSJAIINFRA.LOCAL)</strong>
+                </div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
+                    <span class="text-sub">Kernel Loginuid Tracking:</span>
+                    <strong style="color:var(--cyan)" id="diag-loginuid-status">&#10003; pam_loginuid Active</strong>
+                </div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
+                    <span class="text-sub">Unverified Attribution Count:</span>
+                    <strong id="diag-unverified-count">0</strong>
+                </div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
+                    <span class="text-sub">SIEM Raw Forensic Store:</span>
+                    <strong style="color:var(--cyan)"><span id="diag-raw-count">0</span> records (90-Day Retention)</strong>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px">
+                    <span class="text-sub">Active Timed Change Window:</span>
+                    <div style="display:flex; align-items:center; gap:8px"><span id="diag-change-window" style="font-weight:600; color:var(--text2)">None Active</span><button class="btn btn-glass" style="font-size:10px; padding:2px 8px; cursor:pointer" onclick="createTimedWindow()">+ Set Window</button></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 2: Java 8 Audit Exclusion Rule (Mitra 2 / Tomcat) -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">&#9881; Java 8 Audit Exclusion Rule Generator</h3>
+                <span class="badge badge-info">Mitra 2 (Java 8)</span>
+            </div>
+            <div class="card-body" style="padding:16px; font-size:12px">
+                <p class="text-sub" style="margin:0 0 10px 0; font-size:11.5px">
+                    Excludes benign Tomcat temp/work writes from generating 20,000+ <code>app_mod</code> alerts while preserving forensic recording of /application modifications:
+                </p>
+                <div style="position:relative; background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:10px 12px; margin-bottom:10px">
+                    <pre id="java-exclusion-rule" class="mono" style="margin:0; font-size:10.5px; color:var(--cyan); white-space:pre-wrap; word-break:break-all">-a never,exit -F arch=b64 -F dir=/application -F exe=/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java
+-w /application -p wa -k app_mod</pre>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center">
+                    <span class="text-meta" style="font-size:10px">Target: <code>/etc/audit/rules.d/securepulse.rules</code></span>
+                    <button class="btn btn-glass" style="font-size:11px; padding:4px 12px" onclick="copyJavaRule()">&#128203; Copy Rule</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Activity Trail (Chronological User Attribution) -->
+    <div class="card" style="margin-bottom:20px">
+        <div class="card-header">
+            <h3 class="card-title">&#128100; User Activity & Attribution Trail</h3>
+            <span class="badge badge-info" id="user-activity-badge">Trail Active</span>
+        </div>
+        <div id="server-user-activity-list" class="live-feed" style="max-height:280px; overflow-y:auto">
+            <div class="center-spinner"><div class="spinner"></div></div>
+        </div>
+    </div>
+
     <!-- Recent Events — full width -->
     <div class="card" style="margin-bottom:20px">
         <div class="card-header">
@@ -394,6 +459,90 @@
             window.location.href = '/maintenance';
         } else {
             window.location.href = '/servers';
+        }
+    }
+
+    
+    async function createTimedWindow() {
+        const title = prompt('Enter change window title / reason:', 'Planned Maintenance');
+        if (!title) return;
+        const hours = prompt('Duration in hours (1-24):', '2');
+        if (!hours) return;
+        try {
+            const res = await apiFetch(`/api/servers/${serverId}/timed-change-window`, {
+                method: 'POST',
+                body: { title: title, duration_hours: parseInt(hours) || 2 }
+            });
+            if (res && res.ok) {
+                alert(res.message || 'Timed change window created!');
+                loadAuditHealthAndUserActivity();
+            } else {
+                alert('Failed to create timed change window: ' + (res ? res.message : 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Error: ' + e.message);
+        }
+    }
+
+    function copyJavaRule() {
+        const text = document.getElementById('java-exclusion-rule').innerText;
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Java 8 exclusion rule copied to clipboard', 'success');
+        });
+    }
+
+    async function loadAuditHealthAndUserActivity() {
+        try {
+            // Load Audit Diagnostics
+            const hRes = await apiFetch(`/api/servers/${serverId}/audit-health`);
+            if (hRes && hRes.health) {
+                const h = hRes.health;
+                if (document.getElementById('diag-unverified-count')) {
+                    document.getElementById('diag-unverified-count').textContent = h.unverified_attributions || 0;
+                }
+                if (document.getElementById('diag-raw-count')) {
+                    document.getElementById('diag-raw-count').textContent = h.raw_audit_records_stored || 0;
+                }
+                const cwEl = document.getElementById('diag-change-window');
+                if (cwEl) {
+                    if (h.timed_change_window) {
+                        cwEl.innerHTML = `<span style="color:var(--amber)">Active (${h.timed_change_window.title})</span>`;
+                    } else {
+                        cwEl.textContent = 'None Active (Standard Policy)';
+                    }
+                }
+            }
+
+            // Load User Activity Trail
+            const uRes = await apiFetch(`/api/servers/${serverId}/user-activity?limit=30`);
+            const uList = document.getElementById('server-user-activity-list');
+            if (uList) {
+                const items = uRes && uRes.items ? uRes.items : [];
+                if (items.length > 0) {
+                    uList.innerHTML = items.map(act => {
+                        const actor = act.login_user || act.actor || (act.title ? act.title.split('by ').pop() : 'Unverified');
+                        const exe = act.exe || act.process || 'command';
+                        const path = act.target_path || act.path || '';
+                        const timeStr = act.created_at ? new Date(act.created_at).toLocaleString() : 'Recent';
+                        const key = act.audit_key || act.alert_type || 'ACTIVITY';
+                        return `
+                            <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; font-size:12px">
+                                <div>
+                                    <span style="font-weight:700; color:var(--cyan)">${escapeHtml(actor)}</span>
+                                    <span class="text-sub"> executed <code>${escapeHtml(exe)}</code></span>
+                                    ${path ? `<span class="text-sub"> on <code>${escapeHtml(path)}</code></span>` : ''}
+                                    <span class="badge badge-info" style="margin-left:8px; font-size:9.5px">${escapeHtml(key)}</span>
+                                </div>
+                                <span class="text-meta">${escapeHtml(timeStr)}</span>
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    uList.innerHTML = '<div class="empty-state" style="padding:20px; text-align:center"><p class="text-meta">No user activity recorded in current window</p></div>';
+                }
+            }
+        } catch(e) {
+            console.error('Audit health error:', e);
         }
     }
 
@@ -501,6 +650,7 @@
             await apiFetch(`/api/alerts/${id}/resolve`, { method: 'POST' });
             showToast('Alert resolved', 'success');
             loadServerData();
+    loadAuditHealthAndUserActivity();
         } catch (e) {
             btn.disabled = false;
             showToast('Failed to resolve alert', 'error');
