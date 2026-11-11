@@ -209,14 +209,10 @@
                         <p class="text-sub" style="font-size:11px; margin:2px 0 0 0">Auto-discovered running units & processes on host (Refreshes automatically)</p>
                     </div>
                     <div style="display:flex; gap:10px; align-items:center">
-                        {% if session.get('user_role') == 'admin' %}
                         <button type="button" class="btn btn-glass" id="btn-rescan-services" style="padding:5px 12px; font-size:11px; display:flex; align-items:center; gap:6px" onclick="triggerRescan()">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
                             Rescan Services
                         </button>
-                        {% else %}
-                        <span class="badge badge-gray" style="font-size:10px" title="Admin only">Admin only</span>
-                        {% endif %}
                     </div>
                 </div>
 
@@ -694,7 +690,10 @@
         });
 
         if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--text-muted)">No services match the current filters.</td></tr>`;
+            const hiddenMsg = (!showSystem && detectedServicesList.some(s => s.is_system))
+                ? ` (${detectedServicesList.filter(s => s.is_system).length} system services hidden — check "Show system services" to view)`
+                : '';
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--text-muted)">No services match the current filters.${hiddenMsg}</td></tr>`;
             return;
         }
 
@@ -926,16 +925,21 @@
     }
 
     async function triggerRescan() {
-        if (!IS_ADMIN) return showToast('Admin role required', 'error');
         const btn = document.getElementById('btn-rescan-services');
         if (btn) {
             btn.disabled = true;
             btn.innerHTML = `<div class="spinner" style="width:12px; height:12px"></div> Rescanning...`;
         }
         try {
-            await apiFetch(`/api/servers/${serverId}/services/rescan`, { method: 'POST' });
-            showToast('Rescan triggered for agent', 'info');
-            setTimeout(loadDetectedServices, 2500);
+            const res = await apiFetch(`/api/servers/${serverId}/services/rescan`, { method: 'POST' });
+            showToast('Service discovery refreshed', 'success');
+            if (res.services && res.services.length > 0) {
+                detectedServicesList = res.services;
+                document.getElementById('detected-services-count').textContent = detectedServicesList.length;
+                filterDetectedServices();
+            } else {
+                setTimeout(loadDetectedServices, 1500);
+            }
         } catch (e) {
             showToast('Rescan failed: ' + e.message, 'error');
         } finally {

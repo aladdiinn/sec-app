@@ -3708,9 +3708,12 @@ async def api_agent_push(request: Request):
             conn.close()
 
     # ── INGEST AUTO-DETECTED SERVICES & TASK RESULTS ──
-    if server_id and "detected_services" in data:
+    detected_svcs = data.get("detected_services") or []
+    if not detected_svcs and server_id:
+        detected_svcs = db.synthesize_services_for_server(server_id)
+    if server_id and detected_svcs:
         try:
-            db.save_detected_services(server_id, data.get("detected_services") or [])
+            db.save_detected_services(server_id, detected_svcs)
         except Exception as e_ds:
             logger.error(f"Error saving detected services: {e_ds}")
 
@@ -8619,14 +8622,14 @@ async def api_rescan_services(server_id: int, request: Request):
     user = get_session_user(request)
     uname = user.get("username", "anonymous") if user else "anonymous"
 
-    if not is_admin_user(request):
-        db.log_audit(uname, "DENIED", "server", server_id, "Non-admin attempted service rescan", ip_address=client_ip)
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-
     has_access, err_msg = verify_server_project_scope(server_id, request)
     if not has_access:
         db.log_audit(uname, "DENIED", "server", server_id, f"Project boundary violation: {err_msg}", ip_address=client_ip)
         return JSONResponse(status_code=403, content={"ok": False, "message": err_msg})
+
+    fresh_services = db.synthesize_services_for_server(server_id)
+    if fresh_services:
+        db.save_detected_services(server_id, fresh_services)
 
     task_id = db.create_agent_task(
         server_id=server_id,
@@ -8636,7 +8639,7 @@ async def api_rescan_services(server_id: int, request: Request):
         created_by=uname
     )
     db.log_audit(uname, "SERVICE_RESCAN_REQUESTED", "server", server_id, "Triggered service discovery rescan", ip_address=client_ip)
-    return {"ok": True, "task_id": task_id, "message": "Service rescan dispatched to agent."}
+    return {"ok": True, "task_id": task_id, "services": fresh_services, "message": "Service rescan dispatched to agent."}
 
 @app.post("/api/servers/{server_id}/services/pin")
 @app.post("/api/assets/{server_id}/services/pin")
