@@ -63,29 +63,39 @@ def replay_past_events(days=30):
     except Exception:
         conn = None
 
+    is_live_db = False
+    events_to_test = None
     if conn:
-        print(f"[*] Connected to PostgreSQL database. Replaying last {days} days of stored telemetry...")
-        since_dt = datetime.now(timezone.utc) - timedelta(days=days)
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, event_time, method, url_path, status_code, bytes_sent, client_ip, user_name, raw, severity
-                FROM app_events
-                WHERE event_time >= %s
-                ORDER BY event_time ASC;
-            """, (since_dt,))
-            rows = cur.fetchall()
-            events_to_test = []
-            for r in rows:
-                events_to_test.append((
-                    (r["method"] if isinstance(r, dict) else r[2]) or "GET",
-                    (r["url_path"] if isinstance(r, dict) else r[3]) or "/",
-                    int((r["status_code"] if isinstance(r, dict) else r[4]) or 200),
-                    int((r["bytes_sent"] if isinstance(r, dict) else r[5]) or 0),
-                    (r["client_ip"] if isinstance(r, dict) else r[6]) or "127.0.0.1",
-                    (r["user_name"] if isinstance(r, dict) else r[7]) or "-",
-                    ""
-                ))
-            is_live_db = True
+        try:
+            since_dt = datetime.now(timezone.utc) - timedelta(days=days)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, event_time, method, url_path, status_code, bytes_sent, client_ip, user_name, raw, severity
+                    FROM app_events
+                    WHERE event_time >= %s
+                    ORDER BY event_time ASC;
+                """, (since_dt,))
+                rows = cur.fetchall()
+                if rows:
+                    events_to_test = []
+                    for r in rows:
+                        events_to_test.append((
+                            (r["method"] if isinstance(r, dict) else r[2]) or "GET",
+                            (r["url_path"] if isinstance(r, dict) else r[3]) or "/",
+                            int((r["status_code"] if isinstance(r, dict) else r[4]) or 200),
+                            int((r["bytes_sent"] if isinstance(r, dict) else r[5]) or 0),
+                            (r["client_ip"] if isinstance(r, dict) else r[6]) or "127.0.0.1",
+                            (r["user_name"] if isinstance(r, dict) else r[7]) or "-",
+                            ""
+                        ))
+                    is_live_db = True
+                    print(f"[*] Connected to database. Replaying last {days} days of stored telemetry ({len(events_to_test)} events)...")
+                else:
+                    print(f"[*] Stored app_events table is empty. Replaying labelled production-sampled corpus...")
+        except Exception as ex_db:
+            print(f"[*] Stored app_events table unavailable ({ex_db}). Replaying labelled production-sampled corpus...")
+            is_live_db = False
+            events_to_test = None
     else:
         print("[*] Local PostgreSQL offline. Replaying labelled production-sampled corpus...")
         events_to_test = None
