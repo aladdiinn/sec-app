@@ -1475,6 +1475,10 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 
             # Trigger emails for Critical severity, or specific high-interest security alerts (Audit, FIM, Commands)
             # Only Critical alerts trigger immediate email notifications; warnings & info stay in dashboard/asset card
+            # Explicit policy: Session alerts and any /temp/ or /tmp/ operations are strictly WARNING only and NEVER send emails
+            if "session" in alert_type.lower() or "session" in final_title.lower() or any(tp in (message or "").lower() for tp in ["/tmp", "/temp", "\tmp", "\temp", "tmp", "temp"]):
+                email_enabled = False
+
             if email_enabled and severity.lower() == "critical":
                 # Get hostname and IP for the email
                 hostname = "Unknown Host"

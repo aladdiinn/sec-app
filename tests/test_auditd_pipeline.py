@@ -193,5 +193,45 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
         self.assertIn("-a never,exit", rule, "Rule must exclude java writes from app_mod")
         self.assertNotIn("java-11", rule, "Must NOT reference java-11")
 
+    # -------------------------------------------------------------------------
+    # T10: Session & Temp Folder Alerts Are Warning Only (No Emails)
+    # -------------------------------------------------------------------------
+    def test_t10_session_and_temp_alerts_are_warning_only_no_mail(self):
+        """Session alerts and any /temp/ path alerts must be WARNING only and NEVER dispatch emails."""
+        created_alerts = []
+        def mock_create(server_id, alert_type, severity, title, msg):
+            created_alerts.append({"type": alert_type, "severity": severity, "title": title, "msg": msg})
+
+        with patch.object(app_module, '_create_alert_dedup', side_effect=mock_create), \
+             patch.object(app_module, '_is_rule_enabled', return_value=True):
+            # 1. Session alert
+            data_session = {
+                "audit_events": [
+                    {
+                        "key": "session",
+                        "username": "shreya.kerur",
+                        "auid": "1742601308",
+                        "line": 'type=SYSCALL msg=audit(1742601308:1864): auid=1742601308 comm="sudo" exe="/usr/bin/sudo" name="/var/run/utmp"'
+                    }
+                ]
+            }
+            app_module._check_unified_fim(11, data_session)
+            self.assertTrue(len(created_alerts) >= 1)
+            self.assertEqual(created_alerts[-1]["severity"], "warning", "Session alerts must be WARNING only, never CRITICAL")
+
+            # 2. Temp folder alert
+            data_temp = {
+                "audit_events": [
+                    {
+                        "key": "perm_mod",
+                        "username": "shreya.kerur",
+                        "auid": "1742601308",
+                        "line": 'type=SYSCALL msg=audit(1742601308:1865): auid=1742601308 comm="touch" exe="/bin/touch" name="/tmp/test_session.tmp"'
+                    }
+                ]
+            }
+            app_module._check_unified_fim(11, data_temp)
+            self.assertEqual(created_alerts[-1]["severity"], "warning", "Temp folder operations must be WARNING only")
+
 if __name__ == '__main__':
     unittest.main()

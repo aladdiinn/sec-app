@@ -2855,8 +2855,6 @@ def _check_unified_fim(server_id, data):
 
         auid_str = last_event.get("auid", "1005")
         actor = _resolve_server_human_actor(server_id, data, line, key)
-
-        severity = "critical"
         
         real_actor = actor if (actor and actor not in ("unknown", "")) else "attribution unverified"
         display_key = "System Config" if key in ("(null)", "null", "") else key.replace('_', ' ').title()
@@ -2869,6 +2867,16 @@ def _check_unified_fim(server_id, data):
         filename_str = f_m.group(1) if f_m else ""
         exe_str_val = e_m.group(1) if e_m else ""
         f_lower = filename_str.lower()
+
+        # Severity determination:
+        # Session alerts, login alerts, and ANY /temp/ or /tmp/ folder alerts are strictly WARNING ONLY (no email notifications)
+        is_temp_path = any(tp in f_lower for tp in ["/tmp", "/temp", "\tmp", "\temp", "tmp", "temp"]) or "temp" in filename_str.lower() or "tmp" in filename_str.lower()
+        if key in ("session", "logins", "app_mod") or is_temp_path:
+            severity = "warning"
+        elif key in ("identity", "scope", "mac-policy", "modules") or any(p in f_lower for p in ["/etc/shadow", "/etc/sudoers"]):
+            severity = "critical"
+        else:
+            severity = "warning"
         
         if ".bash_history" in filename_str and "bash" in exe_str_val.lower():
             continue
