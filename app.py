@@ -5925,7 +5925,7 @@ def task_polling_loop():
                 tasks = res.get("tasks", [])
                 if tasks:
                     print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Poll] Fetched {{len(tasks)}} pending task(s) from SOC backend.", flush=True)
-                    execute_agent_tasks(tasks)
+                    threading.Thread(target=execute_agent_tasks, args=(tasks,), daemon=True).start()
         except Exception as e_poll:
             print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Poll] Polling error: {{e_poll}}", flush=True)
         time.sleep(5)
@@ -5965,9 +5965,9 @@ def execute_agent_tasks(tasks):
             except Exception as e_ack:
                 pass
 
-        # 1. Replay & Expiry Check
+        # 1. Replay & Expiry Check (allow 90s window if timestamp is provided)
         now = int(time.time())
-        if abs(now - ts) > 90:
+        if ts and ts > 0 and abs(now - ts) > 90:
             res_item = {{
                 "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 401,
                 "output": "Task rejected: signature expired (replay protection).",
@@ -5977,7 +5977,7 @@ def execute_agent_tasks(tasks):
             report_task_result(res_item)
             continue
 
-        if nonce in seen_nonces:
+        if nonce and nonce in seen_nonces:
             res_item = {{
                 "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 401,
                 "output": "Task rejected: duplicate nonce (replay protection).",
@@ -5986,7 +5986,8 @@ def execute_agent_tasks(tasks):
             task_results_queue.append(res_item)
             report_task_result(res_item)
             continue
-        seen_nonces.add(nonce)
+        if nonce:
+            seen_nonces.add(nonce)
         if len(seen_nonces) > 2000:
             seen_nonces.clear()
 
@@ -6081,7 +6082,14 @@ def execute_agent_tasks(tasks):
                                         break
                                 if found_bin: break
                             start_cmd = "cd '" + found_bin + "' && if [ -z '$JAVA_HOME' ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; setsid nohup sh ./startup.sh >/dev/null 2>&1 &" if found_bin else "setsid nohup sh startup.sh >/dev/null 2>&1 &"
-                            subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
+                            if run_user and run_user != "root":
+                                p = subprocess.run(["su", "-", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
+                                if p.returncode != 0:
+                                    p = subprocess.run(["su", "-s", "/bin/sh", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
+                                if p.returncode != 0:
+                                    p = subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
+                            else:
+                                p = subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
                             time.sleep(2)
                             chk_p = subprocess.run(["pgrep", "-f", "catalina|tomcat"], capture_output=True, text=True)
                             new_pids = chk_p.stdout.strip().split()
@@ -6156,6 +6164,10 @@ def execute_agent_tasks(tasks):
 
                         if run_user and run_user != "root":
                             p = subprocess.run(["su", "-", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
+                            if p.returncode != 0:
+                                p = subprocess.run(["su", "-s", "/bin/sh", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
+                            if p.returncode != 0:
+                                p = subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
                         else:
                             p = subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
 
@@ -6175,7 +6187,7 @@ def execute_agent_tasks(tasks):
                         status_str = "completed"
                         output = "Tomcat stopped successfully."
                 else:
-                    svc_base = (str(service_id) + " " + str(unit_name or "")).replace("proc:", "").split("-")[0].strip().lower()
+                    svc_base = (str(service_id) + " " + str(unit_name or "")).replace("proc:", "").split("-")[0].split(":")[0].strip().lower()
                     has_sys_unit = False
                     if svc_base in ("haproxy", "nginx", "postgres", "postgresql", "mysql", "redis", "docker"):
                         try:

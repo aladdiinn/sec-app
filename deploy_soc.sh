@@ -36,7 +36,7 @@ fi
 # Reset any pending update flags or stale tasks in database for soc-server
 echo "[INFO] Resetting update flags and clearing stale tasks in DB..."
 docker exec -i bsmart-soc-db psql -U socadmin -d bsmart_soc -c "UPDATE servers SET target_agent_version = '1.7.0', update_status = 'up_to_date' WHERE hostname = 'soc-server' OR ip = '192.168.10.201' OR ip_address = '192.168.10.201';" 2>/dev/null || true
-docker exec -i bsmart-soc-db psql -U socadmin -d bsmart_soc -c "UPDATE agent_tasks SET status = 'cancelled', output = 'Auto-cancelled on service reload' WHERE status IN ('pending', 'dispatched') AND created_at < NOW() - INTERVAL '30 seconds';" 2>/dev/null || true
+docker exec -i bsmart-soc-db psql -U socadmin -d bsmart_soc -c "UPDATE agent_tasks SET status = 'cancelled', output = 'Auto-cancelled on service reload' WHERE status IN ('pending', 'dispatched');" 2>/dev/null || true
 
 # 4. Generate the verified v1.7.0 host agent directly from local repo code
 echo "[4/5] Deploying verified v1.7.0 Node Agent daemon..."
