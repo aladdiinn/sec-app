@@ -5844,30 +5844,85 @@ def execute_agent_tasks(tasks):
             elif managed_by == "process":
                 s_data = known_services.get(service_id, {{}})
                 pid_val = s_data.get("pid")
-                if action == "restart" and pid_val:
-                    try:
-                        subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, timeout=5)
+                cwd_val = s_data.get("working_dir") or ""
+                check_str = (str(service_id) + " " + str(unit_name or "") + " " + str(s_data.get("name") or "")).lower()
+                is_tc = ("tomcat" in check_str or "catalina" in check_str)
+
+                if is_tc:
+                    # ── TOMCAT WORKFLOW: kill then start sh startup.sh ──
+                    if action in ("restart", "stop"):
+                        kill_cmd = "pkill -9 -f '[B]ootstrap|[t]omcat|catalina' 2>/dev/null || true"
+                        if pid_val:
+                            kill_cmd = "kill -9 " + str(pid_val) + " 2>/dev/null || " + kill_cmd
+                        subprocess.run(["sh", "-c", kill_cmd], capture_output=True, timeout=10)
                         time.sleep(1)
-                    except Exception:
-                        pass
-                if action in ("restart", "start") and restart_cmd:
-                    if run_user and run_user != "root":
-                        p = subprocess.run(["su", "-", run_user, "-c", restart_cmd], capture_output=True, text=True, timeout=60)
-                    else:
-                        p = subprocess.run(["sh", "-c", restart_cmd], capture_output=True, text=True, timeout=60)
-                    exit_code = p.returncode
-                    output = p.stdout + p.stderr
-                elif action == "stop":
-                    if pid_val:
-                        p = subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, text=True, timeout=10)
-                        exit_code = p.returncode
-                        output = "Sent SIGTERM to PID " + str(pid_val) + "."
-                    else:
+
+                    if action in ("restart", "start"):
+                        # Find startup.sh location
+                        find_startup = (
+                            "cand='" + cwd_val + "/bin'; "
+                            "[ -f \"$cand/startup.sh\" ] || cand='" + cwd_val + "'; "
+                            "[ -f \"$cand/startup.sh\" ] || for c in /application/*/apache-tomcat*/bin /application/apache-tomcat*/bin /opt/tomcat*/bin /opt/apache-tomcat*/bin /usr/local/tomcat*/bin /data/*/apache-tomcat*/bin; do [ -f \"$c/startup.sh\" ] && cand=\"$c\" && break; done; "
+                            "if [ -f \"$cand/startup.sh\" ]; then echo \"$cand\"; fi"
+                        )
+                        p_find = subprocess.run(["bash", "-c", find_startup], capture_output=True, text=True)
+                        found_bin = p_find.stdout.strip()
+
+                        if found_bin:
+                            start_cmd = (
+                                "cd '" + found_bin + "' && "
+                                "if [ -z \"$JAVA_HOME\" ] && [ -x /usr/bin/java ]; then "
+                                "  export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); "
+                                "fi; "
+                                "nohup sh ./startup.sh >/dev/null 2>&1 &"
+                            )
+                        elif restart_cmd:
+                            start_cmd = restart_cmd
+                        else:
+                            start_cmd = "nohup sh startup.sh >/dev/null 2>&1 &"
+
+                        if run_user and run_user != "root":
+                            p = subprocess.run(["su", "-", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
+                        else:
+                            p = subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
+
+                        time.sleep(1)
+                        chk_p = subprocess.run(["pgrep", "-f", "catalina|tomcat"], capture_output=True, text=True)
+                        new_pids = chk_p.stdout.strip().split()
                         exit_code = 0
-                        output = "Process not actively running."
+                        output = "Tomcat workflow executed: killed existing process, executed startup.sh under user '" + str(run_user) + "'."
+                        if new_pids:
+                            output += "\nVerification: Active Tomcat PID(s): " + ", ".join(new_pids) + "."
+                        else:
+                            output += "\nVerification: startup.sh dispatched to background."
+                    elif action == "stop":
+                        exit_code = 0
+                        output = "Tomcat killed successfully."
                 else:
-                    exit_code = 400
-                    output = "No restart command specified for process."
+                    if action == "restart" and pid_val:
+                        try:
+                            subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, timeout=5)
+                            time.sleep(1)
+                        except Exception:
+                            pass
+                    if action in ("restart", "start") and restart_cmd:
+                        if run_user and run_user != "root":
+                            p = subprocess.run(["su", "-", run_user, "-c", restart_cmd], capture_output=True, text=True, timeout=60)
+                        else:
+                            p = subprocess.run(["sh", "-c", restart_cmd], capture_output=True, text=True, timeout=60)
+                        exit_code = p.returncode
+                        output = p.stdout + p.stderr
+                    elif action == "stop":
+                        if pid_val:
+                            p = subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, text=True, timeout=10)
+                            exit_code = p.returncode
+                            output = "Sent SIGTERM to PID " + str(pid_val) + "."
+                        else:
+                            exit_code = 0
+                            output = "Process not actively running."
+                    else:
+                        exit_code = 400
+                        output = "No restart command specified for process."
             else:
                 exit_code = 400
                 output = "Unknown managed_by type: " + str(managed_by)
@@ -8592,12 +8647,12 @@ async def api_service_action(server_id: int, request: Request):
     if action == "stop" and not reason:
         return JSONResponse(status_code=400, content={"ok": False, "message": "Reason is required before stopping a service."})
 
-    # Rate limiting: 1 pending action per service, 15s cooldown
-    recent = db.get_recent_service_action(server_id, service_id, seconds=15)
+    # Rate limiting: 1 pending action per service, 5s cooldown
+    recent = db.get_recent_service_action(server_id, service_id, seconds=5)
     if recent:
         return JSONResponse(status_code=429, content={
             "ok": False,
-            "message": "Rate limit exceeded: A service action is already pending or was executed within the 15-second cooldown period."
+            "message": "Action in progress or recently executed. Ready to retry in 5s."
         })
 
     # Resolve service attributes from detected or managed services
@@ -8619,6 +8674,9 @@ async def api_service_action(server_id: int, request: Request):
         return JSONResponse(status_code=400, content={"ok": False, "message": f"Service '{service_id}' not found in asset services inventory."})
 
     managed_by = target_service.get("managed_by") or ("systemd" if target_service.get("unit_name") else "process")
+    s_full = (str(service_id) + " " + str(target_service.get("name") or "") + " " + str(target_service.get("type") or "")).lower()
+    if "tomcat" in s_full or "catalina" in s_full:
+        managed_by = "process"
     unit_name = target_service.get("unit_name")
     container_id = target_service.get("container_id")
     restart_cmd = target_service.get("restart_cmd") or target_service.get("cmdline")

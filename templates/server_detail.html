@@ -920,12 +920,24 @@
 
         } catch (e) {
             let msg = e.message || 'Dispatch failed';
-            if (msg.includes('Rate limit') || msg.includes('cooldown')) {
-                progressStatus.innerHTML = `<span style="color:var(--amber)">⏱ Cooldown Active: An action was recently dispatched. Cooldown expires in ~15s (ready to retry shortly).</span>`;
+            if (msg.includes('Rate limit') || msg.includes('cooldown') || msg.includes('progress')) {
+                let remaining = 5;
+                progressStatus.innerHTML = `<span style="color:var(--amber)">⏱ Cooldown Active: Ready to retry in <strong id="cooldown-cd">${remaining}</strong>s...</span>`;
+                confirmBtn.disabled = true;
+                const cdTimer = setInterval(() => {
+                    remaining--;
+                    const cdEl = document.getElementById('cooldown-cd');
+                    if (cdEl) cdEl.textContent = remaining;
+                    if (remaining <= 0) {
+                        clearInterval(cdTimer);
+                        progressStatus.innerHTML = `<span style="color:var(--green)">⚡ Ready to retry. Click Confirm Action below.</span>`;
+                        confirmBtn.disabled = false;
+                    }
+                }, 1000);
             } else {
                 progressStatus.innerHTML = `<span style="color:var(--red)">❌ Error: ${msg}</span>`;
+                confirmBtn.disabled = false;
             }
-            confirmBtn.disabled = false;
             showToast('Service Action: ' + msg, 'warning');
         }
     }

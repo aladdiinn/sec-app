@@ -4572,26 +4572,44 @@ def restart_managed_services(server_id: int, service_name: str = None):
             cmd_display = exec_cmd
 
         elif not restart_cmd and is_tomcat:
-            # Non-blocking kill & restart in background
-            stop_script = f"pkill -9 -u {run_user} -f '[B]ootstrap|[t]omcat' 2>/dev/null || true"
+            # ── Reference Tomcat workflow: kill then start sh startup.sh ──
+            stop_script = f"pkill -9 -u {run_user} -f '[B]ootstrap|[t]omcat|catalina' 2>/dev/null || pkill -9 -f '[B]ootstrap|[t]omcat|catalina' 2>/dev/null || true"
             try: subprocess.Popen(stop_script, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception: pass
 
             start_script = (
-                f"cd '{bin_path}/bin' 2>/dev/null || cd '{bin_path}' 2>/dev/null || true; "
+                f"cand=\"{bin_path}/bin\"; "
+                f"[ -f \"$cand/startup.sh\" ] || cand=\"{bin_path}\"; "
+                f"[ -f \"$cand/startup.sh\" ] || for c in /application/*/apache-tomcat*/bin /application/apache-tomcat*/bin /opt/tomcat*/bin /opt/apache-tomcat*/bin /usr/local/tomcat*/bin /data/*/apache-tomcat*/bin; do [ -f \"$c/startup.sh\" ] && cand=\"$c\" && break; done; "
+                f"cd \"$cand\" 2>/dev/null || true; "
                 f"if [ -z \"$JAVA_HOME\" ] && [ -x /usr/bin/java ]; then "
                 f"  export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); "
                 f"fi; "
-                f"nohup ./startup.sh >/dev/null 2>&1 &"
+                f"nohup sh ./startup.sh >/dev/null 2>&1 &"
             )
-            cmd_display = "kill (tomcat) && nohup ./startup.sh &"
+            cmd_display = "kill (tomcat) && nohup sh startup.sh &"
             try:
                 subprocess.Popen(start_script, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                out = f"Tomcat '{s_name}' startup background process initiated successfully."
+                out = f"Tomcat '{s_name}' killed and startup.sh background process initiated successfully."
                 ret = 0
             except Exception as ex:
                 out = str(ex)
                 ret = 0
+
+            # Also queue as agent task so root daemon executes it on target host
+            try:
+                create_agent_task(
+                    server_id=server_id,
+                    action="restart",
+                    service_id=s_name,
+                    managed_by="process",
+                    restart_cmd=start_script,
+                    run_user=run_user,
+                    reason="Managed service restart playbook: Tomcat kill & startup.sh",
+                    created_by="system"
+                )
+            except Exception:
+                pass
 
         elif restart_cmd:
             cmd_display = restart_cmd
@@ -7163,40 +7181,62 @@ def get_agent_task(task_id: str):
     finally:
         conn.close()
 
-def get_recent_service_action(server_id: int, service_id: str, seconds: int = 15):
+def get_recent_service_action(server_id: int, service_id: str, seconds: int = 5):
     """Check if an active service action is currently in-flight or completed within the cooldown window."""
     conn = get_db_connection()
     if not conn: return None
     try:
         with conn.cursor() as cur:
-            # 1. Clean up any stale in-flight tasks older than 45 seconds so they never block subsequent attempts
+            # Also find sibling server IDs sharing the same IP or hostname so re-enrolled nodes check siblings
+            target_ids = [server_id]
+            try:
+                cur.execute("SELECT ip, ip_address, hostname FROM servers WHERE id = %s;", (server_id,))
+                srow = cur.fetchone()
+                if srow:
+                    sip = srow.get("ip") or srow.get("ip_address")
+                    shost = srow.get("hostname")
+                    if sip or shost:
+                        cur.execute("""
+                            SELECT id FROM servers 
+                            WHERE (ip = %s OR ip_address = %s OR (hostname = %s AND hostname NOT IN ('Target-Node', 'localhost', '')))
+                              AND id != %s;
+                        """, (sip, sip, shost, server_id))
+                        for r in cur.fetchall():
+                            mid = r.get("id") if isinstance(r, dict) else r[0]
+                            if mid not in target_ids:
+                                target_ids.append(mid)
+            except Exception:
+                pass
+
+            # 1. Clean up any stale in-flight tasks older than 10 seconds so they never block subsequent attempts
             try:
                 cur.execute("""
                     UPDATE agent_tasks
-                    SET status = 'failed', exit_code = 504, output = 'Task execution timed out (agent did not acknowledge within 45s)', completed_at = NOW()
-                    WHERE server_id = %s 
+                    SET status = 'failed', exit_code = 504, output = 'Task execution timed out (agent did not acknowledge within 10s)', completed_at = NOW()
+                    WHERE server_id = ANY(%s) 
                       AND service_id = %s
                       AND status IN ('pending', 'dispatched', 'running')
-                      AND created_at < NOW() - INTERVAL '45 seconds';
-                """, (server_id, service_id))
+                      AND created_at < NOW() - INTERVAL '10 seconds';
+                """, (target_ids, service_id))
                 conn.commit()
             except Exception:
                 pass
 
-            # 2. Only consider tasks that are actively in-flight within the last 45s, or completed within cooldown window (15s)
-            cooldown_secs = max(5, int(seconds))
+            # 2. Only consider tasks actively in-flight (<10s) or successfully completed within last 5s
+            # Never block if previous task failed!
+            cooldown_secs = max(3, int(seconds))
             cur.execute(f"""
                 SELECT id, task_id, action, status, created_at
                 FROM agent_tasks
-                WHERE server_id = %s 
+                WHERE server_id = ANY(%s) 
                   AND service_id = %s
                   AND (
-                      (status IN ('pending', 'dispatched', 'running') AND created_at >= NOW() - INTERVAL '45 seconds')
-                      OR (completed_at IS NOT NULL AND completed_at >= NOW() - INTERVAL '{cooldown_secs} seconds')
+                      (status IN ('pending', 'dispatched', 'running') AND created_at >= NOW() - INTERVAL '10 seconds')
+                      OR (status = 'completed' AND completed_at IS NOT NULL AND completed_at >= NOW() - INTERVAL '{cooldown_secs} seconds')
                   )
                 ORDER BY id DESC
                 LIMIT 1;
-            """, (server_id, service_id))
+            """, (target_ids, service_id))
             row = cur.fetchone()
             return dict(row) if row else None
     except Exception as e:
