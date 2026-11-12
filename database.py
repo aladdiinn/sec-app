@@ -7040,6 +7040,34 @@ def save_detected_services(server_id: int, services_list: list):
                     msg = f"Pinned managed service '{pinned.get('name')}' on {hostname} transitioned from running to stopped unexpectedly."
                     log_alert(server_id=server_id, alert_type="service_stopped", message=msg, severity="critical", title=title)
 
+        # ── MERGE incoming agent list with synthesized services ──────────────────
+        # The agent may only push a subset of services (e.g. systemd slice only).
+        # We always synthesize the full service picture from stored telemetry and
+        # then let the agent's real-time values override matching entries so the
+        # dashboard shows ALL services (docker containers, java procs, redis …)
+        # even when the agent's discover_services() doesn't surface them.
+        if services_list:
+            try:
+                synth = synthesize_services_for_server(server_id, conn)
+                # Build merged map keyed by unit_name → name → id fallback
+                def _svc_key(s):
+                    return (s.get("unit_name") or s.get("name") or s.get("id") or "").strip().lower()
+
+                merged_map = {}
+                for s in synth:
+                    k = _svc_key(s)
+                    if k:
+                        merged_map[k] = s
+                # Agent data wins (has real runtime status/uptime)
+                for s in services_list:
+                    k = _svc_key(s)
+                    if k:
+                        merged_map[k] = s
+                services_list = list(merged_map.values())
+            except Exception as _me:
+                logger.warning(f"save_detected_services merge warning: {_me}")
+        # ─────────────────────────────────────────────────────────────────────────
+
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE servers 

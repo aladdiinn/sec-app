@@ -7269,6 +7269,11 @@ def main():
                 commit_audit_checkpoint()
             except:
                 pass
+            # Cache server_id returned from SOC so execute_agent_tasks can use it immediately
+            if res_data.get("server_id") and ASSIGNED_SERVER_ID is None:
+                ASSIGNED_SERVER_ID = int(res_data["server_id"])
+            elif sid and ASSIGNED_SERVER_ID is None:
+                ASSIGNED_SERVER_ID = sid
             if res_data.get("update_requested"):
                 dl_url = res_data.get("update_cmd_url")
                 try:

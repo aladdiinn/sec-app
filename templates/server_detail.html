@@ -907,7 +907,7 @@
                             closeServiceActionModal();
                             loadServerData();
                         };
-                    } else if (attempts > 30) {
+                    } else if (attempts > 60) {
                         clearInterval(actionPollTimer);
                         actionPollTimer = null;
                         progressStatus.innerHTML = `<span style="color:var(--amber)">⏱ Task dispatched to agent queue (Agent will execute on next cycle).</span>`;
