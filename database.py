@@ -427,6 +427,8 @@ def init_db():
             ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS picked_up_at TIMESTAMP WITH TIME ZONE;
             ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS started_at TIMESTAMP WITH TIME ZONE;
             ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS reject_reason TEXT;
+            ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS dispatch_count INT DEFAULT 0;
+            ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP WITH TIME ZONE;
 
             CREATE TABLE IF NOT EXISTS audit_logs (
                     id SERIAL PRIMARY KEY,
@@ -3560,6 +3562,13 @@ def log_audit(username, action, target_type, target_id, detail, ip_address=None,
     finally:
         conn.close()
 
+def log_audit_event(user_id=None, username="system", action="event", resource="system", details="", ip_address=None, machine_id=None):
+    """Adapter for legacy audit event calls to log_audit."""
+    parts = (str(resource) if resource else "system").split(":", 1)
+    target_type = parts[0] if parts else "system"
+    target_id = parts[1] if len(parts) > 1 else None
+    return log_audit(username=username, action=action, target_type=target_type, target_id=target_id, detail=details, ip_address=ip_address, machine_id=machine_id)
+
 def get_audit_logs(username=None, action=None, limit=100):
     conn = get_db_connection()
     if not conn: return []
@@ -4940,6 +4949,12 @@ def classify_log_entry(message: str, source: str = "", log_type: str = None) -> 
     level = _detect_level(msg_lower)
 
     # 0. EXPLICIT SOURCE MATCH (Highest Priority - never reclassify across application types based on log message contents)
+    is_os_source = (
+        src_lower in ("systemd/journal", "journalctl", "syslog/journalctl") or
+        src_lower.startswith("systemd/") or
+        any(k in src_lower for k in ["/var/log/syslog", "/var/log/auth.log", "/var/log/secure", "/var/log/messages", "/var/log/kern.log", "/var/log/audit", "/var/log/dpkg.log"])
+    )
+
     is_tomcat_src = (
         lt in ("tomcat", "catalina") or
         any(k in src_lower for k in ["tomcat", "catalina", "nohup", "apache-tomcat", "mdm"])
@@ -4956,11 +4971,6 @@ def classify_log_entry(message: str, source: str = "", log_type: str = None) -> 
         clean_src = src_str if (src_str and "node-agent" not in src_str and "app-agent" not in src_str) else "/var/log/postgresql/postgresql.log"
         return "postgres", clean_src, level
 
-    is_os_source = (
-        src_lower in ("systemd/journal", "journalctl", "syslog/journalctl") or
-        src_lower.startswith("systemd/") or
-        any(k in src_lower for k in ["/var/log/syslog", "/var/log/auth.log", "/var/log/secure", "/var/log/messages", "/var/log/kern.log", "/var/log/audit", "/var/log/dpkg.log"])
-    )
     if is_os_source:
         return "os", src_str, level
 
@@ -7093,7 +7103,7 @@ def save_detected_services(server_id: int, services_list: list):
 def create_agent_task(server_id: int, action: str, service_id: str, managed_by: str = 'systemd',
                       unit_name: str = None, container_id: str = None, restart_cmd: str = None,
                       run_user: str = None, reason: str = None, created_by: str = 'admin'):
-    """Insert a new pending service action task into agent_tasks."""
+    """Insert a new pending service action task into agent_tasks in 'queued' state."""
     import uuid
     task_id = str(uuid.uuid4())
     conn = get_db_connection()
@@ -7103,8 +7113,8 @@ def create_agent_task(server_id: int, action: str, service_id: str, managed_by: 
             cur.execute("""
                 INSERT INTO agent_tasks (
                     server_id, task_id, action, service_id, managed_by, unit_name,
-                    container_id, restart_cmd, run_user, reason, status, created_by, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, NOW())
+                    container_id, restart_cmd, run_user, reason, status, created_by, created_at, dispatch_count
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'queued', %s, NOW(), 0)
                 RETURNING task_id;
             """, (server_id, task_id, action, service_id, managed_by, unit_name,
                   container_id, restart_cmd, run_user, reason, created_by))
@@ -7117,72 +7127,58 @@ def create_agent_task(server_id: int, action: str, service_id: str, managed_by: 
         conn.close()
 
 def get_pending_agent_tasks(server_id: int):
-    """Retrieve pending agent tasks for a server and set status to dispatched."""
+    """Retrieve pending/queued tasks for a server without premature status mutation."""
     conn = get_db_connection()
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            # Auto-expire tasks in pending/dispatched/running older than 120s
+            # 1. State-specific lifecycle timeouts
             try:
+                # Queued tasks expire after 60s without a poll
                 cur.execute("""
                     UPDATE agent_tasks
-                    SET status = 'timed out', exit_code = 504, output = 'Task timed out: execution did not complete within 120s.', completed_at = NOW()
-                    WHERE status IN ('pending', 'dispatched', 'running')
-                      AND created_at < NOW() - INTERVAL '120 seconds';
+                    SET status = 'timed out', exit_code = 504, output = 'Task timed out: not polled by agent within 60s.', completed_at = NOW()
+                    WHERE status IN ('queued', 'pending')
+                      AND created_at < NOW() - INTERVAL '60 seconds';
+                """)
+                # Dispatched tasks unacknowledged within 15s re-queued up to 3 tries, then failed
+                cur.execute("""
+                    UPDATE agent_tasks
+                    SET status = 'queued', picked_up_at = NULL
+                    WHERE status = 'dispatched'
+                      AND COALESCE(dispatch_count, 1) < 3
+                      AND picked_up_at < NOW() - INTERVAL '15 seconds';
+                """)
+                cur.execute("""
+                    UPDATE agent_tasks
+                    SET status = 'failed', exit_code = 504, output = 'Task failed: agent did not acknowledge receipt after 3 dispatch attempts.', completed_at = NOW()
+                    WHERE status = 'dispatched'
+                      AND COALESCE(dispatch_count, 1) >= 3
+                      AND picked_up_at < NOW() - INTERVAL '15 seconds';
+                """)
+                # Running tasks expire only when exceeding 120s from started_at (independent of created_at)
+                cur.execute("""
+                    UPDATE agent_tasks
+                    SET status = 'timed out', exit_code = 504, output = 'Task timed out: execution exceeded 120s from start.', completed_at = NOW()
+                    WHERE status = 'running'
+                      AND started_at IS NOT NULL
+                      AND started_at < NOW() - INTERVAL '120 seconds';
                 """)
                 conn.commit()
             except Exception:
                 pass
 
-            # Also find sibling server IDs sharing the same IP or hostname so re-enrolled nodes never miss tasks
-            target_ids = [server_id]
-            try:
-                cur.execute("SELECT ip, ip_address, hostname FROM servers WHERE id = %s;", (server_id,))
-                srow = cur.fetchone()
-                if srow:
-                    sip = srow.get("ip") or srow.get("ip_address")
-                    shost = srow.get("hostname")
-                    if sip or shost:
-                        cur.execute("""
-                            SELECT id FROM servers 
-                            WHERE (ip = %s OR ip_address = %s OR (hostname = %s AND hostname NOT IN ('Target-Node', 'localhost', '')))
-                              AND id != %s;
-                        """, (sip, sip, shost, server_id))
-                        for r in cur.fetchall():
-                            mid = r.get("id") if isinstance(r, dict) else r[0]
-                            if mid not in target_ids:
-                                target_ids.append(mid)
-            except Exception:
-                pass
-
-            if len(target_ids) == 1:
-                cur.execute("""
-                    SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
-                           container_id, restart_cmd, run_user, reason, status, created_by, created_at,
-                           picked_up_at, started_at, completed_at
-                    FROM agent_tasks
-                    WHERE server_id = %s AND (status = 'pending' OR (status = 'dispatched' AND picked_up_at < NOW() - INTERVAL '15 seconds'))
-                    ORDER BY id ASC;
-                """, (server_id,))
-            else:
-                cur.execute("""
-                    SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
-                           container_id, restart_cmd, run_user, reason, status, created_by, created_at,
-                           picked_up_at, started_at, completed_at
-                    FROM agent_tasks
-                    WHERE server_id = ANY(%s) AND (status = 'pending' OR (status = 'dispatched' AND picked_up_at < NOW() - INTERVAL '15 seconds'))
-                    ORDER BY id ASC;
-                """, (target_ids,))
+            # Strictly bind tasks to target server_id identity (no loose IP sibling cross-contamination)
+            cur.execute("""
+                SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
+                       container_id, restart_cmd, run_user, reason, status, created_by, created_at,
+                       picked_up_at, started_at, completed_at, COALESCE(dispatch_count, 0) as dispatch_count
+                FROM agent_tasks
+                WHERE server_id = %s AND (status IN ('queued', 'pending') OR (status = 'dispatched' AND picked_up_at < NOW() - INTERVAL '15 seconds'))
+                ORDER BY id ASC;
+            """, (server_id,))
             rows = cur.fetchall()
             tasks = [dict(r) for r in rows] if rows else []
-            if tasks:
-                tids = [t["task_id"] for t in tasks]
-                cur.execute("""
-                    UPDATE agent_tasks 
-                    SET status = 'dispatched', picked_up_at = NOW(), server_id = %s
-                    WHERE task_id = ANY(%s);
-                """, (server_id, tids))
-                conn.commit()
             return tasks
     except Exception as e:
         logger.error(f"Error in get_pending_agent_tasks: {e}")
@@ -7190,17 +7186,50 @@ def get_pending_agent_tasks(server_id: int):
     finally:
         conn.close()
 
-def update_agent_task_status(task_id: str, status: str):
-    """Update task lifecycle state (e.g. running)."""
+def mark_tasks_dispatched(task_ids: list, server_id: int):
+    """Explicitly transition tasks to 'dispatched' only after successful signing and HTTP response generation."""
+    if not task_ids: return False
     conn = get_db_connection()
     if not conn: return False
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE agent_tasks
-                SET status = %s, started_at = CASE WHEN started_at IS NULL THEN NOW() ELSE started_at END
-                WHERE task_id = %s;
-            """, (status, task_id))
+                UPDATE agent_tasks 
+                SET status = 'dispatched', picked_up_at = NOW(), dispatch_count = COALESCE(dispatch_count, 0) + 1, server_id = %s
+                WHERE task_id = ANY(%s);
+            """, (server_id, task_ids))
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error in mark_tasks_dispatched: {e}")
+        return False
+    finally:
+        conn.close()
+
+def update_agent_task_status(task_id: str, status: str):
+    """Update task lifecycle state (acknowledged, running)."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            if status == "acknowledged":
+                cur.execute("""
+                    UPDATE agent_tasks
+                    SET status = 'acknowledged', acknowledged_at = NOW()
+                    WHERE task_id = %s;
+                """, (task_id,))
+            elif status == "running":
+                cur.execute("""
+                    UPDATE agent_tasks
+                    SET status = 'running', started_at = CASE WHEN started_at IS NULL THEN NOW() ELSE started_at END
+                    WHERE task_id = %s;
+                """, (task_id,))
+            else:
+                cur.execute("""
+                    UPDATE agent_tasks
+                    SET status = %s
+                    WHERE task_id = %s;
+                """, (status, task_id))
             conn.commit()
             return True
     except Exception as e:
@@ -7213,6 +7242,11 @@ def update_agent_task_result(task_id: str, status: str, exit_code: int = None, o
     """Update agent task result after execution."""
     conn = get_db_connection()
     if not conn: return False
+    # Normalize completed to succeeded when exit_code == 0
+    if status == 'completed' and (exit_code == 0 or exit_code is None):
+        status = 'succeeded'
+    elif exit_code is not None and exit_code != 0 and status in ('completed', 'succeeded'):
+        status = 'failed'
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -7229,7 +7263,7 @@ def update_agent_task_result(task_id: str, status: str, exit_code: int = None, o
         conn.close()
 
 def cancel_agent_task(server_id: int, task_id: str, cancelled_by: str = 'admin'):
-    """Cancel a pending or dispatched task that has not completed."""
+    """Cancel a queued, pending, dispatched or acknowledged task that has not completed."""
     conn = get_db_connection()
     if not conn: return False
     try:
@@ -7237,7 +7271,7 @@ def cancel_agent_task(server_id: int, task_id: str, cancelled_by: str = 'admin')
             cur.execute("""
                 UPDATE agent_tasks
                 SET status = 'cancelled', output = %s, completed_at = NOW()
-                WHERE task_id = %s AND status IN ('pending', 'dispatched');
+                WHERE task_id = %s AND status IN ('queued', 'pending', 'dispatched', 'acknowledged');
             """, (f"Cancelled by {cancelled_by}.", task_id))
             conn.commit()
             return cur.rowcount > 0

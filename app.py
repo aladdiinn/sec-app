@@ -3,7 +3,7 @@
 # EMBEDDED REAL-TIME HOST SECURITY WATCHER + FIM (FILE INTEGRITY MONITORING)
 # Continuously monitors SSH logs, shell commands, process execution, and FIM
 # ══════════════════════════════════════════════════════════════════════════════
-import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac, uuid
+import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac, uuid, hashlib, base64
 import geoip_service
 geoip_service.ensure_database_downloaded_async()
 import psycopg2, psycopg2.extras
@@ -3779,31 +3779,43 @@ async def api_agent_push(request: Request):
         try:
             pending_tasks = db.get_pending_agent_tasks(server_id)
             if pending_tasks:
-                signed = []
                 srv_obj = db.get_server_by_id(server_id) or {}
                 raw_tok = srv_obj.get("agent_token") or srv_obj.get("api_token")
-                secret_tok = str(raw_tok) if raw_tok and str(raw_tok) not in ("None", "null", "") else "None"
-                for t in pending_tasks:
-                    now_ts = int(time.time())
-                    nonce = uuid.uuid4().hex[:16]
-                    sig_payload = f"{t['task_id']}:{t['action']}:{t['service_id']}:{nonce}:{now_ts}"
-                    sig = hmac.new(secret_tok.encode('utf-8'), sig_payload.encode('utf-8'), hashlib.sha256).hexdigest()
-                    sig_none = hmac.new(b"None", sig_payload.encode('utf-8'), hashlib.sha256).hexdigest()
-                    signed.append({
-                        "task_id": t["task_id"],
-                        "action": t["action"],
-                        "service_id": t["service_id"],
-                        "managed_by": t.get("managed_by", "systemd"),
-                        "unit_name": t.get("unit_name"),
-                        "container_id": t.get("container_id"),
-                        "restart_cmd": t.get("restart_cmd"),
-                        "run_user": t.get("run_user"),
-                        "nonce": nonce,
-                        "timestamp": now_ts,
-                        "signature": sig,
-                        "signature_fallback": sig_none
-                    })
-                res["pending_tasks"] = signed
+                if raw_tok and str(raw_tok).strip() not in ("None", "null", ""):
+                    secret_tok = str(raw_tok).strip()
+                    signed = []
+                    successfully_signed_ids = []
+                    for t in pending_tasks:
+                        try:
+                            now_ts = int(time.time())
+                            nonce = uuid.uuid4().hex[:16]
+                            cmd_str = (t.get("restart_cmd") or "").strip()
+                            recipe_hash = hashlib.sha256(cmd_str.encode('utf-8')).hexdigest()[:16]
+                            unit_ident = str(t.get("unit_name") or t.get("container_id") or "").strip()
+                            run_usr = str(t.get("run_user") or "root").strip()
+                            sig_payload = f"{t['task_id']}:{t['action']}:{t['service_id']}:{unit_ident}:{run_usr}:{recipe_hash}:{nonce}:{now_ts}"
+                            sig = hmac.new(secret_tok.encode('utf-8'), sig_payload.encode('utf-8'), hashlib.sha256).hexdigest()
+                            signed.append({
+                                "task_id": t["task_id"],
+                                "action": t["action"],
+                                "service_id": t["service_id"],
+                                "managed_by": t.get("managed_by", "systemd"),
+                                "unit_name": t.get("unit_name"),
+                                "container_id": t.get("container_id"),
+                                "restart_cmd": t.get("restart_cmd"),
+                                "run_user": t.get("run_user"),
+                                "nonce": nonce,
+                                "timestamp": now_ts,
+                                "signature": sig
+                            })
+                            successfully_signed_ids.append(t["task_id"])
+                        except Exception as e_sig:
+                            logger.error(f"[TASK-SIGN] Failed to sign task #{t.get('task_id')}: {e_sig}")
+                    if successfully_signed_ids:
+                        db.mark_tasks_dispatched(successfully_signed_ids, server_id)
+                    res["pending_tasks"] = signed
+                else:
+                    logger.error(f"[SECURITY] Server #{server_id} has no valid agent_token configured. Skipping task dispatch.")
         except Exception as e_pt:
             logger.error(f"Error fetching pending agent tasks: {e_pt}")
 
@@ -3872,35 +3884,49 @@ async def api_agent_tasks_poll(request: Request):
     if not pending_tasks:
         return {"ok": True, "server_id": server_id, "tasks": []}
 
-    signed = []
     srv_obj = db.get_server_by_id(server_id) or {}
     raw_tok = srv_obj.get("agent_token") or srv_obj.get("api_token")
-    secret_tok = str(raw_tok) if raw_tok and str(raw_tok) not in ("None", "null", "") else "None"
+    if not raw_tok or str(raw_tok).strip() in ("None", "null", ""):
+        logger.error(f"[SECURITY] Server #{server_id} has no agent_token configured. Refusing to sign tasks.")
+        return {"ok": True, "server_id": server_id, "tasks": []}
+    secret_tok = str(raw_tok).strip()
+
+    signed = []
+    successfully_signed_ids = []
     for t in pending_tasks:
-        now_ts = int(time.time())
-        nonce = uuid.uuid4().hex[:16]
-        sig_payload = f"{t['task_id']}:{t['action']}:{t['service_id']}:{nonce}:{now_ts}"
-        sig = hmac.new(secret_tok.encode('utf-8'), sig_payload.encode('utf-8'), hashlib.sha256).hexdigest()
-        sig_none = hmac.new(b"None", sig_payload.encode('utf-8'), hashlib.sha256).hexdigest()
-        signed.append({
-            "task_id": t["task_id"],
-            "action": t["action"],
-            "service_id": t["service_id"],
-            "managed_by": t.get("managed_by", "systemd"),
-            "unit_name": t.get("unit_name"),
-            "container_id": t.get("container_id"),
-            "restart_cmd": t.get("restart_cmd"),
-            "run_user": t.get("run_user"),
-            "nonce": nonce,
-            "timestamp": now_ts,
-            "signature": sig,
-            "signature_fallback": sig_none
-        })
+        try:
+            now_ts = int(time.time())
+            nonce = uuid.uuid4().hex[:16]
+            cmd_str = (t.get("restart_cmd") or "").strip()
+            recipe_hash = hashlib.sha256(cmd_str.encode('utf-8')).hexdigest()[:16]
+            unit_ident = str(t.get("unit_name") or t.get("container_id") or "").strip()
+            run_usr = str(t.get("run_user") or "root").strip()
+            sig_payload = f"{t['task_id']}:{t['action']}:{t['service_id']}:{unit_ident}:{run_usr}:{recipe_hash}:{nonce}:{now_ts}"
+            sig = hmac.new(secret_tok.encode('utf-8'), sig_payload.encode('utf-8'), hashlib.sha256).hexdigest()
+            signed.append({
+                "task_id": t["task_id"],
+                "action": t["action"],
+                "service_id": t["service_id"],
+                "managed_by": t.get("managed_by", "systemd"),
+                "unit_name": t.get("unit_name"),
+                "container_id": t.get("container_id"),
+                "restart_cmd": t.get("restart_cmd"),
+                "run_user": t.get("run_user"),
+                "nonce": nonce,
+                "timestamp": now_ts,
+                "signature": sig
+            })
+            successfully_signed_ids.append(t["task_id"])
+        except Exception as e_sig:
+            logger.error(f"[TASK-SIGN] Failed to sign task #{t.get('task_id')}: {e_sig}")
+
+    if successfully_signed_ids:
+        db.mark_tasks_dispatched(successfully_signed_ids, server_id)
     return {"ok": True, "server_id": server_id, "tasks": signed}
 
 @app.post("/api/agent/tasks/status")
 async def api_agent_task_status_report(request: Request):
-    """Acknowledge task receipt and execution commencement."""
+    """Acknowledge task receipt (acknowledged) and execution commencement (running)."""
     try:
         data = await request.json()
     except Exception:
@@ -3908,7 +3934,12 @@ async def api_agent_task_status_report(request: Request):
     task_id = data.get("task_id")
     status_val = data.get("status", "running")
     if task_id:
-        db.update_agent_task_status(task_id, status_val)
+        if status_val == "acknowledged":
+            db.update_agent_task_status(task_id, "acknowledged")
+        elif status_val == "running":
+            db.update_agent_task_status(task_id, "running")
+        else:
+            db.update_agent_task_status(task_id, status_val)
     return {"ok": True}
 
 @app.post("/api/agent/tasks/result")
@@ -5616,8 +5647,56 @@ def send_agent_request(endpoint, data=None, headers=None, timeout=10):
     raise last_err
 
 # ── AUTO-DETECTED SERVICES STATE & LOGIC ──
+def load_seen_nonces():
+    try:
+        p_path = "/opt/securepulse/.seen_nonces"
+        if os.path.exists(p_path):
+            with open(p_path, "r") as f:
+                return set(line.strip() for line in f if line.strip())
+    except Exception:
+        pass
+    return set()
+
+def persist_seen_nonce(nonce):
+    try:
+        os.makedirs("/opt/securepulse", exist_ok=True)
+        with open("/opt/securepulse/.seen_nonces", "a") as f:
+            f.write(str(nonce) + "\\n")
+    except Exception:
+        pass
+
+def save_pending_task_result(result_item):
+    try:
+        os.makedirs("/opt/securepulse", exist_ok=True)
+        p_path = "/opt/securepulse/.pending_results.json"
+        items = []
+        if os.path.exists(p_path):
+            try:
+                with open(p_path, "r") as f:
+                    items = json.load(f)
+            except Exception:
+                items = []
+        items = [i for i in items if i.get("task_id") != result_item.get("task_id")]
+        items.append(result_item)
+        with open(p_path, "w") as f:
+            json.dump(items, f)
+    except Exception:
+        pass
+
+def remove_pending_task_result(task_id):
+    try:
+        p_path = "/opt/securepulse/.pending_results.json"
+        if os.path.exists(p_path):
+            with open(p_path, "r") as f:
+                items = json.load(f)
+            items = [i for i in items if i.get("task_id") != task_id]
+            with open(p_path, "w") as f:
+                json.dump(items, f)
+    except Exception:
+        pass
+
 known_services = {{}}
-seen_nonces = set()
+seen_nonces = load_seen_nonces()
 task_results_queue = []
 last_service_discovery = 0
 
@@ -5877,6 +5956,7 @@ def report_task_result(result_item):
     if os.environ.get("TESTING"):
         return True
     tid = result_item.get("task_id")
+    save_pending_task_result(result_item)
     for endpoint in ["/api/agent/tasks/result", "/api/agent/push", "/api/agent/event"]:
         try:
             req_data = result_item if endpoint == "/api/agent/tasks/result" else {{
@@ -5886,14 +5966,16 @@ def report_task_result(result_item):
                 "server_ip": TARGET_IP,
                 "machine_id": get_machine_id()
             }}
-            send_agent_request(
+            res_b = send_agent_request(
                 endpoint,
                 data=json.dumps(req_data).encode("utf-8"),
                 headers={{"Content-Type": "application/json"}},
                 timeout=5
             )
-            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Task {{tid}} result reported successfully via {{endpoint}}.", flush=True)
-            return True
+            if res_b:
+                remove_pending_task_result(tid)
+                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Task {{tid}} result reported successfully via {{endpoint}}.", flush=True)
+                return True
         except Exception as e_rep:
             print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Reporting task {{tid}} via {{endpoint}} failed: {{e_rep}}", flush=True)
             time.sleep(0.5)
@@ -5903,6 +5985,17 @@ def task_polling_loop():
     global ASSIGNED_SERVER_ID
     while True:
         try:
+            # Retry unconfirmed task results saved on disk
+            try:
+                p_path = "/opt/securepulse/.pending_results.json"
+                if os.path.exists(p_path):
+                    with open(p_path, "r") as f:
+                        disk_results = json.load(f)
+                    for res_i in (disk_results or []):
+                        report_task_result(res_i)
+            except Exception:
+                pass
+
             sid = check_assigned_server_id()
             poll_payload = {{
                 "server_id": sid,
@@ -5952,22 +6045,22 @@ def execute_agent_tasks(tasks):
         t_start = time.time()
         print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Starting task {{tid}}: action={{action}}, service={{service_id}}, managed_by={{managed_by}}", flush=True)
 
-        # Acknowledge task pickup and report running state immediately via all available endpoints
-        for ep in ["/api/agent/tasks/status", "/api/agent/push", "/api/agent/event"]:
-            try:
-                st_payload = {{"task_id": tid, "status": "running", "server_id": sid}} if ep == "/api/agent/tasks/status" else {{
-                    "server_id": sid, "task_status_update": {{"task_id": tid, "status": "running"}},
-                    "hostname": get_hostname(), "server_ip": TARGET_IP, "machine_id": get_machine_id()
-                }}
-                send_agent_request(ep, data=json.dumps(st_payload).encode("utf-8"), timeout=3)
-                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Transitioned task {{tid}} to 'running' state via {{ep}}.", flush=True)
-                break
-            except Exception as e_ack:
-                pass
+        # 1. Missing secret check
+        if not AGENT_TOKEN or str(AGENT_TOKEN).strip() in ("None", "null", ""):
+            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Refusing task {{tid}}: agent has no secret configured.", flush=True)
+            res_item = {{
+                "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 401,
+                "output": "Task rejected: agent has no secret.",
+                "reject_reason": "missing_secret", "duration_ms": int((time.time() - t_start) * 1000)
+            }}
+            task_results_queue.append(res_item)
+            report_task_result(res_item)
+            continue
 
-        # 1. Replay & Expiry Check (allow 90s window if timestamp is provided)
+        # 2. Expiry check (strict 60s window)
         now = int(time.time())
-        if ts and ts > 0 and abs(now - ts) > 90:
+        if ts and ts > 0 and abs(now - ts) > 60:
+            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Refusing task {{tid}}: timestamp {{ts}} expired (window 60s, now {{now}}).", flush=True)
             res_item = {{
                 "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 401,
                 "output": "Task rejected: signature expired (replay protection).",
@@ -5977,7 +6070,9 @@ def execute_agent_tasks(tasks):
             report_task_result(res_item)
             continue
 
+        # 3. Nonce replay check
         if nonce and nonce in seen_nonces:
+            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Refusing task {{tid}}: duplicate nonce {{nonce}}.", flush=True)
             res_item = {{
                 "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 401,
                 "output": "Task rejected: duplicate nonce (replay protection).",
@@ -5988,33 +6083,54 @@ def execute_agent_tasks(tasks):
             continue
         if nonce:
             seen_nonces.add(nonce)
-        if len(seen_nonces) > 2000:
-            seen_nonces.clear()
+            persist_seen_nonce(nonce)
 
-        # 2. HMAC Signature Verification
-        expected_payload = f"{{tid}}:{{action}}:{{service_id}}:{{nonce}}:{{ts}}"
+        # 4. Cryptographic HMAC Signature Verification (NO bypasses!)
+        cmd_str = (restart_cmd or "").strip()
+        recipe_hash = hashlib.sha256(cmd_str.encode('utf-8')).hexdigest()[:16]
+        unit_ident = str(unit_name or container_id or "").strip()
+        run_usr = str(run_user or "root").strip()
+        expected_payload = f"{{tid}}:{{action}}:{{service_id}}:{{unit_ident}}:{{run_usr}}:{{recipe_hash}}:{{nonce}}:{{ts}}"
         expected_sig = hmac.new(AGENT_TOKEN.encode('utf-8'), expected_payload.encode('utf-8'), hashlib.sha256).hexdigest()
-        sig_none = hmac.new(b"None", expected_payload.encode('utf-8'), hashlib.sha256).hexdigest()
-        sig_fb = task.get("signature_fallback")
 
-        sig_valid = False
-        if hmac.compare_digest(sig, expected_sig):
-            sig_valid = True
-        elif hmac.compare_digest(sig, sig_none):
-            sig_valid = True
-        elif sig_fb and (hmac.compare_digest(sig_fb, sig_none) or hmac.compare_digest(sig_fb, expected_sig)):
-            sig_valid = True
-        elif not AGENT_TOKEN or str(AGENT_TOKEN) in ("None", "null", "sp-token-Target-Node", ""):
-            sig_valid = True
-        else:
-            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Signature notice on task {{tid}}: token differs from DB. Authorizing execution under host root daemon.", flush=True)
-            sig_valid = True
+        if not hmac.compare_digest(str(sig), expected_sig):
+            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Cryptographic signature MISMATCH for task {{tid}}. Verification failed.", flush=True)
+            res_item = {{
+                "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 401,
+                "output": "Task rejected: cryptographic signature verification failed (HMAC mismatch).",
+                "reject_reason": "bad_signature", "duration_ms": int((time.time() - t_start) * 1000)
+            }}
+            task_results_queue.append(res_item)
+            report_task_result(res_item)
+            continue
 
-        # 3. Action: rescan
+        print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Cryptographic signature VERIFIED successfully for task {{tid}}.", flush=True)
+
+        # 5. Acknowledge task pickup immediately
+        for ep in ["/api/agent/tasks/status", "/api/agent/push"]:
+            try:
+                st_payload = {{"task_id": tid, "status": "acknowledged", "server_id": sid}}
+                send_agent_request(ep, data=json.dumps(st_payload).encode("utf-8"), timeout=3)
+                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Acknowledged task {{tid}} via {{ep}}.", flush=True)
+                break
+            except Exception:
+                pass
+
+        # 6. Report running state
+        for ep in ["/api/agent/tasks/status", "/api/agent/push"]:
+            try:
+                st_payload = {{"task_id": tid, "status": "running", "server_id": sid}}
+                send_agent_request(ep, data=json.dumps(st_payload).encode("utf-8"), timeout=3)
+                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Transitioned task {{tid}} to 'running' state via {{ep}}.", flush=True)
+                break
+            except Exception:
+                pass
+
+        # 7. Action: rescan
         if action == "rescan":
             discover_services(force=True)
             res_item = {{
-                "server_id": sid, "task_id": tid, "status": "completed", "exit_code": 0,
+                "server_id": sid, "task_id": tid, "status": "succeeded", "exit_code": 0,
                 "output": f"Service rescan completed: {{len(known_services)}} services detected.",
                 "duration_ms": int((time.time() - t_start) * 1000)
             }}
@@ -6022,11 +6138,11 @@ def execute_agent_tasks(tasks):
             report_task_result(res_item)
             continue
 
-        # 4. Protected Services Verification
+        # 8. Protected Services Verification
         target_check = (unit_name or service_id or "").lower()
         if any(p == target_check or p in target_check for p in ["sshd", "ssh.service", "securepulse", "auditd"]):
             res_item = {{
-                "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 400,
+                "server_id": sid, "task_id": tid, "status": "rejected", "exit_code": 400,
                 "output": "Refused: Service '" + str(target_check) + "' is protected and cannot be modified.",
                 "reject_reason": "protected_service", "duration_ms": int((time.time() - t_start) * 1000)
             }}
@@ -6034,11 +6150,11 @@ def execute_agent_tasks(tasks):
             report_task_result(res_item)
             continue
 
-        # 5. Shell character check
+        # 9. Shell character check
         bad_chars = [';', '&', '|', chr(96), chr(36), '(', ')', '<', '>', chr(10)]
         if any(c in (unit_name or '') for c in bad_chars) or any(c in (container_id or '') for c in bad_chars):
             res_item = {{
-                "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 400,
+                "server_id": sid, "task_id": tid, "status": "rejected", "exit_code": 400,
                 "output": "Refused: Illegal shell injection characters in target identifier.",
                 "reject_reason": "shell_injection", "duration_ms": int((time.time() - t_start) * 1000)
             }}
@@ -6046,14 +6162,49 @@ def execute_agent_tasks(tasks):
             report_task_result(res_item)
             continue
 
-        # 6. Execute Fixed Command
+        # 10. Pre-restart syntax verification for HAProxy & Nginx
+        if "haproxy" in target_check and action in ("restart", "reload"):
+            cfg_file = "/etc/haproxy/haproxy.cfg"
+            chk_cmd = ["haproxy", "-c", "-f", cfg_file] if os.path.isfile(cfg_file) else ["haproxy", "-c", "-q"]
+            p_chk = subprocess.run(chk_cmd, capture_output=True, text=True)
+            if p_chk.returncode != 0:
+                err_out = (p_chk.stdout + chr(10) + p_chk.stderr).strip()
+                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] HAProxy config validation FAILED: {{err_out}}", flush=True)
+                res_item = {{
+                    "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 400,
+                    "output": f"Pre-restart config check failed (haproxy -c): {{err_out}}",
+                    "reject_reason": "config_test_failed", "duration_ms": int((time.time() - t_start) * 1000)
+                }}
+                task_results_queue.append(res_item)
+                report_task_result(res_item)
+                continue
+
+        if "nginx" in target_check and action in ("restart", "reload"):
+            p_chk = subprocess.run(["nginx", "-t"], capture_output=True, text=True)
+            if p_chk.returncode != 0:
+                err_out = (p_chk.stdout + chr(10) + p_chk.stderr).strip()
+                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Nginx config validation FAILED: {{err_out}}", flush=True)
+                res_item = {{
+                    "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 400,
+                    "output": f"Pre-restart config check failed (nginx -t): {{err_out}}",
+                    "reject_reason": "config_test_failed", "duration_ms": int((time.time() - t_start) * 1000)
+                }}
+                task_results_queue.append(res_item)
+                report_task_result(res_item)
+                continue
+
+        # 11. Execute Action
         exit_code = 1
         output = ""
+        status_str = "failed"
         try:
             if managed_by == "systemd":
                 unit = unit_name or service_id.replace("unit:", "")
                 if not unit.endswith(".service"): unit += ".service"
-                cmd = ["systemctl", action, unit]
+                if "haproxy" in unit.lower() and subprocess.run(["which", "systemd-run"], capture_output=True).returncode == 0:
+                    cmd = ["systemd-run", "--no-block", "systemctl", action, unit]
+                else:
+                    cmd = ["systemctl", action, unit]
                 print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Executing: {{' '.join(cmd)}}", flush=True)
                 p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                 exit_code = p.returncode
@@ -6063,51 +6214,11 @@ def execute_agent_tasks(tasks):
                 new_state = chk.stdout.strip()
                 print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Systemd result: exit_code={{exit_code}}, state='{{new_state}}'", flush=True)
                 if exit_code == 0:
-                    status_str = "completed"
+                    status_str = "succeeded"
                     output = f"systemctl {{action}} {{unit}} succeeded." + chr(10) + "Verification: Unit '" + str(unit) + "' state is '" + str(new_state) + "'."
                 else:
-                    # Fallback to Tomcat standalone process restart if systemd unit failed
-                    if any(k in (unit + " " + service_id).lower() for k in ["tomcat", "catalina"]):
-                        print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Systemd unit {{unit}} failed. Executing standalone Tomcat process workflow...", flush=True)
-                        subprocess.run(["pkill", "-15", "-f", "[B]ootstrap|[t]omcat|catalina"], capture_output=True, timeout=5)
-                        time.sleep(1)
-                        subprocess.run(["pkill", "-9", "-f", "[B]ootstrap|[t]omcat|catalina"], capture_output=True, timeout=5)
-                        time.sleep(1)
-                        if action in ("restart", "start"):
-                            found_bin = ""
-                            for pat in ["/application/*/apache-tomcat*/bin", "/application/apache-tomcat*/bin", "/opt/tomcat*/bin", "/opt/apache-tomcat*/bin", "/usr/local/tomcat*/bin"]:
-                                for m in glob.glob(pat):
-                                    if os.path.isfile(os.path.join(m, "startup.sh")):
-                                        found_bin = m
-                                        break
-                                if found_bin: break
-                            start_cmd = "cd '" + found_bin + "' && if [ -z '$JAVA_HOME' ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; setsid nohup sh ./startup.sh >/dev/null 2>&1 &" if found_bin else "setsid nohup sh startup.sh >/dev/null 2>&1 &"
-                            if run_user and run_user != "root":
-                                p = subprocess.run(["su", "-", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
-                                if p.returncode != 0:
-                                    p = subprocess.run(["su", "-s", "/bin/sh", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
-                                if p.returncode != 0:
-                                    p = subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
-                            else:
-                                p = subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
-                            time.sleep(2)
-                            chk_p = subprocess.run(["pgrep", "-f", "catalina|tomcat"], capture_output=True, text=True)
-                            new_pids = chk_p.stdout.strip().split()
-                            if new_pids:
-                                exit_code = 0
-                                status_str = "completed"
-                                output = "Tomcat standalone restart succeeded via startup.sh." + chr(10) + "Active PID(s): " + ", ".join(new_pids) + "."
-                            else:
-                                exit_code = 1
-                                status_str = "failed"
-                                output = "Tomcat startup script dispatched but no active PID was found."
-                        elif action == "stop":
-                            exit_code = 0
-                            status_str = "completed"
-                            output = "Tomcat stopped successfully."
-                    else:
-                        status_str = "failed"
-                        output = f"systemctl {{action}} {{unit}} failed (code {{exit_code}})." + chr(10) + "Verification: Unit '" + str(unit) + "' state is '" + str(new_state) + "'." + (chr(10) + out if out else "")
+                    status_str = "failed"
+                    output = f"systemctl {{action}} {{unit}} failed (code {{exit_code}})." + chr(10) + "Verification: Unit '" + str(unit) + "' state is '" + str(new_state) + "'." + (chr(10) + out if out else "")
 
             elif managed_by == "docker":
                 cid = container_id or service_id.replace("docker:", "")
@@ -6117,126 +6228,77 @@ def execute_agent_tasks(tasks):
                 out = (p.stdout + p.stderr).strip()
                 time.sleep(1)
                 chk = subprocess.run(["docker", "inspect", "-f", "{{{{.State.Status}}}}", cid], capture_output=True, text=True)
-                status_str = "completed" if exit_code == 0 else "failed"
+                status_str = "succeeded" if exit_code == 0 else "failed"
                 output = f"docker {{action}} {{cid}} (status: {{chk.stdout.strip()}}): {{out}}"
 
             elif managed_by == "process":
                 s_data = known_services.get(service_id, {{}})
                 pid_val = s_data.get("pid")
                 cwd_val = s_data.get("working_dir") or ""
-                check_str = (str(service_id) + " " + str(unit_name or "") + " " + str(s_data.get("name") or "")).lower()
-                is_tc = ("tomcat" in check_str or "catalina" in check_str)
+                listen_ports = s_data.get("ports") or []
 
-                if is_tc:
-                    # ── TOMCAT KILL-THEN-STARTUP WORKFLOW ──
-                    if action in ("restart", "stop"):
-                        if pid_val:
-                            try: subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, timeout=5)
-                            except: pass
-                        subprocess.run(["pkill", "-15", "-f", "[B]ootstrap|[t]omcat|catalina"], capture_output=True, timeout=5)
+                if action in ("restart", "stop"):
+                    if pid_val:
+                        try:
+                            subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, timeout=5)
+                        except Exception:
+                            pass
                         time.sleep(2)
-                        subprocess.run(["pkill", "-9", "-f", "[B]ootstrap|[t]omcat|catalina"], capture_output=True, timeout=5)
-                        if pid_val:
-                            try: subprocess.run(["kill", "-9", str(pid_val)], capture_output=True, timeout=5)
-                            except: pass
+                        if subprocess.run(["kill", "-0", str(pid_val)], capture_output=True).returncode == 0:
+                            try:
+                                subprocess.run(["kill", "-9", str(pid_val)], capture_output=True, timeout=5)
+                            except Exception:
+                                pass
                         time.sleep(1)
 
-                    if action in ("restart", "start"):
-                        found_bin = ""
-                        for cand_dir in [cwd_val + "/bin", cwd_val]:
-                            if cand_dir and os.path.isfile(os.path.join(cand_dir, "startup.sh")):
-                                found_bin = cand_dir
-                                break
-                        if not found_bin:
-                            for pat in ["/application/*/apache-tomcat*/bin", "/application/apache-tomcat*/bin", "/opt/tomcat*/bin", "/opt/apache-tomcat*/bin", "/usr/local/tomcat*/bin", "/data/*/apache-tomcat*/bin"]:
-                                for m in glob.glob(pat):
-                                    if os.path.isfile(os.path.join(m, "startup.sh")):
-                                        found_bin = m
-                                        break
-                                if found_bin: break
+                if action in ("restart", "start"):
+                    start_cmd = restart_cmd
+                    if not start_cmd:
+                        cand_sh = os.path.join(cwd_val, "bin", "startup.sh") if cwd_val else ""
+                        if cand_sh and os.path.isfile(cand_sh):
+                            start_cmd = f"cd '{{os.path.dirname(cand_sh)}}' && setsid nohup sh ./startup.sh >/dev/null 2>&1 &"
+                        elif cwd_val and os.path.isfile(os.path.join(cwd_val, "startup.sh")):
+                            start_cmd = f"cd '{{cwd_val}}' && setsid nohup sh ./startup.sh >/dev/null 2>&1 &"
 
-                        if found_bin:
-                            start_cmd = "cd '" + found_bin + "' && if [ -z '$JAVA_HOME' ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; setsid nohup sh ./startup.sh >/dev/null 2>&1 &"
-                        elif restart_cmd:
-                            start_cmd = restart_cmd
-                        else:
-                            start_cmd = "setsid nohup sh startup.sh >/dev/null 2>&1 &"
-
+                    if start_cmd:
+                        print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Starting process under user {{run_user}}: {{start_cmd}}", flush=True)
                         if run_user and run_user != "root":
-                            p = subprocess.run(["su", "-", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
-                            if p.returncode != 0:
-                                p = subprocess.run(["su", "-s", "/bin/sh", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
-                            if p.returncode != 0:
-                                p = subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
+                            p = subprocess.run(["su", "-s", "/bin/sh", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
                         else:
                             p = subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
-
                         time.sleep(2)
-                        chk_p = subprocess.run(["pgrep", "-f", "catalina|tomcat"], capture_output=True, text=True)
-                        new_pids = chk_p.stdout.strip().split()
-                        if new_pids:
+
+                        verified = False
+                        new_pid = None
+                        chk_p = subprocess.run(["pgrep", "-f", str(unit_name or service_id)], capture_output=True, text=True)
+                        p_list = chk_p.stdout.strip().split()
+                        if p_list:
+                            new_pid = p_list[-1]
+                            verified = True
+
+                        if not verified and listen_ports:
+                            chk_net = subprocess.run(["ss", "-tulpn"], capture_output=True, text=True)
+                            for pt in listen_ports:
+                                if f":{{pt}}" in chk_net.stdout:
+                                    verified = True
+                                    break
+
+                        if verified or p.returncode == 0:
                             exit_code = 0
-                            status_str = "completed"
-                            output = "Tomcat workflow executed successfully under user '" + str(run_user) + "'." + chr(10) + "Active PID(s): " + ", ".join(new_pids) + "."
+                            status_str = "succeeded"
+                            output = f"Process service {{action}} succeeded." + (f" New PID: {{new_pid}}." if new_pid else "")
                         else:
                             exit_code = 1
                             status_str = "failed"
-                            output = "Tomcat startup dispatched but no active PID was found."
-                    elif action == "stop":
-                        exit_code = 0
-                        status_str = "completed"
-                        output = "Tomcat stopped successfully."
-                else:
-                    svc_base = (str(service_id) + " " + str(unit_name or "")).replace("proc:", "").split("-")[0].split(":")[0].strip().lower()
-                    has_sys_unit = False
-                    if svc_base in ("haproxy", "nginx", "postgres", "postgresql", "mysql", "redis", "docker"):
-                        try:
-                            chk_u = subprocess.run(["systemctl", "status", f"{{svc_base}}.service"], capture_output=True, text=True)
-                            if "not found" not in chk_u.stderr.lower() and chk_u.returncode != 4:
-                                has_sys_unit = True
-                        except Exception:
-                            pass
-
-                    if has_sys_unit:
-                        cmd = ["systemctl", action, f"{{svc_base}}.service"]
-                        print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Executing: {{' '.join(cmd)}}", flush=True)
-                        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-                        exit_code = p.returncode
-                        out = (p.stdout + p.stderr).strip()
-                        time.sleep(1)
-                        chk_s = subprocess.run(["systemctl", "is-active", f"{{svc_base}}.service"], capture_output=True, text=True)
-                        new_state = chk_s.stdout.strip()
-                        status_str = "completed" if exit_code == 0 else "failed"
-                        output = f"systemctl {{action}} {{svc_base}}.service succeeded." + chr(10) + f"Verification: Unit '{{svc_base}}.service' state is '{{new_state}}'."
+                            output = "Process startup script executed, but verification failed."
                     else:
-                        if action in ("restart", "stop") and pid_val:
-                            try:
-                                subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, timeout=5)
-                                time.sleep(1)
-                            except Exception:
-                                pass
-                    if action in ("restart", "start") and restart_cmd:
-                        if run_user and run_user != "root":
-                            p = subprocess.run(["su", "-", run_user, "-c", restart_cmd], capture_output=True, text=True, timeout=60)
-                        else:
-                            p = subprocess.run(["sh", "-c", restart_cmd], capture_output=True, text=True, timeout=60)
-                        exit_code = p.returncode
-                        output = p.stdout + p.stderr
-                        status_str = "completed" if exit_code == 0 else "failed"
-                    elif action == "stop":
-                        if pid_val:
-                            p = subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, text=True, timeout=10)
-                            exit_code = p.returncode
-                            output = "Sent SIGTERM to PID " + str(pid_val) + "."
-                            status_str = "completed" if exit_code == 0 else "failed"
-                        else:
-                            exit_code = 0
-                            status_str = "completed"
-                            output = "Process not actively running."
-                    else:
-                        exit_code = 400
+                        exit_code = 1
                         status_str = "failed"
-                        output = "No restart command specified for process."
+                        output = "No valid startup command or working directory found for this process service."
+                elif action == "stop":
+                    exit_code = 0
+                    status_str = "succeeded"
+                    output = f"Process service {{service_id}} stopped."
             else:
                 exit_code = 400
                 status_str = "failed"
@@ -9030,11 +9092,20 @@ async def api_service_action(server_id: int, request: Request):
 
     managed_by = target_service.get("managed_by") or ("systemd" if target_service.get("unit_name") else "process")
     s_full = (str(service_id) + " " + str(target_service.get("name") or "") + " " + str(target_service.get("type") or "")).lower()
-    if "tomcat" in s_full or "catalina" in s_full:
+    if ("tomcat" in s_full or "catalina" in s_full) and not target_service.get("unit_name"):
         managed_by = "process"
     unit_name = target_service.get("unit_name")
     container_id = target_service.get("container_id")
-    restart_cmd = target_service.get("restart_cmd") or target_service.get("cmdline")
+    # For systemd services, restart_cmd is strictly None (systemctl action unit only)
+    if managed_by == "systemd":
+        restart_cmd = None
+    else:
+        raw_cmd = target_service.get("restart_cmd") or ""
+        # Strip control characters (\x00-\x1f) and transient arguments (-sf <pid>, sockpair)
+        clean_cmd = re.sub(r'[\x00-\x1f\x7f]', '', raw_cmd).strip()
+        clean_cmd = re.sub(r'-sf\s+\d+', '', clean_cmd)
+        clean_cmd = re.sub(r'-x\s+sockpair@\d+', '', clean_cmd)
+        restart_cmd = clean_cmd if clean_cmd else None
     run_user = target_service.get("user") or target_service.get("run_user") or "root"
 
     # Queue task
@@ -9100,6 +9171,108 @@ async def api_cancel_task(server_id: int, task_id: str, request: Request):
         db.log_audit(uname, "SERVICE_ACTION_CANCELLED", "server", server_id, f"Cancelled agent task {task_id}")
         return {"ok": True, "message": "Task cancelled successfully."}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Task could not be cancelled (already running or completed)."})
+
+@app.get("/api/admin/tasks/stuck")
+async def api_admin_get_stuck_tasks(request: Request):
+    """Read-only query listing tasks stuck in pending/dispatched/running or timed out."""
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
+    conn = db.get_db_connection()
+    if not conn:
+        return JSONResponse(status_code=500, content={"ok": False, "message": "Database connection failed."})
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
+                       restart_cmd, status, exit_code, output, created_by, created_at,
+                       picked_up_at, started_at, completed_at, reject_reason,
+                       COALESCE(dispatch_count, 0) as dispatch_count
+                FROM agent_tasks
+                WHERE status IN ('queued', 'pending', 'dispatched', 'running', 'timed out')
+                ORDER BY id DESC;
+            """)
+            rows = cur.fetchall()
+            tasks = [dict(r) for r in rows] if rows else []
+            return {"ok": True, "count": len(tasks), "tasks": tasks}
+    except Exception as e:
+        logger.error(f"Error querying stuck tasks: {e}")
+        return JSONResponse(status_code=500, content={"ok": False, "message": str(e)})
+    finally:
+        conn.close()
+
+@app.post("/api/admin/tasks/stuck/cancel")
+async def api_admin_cancel_stuck_tasks(request: Request):
+    """Admin-confirmed action to cancel stuck/timed-out tasks with an audit entry."""
+    client_ip = request.client.host if request.client else None
+    user = get_session_user(request)
+    uname = user.get("username", "admin") if user else "admin"
+    if not is_admin_user(request):
+        db.log_audit(uname, "DENIED", "server", 0, "Non-admin attempted cancelling stuck tasks", ip_address=client_ip)
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    task_ids = body.get("task_ids")
+    conn = db.get_db_connection()
+    if not conn:
+        return JSONResponse(status_code=500, content={"ok": False, "message": "Database connection failed."})
+    try:
+        with conn.cursor() as cur:
+            if task_ids and isinstance(task_ids, list):
+                cur.execute("""
+                    UPDATE agent_tasks
+                    SET status = 'cancelled', output = %s, completed_at = NOW()
+                    WHERE task_id = ANY(%s) AND status IN ('queued', 'pending', 'dispatched', 'running', 'timed out')
+                    RETURNING task_id;
+                """, (f"Cancelled by administrator {uname}.", task_ids))
+            else:
+                cur.execute("""
+                    UPDATE agent_tasks
+                    SET status = 'cancelled', output = %s, completed_at = NOW()
+                    WHERE status IN ('queued', 'pending', 'dispatched', 'running', 'timed out')
+                    RETURNING task_id;
+                """, (f"Cancelled by administrator {uname} (bulk cleanup).",))
+            rows = cur.fetchall()
+            c_ids = [r[0] if not isinstance(r, dict) else r["task_id"] for r in rows] if rows else []
+            conn.commit()
+            db.log_audit(uname, "TASKS_CLEANUP_CANCELLED", "server", 0, f"Cancelled {len(c_ids)} stuck/timed-out tasks: {c_ids}", ip_address=client_ip)
+            return {"ok": True, "cancelled_count": len(c_ids), "task_ids": c_ids}
+    except Exception as e:
+        logger.error(f"Error cancelling stuck tasks: {e}")
+        return JSONResponse(status_code=500, content={"ok": False, "message": str(e)})
+    finally:
+        conn.close()
+
+@app.get("/api/admin/servers/duplicates")
+async def api_admin_get_duplicate_servers(request: Request):
+    """Read-only query identifying duplicate server records (same IP/hostname/machine-id) for reviewed merge."""
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
+    conn = db.get_db_connection()
+    if not conn:
+        return JSONResponse(status_code=500, content={"ok": False, "message": "Database connection failed."})
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    COALESCE(NULLIF(ip_address, ''), NULLIF(ip, '')) as resolved_ip,
+                    hostname,
+                    machine_id,
+                    array_agg(id ORDER BY id ASC) as server_ids,
+                    count(*) as duplicate_count
+                FROM servers
+                GROUP BY resolved_ip, hostname, machine_id
+                HAVING count(*) > 1;
+            """)
+            rows = cur.fetchall()
+            duplicates = [dict(r) for r in rows] if rows else []
+            return {"ok": True, "count": len(duplicates), "duplicates": duplicates}
+    except Exception as e:
+        logger.error(f"Error checking duplicate servers: {e}")
+        return JSONResponse(status_code=500, content={"ok": False, "message": str(e)})
+    finally:
+        conn.close()
 
 @app.post("/api/servers/{server_id}/services/rescan")
 @app.post("/api/assets/{server_id}/services/rescan")

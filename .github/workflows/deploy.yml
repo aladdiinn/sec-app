@@ -60,6 +60,27 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pyflakes
+
+      - name: Static Undefined-Name Gate (pyflakes / ruff F821)
+        run: |
+          echo "Verifying no undefined names exist in critical codebase..."
+          OUTPUT=$(python -m pyflakes app.py database.py ses_mailer.py generate_agent.py 2>&1 || true)
+          UNDEFINED=$(echo "$OUTPUT" | grep "undefined name" || true)
+          if [ -n "$UNDEFINED" ]; then
+            echo "CRITICAL: Undefined names detected by pyflakes!"
+            echo "$UNDEFINED"
+            exit 1
+          fi
+          echo "[PASS] 0 undefined names found across app.py, database.py, ses_mailer.py, and generate_agent.py."
+
+      - name: Run Manage Asset & Services Cryptographic Lifecycle Tests
+        env:
+          TESTING: "1"
+          SECRET_KEY: "test-secret-key-32-chars-long-abc"
+          DB_PASSWORD: "testpassword"
+        run: |
+          python -m unittest tests/test_manage_asset_and_services.py
 
       - name: Run Auth Security Hardening Tests
         env:

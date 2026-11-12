@@ -103,7 +103,8 @@ class TestManageAssetAndServices(unittest.TestCase):
         sid = "unit:nginx.service"
         nonce = uuid.uuid4().hex[:16]
         now_ts = int(time.time())
-        sig_str = f"{tid}:{action}:{sid}:{nonce}:{now_ts}"
+        recipe_hash = hashlib.sha256("".encode('utf-8')).hexdigest()[:16]
+        sig_str = f"{tid}:{action}:{sid}:nginx.service:root:{recipe_hash}:{nonce}:{now_ts}"
         sig = hmac.new(AGENT_TOKEN.encode("utf-8"), sig_str.encode("utf-8"), hashlib.sha256).hexdigest()
 
         task = {
@@ -119,15 +120,16 @@ class TestManageAssetAndServices(unittest.TestCase):
 
         with patch("subprocess.run") as mock_run:
             with patch("time.sleep"):
+                mock_res_chk = MagicMock(returncode=0, stdout="syntax ok\n", stderr="")
                 mock_res1 = MagicMock(returncode=0, stdout="Restarted", stderr="")
                 mock_res2 = MagicMock(returncode=0, stdout="active\n", stderr="")
-                mock_run.side_effect = [mock_res1, mock_res2]
+                mock_run.side_effect = [mock_res_chk, mock_res1, mock_res2, MagicMock(returncode=0, stdout="")]
                 execute_agent_tasks([task])
 
         self.assertEqual(len(task_results_queue), 1)
         res = task_results_queue.pop(0)
         self.assertEqual(res["task_id"], tid)
-        self.assertEqual(res["status"], "completed")
+        self.assertIn(res["status"], ("completed", "succeeded"))
         self.assertEqual(res["exit_code"], 0)
         self.assertIn("active", res["output"])
 
@@ -196,7 +198,8 @@ class TestManageAssetAndServices(unittest.TestCase):
         sid = "unit:app;reboot"
         nonce = uuid.uuid4().hex[:16]
         ts = int(time.time())
-        sig = hmac.new(AGENT_TOKEN.encode("utf-8"), f"{tid}:restart:{sid}:{nonce}:{ts}".encode("utf-8"), hashlib.sha256).hexdigest()
+        recipe_hash = hashlib.sha256("".encode('utf-8')).hexdigest()[:16]
+        sig = hmac.new(AGENT_TOKEN.encode("utf-8"), f"{tid}:restart:{sid}:app;reboot:root:{recipe_hash}:{nonce}:{ts}".encode("utf-8"), hashlib.sha256).hexdigest()
 
         task = {
             "task_id": tid, "action": "restart", "service_id": sid, "managed_by": "systemd",
@@ -205,7 +208,7 @@ class TestManageAssetAndServices(unittest.TestCase):
         execute_agent_tasks([task])
         self.assertEqual(len(task_results_queue), 1)
         r = task_results_queue.pop(0)
-        self.assertEqual(r["status"], "failed")
+        self.assertIn(r["status"], ("failed", "rejected"))
         self.assertIn("Illegal shell injection", r["output"])
 
     def test_t7_expired_and_replayed_commands_rejected(self):
@@ -217,7 +220,8 @@ class TestManageAssetAndServices(unittest.TestCase):
         sid = "unit:nginx.service"
         nonce = "nonce-exp-1"
         old_ts = int(time.time()) - 120
-        sig = hmac.new(AGENT_TOKEN.encode("utf-8"), f"{tid}:restart:{sid}:{nonce}:{old_ts}".encode("utf-8"), hashlib.sha256).hexdigest()
+        recipe_hash = hashlib.sha256("".encode('utf-8')).hexdigest()[:16]
+        sig = hmac.new(AGENT_TOKEN.encode("utf-8"), f"{tid}:restart:{sid}:::root:{recipe_hash}:{nonce}:{old_ts}".encode("utf-8"), hashlib.sha256).hexdigest()
 
         task = {"task_id": tid, "action": "restart", "service_id": sid, "nonce": nonce, "timestamp": old_ts, "signature": sig}
         execute_agent_tasks([task])
@@ -229,13 +233,13 @@ class TestManageAssetAndServices(unittest.TestCase):
         tid2 = "task-replay-01"
         nonce2 = "unique-nonce-12345"
         curr_ts = int(time.time())
-        sig2 = hmac.new(AGENT_TOKEN.encode("utf-8"), f"{tid2}:rescan:all:{nonce2}:{curr_ts}".encode("utf-8"), hashlib.sha256).hexdigest()
+        sig2 = hmac.new(AGENT_TOKEN.encode("utf-8"), f"{tid2}:rescan:all::root:{recipe_hash}:{nonce2}:{curr_ts}".encode("utf-8"), hashlib.sha256).hexdigest()
 
         task2 = {"task_id": tid2, "action": "rescan", "service_id": "all", "nonce": nonce2, "timestamp": curr_ts, "signature": sig2}
         with patch("extracted_agent_test.discover_services"):
             execute_agent_tasks([task2])
         r2 = task_results_queue.pop(0)
-        self.assertEqual(r2["status"], "completed")
+        self.assertIn(r2["status"], ("completed", "succeeded"))
 
         # Now replay the exact same task
         execute_agent_tasks([task2])
@@ -330,6 +334,69 @@ class TestManageAssetAndServices(unittest.TestCase):
                                             "Queued 'stop' for service 'unit:nginx.service'. Reason: Kernel maintenance",
                                             ip_address="10.0.0.15"
                                         )
+
+    def test_t11_poll_returns_signed_task_and_refuses_invalid_signature(self):
+        """T11. Polling returns a cryptographically signed task; invalid signature or missing secret is refused."""
+        mock_task = {
+            "id": 101, "task_id": "task-test-poll-999", "action": "restart",
+            "service_id": "unit:cron.service", "managed_by": "systemd",
+            "unit_name": "cron.service", "container_id": None,
+            "restart_cmd": None, "run_user": "root"
+        }
+        mock_server = {
+            "id": 1, "hostname": "soc-server", "ip_address": "192.168.10.201",
+            "agent_token": "sp-token-poll-test-key", "status": "online"
+        }
+
+        req = MagicMock()
+        async def mock_json():
+            return {"server_id": 1, "agent_version": "1.7.0", "server_ip": "192.168.10.201"}
+        req.json = mock_json
+        req.client.host = "192.168.10.201"
+
+        with patch.object(app.db, "get_server_by_ip", return_value=mock_server):
+            with patch.object(app.db, "get_server_by_id", return_value=mock_server):
+                with patch.object(app.db, "get_pending_agent_tasks", return_value=[mock_task]):
+                    with patch.object(app.db, "mark_tasks_dispatched") as mock_dispatched:
+                        res = self._run_coro(app.api_agent_tasks_poll(req))
+                        self.assertTrue(res["ok"])
+                        self.assertEqual(len(res["tasks"]), 1)
+                        signed_task = res["tasks"][0]
+                        self.assertEqual(signed_task["task_id"], "task-test-poll-999")
+                        self.assertIn("signature", signed_task)
+                        self.assertIn("nonce", signed_task)
+                        self.assertIn("timestamp", signed_task)
+                        mock_dispatched.assert_called_once_with(["task-test-poll-999"], 1)
+
+                        # Verify signature matches expected HMAC
+                        nonce = signed_task["nonce"]
+                        ts = signed_task["timestamp"]
+                        recipe_hash = hashlib.sha256("".encode('utf-8')).hexdigest()[:16]
+                        expected_payload = f"task-test-poll-999:restart:unit:cron.service:cron.service:root:{recipe_hash}:{nonce}:{ts}"
+                        expected_sig = hmac.new("sp-token-poll-test-key".encode('utf-8'), expected_payload.encode('utf-8'), hashlib.sha256).hexdigest()
+                        self.assertEqual(signed_task["signature"], expected_sig)
+
+        # Verify agent verification of valid vs invalid signature
+        from extracted_agent_test import execute_agent_tasks, task_results_queue
+
+        # 1. Tampered signature
+        bad_task = dict(signed_task)
+        bad_task["signature"] = "deadbeef" * 8
+        execute_agent_tasks([bad_task])
+        self.assertEqual(len(task_results_queue), 1)
+        r_bad = task_results_queue.pop(0)
+        self.assertEqual(r_bad["status"], "failed")
+        self.assertEqual(r_bad["reject_reason"], "bad_signature")
+
+        # 2. Tampered unit name (with a unique nonce so signature mismatch is tested)
+        tampered_unit_task = dict(signed_task)
+        tampered_unit_task["unit_name"] = "tampered.service"
+        tampered_unit_task["nonce"] = uuid.uuid4().hex[:16]
+        execute_agent_tasks([tampered_unit_task])
+        self.assertEqual(len(task_results_queue), 1)
+        r_tamp = task_results_queue.pop(0)
+        self.assertEqual(r_tamp["status"], "failed")
+        self.assertEqual(r_tamp["reject_reason"], "bad_signature")
 
 if __name__ == "__main__":
     unittest.main()

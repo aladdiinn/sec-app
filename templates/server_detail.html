@@ -957,14 +957,18 @@
                         const elapsed = Math.round((Date.now() - startTime) / 1000);
                         let stateHtml = '';
 
-                        if (t.status === 'pending') {
-                            if (attempts > 10) { // ~15 seconds without agent pickup
+                        const isAgentStale = !srv.is_online || (elapsed > 15 && (!srv.last_seen || srv.last_seen === 'never'));
+                        const staleWarningHtml = isAgentStale ? `
+                            <div style="color:var(--amber); margin-bottom:8px; line-height:1.4">
+                                ⚠️ <strong>Agent not responding</strong>: Last heartbeat: ${srv.last_seen || 'unknown'}, Agent version: ${srv.agent_version || 'unknown'}.
+                            </div>` : '';
+
+                        if (t.status === 'queued' || t.status === 'pending') {
+                            if (elapsed > 15) {
                                 stateHtml = `
-                                    <div style="color:var(--amber); margin-bottom:8px; line-height:1.4">
-                                        ⚠️ <strong>Agent not responding</strong>: Last heartbeat: ${srv.last_seen || 'unknown'}, Agent version: ${srv.agent_version || 'unknown'}.
-                                    </div>
+                                    ${staleWarningHtml}
                                     <div style="display:flex; gap:8px; align-items:center">
-                                        <button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red)" onclick="cancelCurrentTask('${taskId}')">Cancel Task</button>
+                                        <button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel Task</button>
                                         <span style="font-size:11px; color:var(--text-muted)">Waiting for node poll (${elapsed}s elapsed)...</span>
                                     </div>
                                 `;
@@ -973,12 +977,23 @@
                             }
                         } else if (t.status === 'dispatched') {
                             stateHtml = `
+                                ${staleWarningHtml}
                                 <div style="display:flex; justify-content:space-between; align-items:center">
                                     <div style="display:flex; align-items:center; gap:8px">
                                         <div class="spinner" style="width:14px; height:14px"></div>
-                                        <span style="color:var(--blue)">● Picked up by agent (${elapsed}s)... Starting execution.</span>
+                                        <span style="color:var(--blue)">● Dispatched to agent (${elapsed}s)... Waiting for acknowledgment.</span>
                                     </div>
-                                    ${elapsed > 8 ? `<button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel</button>` : ''}
+                                    ${elapsed > 10 ? `<button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel</button>` : ''}
+                                </div>
+                            `;
+                        } else if (t.status === 'acknowledged') {
+                            stateHtml = `
+                                <div style="display:flex; justify-content:space-between; align-items:center">
+                                    <div style="display:flex; align-items:center; gap:8px">
+                                        <div class="spinner" style="width:14px; height:14px"></div>
+                                        <span style="color:var(--cyan)">● Acknowledged by agent (${elapsed}s)... Starting execution.</span>
+                                    </div>
+                                    ${elapsed > 15 ? `<button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel</button>` : ''}
                                 </div>
                             `;
                         } else if (t.status === 'running') {
@@ -991,7 +1006,7 @@
                                     ${elapsed > 15 ? `<button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel</button>` : ''}
                                 </div>
                             `;
-                        } else if (t.status === 'completed') {
+                        } else if (t.status === 'completed' || t.status === 'succeeded') {
                             clearInterval(actionPollTimer);
                             actionPollTimer = null;
                             if (t.exit_code === 0) {
