@@ -972,9 +972,25 @@
                                 stateHtml = `<div class="spinner" style="width:14px; height:14px"></div><span>Queued in agent queue (${elapsed}s elapsed)...</span>`;
                             }
                         } else if (t.status === 'dispatched') {
-                            stateHtml = `<div class="spinner" style="width:14px; height:14px"></div><span style="color:var(--blue)">● Picked up by agent (${elapsed}s)... Starting execution.</span>`;
+                            stateHtml = `
+                                <div style="display:flex; justify-content:space-between; align-items:center">
+                                    <div style="display:flex; align-items:center; gap:8px">
+                                        <div class="spinner" style="width:14px; height:14px"></div>
+                                        <span style="color:var(--blue)">● Picked up by agent (${elapsed}s)... Starting execution.</span>
+                                    </div>
+                                    ${elapsed > 8 ? `<button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel</button>` : ''}
+                                </div>
+                            `;
                         } else if (t.status === 'running') {
-                            stateHtml = `<div class="spinner" style="width:14px; height:14px"></div><span style="color:var(--cyan)">⚡ Executing ${activeActionType.toUpperCase()} on '${activeActionTarget.name}' (${elapsed}s)...</span>`;
+                            stateHtml = `
+                                <div style="display:flex; justify-content:space-between; align-items:center">
+                                    <div style="display:flex; align-items:center; gap:8px">
+                                        <div class="spinner" style="width:14px; height:14px"></div>
+                                        <span style="color:var(--cyan)">⚡ Executing ${activeActionType.toUpperCase()} on '${activeActionTarget.name}' (${elapsed}s)...</span>
+                                    </div>
+                                    ${elapsed > 15 ? `<button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel</button>` : ''}
+                                </div>
+                            `;
                         } else if (t.status === 'completed') {
                             clearInterval(actionPollTimer);
                             actionPollTimer = null;

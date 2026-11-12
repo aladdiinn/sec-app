@@ -60,6 +60,10 @@ services:
       # Persistent host-mounted storage (logs, offline GeoIP database, local state)
       - /application/Soc/logs:/app/logs
       - /application/Soc/data:/app/data
+      - /application/Soc/app.py:/app/app.py
+      - /application/Soc/database.py:/app/database.py
+      - /application/Soc/templates:/app/templates
+      - /application/Soc/static:/app/static
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:8001/api/version || exit 1"]
       interval: 15s
