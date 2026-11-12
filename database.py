@@ -7184,14 +7184,15 @@ def get_recent_service_action(server_id: int, service_id: str, seconds: int = 15
                 pass
 
             # 2. Only consider tasks that are actively in-flight within the last 45s, or completed within cooldown window (15s)
-            cur.execute("""
+            cooldown_secs = max(5, int(seconds))
+            cur.execute(f"""
                 SELECT id, task_id, action, status, created_at
                 FROM agent_tasks
                 WHERE server_id = %s 
                   AND service_id = %s
                   AND (
                       (status IN ('pending', 'dispatched', 'running') AND created_at >= NOW() - INTERVAL '45 seconds')
-                      OR (completed_at IS NOT NULL AND completed_at >= NOW() - INTERVAL '15 seconds')
+                      OR (completed_at IS NOT NULL AND completed_at >= NOW() - INTERVAL '{cooldown_secs} seconds')
                   )
                 ORDER BY id DESC
                 LIMIT 1;
