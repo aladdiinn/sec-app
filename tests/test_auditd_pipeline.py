@@ -274,7 +274,12 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
         agent_code = res.body[agent_start:py_eof_end].decode("utf-8")
         try:
             import ast
-            ast.parse(agent_code)
+            tree = ast.parse(agent_code)
+            # Verify main() declares ASSIGNED_SERVER_ID as global to prevent UnboundLocalError
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name == "main":
+                    global_vars = [name for g in ast.walk(node) if isinstance(g, ast.Global) for name in g.names]
+                    self.assertIn("ASSIGNED_SERVER_ID", global_vars, "ASSIGNED_SERVER_ID must be declared global in main()")
         except SyntaxError as e:
             self.fail(f"Embedded node_push_agent.py has SyntaxError at line {e.lineno}: {e.msg}")
 

@@ -7189,7 +7189,7 @@ def get_new_log_lines(max_lines_per_file=100):
 
 # Main loop
 def main():
-    global push_count, daily_inventory_done_date, discovered_paths
+    global push_count, daily_inventory_done_date, discovered_paths, ASSIGNED_SERVER_ID
     print(f"[{APP_BRAND} Agent] Starting. SOC: {{SOC_URL}}, Node: {{TARGET_NAME}} ({{TARGET_IP}}), Server ID: {{ASSIGNED_SERVER_ID}}")
     print("[{APP_BRAND} Agent] Discovering log paths...")
     discovered_paths = auto_discover_log_paths()
