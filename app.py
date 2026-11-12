@@ -6635,7 +6635,7 @@ def get_open_ports():
                 cmdline = ""
                 
                 # users:(("nginx",pid=123,fd=5))
-                proc_m = re.search(r'users:\\s*\\(\\s*\\(\\s*"([^"]+)"\\s*,\\s*pid=(\\d+)', line)
+                proc_m = re.search(r'users:\s*\(\s*\(\s*"([^"]+)"\s*,\s*pid=(\d+)', line)
                 if proc_m:
                     proc_name = proc_m.group(1)
                     pid = int(proc_m.group(2))
@@ -6714,7 +6714,7 @@ def get_process_connections():
         out = subprocess.check_output(["ss", "-tunpa"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
         for line in out.strip().split("\\n")[1:]:
             if "ESTAB" in line or "SYN-RECV" in line:
-                m = re.search(r'users:\\(\\("([^"]+)",pid=(\\d+)', line)
+                m = re.search(r'users:\(\("([^"]+)",pid=(\d+)', line)
                 if m:
                     name = m.group(1)
                     pid = m.group(2)
@@ -7272,7 +7272,7 @@ sudo_log_positions = {{}}
 
 def get_sudo_events():
     events = []
-    sudo_pattern = re.compile(r'(sudo:|su:|COMMAND=|su\\[)', re.IGNORECASE)
+    sudo_pattern = re.compile(r'(sudo:|su:|COMMAND=|su\[)', re.IGNORECASE)
     for path, ltype in discovered_paths.items():
         if ltype != 'os': continue
         try:
