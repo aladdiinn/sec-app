@@ -245,7 +245,7 @@ def init_db():
                 ("cpu_percent", "FLOAT DEFAULT 0"),
                 ("memory_percent", "FLOAT DEFAULT 0"),
                 ("disk_percent", "FLOAT DEFAULT 0"),
-                ("agent_version", "VARCHAR(32) DEFAULT '1.6.2'"),
+                ("agent_version", "VARCHAR(32) DEFAULT '1.7.0'"),
                 ("target_agent_version", "VARCHAR(32)"),
                 ("update_status", "VARCHAR(32) DEFAULT 'up_to_date'"),
                 ("last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
@@ -415,10 +415,18 @@ def init_db():
                 duration_ms INT,
                 created_by VARCHAR(64),
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                completed_at TIMESTAMP WITH TIME ZONE
+                picked_up_at TIMESTAMP WITH TIME ZONE,
+                started_at TIMESTAMP WITH TIME ZONE,
+                completed_at TIMESTAMP WITH TIME ZONE,
+                reject_reason TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_agent_tasks_server_status ON agent_tasks(server_id, status);
             CREATE INDEX IF NOT EXISTS idx_agent_tasks_task_id ON agent_tasks(task_id);
+
+            -- Ensure agent_tasks columns exist in existing deployments
+            ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS picked_up_at TIMESTAMP WITH TIME ZONE;
+            ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS started_at TIMESTAMP WITH TIME ZONE;
+            ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS reject_reason TEXT;
 
             CREATE TABLE IF NOT EXISTS audit_logs (
                     id SERIAL PRIMARY KEY,
@@ -7114,6 +7122,18 @@ def get_pending_agent_tasks(server_id: int):
     if not conn: return []
     try:
         with conn.cursor() as cur:
+            # Auto-expire tasks in pending/dispatched/running older than 120s
+            try:
+                cur.execute("""
+                    UPDATE agent_tasks
+                    SET status = 'timed out', exit_code = 504, output = 'Task timed out: execution did not complete within 120s.', completed_at = NOW()
+                    WHERE status IN ('pending', 'dispatched', 'running')
+                      AND created_at < NOW() - INTERVAL '120 seconds';
+                """)
+                conn.commit()
+            except Exception:
+                pass
+
             # Also find sibling server IDs sharing the same IP or hostname so re-enrolled nodes never miss tasks
             target_ids = [server_id]
             try:
@@ -7138,7 +7158,8 @@ def get_pending_agent_tasks(server_id: int):
             if len(target_ids) == 1:
                 cur.execute("""
                     SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
-                           container_id, restart_cmd, run_user, reason, status, created_by, created_at
+                           container_id, restart_cmd, run_user, reason, status, created_by, created_at,
+                           picked_up_at, started_at, completed_at
                     FROM agent_tasks
                     WHERE server_id = %s AND status = 'pending'
                     ORDER BY id ASC;
@@ -7146,7 +7167,8 @@ def get_pending_agent_tasks(server_id: int):
             else:
                 cur.execute("""
                     SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
-                           container_id, restart_cmd, run_user, reason, status, created_by, created_at
+                           container_id, restart_cmd, run_user, reason, status, created_by, created_at,
+                           picked_up_at, started_at, completed_at
                     FROM agent_tasks
                     WHERE server_id = ANY(%s) AND status = 'pending'
                     ORDER BY id ASC;
@@ -7157,7 +7179,7 @@ def get_pending_agent_tasks(server_id: int):
                 tids = [t["task_id"] for t in tasks]
                 cur.execute("""
                     UPDATE agent_tasks 
-                    SET status = 'dispatched', server_id = %s
+                    SET status = 'dispatched', picked_up_at = NOW(), server_id = %s
                     WHERE task_id = ANY(%s);
                 """, (server_id, tids))
                 conn.commit()
@@ -7168,7 +7190,26 @@ def get_pending_agent_tasks(server_id: int):
     finally:
         conn.close()
 
-def update_agent_task_result(task_id: str, status: str, exit_code: int = None, output: str = None, duration_ms: int = None):
+def update_agent_task_status(task_id: str, status: str):
+    """Update task lifecycle state (e.g. running)."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE agent_tasks
+                SET status = %s, started_at = CASE WHEN started_at IS NULL THEN NOW() ELSE started_at END
+                WHERE task_id = %s;
+            """, (status, task_id))
+            conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error in update_agent_task_status: {e}")
+        return False
+    finally:
+        conn.close()
+
+def update_agent_task_result(task_id: str, status: str, exit_code: int = None, output: str = None, duration_ms: int = None, reject_reason: str = None):
     """Update agent task result after execution."""
     conn = get_db_connection()
     if not conn: return False
@@ -7176,13 +7217,32 @@ def update_agent_task_result(task_id: str, status: str, exit_code: int = None, o
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE agent_tasks
-                SET status = %s, exit_code = %s, output = %s, duration_ms = %s, completed_at = NOW()
+                SET status = %s, exit_code = %s, output = %s, duration_ms = %s, reject_reason = %s, completed_at = NOW()
                 WHERE task_id = %s;
-            """, (status, exit_code, output, duration_ms, task_id))
+            """, (status, exit_code, output, duration_ms, reject_reason, task_id))
             conn.commit()
             return True
     except Exception as e:
         logger.error(f"Error in update_agent_task_result: {e}")
+        return False
+    finally:
+        conn.close()
+
+def cancel_agent_task(server_id: int, task_id: str, cancelled_by: str = 'admin'):
+    """Cancel a pending or dispatched task that has not completed."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE agent_tasks
+                SET status = 'cancelled', output = %s, completed_at = NOW()
+                WHERE task_id = %s AND status IN ('pending', 'dispatched');
+            """, (f"Cancelled by {cancelled_by}.", task_id))
+            conn.commit()
+            return cur.rowcount > 0
+    except Exception as e:
+        logger.error(f"Error in cancel_agent_task: {e}")
         return False
     finally:
         conn.close()
@@ -7196,7 +7256,8 @@ def get_agent_task(task_id: str):
             cur.execute("""
                 SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
                        container_id, restart_cmd, run_user, reason, status, exit_code,
-                       output, duration_ms, created_by, created_at, completed_at
+                       output, duration_ms, created_by, created_at, picked_up_at, started_at,
+                       completed_at, reject_reason
                 FROM agent_tasks
                 WHERE task_id = %s
                 LIMIT 1;
@@ -7209,8 +7270,8 @@ def get_agent_task(task_id: str):
     finally:
         conn.close()
 
-def get_recent_service_action(server_id: int, service_id: str, seconds: int = 5):
-    """Check if an active service action is currently in-flight or completed within the cooldown window."""
+def get_recent_service_action(server_id: int, service_id: str, seconds: int = 30):
+    """Check if an active service action is currently in-flight or completed within the 30s cooldown window."""
     conn = get_db_connection()
     if not conn: return None
     try:
@@ -7236,30 +7297,30 @@ def get_recent_service_action(server_id: int, service_id: str, seconds: int = 5)
             except Exception:
                 pass
 
-            # 1. Clean up any stale in-flight tasks older than 10 seconds so they never block subsequent attempts
+            # 1. Clean up stale in-flight tasks older than 120s
             try:
                 cur.execute("""
                     UPDATE agent_tasks
-                    SET status = 'failed', exit_code = 504, output = 'Task execution timed out (agent did not acknowledge within 10s)', completed_at = NOW()
+                    SET status = 'timed out', exit_code = 504, output = 'Task execution timed out (>120s)', completed_at = NOW()
                     WHERE server_id = ANY(%s) 
                       AND service_id = %s
                       AND status IN ('pending', 'dispatched', 'running')
-                      AND created_at < NOW() - INTERVAL '10 seconds';
+                      AND created_at < NOW() - INTERVAL '120 seconds';
                 """, (target_ids, service_id))
                 conn.commit()
             except Exception:
                 pass
 
-            # 2. Only consider tasks actively in-flight (<10s) or successfully completed within last 5s
-            # Never block if previous task failed!
-            cooldown_secs = max(3, int(seconds))
+            # 2. Only consider tasks actively in-flight (<60s) or successfully completed within last 30s
+            # Never block if previous task failed or was rejected!
+            cooldown_secs = max(5, int(seconds))
             cur.execute(f"""
-                SELECT id, task_id, action, status, created_at
+                SELECT id, task_id, action, status, created_at, completed_at
                 FROM agent_tasks
                 WHERE server_id = ANY(%s) 
                   AND service_id = %s
                   AND (
-                      (status IN ('pending', 'dispatched', 'running') AND created_at >= NOW() - INTERVAL '10 seconds')
+                      (status IN ('pending', 'dispatched', 'running') AND created_at >= NOW() - INTERVAL '60 seconds')
                       OR (status = 'completed' AND completed_at IS NOT NULL AND completed_at >= NOW() - INTERVAL '{cooldown_secs} seconds')
                   )
                 ORDER BY id DESC

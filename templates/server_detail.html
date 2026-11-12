@@ -115,6 +115,23 @@
     </div>
     {% endif %}
 
+    {% if server.agent_version and server.agent_version < '1.7.0' %}
+    <div class="card glass fade-in" style="background:rgba(245,158,11,0.08); border:1px solid var(--amber); margin-bottom:20px">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 18px">
+            <div style="display:flex; align-items:center; gap:12px">
+                <span style="font-size:20px">⚠️</span>
+                <div>
+                    <strong style="color:var(--amber); font-size:12px">Push Agent Outdated (v{{ server.agent_version }}):</strong>
+                    <span style="font-size:11px; color:var(--text2)">Target node is running an older agent version. Fast service restart/stop and automated task execution require Agent v1.7.0+.</span>
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center">
+                <button class="btn btn-sm btn-primary" onclick="copyAgentUpdateCmd()" style="font-size:11px; padding:5px 12px">Copy Update Command</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Server Overview Stats -->
     <div class="stats-grid" style="grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px">
         <div class="stat-card stat-card--blue">
@@ -812,13 +829,26 @@
             confirmBtn.style.opacity = '1';
         }
 
-        // Check if service listens on dashboard port
+        // Check if service listens on dashboard port or is haproxy
         const ports = serviceObj.ports || [];
         const isPortSensitive = ports.some(p => {
             const num = parseInt(String(p).split('/')[0], 10);
-            return num === 80 || num === 443 || num === 8000;
-        });
-        portAlert.style.display = (isPortSensitive && action === 'stop') ? 'block' : 'none';
+            return num === 80 || num === 443 || num === 3443 || num === 8000;
+        }) || sLower.includes('haproxy');
+
+        if (isPortSensitive) {
+            portAlert.style.display = 'block';
+            const alertText = document.getElementById('modal-port-alert-text');
+            if (alertText) {
+                if (action === 'restart') {
+                    alertText.textContent = "This service (e.g. HAProxy/web) carries traffic for this SOC Dashboard. Restarting will briefly reload sockets (~2-3s). The agent will execute the restart and report the result once connectivity resumes.";
+                } else {
+                    alertText.textContent = "Caution: Stopping this service may interrupt your connection to the dashboard on this host.";
+                }
+            }
+        } else {
+            portAlert.style.display = 'none';
+        }
 
         overlay.style.display = 'block';
         modal.style.display = 'block';
@@ -833,6 +863,38 @@
         document.getElementById('service-action-modal').style.display = 'none';
         activeActionTarget = null;
         activeActionType = null;
+    }
+
+    async function cancelCurrentTask(taskId) {
+        try {
+            const res = await apiFetch(`/api/servers/${serverId}/tasks/${taskId}/cancel`, { method: 'POST' });
+            if (res.ok) {
+                showToast('Task cancelled successfully', 'info');
+                const progressStatus = document.getElementById('modal-progress-status');
+                progressStatus.innerHTML = `<span style="color:var(--amber)">🛑 Task Cancelled by Administrator.</span>`;
+                const confirmBtn = document.getElementById('btn-modal-confirm-action');
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Close';
+                confirmBtn.onclick = () => { closeServiceActionModal(); loadServerData(); };
+                if (actionPollTimer) {
+                    clearInterval(actionPollTimer);
+                    actionPollTimer = null;
+                }
+            } else {
+                showToast(res.message || 'Could not cancel task', 'warning');
+            }
+        } catch (e) {
+            showToast('Failed to cancel task: ' + e.message, 'error');
+        }
+    }
+
+    function copyAgentUpdateCmd() {
+        const cmd = `curl -sSL "${window.location.origin}/setup_node.sh?node_name=${encodeURIComponent('{{ server.hostname }}')}&ip=${encodeURIComponent('{{ server.ip_address }}')}" | sudo bash`;
+        navigator.clipboard.writeText(cmd).then(() => {
+            showToast('Update command copied to clipboard!', 'success');
+        }).catch(() => {
+            prompt('Copy agent update command:', cmd);
+        });
     }
 
     async function submitServiceAction() {
@@ -875,7 +937,12 @@
             }
 
             const taskId = res.task_id;
-            progressStatus.innerHTML = `<div class="spinner" style="width:16px; height:16px"></div><span>Signed task dispatched. Waiting for agent execution...</span>`;
+            const startTime = Date.now();
+            progressStatus.innerHTML = `
+                <div style="display:flex; align-items:center; gap:8px">
+                    <div class="spinner" style="width:14px; height:14px"></div>
+                    <span style="color:var(--cyan)">● Queued in agent queue (${new Date().toLocaleTimeString()})...</span>
+                </div>`;
 
             // Poll task status
             let attempts = 0;
@@ -884,44 +951,98 @@
                 try {
                     const taskRes = await apiFetch(`/api/servers/${serverId}/tasks/${taskId}`);
                     const t = taskRes.task;
-                    if (t && (t.status === 'completed' || t.status === 'failed')) {
-                        clearInterval(actionPollTimer);
-                        actionPollTimer = null;
-                        
-                        if (t.status === 'completed' && t.exit_code === 0) {
-                            progressStatus.innerHTML = `<span style="color:var(--green)">✅ ${activeActionType.toUpperCase()} Succeeded (Duration: ${t.duration_ms || 0}ms)</span>`;
-                            showToast(`Service action '${activeActionType}' succeeded!`, 'success');
-                        } else {
-                            progressStatus.innerHTML = `<span style="color:var(--red)">⚠️ Action Completed with Exit Code ${t.exit_code}</span>`;
-                            showToast(`Service action returned code ${t.exit_code}`, 'warning');
+                    const srv = taskRes.server || {};
+
+                    if (t) {
+                        const elapsed = Math.round((Date.now() - startTime) / 1000);
+                        let stateHtml = '';
+
+                        if (t.status === 'pending') {
+                            if (attempts > 10) { // ~15 seconds without agent pickup
+                                stateHtml = `
+                                    <div style="color:var(--amber); margin-bottom:8px; line-height:1.4">
+                                        ⚠️ <strong>Agent not responding</strong>: Last heartbeat: ${srv.last_seen || 'unknown'}, Agent version: ${srv.agent_version || 'unknown'}.
+                                    </div>
+                                    <div style="display:flex; gap:8px; align-items:center">
+                                        <button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red)" onclick="cancelCurrentTask('${taskId}')">Cancel Task</button>
+                                        <span style="font-size:11px; color:var(--text-muted)">Waiting for node poll (${elapsed}s elapsed)...</span>
+                                    </div>
+                                `;
+                            } else {
+                                stateHtml = `<div class="spinner" style="width:14px; height:14px"></div><span>Queued in agent queue (${elapsed}s elapsed)...</span>`;
+                            }
+                        } else if (t.status === 'dispatched') {
+                            stateHtml = `<div class="spinner" style="width:14px; height:14px"></div><span style="color:var(--blue)">● Picked up by agent (${elapsed}s)... Starting execution.</span>`;
+                        } else if (t.status === 'running') {
+                            stateHtml = `<div class="spinner" style="width:14px; height:14px"></div><span style="color:var(--cyan)">⚡ Executing ${activeActionType.toUpperCase()} on '${activeActionTarget.name}' (${elapsed}s)...</span>`;
+                        } else if (t.status === 'completed') {
+                            clearInterval(actionPollTimer);
+                            actionPollTimer = null;
+                            if (t.exit_code === 0) {
+                                stateHtml = `<span style="color:var(--green)">✅ ${activeActionType.toUpperCase()} Succeeded (Duration: ${t.duration_ms || 0}ms)</span>`;
+                                showToast(`Service action '${activeActionType}' succeeded!`, 'success');
+                            } else {
+                                stateHtml = `<span style="color:var(--red)">⚠️ Action Completed with Exit Code ${t.exit_code}</span>`;
+                                showToast(`Service action returned exit code ${t.exit_code}`, 'warning');
+                            }
+                            if (t.output) {
+                                progressOutput.style.display = 'block';
+                                progressOutput.textContent = t.output;
+                            }
+                            confirmBtn.disabled = false;
+                            confirmBtn.textContent = 'Close & Refresh';
+                            confirmBtn.onclick = () => {
+                                closeServiceActionModal();
+                                loadServerData();
+                            };
+                        } else if (t.status === 'rejected') {
+                            clearInterval(actionPollTimer);
+                            actionPollTimer = null;
+                            stateHtml = `<span style="color:var(--red)">❌ Task Rejected: ${t.output || t.reject_reason || 'Verification failure'}</span>`;
+                            if (t.output) {
+                                progressOutput.style.display = 'block';
+                                progressOutput.textContent = t.output;
+                            }
+                            confirmBtn.disabled = false;
+                        } else if (t.status === 'timed out') {
+                            clearInterval(actionPollTimer);
+                            actionPollTimer = null;
+                            stateHtml = `<span style="color:var(--red)">⏱ Task Timed Out: Agent did not complete execution within 120s.</span>`;
+                            confirmBtn.disabled = false;
+                        } else if (t.status === 'cancelled') {
+                            clearInterval(actionPollTimer);
+                            actionPollTimer = null;
+                            stateHtml = `<span style="color:var(--amber)">🛑 Task Cancelled by Administrator.</span>`;
+                            confirmBtn.disabled = false;
+                        } else if (t.status === 'failed') {
+                            clearInterval(actionPollTimer);
+                            actionPollTimer = null;
+                            stateHtml = `<span style="color:var(--red)">❌ Action Failed: ${t.output || 'Execution error'}</span>`;
+                            if (t.output) {
+                                progressOutput.style.display = 'block';
+                                progressOutput.textContent = t.output;
+                            }
+                            confirmBtn.disabled = false;
                         }
 
-                        if (t.output) {
-                            progressOutput.style.display = 'block';
-                            progressOutput.textContent = t.output;
-                        }
+                        progressStatus.innerHTML = stateHtml;
+                    }
 
-                        confirmBtn.disabled = false;
-                        confirmBtn.textContent = 'Close & Refresh';
-                        confirmBtn.onclick = () => {
-                            closeServiceActionModal();
-                            loadServerData();
-                        };
-                    } else if (attempts > 60) {
+                    if (attempts > 80) { // 120 seconds
                         clearInterval(actionPollTimer);
                         actionPollTimer = null;
-                        progressStatus.innerHTML = `<span style="color:var(--amber)">⏱ Task dispatched to agent queue (Agent will execute on next cycle).</span>`;
+                        progressStatus.innerHTML = `<span style="color:var(--amber)">⏱ Task dispatch timed out after 120s.</span>`;
                         confirmBtn.disabled = false;
                     }
                 } catch (err) {
-                    console.error('Task poll error:', err);
+                    console.warn('Task poll reconnecting...', err);
                 }
             }, 1500);
 
         } catch (e) {
             let msg = e.message || 'Dispatch failed';
-            if (msg.includes('Rate limit') || msg.includes('cooldown') || msg.includes('progress')) {
-                let remaining = 5;
+            if (msg.includes('Rate limit') || msg.includes('cooldown') || msg.includes('progress') || msg.includes('already in progress')) {
+                let remaining = 30;
                 progressStatus.innerHTML = `<span style="color:var(--amber)">⏱ Cooldown Active: Ready to retry in <strong id="cooldown-cd">${remaining}</strong>s...</span>`;
                 confirmBtn.disabled = true;
                 const cdTimer = setInterval(() => {
