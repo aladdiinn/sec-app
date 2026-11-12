@@ -6130,12 +6130,34 @@ def execute_agent_tasks(tasks):
                         status_str = "completed"
                         output = "Tomcat stopped successfully."
                 else:
-                    if action in ("restart", "stop") and pid_val:
+                    svc_base = (str(service_id) + " " + str(unit_name or "")).replace("proc:", "").split("-")[0].strip().lower()
+                    has_sys_unit = False
+                    if svc_base in ("haproxy", "nginx", "postgres", "postgresql", "mysql", "redis", "docker"):
                         try:
-                            subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, timeout=5)
-                            time.sleep(1)
+                            chk_u = subprocess.run(["systemctl", "status", f"{{svc_base}}.service"], capture_output=True, text=True)
+                            if "not found" not in chk_u.stderr.lower() and chk_u.returncode != 4:
+                                has_sys_unit = True
                         except Exception:
                             pass
+
+                    if has_sys_unit:
+                        cmd = ["systemctl", action, f"{{svc_base}}.service"]
+                        print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Executing: {{' '.join(cmd)}}", flush=True)
+                        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                        exit_code = p.returncode
+                        out = (p.stdout + p.stderr).strip()
+                        time.sleep(1)
+                        chk_s = subprocess.run(["systemctl", "is-active", f"{{svc_base}}.service"], capture_output=True, text=True)
+                        new_state = chk_s.stdout.strip()
+                        status_str = "completed" if exit_code == 0 else "failed"
+                        output = f"systemctl {{action}} {{svc_base}}.service succeeded." + chr(10) + f"Verification: Unit '{{svc_base}}.service' state is '{{new_state}}'."
+                    else:
+                        if action in ("restart", "stop") and pid_val:
+                            try:
+                                subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, timeout=5)
+                                time.sleep(1)
+                            except Exception:
+                                pass
                     if action in ("restart", "start") and restart_cmd:
                         if run_user and run_user != "root":
                             p = subprocess.run(["su", "-", run_user, "-c", restart_cmd], capture_output=True, text=True, timeout=60)
@@ -7480,12 +7502,19 @@ def main():
             }}
 
             data = json.dumps(payload).encode("utf-8")
-            res_bytes = send_agent_request(
-                "/api/agent/push",
-                data=data,
-                headers={{"Content-Type": "application/json"}},
-                timeout=10
-            )
+            res_bytes = None
+            for push_ep in ["/api/agent/event", "/api/agent/push"]:
+                try:
+                    res_bytes = send_agent_request(
+                        push_ep,
+                        data=data,
+                        headers={{"Content-Type": "application/json"}},
+                        timeout=10
+                    )
+                    if res_bytes: break
+                except urllib.error.HTTPError as he:
+                    if he.code == 404: continue
+                    raise he
             res_data = json.loads(res_bytes.decode())
             # Commit audit checkpoint ONLY on successful HTTP 200 response
             try:
