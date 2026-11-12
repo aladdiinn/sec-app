@@ -268,6 +268,16 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
         self.assertIn(b"inventory_in_progress", res.body)
         self.assertIn(b"scheduled_inventory_hour", res.body)
 
+        # Verify the generated node_push_agent.py has valid Python syntax
+        agent_prefix = b"cat << PY_EOF > /opt/securepulse/node_push_agent.py\n"
+        agent_start = res.body.find(agent_prefix) + len(agent_prefix)
+        agent_code = res.body[agent_start:py_eof_end].decode("utf-8")
+        try:
+            import ast
+            ast.parse(agent_code)
+        except SyntaxError as e:
+            self.fail(f"Embedded node_push_agent.py has SyntaxError at line {e.lineno}: {e.msg}")
+
     def test_t12_session_and_temp_alerts_warning_only(self):
         """Verify session alerts and /tmp/ operations are strictly forced to WARNING and never sent via email."""
         mock_conn = MagicMock()

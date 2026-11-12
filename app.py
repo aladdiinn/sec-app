@@ -5858,24 +5858,22 @@ def execute_agent_tasks(tasks):
                         time.sleep(1)
 
                     if action in ("restart", "start"):
-                        # Find startup.sh location
-                        find_startup = (
-                            "cand='" + cwd_val + "/bin'; "
-                            "[ -f \"$cand/startup.sh\" ] || cand='" + cwd_val + "'; "
-                            "[ -f \"$cand/startup.sh\" ] || for c in /application/*/apache-tomcat*/bin /application/apache-tomcat*/bin /opt/tomcat*/bin /opt/apache-tomcat*/bin /usr/local/tomcat*/bin /data/*/apache-tomcat*/bin; do [ -f \"$c/startup.sh\" ] && cand=\"$c\" && break; done; "
-                            "if [ -f \"$cand/startup.sh\" ]; then echo \"$cand\"; fi"
-                        )
-                        p_find = subprocess.run(["bash", "-c", find_startup], capture_output=True, text=True)
-                        found_bin = p_find.stdout.strip()
+                        # Find startup.sh location using native python paths
+                        found_bin = ""
+                        for cand_dir in [cwd_val + "/bin", cwd_val]:
+                            if cand_dir and os.path.isfile(os.path.join(cand_dir, "startup.sh")):
+                                found_bin = cand_dir
+                                break
+                        if not found_bin:
+                            for pat in ["/application/*/apache-tomcat*/bin", "/application/apache-tomcat*/bin", "/opt/tomcat*/bin", "/opt/apache-tomcat*/bin", "/usr/local/tomcat*/bin", "/data/*/apache-tomcat*/bin"]:
+                                for m in glob.glob(pat):
+                                    if os.path.isfile(os.path.join(m, "startup.sh")):
+                                        found_bin = m
+                                        break
+                                if found_bin: break
 
                         if found_bin:
-                            start_cmd = (
-                                "cd '" + found_bin + "' && "
-                                "if [ -z \"$JAVA_HOME\" ] && [ -x /usr/bin/java ]; then "
-                                "  export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); "
-                                "fi; "
-                                "nohup sh ./startup.sh >/dev/null 2>&1 &"
-                            )
+                            start_cmd = "cd '" + found_bin + "' && if [ -z '$JAVA_HOME' ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; nohup sh ./startup.sh >/dev/null 2>&1 &"
                         elif restart_cmd:
                             start_cmd = restart_cmd
                         else:
@@ -5892,9 +5890,9 @@ def execute_agent_tasks(tasks):
                         exit_code = 0
                         output = "Tomcat workflow executed: killed existing process, executed startup.sh under user '" + str(run_user) + "'."
                         if new_pids:
-                            output += "\nVerification: Active Tomcat PID(s): " + ", ".join(new_pids) + "."
+                            output += chr(10) + "Verification: Active Tomcat PID(s): " + ", ".join(new_pids) + "."
                         else:
-                            output += "\nVerification: startup.sh dispatched to background."
+                            output += chr(10) + "Verification: startup.sh dispatched to background."
                     elif action == "stop":
                         exit_code = 0
                         output = "Tomcat killed successfully."
