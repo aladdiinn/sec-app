@@ -3755,8 +3755,8 @@ async def api_agent_push(request: Request):
     if needs_inventory:
         res["inventory_scan_requested"] = True
 
-    # ── ATTACH SIGNED PENDING SERVICE ACTION TASKS ──
-    if server_id:
+    # ── ATTACH SIGNED PENDING SERVICE ACTION TASKS (Legacy Agent < 1.7.0 fallback) ──
+    if server_id and agent_version < "1.7.0":
         try:
             pending_tasks = db.get_pending_agent_tasks(server_id)
             if pending_tasks:
@@ -3846,7 +3846,7 @@ async def api_agent_tasks_poll(request: Request):
 
     pending_tasks = db.get_pending_agent_tasks(server_id)
     if not pending_tasks:
-        return {"ok": True, "tasks": []}
+        return {"ok": True, "server_id": server_id, "tasks": []}
 
     signed = []
     srv_obj = db.get_server_by_id(server_id) or {}
@@ -3872,7 +3872,7 @@ async def api_agent_tasks_poll(request: Request):
             "signature": sig,
             "signature_fallback": sig_none
         })
-    return {"ok": True, "tasks": signed}
+    return {"ok": True, "server_id": server_id, "tasks": signed}
 
 @app.post("/api/agent/tasks/status")
 async def api_agent_task_status_report(request: Request):
@@ -5852,42 +5852,49 @@ def discover_services(force=False):
 def report_task_result(result_item):
     if os.environ.get("TESTING"):
         return True
+    tid = result_item.get("task_id")
     for attempt in range(5):
         try:
-            send_agent_request(
+            res_b = send_agent_request(
                 "/api/agent/tasks/result",
                 data=json.dumps(result_item).encode("utf-8"),
                 headers={{"Content-Type": "application/json"}},
-                timeout=4
+                timeout=5
             )
+            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Task {{tid}} result reported successfully to backend.", flush=True)
             return True
-        except Exception:
+        except Exception as e_rep:
+            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Retrying report for task {{tid}} (attempt {{attempt+1}}/5): {{e_rep}}", flush=True)
             time.sleep(1)
     return False
 
 def task_polling_loop():
+    global ASSIGNED_SERVER_ID
     while True:
         try:
             sid = check_assigned_server_id()
-            if sid:
-                poll_payload = {{
-                    "server_id": sid,
-                    "agent_version": AGENT_VERSION,
-                    "hostname": get_hostname(),
-                    "server_ip": TARGET_IP,
-                    "machine_id": get_machine_id()
-                }}
-                res_bytes = send_agent_request("/api/agent/tasks/poll", data=json.dumps(poll_payload).encode("utf-8"), timeout=5)
+            poll_payload = {{
+                "server_id": sid,
+                "agent_version": AGENT_VERSION,
+                "hostname": get_hostname(),
+                "server_ip": TARGET_IP,
+                "machine_id": get_machine_id()
+            }}
+            res_bytes = send_agent_request("/api/agent/tasks/poll", data=json.dumps(poll_payload).encode("utf-8"), timeout=5)
+            if res_bytes:
                 res = json.loads(res_bytes.decode())
+                if res.get("server_id") and ASSIGNED_SERVER_ID is None:
+                    ASSIGNED_SERVER_ID = int(res["server_id"])
                 tasks = res.get("tasks", [])
                 if tasks:
+                    print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Poll] Fetched {{len(tasks)}} pending task(s) from SOC backend.", flush=True)
                     execute_agent_tasks(tasks)
         except Exception:
             pass
         time.sleep(5)
 
 def execute_agent_tasks(tasks):
-    global AGENT_TOKEN, seen_nonces, task_results_queue
+    global AGENT_TOKEN, seen_nonces, task_results_queue, ASSIGNED_SERVER_ID
     if not tasks: return
 
     sid = check_assigned_server_id()
@@ -5906,12 +5913,14 @@ def execute_agent_tasks(tasks):
         sig = task.get("signature", "")
 
         t_start = time.time()
+        print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Starting task {{tid}}: action={{action}}, service={{service_id}}, managed_by={{managed_by}}", flush=True)
 
         # Acknowledge task pickup and report running state immediately
         try:
             send_agent_request("/api/agent/tasks/status", data=json.dumps({{"task_id": tid, "status": "running", "server_id": sid}}).encode("utf-8"), timeout=4)
-        except Exception:
-            pass
+            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Transitioned task {{tid}} to 'running' state.", flush=True)
+        except Exception as e_ack:
+            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Warning: could not report 'running' status: {{e_ack}}", flush=True)
 
         # 1. Replay & Expiry Check
         now = int(time.time())
@@ -6005,12 +6014,14 @@ def execute_agent_tasks(tasks):
                 unit = unit_name or service_id.replace("unit:", "")
                 if not unit.endswith(".service"): unit += ".service"
                 cmd = ["systemctl", action, unit]
+                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Executing: {{' '.join(cmd)}}", flush=True)
                 p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                 exit_code = p.returncode
                 out = (p.stdout + p.stderr).strip()
                 time.sleep(1)
                 chk = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True)
                 new_state = chk.stdout.strip()
+                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Systemd result: exit_code={{exit_code}}, state='{{new_state}}'", flush=True)
                 if exit_code == 0:
                     status_str = "completed"
                     output = f"systemctl {{action}} {{unit}} succeeded." + chr(10) + "Verification: Unit '" + str(unit) + "' state is '" + str(new_state) + "'."
@@ -8219,6 +8230,28 @@ async def api_agent_status(request: Request):
                         cur.execute("SELECT * FROM approvals WHERE hostname = %s OR hostname LIKE %s ORDER BY id DESC LIMIT 1;", (clean_h, f"%{clean_h}%"))
                         r = cur.fetchone()
                         if r: appr = dict(r)
+
+                    # Fallback: check servers table directly if node is already onboarded / existing
+                    if not appr:
+                        srv = None
+                        if req_ip and req_ip not in ("127.0.0.1", "0.0.0.0"):
+                            cur.execute("SELECT id, name, hostname, ip, agent_token, api_token FROM servers WHERE ip = %s OR ip_address = %s ORDER BY id DESC LIMIT 1;", (req_ip, req_ip))
+                            sr = cur.fetchone()
+                            if sr: srv = dict(sr)
+                        if not srv and req_host:
+                            clean_h = re.sub(r'^\[.*?\]\s*', '', req_host).strip().lower()
+                            cur.execute("SELECT id, name, hostname, ip, agent_token, api_token FROM servers WHERE LOWER(hostname) = %s OR LOWER(name) = %s ORDER BY id DESC LIMIT 1;", (clean_h, clean_h))
+                            sr = cur.fetchone()
+                            if sr: srv = dict(sr)
+                        if srv:
+                            tok_val = srv.get("agent_token") or srv.get("api_token") or "None"
+                            return Response(content=json.dumps({
+                                "status": "approved",
+                                "node_type": "server",
+                                "server_id": srv["id"],
+                                "server_ip": srv.get("ip") or req_ip,
+                                "token": tok_val
+                            }, separators=(',', ':')), media_type="application/json")
             except Exception:
                 pass
             finally:
