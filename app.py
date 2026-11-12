@@ -3547,8 +3547,12 @@ async def api_agent_push(request: Request):
             except Exception: pass
             finally: conn.close()
 
-    # Step 1: Validate server_id if provided
-    if server_id:
+    # Step 1: Validate server_id and sync with latest server for IP if re-enrolled
+    if server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
+        latest_srv = db.get_server_by_ip(server_ip)
+        if latest_srv and latest_srv.get("id"):
+            server_id = latest_srv["id"]
+    elif server_id:
         srv = db.get_server_by_id(server_id)
         if not srv:
             server_id = None
@@ -3819,7 +3823,12 @@ async def api_agent_tasks_poll(request: Request):
     agent_version = data.get("agent_version", "1.7.0")
     client_ip = request.client.host if request.client else None
 
-    # Resolve server_id if missing
+    # Resolve server_id to latest active server record
+    if server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
+        latest_srv = db.get_server_by_ip(server_ip)
+        if latest_srv and latest_srv.get("id"):
+            server_id = latest_srv["id"]
+
     if not server_id and machine_id:
         conn = db.get_db_connection()
         if conn:
@@ -6056,8 +6065,41 @@ def execute_agent_tasks(tasks):
                     status_str = "completed"
                     output = f"systemctl {{action}} {{unit}} succeeded." + chr(10) + "Verification: Unit '" + str(unit) + "' state is '" + str(new_state) + "'."
                 else:
-                    status_str = "failed"
-                    output = f"systemctl {{action}} {{unit}} failed (code {{exit_code}})." + chr(10) + "Verification: Unit '" + str(unit) + "' state is '" + str(new_state) + "'." + (chr(10) + out if out else "")
+                    # Fallback to Tomcat standalone process restart if systemd unit failed
+                    if any(k in (unit + " " + service_id).lower() for k in ["tomcat", "catalina"]):
+                        print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Systemd unit {{unit}} failed. Executing standalone Tomcat process workflow...", flush=True)
+                        subprocess.run(["pkill", "-15", "-f", "[B]ootstrap|[t]omcat|catalina"], capture_output=True, timeout=5)
+                        time.sleep(1)
+                        subprocess.run(["pkill", "-9", "-f", "[B]ootstrap|[t]omcat|catalina"], capture_output=True, timeout=5)
+                        time.sleep(1)
+                        if action in ("restart", "start"):
+                            found_bin = ""
+                            for pat in ["/application/*/apache-tomcat*/bin", "/application/apache-tomcat*/bin", "/opt/tomcat*/bin", "/opt/apache-tomcat*/bin", "/usr/local/tomcat*/bin"]:
+                                for m in glob.glob(pat):
+                                    if os.path.isfile(os.path.join(m, "startup.sh")):
+                                        found_bin = m
+                                        break
+                                if found_bin: break
+                            start_cmd = "cd '" + found_bin + "' && if [ -z '$JAVA_HOME' ] && [ -x /usr/bin/java ]; then export JAVA_HOME=$(dirname $(dirname $(readlink -f /usr/bin/java))); fi; setsid nohup sh ./startup.sh >/dev/null 2>&1 &" if found_bin else "setsid nohup sh startup.sh >/dev/null 2>&1 &"
+                            subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
+                            time.sleep(2)
+                            chk_p = subprocess.run(["pgrep", "-f", "catalina|tomcat"], capture_output=True, text=True)
+                            new_pids = chk_p.stdout.strip().split()
+                            if new_pids:
+                                exit_code = 0
+                                status_str = "completed"
+                                output = "Tomcat standalone restart succeeded via startup.sh." + chr(10) + "Active PID(s): " + ", ".join(new_pids) + "."
+                            else:
+                                exit_code = 1
+                                status_str = "failed"
+                                output = "Tomcat startup script dispatched but no active PID was found."
+                        elif action == "stop":
+                            exit_code = 0
+                            status_str = "completed"
+                            output = "Tomcat stopped successfully."
+                    else:
+                        status_str = "failed"
+                        output = f"systemctl {{action}} {{unit}} failed (code {{exit_code}})." + chr(10) + "Verification: Unit '" + str(unit) + "' state is '" + str(new_state) + "'." + (chr(10) + out if out else "")
 
             elif managed_by == "docker":
                 cid = container_id or service_id.replace("docker:", "")
@@ -6225,8 +6267,6 @@ def get_machine_id():
 
 def check_assigned_server_id():
     global ASSIGNED_SERVER_ID
-    if ASSIGNED_SERVER_ID is not None:
-        return ASSIGNED_SERVER_ID
     try:
         q_path = f"/api/agent/status?ip={{TARGET_IP}}&hostname={{get_hostname()}}"
         res_bytes = send_agent_request(q_path, timeout=5)

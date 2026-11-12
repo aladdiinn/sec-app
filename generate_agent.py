@@ -35,8 +35,33 @@ def main():
     node_name = "soc-server"
     node_ip = "192.168.10.201"
     token = "sp-token-soc-server"
-    assigned_id = "23"
+    assigned_id = "25"
     soc_url = "http://127.0.0.1:8001"
+
+    # Query DB dynamically for the latest active server_id and token if possible
+    try:
+        p = subprocess.run([
+            "docker", "exec", "-i", "bsmart-soc-db", "psql", "-U", "socadmin", "-d", "bsmart_soc", "-t", "-A", "-c",
+            "SELECT id FROM servers WHERE LOWER(hostname) = 'soc-server' OR ip = '192.168.10.201' OR ip_address = '192.168.10.201' ORDER BY id DESC LIMIT 1;"
+        ], capture_output=True, text=True, timeout=5)
+        val = p.stdout.strip()
+        if val.isdigit():
+            assigned_id = val
+            print(f"[INFO] Dynamically resolved Server ID from DB: {assigned_id}")
+    except Exception:
+        pass
+
+    try:
+        p = subprocess.run([
+            "docker", "exec", "-i", "bsmart-soc-db", "psql", "-U", "socadmin", "-d", "bsmart_soc", "-t", "-A", "-c",
+            f"SELECT COALESCE(agent_token, api_token, 'sp-token-soc-server') FROM servers WHERE id = {assigned_id} LIMIT 1;"
+        ], capture_output=True, text=True, timeout=5)
+        tok_val = p.stdout.strip()
+        if tok_val and tok_val not in ("None", "null", ""):
+            token = tok_val
+            print(f"[INFO] Dynamically resolved Agent Token from DB: {token}")
+    except Exception:
+        pass
 
     agent_code = agent_code.replace('{base_url}', soc_url)
     agent_code = agent_code.replace('$NODE_IP', node_ip)
@@ -62,7 +87,7 @@ def main():
         with open(dest_file, "w", encoding="utf-8") as f:
             f.write(agent_code + "\n")
         os.chmod(dest_file, 0o755)
-        print(f"[SUCCESS] Written {len(agent_code.splitlines())} lines to {dest_file}")
+        print(f"[SUCCESS] Written {len(agent_code.splitlines())} lines to {dest_file} (Server ID: {assigned_id})")
 
         # Validate syntax
         p = subprocess.run([sys.executable, "-m", "py_compile", dest_file], capture_output=True, text=True)
@@ -79,7 +104,7 @@ def main():
         if p.returncode != 0:
             print(f"[ERROR] Syntax error: {p.stderr}")
             sys.exit(1)
-        print(f"[SUCCESS] Standalone agent generated and verified ({len(agent_code.splitlines())} lines)")
+        print(f"[SUCCESS] Standalone agent generated and verified ({len(agent_code.splitlines())} lines, Server ID: {assigned_id})")
         if os.path.exists(test_out):
             os.remove(test_out)
 

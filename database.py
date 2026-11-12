@@ -2044,7 +2044,7 @@ def get_server_by_ip(ip: str):
         return None
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM servers WHERE TRIM(ip_address) = %s OR TRIM(ip) = %s ORDER BY id ASC LIMIT 1;", (clean_ip, clean_ip))
+            cur.execute("SELECT * FROM servers WHERE TRIM(ip_address) = %s OR TRIM(ip) = %s ORDER BY id DESC LIMIT 1;", (clean_ip, clean_ip))
             row = cur.fetchone()
             if not row:
                 return None
