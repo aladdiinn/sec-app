@@ -7161,7 +7161,7 @@ def get_pending_agent_tasks(server_id: int):
                            container_id, restart_cmd, run_user, reason, status, created_by, created_at,
                            picked_up_at, started_at, completed_at
                     FROM agent_tasks
-                    WHERE server_id = %s AND status = 'pending'
+                    WHERE server_id = %s AND (status = 'pending' OR (status = 'dispatched' AND picked_up_at < NOW() - INTERVAL '15 seconds'))
                     ORDER BY id ASC;
                 """, (server_id,))
             else:
@@ -7170,7 +7170,7 @@ def get_pending_agent_tasks(server_id: int):
                            container_id, restart_cmd, run_user, reason, status, created_by, created_at,
                            picked_up_at, started_at, completed_at
                     FROM agent_tasks
-                    WHERE server_id = ANY(%s) AND status = 'pending'
+                    WHERE server_id = ANY(%s) AND (status = 'pending' OR (status = 'dispatched' AND picked_up_at < NOW() - INTERVAL '15 seconds'))
                     ORDER BY id ASC;
                 """, (target_ids,))
             rows = cur.fetchall()

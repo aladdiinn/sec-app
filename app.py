@@ -5579,7 +5579,7 @@ except Exception:
     _ssl_ctx = None
 
 CANDIDATE_SOC_URLS = [SOC_URL]
-for _candidate in ["https://192.168.10.201:3443", "https://127.0.0.1:3443", "http://127.0.0.1:8001", "http://127.0.0.1:8000"]:
+for _candidate in ["http://127.0.0.1:8001", "https://192.168.10.201:3443", "https://127.0.0.1:3443"]:
     if _candidate not in CANDIDATE_SOC_URLS:
         CANDIDATE_SOC_URLS.append(_candidate)
 
@@ -6227,11 +6227,12 @@ def check_assigned_server_id():
     try:
         q_path = f"/api/agent/status?ip={{TARGET_IP}}&hostname={{get_hostname()}}"
         res_bytes = send_agent_request(q_path, timeout=5)
-        res = json.loads(res_bytes.decode())
-        sid = res.get("server_id")
-        if sid:
-            ASSIGNED_SERVER_ID = int(sid)
-            return ASSIGNED_SERVER_ID
+        if res_bytes:
+            res = json.loads(res_bytes.decode())
+            sid = res.get("server_id")
+            if sid:
+                ASSIGNED_SERVER_ID = int(sid)
+                return ASSIGNED_SERVER_ID
     except: pass
     return ASSIGNED_SERVER_ID
 
@@ -7503,7 +7504,7 @@ def main():
 
             data = json.dumps(payload).encode("utf-8")
             res_bytes = None
-            for push_ep in ["/api/agent/event", "/api/agent/push"]:
+            for push_ep in ["/api/agent/push", "/api/agent/event"]:
                 try:
                     res_bytes = send_agent_request(
                         push_ep,
@@ -7515,7 +7516,20 @@ def main():
                 except urllib.error.HTTPError as he:
                     if he.code == 404: continue
                     raise he
-            res_data = json.loads(res_bytes.decode())
+                except Exception:
+                    continue
+
+            if not res_bytes:
+                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [BSMART SOC Agent] Telemetry push empty/failed across endpoints. Retrying in {{PUSH_INTERVAL}}s...", flush=True)
+                time.sleep(PUSH_INTERVAL)
+                continue
+
+            try:
+                res_data = json.loads(res_bytes.decode())
+            except Exception as e_json:
+                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [BSMART SOC Agent] JSON decode error: {{e_json}}", flush=True)
+                time.sleep(PUSH_INTERVAL)
+                continue
             # Commit audit checkpoint ONLY on successful HTTP 200 response
             try:
                 commit_audit_checkpoint()

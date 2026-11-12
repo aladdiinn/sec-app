@@ -36,7 +36,7 @@ def main():
     node_ip = "192.168.10.201"
     token = "sp-token-soc-server"
     assigned_id = "23"
-    soc_url = "https://127.0.0.1:3443"
+    soc_url = "http://127.0.0.1:8001"
 
     agent_code = agent_code.replace('{base_url}', soc_url)
     agent_code = agent_code.replace('$NODE_IP', node_ip)
