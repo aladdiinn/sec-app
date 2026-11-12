@@ -16,18 +16,44 @@ docker compose up -d
 echo "[2/4] Deploying verified v1.7.0 Node Agent daemon..."
 python3 /application/Soc/generate_agent.py
 
-# 3. Stop any stray background processes and restart securepulse service
-echo "[3/4] Restarting securepulse.service daemon..."
+# Configure systemd unit with unbuffered output and proper environment
+cat << 'UNIT_EOF' > /etc/systemd/system/securepulse.service
+[Unit]
+Description=BSMART SOC Node Agent Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/securepulse
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -u /opt/securepulse/node_push_agent.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/securepulse_agent.log
+StandardError=append:/var/log/securepulse_agent.log
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+
+# 3. Clear old log file and restart service cleanly
+echo "[3/4] Truncating old log and restarting securepulse.service..."
+> /var/log/securepulse_agent.log
 pkill -9 -f node_push_agent.py 2>/dev/null || true
 systemctl daemon-reload
 systemctl restart securepulse
 
 # 4. Verification
-echo "[4/4] Verifying agent status..."
-sleep 2
+echo "[4/4] Verifying agent status & fresh startup logs..."
+sleep 3
 systemctl status securepulse --no-pager
 
+echo ""
+echo "--- Live Agent Startup Log (/var/log/securepulse_agent.log) ---"
+cat /var/log/securepulse_agent.log
+echo "----------------------------------------------------------------"
+
 echo "============================================================"
-echo " [SUCCESS] Deployment complete! Check live logs with:"
-echo " tail -n 25 -f /var/log/securepulse_agent.log"
+echo " [SUCCESS] Agent is active & ready for service restarts!"
 echo "============================================================"

@@ -47,6 +47,11 @@ def main():
     agent_code = agent_code.replace('{server_id or "None"}', assigned_id)
     agent_code = agent_code.replace('{APP_BRAND}', 'BSMART SOC')
 
+    # Ensure unbuffered output is at the very beginning
+    unbuf_hdr = "import sys\ntry:\n    sys.stdout.reconfigure(line_buffering=True)\n    sys.stderr.reconfigure(line_buffering=True)\nexcept Exception:\n    pass\n"
+    if "reconfigure(line_buffering=True)" not in agent_code:
+        agent_code = unbuf_hdr + agent_code
+
     # Target destination
     dest_dir = "/opt/securepulse"
     dest_file = os.path.join(dest_dir, "node_push_agent.py")
@@ -75,6 +80,8 @@ def main():
             print(f"[ERROR] Syntax error: {p.stderr}")
             sys.exit(1)
         print(f"[SUCCESS] Standalone agent generated and verified ({len(agent_code.splitlines())} lines)")
+        if os.path.exists(test_out):
+            os.remove(test_out)
 
 if __name__ == "__main__":
     main()
