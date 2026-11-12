@@ -3691,15 +3691,18 @@ async def api_agent_push(request: Request):
                         up_status = "up_to_date" if (target and agent_version == target) else srow.get("update_status", "up_to_date")
                         cur.execute("UPDATE servers SET agent_version = %s, update_status = %s WHERE id = %s;", (agent_version, up_status, server_id))
                     
-                    target = srow.get("target_agent_version") or "1.7.0"
+                    target = srow.get("target_agent_version")
                     def _parse_semver(v):
                         try: return [int(x) for x in re.findall(r'\d+', str(v))]
                         except Exception: return [0]
 
                     v_cur = _parse_semver(agent_version)
-                    v_target = _parse_semver(target)
+                    v_target = _parse_semver(target or "1.7.0")
 
-                    if v_cur < v_target:
+                    # NEVER auto-update local soc-server host agent
+                    # Only trigger update if update_status was explicitly requested as 'pending'
+                    is_soc_host = (server_id == 23 or hostname == "soc-server" or server_ip in ("127.0.0.1", "192.168.10.201"))
+                    if not is_soc_host and srow.get("update_status") == "pending" and target and v_cur < v_target:
                         update_req = True
                         update_cmd_url = f"{str(request.base_url).rstrip('/')}/setup_node.sh"
         except Exception as e:
@@ -7540,7 +7543,7 @@ def main():
                 ASSIGNED_SERVER_ID = int(res_data["server_id"])
             elif sid and ASSIGNED_SERVER_ID is None:
                 ASSIGNED_SERVER_ID = sid
-            if res_data.get("update_requested"):
+            if res_data.get("update_requested") and TARGET_NAME != "soc-server" and TARGET_IP not in ("127.0.0.1", "192.168.10.201") and sid != 23:
                 dl_url = res_data.get("update_cmd_url")
                 try:
                     send_agent_request("/api/agent/status-update", data=json.dumps({{"server_id": sid, "status": "updating"}}).encode('utf-8'), timeout=5)
