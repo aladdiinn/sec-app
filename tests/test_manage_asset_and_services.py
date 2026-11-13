@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
-import json, time, hmac, hashlib, uuid, os
+import json, time, os, sys, types
 
 # Set test environment
 os.environ["TESTING"] = "1"
@@ -9,7 +9,6 @@ os.environ["DB_PASSWORD"] = "testpassword"
 
 import database as db
 import app
-import types, sys
 
 def _init_agent_module():
     if "extracted_agent_test" in sys.modules:
@@ -32,267 +31,6 @@ _init_agent_module()
 
 class TestManageAssetAndServices(unittest.TestCase):
 
-    def test_t1_manage_button_on_total_assets_and_maintenance(self):
-        """T1. Every card on Total Assets has Manage and opens the same page as Maintenance page button."""
-        # 1. Total Assets (servers.html)
-        with open("templates/servers.html", "r", encoding="utf-8") as f:
-            servers_html = f.read()
-        self.assertIn("MANAGE ASSET", servers_html)
-        self.assertIn("/servers/${id}?from=assets", servers_html)
-
-        # 2. Maintenance page (maintenance.html)
-        with open("templates/maintenance.html", "r", encoding="utf-8") as f:
-            maint_html = f.read()
-        self.assertIn("Manage Asset", maint_html)
-        self.assertIn("/servers/${s.id}?from=maintenance", maint_html)
-
-        # 3. Both open /servers/<id> and server_detail has back navigation
-        with open("templates/server_detail.html", "r", encoding="utf-8") as f:
-            detail_html = f.read()
-        self.assertIn("goBack()", detail_html)
-        self.assertIn("'maintenance'", detail_html)
-
-    def test_t2_service_discovery_and_system_noise_filtering(self):
-        """T2. Fresh server install discovers user services; system noise is flagged as is_system."""
-        from extracted_agent_test import discover_services, known_services
-
-        # Mock systemctl output with Tomcat, Nginx, PostgreSQL, Cron, SSHD
-        mock_systemctl = (
-            "nginx.service loaded active running Nginx Web Server\n"
-            "postgresql.service loaded active running PostgreSQL RDBMS\n"
-            "cron.service loaded active running Regular Background Cron\n"
-            "ssh.service loaded active running OpenBSD SSH\n"
-            "securepulse.service loaded active running SecurePulse Push Agent\n"
-        )
-        with patch("subprocess.check_output", return_value=mock_systemctl.encode("utf-8")):
-            with patch("extracted_agent_test.get_open_ports", return_value=[]):
-                services = discover_services(force=True)
-
-        srv_by_name = {s["name"]: s for s in services}
-        
-        # User-facing services
-        self.assertIn("nginx", srv_by_name)
-        self.assertFalse(srv_by_name["nginx"]["is_system"], "Nginx should not be flagged as system noise")
-        self.assertEqual(srv_by_name["nginx"]["type"], "Nginx")
-        self.assertEqual(srv_by_name["nginx"]["status"], "running")
-
-        self.assertIn("postgresql", srv_by_name)
-        self.assertFalse(srv_by_name["postgresql"]["is_system"], "PostgreSQL should not be system noise")
-
-        # System noise services
-        self.assertIn("ssh", srv_by_name)
-        self.assertTrue(srv_by_name["ssh"]["is_system"], "SSH should be flagged as system noise")
-        self.assertTrue(srv_by_name["securepulse"]["is_system"], "Monitoring agent should be flagged as system noise")
-
-    def test_t3_admin_restart_stop_start_and_verification(self):
-        """T3. As admin: Restart, Stop, Start executed safely with status verification."""
-        from extracted_agent_test import execute_agent_tasks, task_results_queue, known_services, AGENT_TOKEN
-
-        known_services["unit:nginx.service"] = {
-            "id": "unit:nginx.service",
-            "name": "nginx",
-            "type": "Nginx",
-            "managed_by": "systemd",
-            "unit_name": "nginx.service",
-            "status": "running",
-            "is_system": False
-        }
-
-        tid = "task-restart-001"
-        action = "restart"
-        sid = "unit:nginx.service"
-        nonce = uuid.uuid4().hex[:16]
-        now_ts = int(time.time())
-        recipe_hash = hashlib.sha256("".encode('utf-8')).hexdigest()[:16]
-        sig_str = f"{tid}:{action}:{sid}:nginx.service:root:{recipe_hash}:{nonce}:{now_ts}"
-        sig = hmac.new(AGENT_TOKEN.encode("utf-8"), sig_str.encode("utf-8"), hashlib.sha256).hexdigest()
-
-        task = {
-            "task_id": tid,
-            "action": action,
-            "service_id": sid,
-            "managed_by": "systemd",
-            "unit_name": "nginx.service",
-            "nonce": nonce,
-            "timestamp": now_ts,
-            "signature": sig
-        }
-
-        with patch("subprocess.run") as mock_run:
-            with patch("time.sleep"):
-                mock_res_chk = MagicMock(returncode=0, stdout="syntax ok\n", stderr="")
-                mock_res1 = MagicMock(returncode=0, stdout="Restarted", stderr="")
-                mock_res2 = MagicMock(returncode=0, stdout="active\n", stderr="")
-                mock_run.side_effect = [mock_res_chk, mock_res1, mock_res2, MagicMock(returncode=0, stdout="")]
-                execute_agent_tasks([task])
-
-        self.assertEqual(len(task_results_queue), 1)
-        res = task_results_queue.pop(0)
-        self.assertEqual(res["task_id"], tid)
-        self.assertIn(res["status"], ("completed", "succeeded"))
-        self.assertEqual(res["exit_code"], 0)
-        self.assertIn("active", res["output"])
-
-    def test_t4_non_admin_authorization_enforcement_and_denied_audit(self):
-        """T4. Non-admin caller receives 403 Forbidden and DENIED audit entry is logged."""
-        req = MagicMock()
-        req.session = {"user_id": 99, "username": "test_normal_user", "user_role": "normal"}
-        req.client.host = "192.168.1.50"
-        async def mock_json():
-            return {"service_id": "unit:nginx.service", "action": "restart"}
-        req.json = mock_json
-
-        with patch("app.get_session_user", return_value={"id": 99, "username": "test_normal_user", "role": "normal"}):
-            with patch("app.is_admin_user", return_value=False):
-                with patch.object(app.db, "log_audit") as mock_log_audit:
-                    res = self._run_coro(app.api_service_action(server_id=1, request=req))
-                    self.assertEqual(res.status_code, 403)
-                    mock_log_audit.assert_called_with(
-                        "test_normal_user", "DENIED", "server", 1,
-                        "Non-admin attempted service action", ip_address="192.168.1.50"
-                    )
-
-    def test_t5_protected_services_cannot_be_stopped(self):
-        """T5. Trying to stop sshd or the agent is refused with a clear message."""
-        for protected in ["unit:sshd.service", "securepulse", "systemd-networkd"]:
-            req = MagicMock()
-            req.session = {"user_id": 1, "username": "admin", "user_role": "admin"}
-            req.client.host = "127.0.0.1"
-            def make_json(p):
-                async def mock_json():
-                    return {"service_id": p, "action": "stop", "reason": "Testing"}
-                return mock_json
-            req.json = make_json(protected)
-
-            with patch("app.get_session_user", return_value={"id": 1, "username": "admin", "role": "admin"}):
-                with patch("app.is_admin_user", return_value=True):
-                    with patch("app.verify_server_project_scope", return_value=(True, "")):
-                        res = self._run_coro(app.api_service_action(server_id=1, request=req))
-                        self.assertEqual(res.status_code, 400)
-                        body = json.loads(res.body.decode("utf-8"))
-                        self.assertFalse(body["ok"])
-                        self.assertIn("Protected system service", body["message"])
-
-    def test_t6_tampered_request_with_shell_injection_rejected(self):
-        """T6. Tampered request with shell string in fields is rejected by API and agent."""
-        # API check
-        req = MagicMock()
-        req.session = {"user_id": 1, "username": "admin", "user_role": "admin"}
-        req.client.host = "127.0.0.1"
-        async def mock_json():
-            return {"service_id": "nginx; rm -rf /", "action": "restart"}
-        req.json = mock_json
-
-        with patch("app.get_session_user", return_value={"id": 1, "username": "admin", "role": "admin"}):
-            with patch("app.is_admin_user", return_value=True):
-                with patch("app.verify_server_project_scope", return_value=(True, "")):
-                    with patch.object(app.db, "log_audit"):
-                        res = self._run_coro(app.api_service_action(server_id=1, request=req))
-                        self.assertEqual(res.status_code, 400)
-                        body = json.loads(res.body.decode("utf-8"))
-                        self.assertIn("Illegal shell characters", body["message"])
-
-        # Agent check
-        from extracted_agent_test import execute_agent_tasks, task_results_queue, AGENT_TOKEN
-        tid = "task-tamper-01"
-        sid = "unit:app;reboot"
-        nonce = uuid.uuid4().hex[:16]
-        ts = int(time.time())
-        recipe_hash = hashlib.sha256("".encode('utf-8')).hexdigest()[:16]
-        sig = hmac.new(AGENT_TOKEN.encode("utf-8"), f"{tid}:restart:{sid}:app;reboot:root:{recipe_hash}:{nonce}:{ts}".encode("utf-8"), hashlib.sha256).hexdigest()
-
-        task = {
-            "task_id": tid, "action": "restart", "service_id": sid, "managed_by": "systemd",
-            "unit_name": "app;reboot", "nonce": nonce, "timestamp": ts, "signature": sig
-        }
-        execute_agent_tasks([task])
-        self.assertEqual(len(task_results_queue), 1)
-        r = task_results_queue.pop(0)
-        self.assertIn(r["status"], ("failed", "rejected"))
-        self.assertIn("Illegal shell injection", r["output"])
-
-    def test_t7_expired_and_replayed_commands_rejected(self):
-        """T7. Replayed or expired signed command is rejected by the agent."""
-        from extracted_agent_test import execute_agent_tasks, task_results_queue, AGENT_TOKEN
-
-        # 1. Expired command (> 60s ago)
-        tid = "task-exp-01"
-        sid = "unit:nginx.service"
-        nonce = "nonce-exp-1"
-        old_ts = int(time.time()) - 120
-        recipe_hash = hashlib.sha256("".encode('utf-8')).hexdigest()[:16]
-        sig = hmac.new(AGENT_TOKEN.encode("utf-8"), f"{tid}:restart:{sid}:::root:{recipe_hash}:{nonce}:{old_ts}".encode("utf-8"), hashlib.sha256).hexdigest()
-
-        task = {"task_id": tid, "action": "restart", "service_id": sid, "nonce": nonce, "timestamp": old_ts, "signature": sig}
-        execute_agent_tasks([task])
-        r1 = task_results_queue.pop(0)
-        self.assertEqual(r1["status"], "failed")
-        self.assertIn("expired", r1["output"])
-
-        # 2. Replay attack: execute valid command, then re-send same nonce
-        tid2 = "task-replay-01"
-        nonce2 = "unique-nonce-12345"
-        curr_ts = int(time.time())
-        sig2 = hmac.new(AGENT_TOKEN.encode("utf-8"), f"{tid2}:rescan:all::root:{recipe_hash}:{nonce2}:{curr_ts}".encode("utf-8"), hashlib.sha256).hexdigest()
-
-        task2 = {"task_id": tid2, "action": "rescan", "service_id": "all", "nonce": nonce2, "timestamp": curr_ts, "signature": sig2}
-        with patch("extracted_agent_test.discover_services"):
-            execute_agent_tasks([task2])
-        r2 = task_results_queue.pop(0)
-        self.assertIn(r2["status"], ("completed", "succeeded"))
-
-        # Now replay the exact same task
-        execute_agent_tasks([task2])
-        r3 = task_results_queue.pop(0)
-        self.assertEqual(r3["status"], "failed")
-        self.assertIn("duplicate nonce", r3["output"])
-
-    def test_t8_unexpected_stop_raises_alert_dashboard_stop_does_not(self):
-        """T8. Killing managed service outside dashboard raises alert; intentional stop does not."""
-        pinned = [{"name": "Tomcat", "user": "tomcat", "path": "/opt/tomcat/bin/startup.sh"}]
-        prev_detected = [{"id": "proc:tomcat-tomcat", "name": "Tomcat", "status": "running"}]
-        new_detected = [{"id": "proc:tomcat-tomcat", "name": "Tomcat", "status": "stopped"}]
-
-        # Scenario A: Unexpected crash (no intentional stop task)
-        with patch("database.get_detected_services", return_value=prev_detected):
-            with patch("database.get_managed_services", return_value=pinned):
-                with patch("database.get_server_by_id", return_value={"hostname": "soc-server", "is_maintenance": False}):
-                    with patch("database.log_alert") as mock_alert:
-                        with patch("database.get_db_connection") as mock_conn:
-                            cur = MagicMock()
-                            cur.fetchone.return_value = None
-                            mock_conn.return_value.cursor.return_value.__enter__.return_value = cur
-                            db.save_detected_services(server_id=1, services_list=new_detected)
-                            mock_alert.assert_called_once()
-                            call_args = mock_alert.call_args[1]
-                            self.assertEqual(call_args["alert_type"], "service_stopped")
-                            self.assertIn("Tomcat", call_args["title"])
-
-        # Scenario B: Intentional dashboard stop (task exists)
-        with patch("database.get_detected_services", return_value=prev_detected):
-            with patch("database.get_managed_services", return_value=pinned):
-                with patch("database.get_server_by_id", return_value={"hostname": "soc-server", "is_maintenance": False}):
-                    with patch("database.log_alert") as mock_alert:
-                        with patch("database.get_db_connection") as mock_conn:
-                            cur = MagicMock()
-                            cur.fetchone.return_value = {"id": 10}
-                            mock_conn.return_value.cursor.return_value.__enter__.return_value = cur
-                            db.save_detected_services(server_id=1, services_list=new_detected)
-                            mock_alert.assert_not_called()
-
-    def test_t9_log_analyzer_removed_from_server_detail_retained_in_log_monitor(self):
-        """T9. Log Analyzer section is removed from asset page; Log Monitor page retains full management."""
-        with open("templates/server_detail.html", "r", encoding="utf-8") as f:
-            srv_detail = f.read()
-        self.assertNotIn("LOG ANALYZER CONFIGURATION (APPLICATION LOG SOURCES)", srv_detail)
-        self.assertNotIn("loadSrvDetailLogSources", srv_detail)
-        self.assertNotIn("+ ADD APPLICATION LOG SOURCE", srv_detail)
-
-        with open("templates/log_monitor.html", "r", encoding="utf-8") as f:
-            log_monitor = f.read()
-        self.assertIn("/api/log-monitor/configs", log_monitor)
-        self.assertIn("+ ADD APP", log_monitor)
-
     def _run_coro(self, coro):
         stack = [coro]
         val = None
@@ -308,95 +46,222 @@ class TestManageAssetAndServices(unittest.TestCase):
                 val = e.value
         return val
 
-    def test_t10_all_actions_logged_to_audit_log(self):
-        """T10. Every service action appears in the Audit Log with user, IP, and result."""
+    def test_t1_manage_button_on_total_assets_and_maintenance(self):
+        """T1. Manage button exists; agent outdated check triggers on agent_version < 2.0.0."""
+        with open("templates/servers.html", "r", encoding="utf-8") as f:
+            servers_html = f.read()
+        self.assertIn("MANAGE ASSET", servers_html)
+        self.assertIn("/servers/${id}?from=assets", servers_html)
+        self.assertIn("2.0.0", servers_html)
+
+        with open("templates/maintenance.html", "r", encoding="utf-8") as f:
+            maint_html = f.read()
+        self.assertIn("Manage Asset", maint_html)
+        self.assertIn("/servers/${s.id}?from=maintenance", maint_html)
+
+        with open("templates/server_detail.html", "r", encoding="utf-8") as f:
+            detail_html = f.read()
+        self.assertIn("goBack()", detail_html)
+        self.assertIn("relTime", detail_html)
+        self.assertIn("Evidence", detail_html)
+        self.assertNotIn("RESTART SERVICE", detail_html)
+        self.assertNotIn("service-action-modal", detail_html)
+
+    def test_t2_service_discovery_and_classification(self):
+        """T2. Discovery flags system services and synthesis avoids tomcat8 synthetic default."""
+        from extracted_agent_test import discover_services
+
+        mock_systemctl = (
+            "nginx.service loaded active running Nginx Web Server\n"
+            "postgresql.service loaded active running PostgreSQL RDBMS\n"
+            "cron.service loaded active running Regular Background Cron\n"
+            "ssh.service loaded active running OpenBSD SSH\n"
+            "securepulse.service loaded active running SecurePulse Push Agent\n"
+        )
+        with patch("subprocess.check_output", return_value=mock_systemctl.encode("utf-8")):
+            with patch("extracted_agent_test.get_open_ports", return_value=[]):
+                services = discover_services(force=True)
+
+        srv_by_name = {s["name"]: s for s in services}
+        self.assertIn("nginx", srv_by_name)
+        self.assertFalse(srv_by_name["nginx"]["is_system"])
+        self.assertEqual(srv_by_name["nginx"]["status"], "running")
+        self.assertIn("ssh", srv_by_name)
+        self.assertTrue(srv_by_name["ssh"]["is_system"])
+
+        # Test synthesis for server: Tomcat must never be tomcat8.service
+        synthesized = db.synthesize_services_for_server(27)
+        for s in synthesized:
+            self.assertNotEqual(s.get("unit_name"), "tomcat8.service")
+            if s.get("name") == "Tomcat":
+                self.assertEqual(s.get("managed_by"), "process")
+                self.assertIsNone(s.get("unit_name"))
+            if s.get("name") == "haproxy":
+                self.assertEqual(s.get("managed_by"), "systemd")
+                self.assertEqual(s.get("unit_name"), "haproxy.service")
+
+    def test_t3_service_control_decommissioned_routes_removed(self):
+        """T3. Remote execution routes (action, poll, status, result) are removed from FastAPI app."""
+        app_routes = [route.path for route in app.app.routes]
+        self.assertNotIn("/api/servers/{server_id}/services/action", app_routes)
+        self.assertNotIn("/api/servers/{server_id}/tasks/{task_id}", app_routes)
+        self.assertNotIn("/api/servers/{server_id}/restart-services", app_routes)
+        self.assertNotIn("/api/servers/{server_id}/services/pin", app_routes)
+        self.assertNotIn("/api/agent/tasks/poll", app_routes)
+        self.assertNotIn("/api/agent/tasks/status", app_routes)
+        self.assertNotIn("/api/agent/tasks/result", app_routes)
+        self.assertFalse(hasattr(app, "api_service_action"))
+        self.assertFalse(hasattr(app, "api_agent_tasks_poll"))
+
+    def test_t4_agent_script_has_zero_remote_execution(self):
+        """T4. Agent v2.0.0 has zero remote command execution, polling loops, or result queues."""
+        with open("app.py", "r", encoding="utf-8") as f:
+            text = f.read()
+        s_marker = "cat << PY_EOF > /opt/securepulse/node_push_agent.py"
+        start = text.find(s_marker)
+        end = text.find("PY_EOF", start + len(s_marker))
+        agent_code = text[start + len(s_marker) + 1:end].strip()
+
+        self.assertIn('AGENT_VERSION = "2.0.0"', agent_code)
+        self.assertNotIn("execute_agent_tasks", agent_code)
+        self.assertNotIn("task_polling_loop", agent_code)
+        self.assertNotIn("task_results_queue", agent_code)
+        self.assertNotIn("systemctl restart", agent_code)
+        self.assertNotIn("systemctl stop", agent_code)
+        self.assertNotIn("systemctl start", agent_code)
+        self.assertNotIn("docker restart", agent_code)
+        self.assertNotIn("pkill", agent_code)
+
+    def test_t5_rescan_is_pure_read_only_refresh(self):
+        """T5. POST /api/servers/{id}/services/rescan performs a read-only refresh without tasks."""
         req = MagicMock()
-        req.session = {"user_id": 1, "username": "mannan", "user_role": "admin"}
-        req.client.host = "10.0.0.15"
-        async def mock_json():
-            return {"service_id": "unit:nginx.service", "action": "stop", "reason": "Kernel maintenance"}
-        req.json = mock_json
+        req.session = {"user_id": 1, "username": "admin", "user_role": "admin"}
+        req.client.host = "127.0.0.1"
 
-        detected = [{"id": "unit:nginx.service", "name": "nginx", "unit_name": "nginx.service", "status": "running"}]
+        mock_fresh = [{"id": "proc:tomcat", "name": "Tomcat", "status": "running"}]
+        with patch("app.get_session_user", return_value={"id": 1, "username": "admin", "role": "admin"}):
+            with patch("app.verify_server_project_scope", return_value=(True, "")):
+                with patch("app.db.get_server_by_id", return_value={"id": 1, "hostname": "soc-server", "ip_address": "192.168.10.201", "detected_services": []}):
+                    with patch("app.db.synthesize_services_for_server", return_value=mock_fresh):
+                        with patch("app.db.save_detected_services") as mock_save:
+                            with patch("app.db.log_audit") as mock_audit:
+                                res = self._run_coro(app.api_rescan_services(server_id=1, request=req))
+                                self.assertTrue(res.get("ok"))
+                                mock_save.assert_called_once_with(1, mock_fresh)
+                                mock_audit.assert_called_once()
+                                audit_args = mock_audit.call_args[0]
+                                self.assertEqual(audit_args[1], "SERVICE_RESCAN_REQUESTED")
 
-        with patch("app.get_session_user", return_value={"id": 1, "username": "mannan", "role": "admin"}):
-            with patch("app.is_admin_user", return_value=True):
-                with patch("app.verify_server_project_scope", return_value=(True, "")):
-                    with patch.object(app.db, "get_detected_services", return_value=detected):
-                        with patch.object(app.db, "get_managed_services", return_value=[]):
-                            with patch.object(app.db, "get_recent_service_action", return_value=None):
-                                with patch.object(app.db, "create_agent_task", return_value="task-audit-123"):
-                                    with patch.object(app.db, "log_audit") as mock_audit:
-                                        res = self._run_coro(app.api_service_action(server_id=1, request=req))
-                                        self.assertEqual(res["ok"], True)
-                                        mock_audit.assert_called_with(
-                                            "mannan", "SERVICE_ACTION_REQUESTED", "server", 1,
-                                            "Queued 'stop' for service 'unit:nginx.service'. Reason: Kernel maintenance",
-                                            ip_address="10.0.0.15"
-                                        )
+    def test_t6_unexpected_stop_raises_alert(self):
+        """T6. When a running service stops unexpectedly, an alert is raised."""
+        prev_detected = [{"id": "proc:tomcat", "name": "Tomcat", "status": "running"}]
+        new_detected = [{"id": "proc:tomcat", "name": "Tomcat", "status": "stopped"}]
 
-    def test_t11_poll_returns_signed_task_and_refuses_invalid_signature(self):
-        """T11. Polling returns a cryptographically signed task; invalid signature or missing secret is refused."""
-        mock_task = {
-            "id": 101, "task_id": "task-test-poll-999", "action": "restart",
-            "service_id": "unit:cron.service", "managed_by": "systemd",
-            "unit_name": "cron.service", "container_id": None,
-            "restart_cmd": None, "run_user": "root"
-        }
-        mock_server = {
-            "id": 1, "hostname": "soc-server", "ip_address": "192.168.10.201",
-            "agent_token": "sp-token-poll-test-key", "status": "online"
-        }
+        with patch("database.get_detected_services", return_value=prev_detected):
+            with patch("database.get_managed_services", return_value=[]):
+                with patch("database.get_server_by_id", return_value={"hostname": "soc-server", "is_maintenance": False}):
+                    with patch("database.log_alert") as mock_alert:
+                        with patch("database.get_db_connection") as mock_conn:
+                            cur = MagicMock()
+                            cur.fetchone.return_value = None
+                            mock_conn.return_value.cursor.return_value.__enter__.return_value = cur
+                            db.save_detected_services(server_id=1, services_list=new_detected)
+                            mock_alert.assert_called_once()
+                            call_args = mock_alert.call_args[1]
+                            self.assertEqual(call_args["alert_type"], "service_stopped")
+                            self.assertIn("Tomcat", call_args["title"])
 
+    def test_t7_cases_endpoint_returns_list_without_crash(self):
+        """T7. GET /api/cases handles dictionary response from db.get_incidents() without 500 error."""
         req = MagicMock()
-        async def mock_json():
-            return {"server_id": 1, "agent_version": "1.7.0", "server_ip": "192.168.10.201"}
-        req.json = mock_json
-        req.client.host = "192.168.10.201"
+        req.session = {"user_id": 1, "username": "admin", "user_role": "admin"}
+        mock_incidents = {
+            "items": [
+                {"id": 10, "title": "SQL Injection attempt", "severity": "critical", "status": "open"}
+            ],
+            "total": 1
+        }
+        with patch("app.get_session_user", return_value={"id": 1, "username": "admin", "role": "admin"}):
+            with patch("app.db.get_incidents", return_value=mock_incidents):
+                cases = self._run_coro(app.api_get_cases(request=req))
+                self.assertIsInstance(cases, list)
+                self.assertEqual(len(cases), 1)
+                self.assertEqual(cases[0]["id"], 10)
+                self.assertEqual(cases[0]["title"], "SQL Injection attempt")
 
-        with patch.object(app.db, "get_server_by_ip", return_value=mock_server):
-            with patch.object(app.db, "get_server_by_id", return_value=mock_server):
-                with patch.object(app.db, "get_pending_agent_tasks", return_value=[mock_task]):
-                    with patch.object(app.db, "mark_tasks_dispatched") as mock_dispatched:
-                        res = self._run_coro(app.api_agent_tasks_poll(req))
-                        self.assertTrue(res["ok"])
-                        self.assertEqual(len(res["tasks"]), 1)
-                        signed_task = res["tasks"][0]
-                        self.assertEqual(signed_task["task_id"], "task-test-poll-999")
-                        self.assertIn("signature", signed_task)
-                        self.assertIn("nonce", signed_task)
-                        self.assertIn("timestamp", signed_task)
-                        mock_dispatched.assert_called_once_with(["task-test-poll-999"], 1)
+    def test_t8_server_report_severity_filters_in_api(self):
+        """T8. GET /api/alerts filters by severities and hours in SQL, mapping legacy levels."""
+        req = MagicMock()
+        req.session = {"user_id": 1, "username": "admin", "user_role": "admin"}
 
-                        # Verify signature matches expected HMAC
-                        nonce = signed_task["nonce"]
-                        ts = signed_task["timestamp"]
-                        recipe_hash = hashlib.sha256("".encode('utf-8')).hexdigest()[:16]
-                        expected_payload = f"task-test-poll-999:restart:unit:cron.service:cron.service:root:{recipe_hash}:{nonce}:{ts}"
-                        expected_sig = hmac.new("sp-token-poll-test-key".encode('utf-8'), expected_payload.encode('utf-8'), hashlib.sha256).hexdigest()
-                        self.assertEqual(signed_task["signature"], expected_sig)
+        with patch("app.get_session_user", return_value={"id": 1, "username": "admin", "role": "admin"}):
+            with patch("app.db.get_db_connection") as mock_conn:
+                cur = MagicMock()
+                cur.fetchone.return_value = {"total": 5, "count": 12}
+                cur.fetchall.return_value = [
+                    {"id": 1, "title": "Alert 1", "severity": "critical", "created_at": "2026-11-13 10:00:00"}
+                ]
+                mock_conn.return_value.cursor.return_value.__enter__.return_value = cur
+                res = app.api_get_alerts(
+                    request=req,
+                    server_id=1,
+                    severities="critical,warning",
+                    hours=24
+                )
+                self.assertIn("items", res)
+                self.assertIn("info_excluded_count", res)
+                self.assertEqual(res["info_excluded_count"], 12)
 
-        # Verify agent verification of valid vs invalid signature
-        from extracted_agent_test import execute_agent_tasks, task_results_queue
+    def test_t9_app_report_severity_filters_events_incidents_users(self):
+        """T9. App report applies severity filter across events, incidents, and user peak severities."""
+        req = MagicMock()
+        req.session = {"user_id": 1, "username": "admin", "user_role": "admin"}
 
-        # 1. Tampered signature
-        bad_task = dict(signed_task)
-        bad_task["signature"] = "deadbeef" * 8
-        execute_agent_tasks([bad_task])
-        self.assertEqual(len(task_results_queue), 1)
-        r_bad = task_results_queue.pop(0)
-        self.assertEqual(r_bad["status"], "failed")
-        self.assertEqual(r_bad["reject_reason"], "bad_signature")
+        payload = {
+            "type": "all",
+            "timeframe": "7d",
+            "severities": ["critical", "warning"]
+        }
 
-        # 2. Tampered unit name (with a unique nonce so signature mismatch is tested)
-        tampered_unit_task = dict(signed_task)
-        tampered_unit_task["unit_name"] = "tampered.service"
-        tampered_unit_task["nonce"] = uuid.uuid4().hex[:16]
-        execute_agent_tasks([tampered_unit_task])
-        self.assertEqual(len(task_results_queue), 1)
-        r_tamp = task_results_queue.pop(0)
-        self.assertEqual(r_tamp["status"], "failed")
-        self.assertEqual(r_tamp["reject_reason"], "bad_signature")
+        with patch("app.get_session_user", return_value={"id": 1, "username": "admin", "role": "admin"}):
+            with patch("app.get_effective_project_id", return_value=None):
+                with patch("app.db.get_db_connection") as mock_conn:
+                    cur = MagicMock()
+                    cur.fetchone.side_effect = [
+                        {"id": 1, "name": "Test App", "project_id": 1, "project_name": "Core"}, # app_row
+                        {"count": 25}, # info_events_excluded
+                        {"count": 2},  # total_events_in_db
+                        {"count": 1},  # total_incidents_in_db
+                        {"count": 1}   # total_users_in_db
+                    ]
+                    cur.fetchall.side_effect = [
+                        [{"id": 101, "event_time": "2026-11-13", "severity": "critical", "url_path": "/test"}], # events
+                        [{"id": 501, "last_event_at": "2026-11-13", "severity": "critical", "title": "Attack"}], # incidents
+                        [{"identifier": "attacker1", "peak_severity": "critical", "total_requests": 10, "attack_events": 5}] # users
+                    ]
+                    mock_conn.return_value.cursor.return_value.__enter__.return_value = cur
+                    res = app.api_generate_app_report(request=req, app_id=1, payload=payload)
+                    self.assertIn("info_events_excluded", res)
+                    self.assertEqual(res["info_events_excluded"], 25)
+                    self.assertEqual(len(res["sections"]["events"]), 1)
+                    self.assertEqual(len(res["sections"]["incidents"]), 1)
+                    self.assertEqual(len(res["sections"]["users"]), 1)
+
+    def test_t10_audit_subsystem_health_retained_and_java8_rule_removed(self):
+        """T10. Asset manage page retains Audit Subsystem Health card and removes Java 8 Rule Generator."""
+        with open("templates/server_detail.html", "r", encoding="utf-8") as f:
+            html = f.read()
+
+        # Retained Audit Subsystem Health card
+        self.assertIn("Audit Subsystem & Attribution Health", html)
+        self.assertIn("Domain User NSS Resolution", html)
+        self.assertIn("Kernel Loginuid Tracking", html)
+        self.assertIn("SIEM Raw Forensic Store", html)
+
+        # Removed Java 8 Rule Generator card
+        self.assertNotIn("Java 8 Audit Exclusion Rule Generator", html)
+        self.assertNotIn("copyJavaRule", html)
+        self.assertNotIn("ADD MANUAL SERVICE FALLBACK", html)
 
 if __name__ == "__main__":
     unittest.main()

@@ -97,9 +97,13 @@
         <div style="display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap">
             <div style="flex:1; min-width:260px">
                 <label class="text-meta" style="display:block; margin-bottom:6px">Select Case / Incident</label>
-                <select id="evidence-case-id" class="mono" style="width:100%; padding:10px; background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px">
-                    <option value="">Loading cases...</option>
-                </select>
+                <div style="display:flex; gap:8px; align-items:center">
+                    <select id="evidence-case-id" class="mono" style="flex:1; padding:10px; background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px">
+                        <option value="">Loading cases...</option>
+                    </select>
+                    <button type="button" id="btn-retry-cases" class="btn btn-glass" style="display:none; padding:9px 12px; font-size:11px" onclick="loadEvidenceCases()">Retry</button>
+                </div>
+                <div id="evidence-case-error" style="display:none; font-size:11px; color:#f87171; margin-top:4px"></div>
             </div>
             <button class="btn btn-primary" onclick="exportEvidence()">
                 <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2" style="margin-right:6px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -143,9 +147,7 @@
                 <span class="text-meta" style="font-size:11px; font-weight:700; color:var(--text2)">Severity Levels:</span>
                 <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap">
                     <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="critical" checked> <span style="color:#f87171; font-weight:600">Critical</span></label>
-                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="high" checked> <span style="color:#fbbf24; font-weight:600">High</span></label>
-                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="medium" checked> <span style="color:#fbbf24; font-weight:600">Medium</span></label>
-                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="low" checked> <span style="color:#38bdf8; font-weight:600">Low</span></label>
+                    <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="warning" checked> <span style="color:#fbbf24; font-weight:600">Warning</span></label>
                     <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" class="srv-sev-cb" value="info"> <span style="color:#94a3b8; font-weight:600">Info</span></label>
                 </div>
             </div>
@@ -298,6 +300,101 @@
 {% block extra_js %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script>
+    async function computeSha256(str) {
+        if (window.crypto && window.crypto.subtle) {
+            try {
+                const buf = new TextEncoder().encode(str);
+                const hashBuf = await window.crypto.subtle.digest('SHA-256', buf);
+                return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+            } catch (e) {}
+        }
+        function rrot(x, n) { return (x >>> n) | (x << (32 - n)); }
+        const K = [
+            0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+            0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+            0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+            0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+            0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+            0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+            0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+            0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+        ];
+        let H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+        const bytes = unescape(encodeURIComponent(str)).split('').map(c => c.charCodeAt(0));
+        const bitLen = bytes.length * 8;
+        bytes.push(0x80);
+        while ((bytes.length % 64) !== 56) bytes.push(0);
+        for (let i = 7; i >= 0; i--) bytes.push((bitLen >>> (i * 8)) & 0xff);
+        const words = [];
+        for (let i = 0; i < bytes.length; i += 4) {
+            words.push((bytes[i] << 24) | (bytes[i + 1] << 16) | (bytes[i + 2] << 8) | (bytes[i + 3]));
+        }
+        for (let i = 0; i < words.length; i += 16) {
+            const w = words.slice(i, i + 16);
+            for (let t = 16; t < 64; t++) {
+                const s0 = rrot(w[t - 15], 7) ^ rrot(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+                const s1 = rrot(w[t - 2], 17) ^ rrot(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+                w[t] = ((w[t - 16] + s0 + w[t - 7] + s1) | 0);
+            }
+            let [a, b, c, d, e, f, g, h] = H;
+            for (let t = 0; t < 64; t++) {
+                const S1 = rrot(e, 6) ^ rrot(e, 11) ^ rrot(e, 25);
+                const ch = (e & f) ^ ((~e) & g);
+                const temp1 = (h + S1 + ch + K[t] + w[t]) | 0;
+                const S0 = rrot(a, 2) ^ rrot(a, 13) ^ rrot(a, 22);
+                const maj = (a & b) ^ (a & c) ^ (b & c);
+                const temp2 = (S0 + maj) | 0;
+                h = g; g = f; f = e; e = (d + temp1) | 0; d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+            }
+            H = [(H[0] + a)|0, (H[1] + b)|0, (H[2] + c)|0, (H[3] + d)|0, (H[4] + e)|0, (H[5] + f)|0, (H[6] + g)|0, (H[7] + h)|0];
+        }
+        return H.map(v => (v >>> 0).toString(16).padStart(8, '0')).join('');
+    }
+
+    async function loadEvidenceCases() {
+        const sel = document.getElementById('evidence-case-id');
+        const retryBtn = document.getElementById('btn-retry-cases');
+        const errEl = document.getElementById('evidence-case-error');
+        if (!sel) return [];
+
+        sel.disabled = true;
+        sel.innerHTML = '<option value="">Loading cases...</option>';
+        if (retryBtn) retryBtn.style.display = 'none';
+        if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+        try {
+            const resp = await fetch('/api/cases', { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const cases = await resp.json();
+            const caseItems = Array.isArray(cases) ? cases : (cases.items || []);
+
+            sel.disabled = false;
+            if (caseItems.length === 0) {
+                sel.innerHTML = '<option value="">No cases or incidents found</option>';
+            } else {
+                sel.innerHTML = caseItems.slice(0, 100).map(c => `
+                    <option value="${c.id}">Case #${c.id}: ${(c.title || 'Security Case').substring(0, 60)}</option>
+                `).join('');
+            }
+            return caseItems;
+        } catch (err) {
+            clearTimeout(timeoutId);
+            console.error('Failed to load evidence cases:', err);
+            sel.disabled = false;
+            sel.innerHTML = '<option value="">Failed to load cases</option>';
+            if (retryBtn) retryBtn.style.display = 'inline-block';
+            if (errEl) {
+                errEl.style.display = 'block';
+                errEl.textContent = err.name === 'AbortError' ? 'Loading cases timed out (10s).' : ('Error: ' + err.message);
+            }
+            return [];
+        }
+    }
+
     async function loadKPIs() {
         try {
             // Get all alerts for MTTD/MTTR calculation
@@ -382,9 +479,8 @@
                 });
             }
             
-            // Cases for evidence export
-            const cases = await apiFetch('/api/cases');
-            const caseItems = Array.isArray(cases) ? cases : [];
+            // Cases for evidence export & SLA breach
+            const caseItems = await loadEvidenceCases();
             const risky = caseItems.filter(c => {
                 if (!c.due_at || c.status === 'resolved') return false;
                 const due = new Date(c.due_at);
@@ -394,17 +490,6 @@
             if (riskEl) {
                 riskEl.textContent = risky.length;
                 if (risky.length > 0) riskEl.style.color = 'var(--red)';
-            }
-
-            const sel = document.getElementById('evidence-case-id');
-            if (sel) {
-                if (caseItems.length === 0) {
-                    sel.innerHTML = '<option value="1">Incident #1: Security Infiltration Investigation</option>';
-                } else {
-                    sel.innerHTML = caseItems.map(c => `
-                        <option value="${c.id}">Case #${c.id}: ${(c.title || 'Security Case').substring(0, 60)}</option>
-                    `).join('');
-                }
             }
         } catch (e) {
             console.error('KPI error:', e);
@@ -585,8 +670,9 @@
             const now = new Date();
             const c = caseDetails.case || { id: caseId, title: 'Security Incident', server_id: null };
             
-            // Generate realistic looking SHA-256 digest (without relying on crypto.subtle for HTTP support)
-            const fakeDigest = Array.from({length: 32}, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
+            // Compute real tamper-evident SHA-256 digest from case metadata and alerts count
+            const rawPayload = `CASE_ID:${c.id}|TITLE:${c.title}|STATUS:${c.status}|TIMESTAMP:${now.toISOString()}|ALERTS_COUNT:${caseAlerts.length}`;
+            const documentDigest = await computeSha256(rawPayload);
 
             // Filter alerts specifically to this case or incident title
             let caseAlerts = alerts.filter(a => a.case_id == caseId || a.id == caseId);
@@ -637,7 +723,7 @@
             renderPDF(
                 "CHAIN OF CUSTODY FORENSICS EVIDENCE",
                 `Case #${c.id}: ${c.title}`,
-                `Export Timestamp: ${now.toISOString()}\nDocument SHA-256 Digest: ${fakeDigest}`,
+                `Export Timestamp: ${now.toISOString()}\nDocument SHA-256 Digest: ${documentDigest}`,
                 content,
                 false
             );
@@ -722,7 +808,9 @@
     
     function getSelectedSeverities(prefix) {
         const cbs = document.querySelectorAll('.' + prefix + '-sev-cb:checked');
-        if (!cbs.length) return ['critical', 'high', 'medium', 'low'];
+        if (!cbs.length) {
+            return prefix === 'srv' ? ['critical', 'warning'] : ['critical', 'high', 'medium', 'low'];
+        }
         return Array.from(cbs).map(cb => cb.value.toLowerCase());
     }
 
@@ -758,22 +846,17 @@
                 return;
             }
             
-            const alertsRes = await apiFetch('/api/alerts?limit=500');
-            const allAlerts = Array.isArray(alertsRes) ? alertsRes : (alertsRes.items || []);
-            
             const selectedSevs = getSelectedSeverities('srv');
-            const cutoffTime = new Date(Date.now() - (hours * 3600 * 1000));
-            const serverAlertsUnfiltered = allAlerts.filter(a => a.server_id === server.id && new Date(a.created_at) >= cutoffTime);
+            const alertsUrl = `/api/alerts?server_id=${server.id}&severities=${encodeURIComponent(selectedSevs.join(','))}&hours=${hours}&limit=1000`;
+            const alertsRes = await apiFetch(alertsUrl);
+            const serverAlerts = Array.isArray(alertsRes) ? alertsRes : (alertsRes.items || []);
+            const infoExcludedCount = alertsRes.info_excluded_count !== undefined ? alertsRes.info_excluded_count : 0;
 
-            const infoExcludedCount = serverAlertsUnfiltered.filter(a => (a.severity || 'info').toLowerCase() === 'info' && !selectedSevs.includes('info')).length;
-            const serverAlerts = serverAlertsUnfiltered.filter(a => selectedSevs.includes((a.severity || 'info').toLowerCase()));
-
-            let critCnt = 0, warnCnt = 0, infoCnt = 0, lowCnt = 0;
+            let critCnt = 0, warnCnt = 0, infoCnt = 0;
             serverAlerts.forEach(a => {
                 const s = (a.severity || 'info').toLowerCase();
-                if (s === 'critical') critCnt++;
-                else if (s === 'warning' || s === 'high' || s === 'medium') warnCnt++;
-                else if (s === 'low') lowCnt++;
+                if (s === 'critical' || s === 'high') critCnt++;
+                else if (s === 'warning' || s === 'medium' || s === 'med' || s === 'low') warnCnt++;
                 else if (s === 'info') infoCnt++;
             });
 
@@ -784,13 +867,20 @@
                         <div>
                             <div style="font-weight:700; color:#0f172a; font-size:14px">Alerts by Severity</div>
                             <div style="font-size:11.5px; color:#64748b; margin-top:2px">
-                                Critical: <b style="color:#dc2626">${critCnt}</b> | Warning: <b style="color:#d97706">${warnCnt}</b> | Low: <b style="color:#0284c7">${lowCnt}</b> | Info: <b style="color:#64748b">${infoCnt}</b>
+                                Critical: <b style="color:#dc2626">${critCnt}</b> | Warning: <b style="color:#d97706">${warnCnt}</b> | Info: <b style="color:#64748b">${infoCnt}</b>
                             </div>
                         </div>
-                        ${infoExcludedCount > 0 ? `<div style="font-size:11px; color:#d97706; background:#fffbeb; border:1px solid #fde68a; padding:4px 8px; border-radius:4px">ℹ️ ${infoExcludedCount} INFO events excluded</div>` : ''}
+                        ${infoExcludedCount > 0 ? `<div style="font-size:11px; color:#d97706; background:#fffbeb; border:1px solid #fde68a; padding:4px 8px; border-radius:4px">ℹ️ ${infoExcludedCount} info excluded</div>` : ''}
                     </div>
                     <div class="pdf-card">
-                        ${serverAlerts.length > 0 ? serverAlerts.map(a => `
+                        ${serverAlerts.length > 0 ? serverAlerts.map(a => {
+                            const sev = (a.severity || 'info').toLowerCase();
+                            const isCrit = (sev === 'critical' || sev === 'high');
+                            const isWarn = (sev === 'warning' || sev === 'medium' || sev === 'med' || sev === 'low');
+                            const displaySev = isCrit ? 'CRITICAL' : (isWarn ? 'WARNING' : 'INFO');
+                            const badgeBg = isCrit ? '#fee2e2' : (isWarn ? '#fef3c7' : '#e0f2fe');
+                            const badgeColor = isCrit ? '#dc2626' : (isWarn ? '#d97706' : '#0284c7');
+                            return `
                             <div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid #f1f5f9">
                                 <div style="display:flex; justify-content:space-between">
                                     <div style="font-weight:bold; color:#0f172a; font-size:13px">${escapeHtml(a.title || a.alert_type)}</div>
@@ -798,11 +888,12 @@
                                 </div>
                                 <div style="font-size:11px; margin-top:6px; color:#334155; padding:6px; background:#f8fafc; border-radius:4px; border:1px solid #e2e8f0">${escapeHtml(a.message || a.detail || 'No additional details provided.')}</div>
                                 <div style="font-size:11px; margin-top:6px">
-                                    <span style="display:inline-block; padding:2px 6px; border-radius:4px; font-weight:bold; background:${a.severity==='critical'?'#fee2e2':a.severity==='warning'?'#fef3c7':'#e0f2fe'}; color:${a.severity==='critical'?'#dc2626':a.severity==='warning'?'#d97706':'#0284c7'};">${(a.severity||'info').toUpperCase()}</span>
+                                    <span style="display:inline-block; padding:2px 6px; border-radius:4px; font-weight:bold; background:${badgeBg}; color:${badgeColor};">${displaySev}</span>
                                     ${a.mitre_tactic ? `<span style="display:inline-block; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; margin-left:6px">${escapeHtml(a.mitre_tactic)} (${escapeHtml(a.mitre_technique || '')})</span>` : ''}
                                 </div>
                             </div>
-                        `).join('') : '<div style="font-size:13px; color:#64748b; padding:20px; text-align:center">No events at the selected levels for this period.</div>'}
+                            `;
+                        }).join('') : '<div style="font-size:13px; color:#64748b; padding:20px; text-align:center">No events at the selected levels for this period.</div>'}
                     </div>
                 </div>
             `;

@@ -695,10 +695,10 @@ function formatLocal(dateStr) {
                 }
                 const isSrvRead = s.is_read === true || s.is_read === 'true';
                 const readTag = isSrvRead ? '<div class="badge-read-tag" style="margin-top:4px">✓ Marked as Read</div>' : '';
-                const isOutdated = s.agent_version && s.agent_version < '1.7.0';
+                const isOutdated = s.agent_version && s.agent_version < '2.0.0';
                 const vColor = isOutdated ? 'var(--amber)' : 'var(--text3)';
-                const vTitle = isOutdated ? 'Agent outdated (v' + s.agent_version + '): update required for fast restart & task loop' : 'Agent up to date';
-                const typeBadge = `<div style="text-align:right">${rawBadge}${readTag}<div style="font-family:monospace; font-size:9px; color:${vColor}; margin-top:4px" title="${vTitle}">v${s.agent_version || '1.5'}${isOutdated ? ' <span style="font-size:8px; border:1px solid var(--amber); border-radius:3px; padding:1px 3px; color:var(--amber)">update</span>' : ''}</div></div>`;
+                const vTitle = isOutdated ? 'Agent outdated (v' + s.agent_version + '): update required for detection v2.0.0' : 'Agent up to date';
+                const typeBadge = `<div style="text-align:right">${rawBadge}${readTag}<div style="font-family:monospace; font-size:9px; color:${vColor}; margin-top:4px" title="${vTitle}">v${s.agent_version || '1.5'}${isOutdated ? ' <span style="font-size:8px; border:1px solid var(--amber); border-radius:3px; padding:1px 3px; color:var(--amber)">outdated</span>' : ''}</div></div>`;
                 
                 let alertBox = '<div class="service-alert-box sab-normal"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>NORMAL</strong> – All checks operational</div>';
                 if (isDown) {

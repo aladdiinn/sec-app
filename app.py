@@ -789,11 +789,15 @@ async def lifespan(app: FastAPI):
         logger.info("Vulnerability Advisory Sync Engine started.")
     except Exception as e:
         logger.warning(f"Could not start Vulnerability Advisory Sync Engine: {e}")
+    try:
+        db.log_audit("system", "SERVICE_CONTROL_REMOVED", "system", 0, "Service action and remote execution engine permanently disabled. Monitoring and detection only.")
+    except Exception as e_sc:
+        logger.warning(f"Could not record service control removal audit entry: {e_sc}")
     yield
 
 # Initialize FastAPI App
 APP_VERSION = "1.5"
-AGENT_VERSION = "1.7.0"
+AGENT_VERSION = "2.0.0"
 _inventory_scan_queue = set()  # server_ids queued for on-demand inventory scan
 app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifespan)
 
@@ -3774,196 +3778,7 @@ async def api_agent_push(request: Request):
     if needs_inventory:
         res["inventory_scan_requested"] = True
 
-    # ── ATTACH SIGNED PENDING SERVICE ACTION TASKS ──
-    if server_id:
-        try:
-            pending_tasks = db.get_pending_agent_tasks(server_id)
-            if pending_tasks:
-                srv_obj = db.get_server_by_id(server_id) or {}
-                raw_tok = srv_obj.get("agent_token") or srv_obj.get("api_token")
-                if raw_tok and str(raw_tok).strip() not in ("None", "null", ""):
-                    secret_tok = str(raw_tok).strip()
-                    signed = []
-                    successfully_signed_ids = []
-                    for t in pending_tasks:
-                        try:
-                            now_ts = int(time.time())
-                            nonce = uuid.uuid4().hex[:16]
-                            cmd_str = (t.get("restart_cmd") or "").strip()
-                            recipe_hash = hashlib.sha256(cmd_str.encode('utf-8')).hexdigest()[:16]
-                            unit_ident = str(t.get("unit_name") or t.get("container_id") or "").strip()
-                            run_usr = str(t.get("run_user") or "root").strip()
-                            sig_payload = f"{t['task_id']}:{t['action']}:{t['service_id']}:{unit_ident}:{run_usr}:{recipe_hash}:{nonce}:{now_ts}"
-                            sig = hmac.new(secret_tok.encode('utf-8'), sig_payload.encode('utf-8'), hashlib.sha256).hexdigest()
-                            signed.append({
-                                "task_id": t["task_id"],
-                                "action": t["action"],
-                                "service_id": t["service_id"],
-                                "managed_by": t.get("managed_by", "systemd"),
-                                "unit_name": t.get("unit_name"),
-                                "container_id": t.get("container_id"),
-                                "restart_cmd": t.get("restart_cmd"),
-                                "run_user": t.get("run_user"),
-                                "nonce": nonce,
-                                "timestamp": now_ts,
-                                "signature": sig
-                            })
-                            successfully_signed_ids.append(t["task_id"])
-                        except Exception as e_sig:
-                            logger.error(f"[TASK-SIGN] Failed to sign task #{t.get('task_id')}: {e_sig}")
-                    if successfully_signed_ids:
-                        db.mark_tasks_dispatched(successfully_signed_ids, server_id)
-                    res["pending_tasks"] = signed
-                else:
-                    logger.error(f"[SECURITY] Server #{server_id} has no valid agent_token configured. Skipping task dispatch.")
-        except Exception as e_pt:
-            logger.error(f"Error fetching pending agent tasks: {e_pt}")
-
     return res
-
-@app.post("/api/agent/tasks/poll")
-async def api_agent_tasks_poll(request: Request):
-    """Fast, dedicated task polling endpoint for push agents (polled every 5 seconds)."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    server_id = data.get("server_id")
-    server_ip = (data.get("server_ip") or "").strip()
-    hostname = (data.get("hostname") or "").strip()
-    machine_id = (data.get("machine_id") or "").strip()
-    agent_version = data.get("agent_version", "1.7.0")
-    client_ip = request.client.host if request.client else None
-
-    # Resolve server_id to latest active server record
-    if server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
-        latest_srv = db.get_server_by_ip(server_ip)
-        if latest_srv and latest_srv.get("id"):
-            server_id = latest_srv["id"]
-
-    if not server_id and machine_id:
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM servers WHERE machine_id = %s LIMIT 1;", (machine_id,))
-                    r = cur.fetchone()
-                    if r: server_id = r["id"] if isinstance(r, dict) else r[0]
-            except Exception: pass
-            finally: conn.close()
-
-    if not server_id and server_ip:
-        srv = db.get_server_by_ip(server_ip)
-        if srv: server_id = srv.get("id")
-
-    if not server_id and hostname and hostname.lower() not in ("localhost", "target-node"):
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) ORDER BY id DESC LIMIT 1;", (hostname,))
-                    r = cur.fetchone()
-                    if r: server_id = r["id"] if isinstance(r, dict) else r[0]
-            except Exception: pass
-            finally: conn.close()
-
-    if not server_id:
-        return JSONResponse(status_code=401, content={"ok": False, "message": "Unknown server."})
-
-    # Update heartbeat
-    conn = db.get_db_connection()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s WHERE id = %s;", (agent_version, server_id))
-                conn.commit()
-        except Exception: pass
-        finally: conn.close()
-
-    pending_tasks = db.get_pending_agent_tasks(server_id)
-    if not pending_tasks:
-        return {"ok": True, "server_id": server_id, "tasks": []}
-
-    srv_obj = db.get_server_by_id(server_id) or {}
-    raw_tok = srv_obj.get("agent_token") or srv_obj.get("api_token")
-    if not raw_tok or str(raw_tok).strip() in ("None", "null", ""):
-        logger.error(f"[SECURITY] Server #{server_id} has no agent_token configured. Refusing to sign tasks.")
-        return {"ok": True, "server_id": server_id, "tasks": []}
-    secret_tok = str(raw_tok).strip()
-
-    signed = []
-    successfully_signed_ids = []
-    for t in pending_tasks:
-        try:
-            now_ts = int(time.time())
-            nonce = uuid.uuid4().hex[:16]
-            cmd_str = (t.get("restart_cmd") or "").strip()
-            recipe_hash = hashlib.sha256(cmd_str.encode('utf-8')).hexdigest()[:16]
-            unit_ident = str(t.get("unit_name") or t.get("container_id") or "").strip()
-            run_usr = str(t.get("run_user") or "root").strip()
-            sig_payload = f"{t['task_id']}:{t['action']}:{t['service_id']}:{unit_ident}:{run_usr}:{recipe_hash}:{nonce}:{now_ts}"
-            sig = hmac.new(secret_tok.encode('utf-8'), sig_payload.encode('utf-8'), hashlib.sha256).hexdigest()
-            signed.append({
-                "task_id": t["task_id"],
-                "action": t["action"],
-                "service_id": t["service_id"],
-                "managed_by": t.get("managed_by", "systemd"),
-                "unit_name": t.get("unit_name"),
-                "container_id": t.get("container_id"),
-                "restart_cmd": t.get("restart_cmd"),
-                "run_user": t.get("run_user"),
-                "nonce": nonce,
-                "timestamp": now_ts,
-                "signature": sig
-            })
-            successfully_signed_ids.append(t["task_id"])
-        except Exception as e_sig:
-            logger.error(f"[TASK-SIGN] Failed to sign task #{t.get('task_id')}: {e_sig}")
-
-    if successfully_signed_ids:
-        db.mark_tasks_dispatched(successfully_signed_ids, server_id)
-    return {"ok": True, "server_id": server_id, "tasks": signed}
-
-@app.post("/api/agent/tasks/status")
-async def api_agent_task_status_report(request: Request):
-    """Acknowledge task receipt (acknowledged) and execution commencement (running)."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    task_id = data.get("task_id")
-    status_val = data.get("status", "running")
-    if task_id:
-        if status_val == "acknowledged":
-            db.update_agent_task_status(task_id, "acknowledged")
-        elif status_val == "running":
-            db.update_agent_task_status(task_id, "running")
-        else:
-            db.update_agent_task_status(task_id, status_val)
-    return {"ok": True}
-
-@app.post("/api/agent/tasks/result")
-async def api_agent_task_result_report(request: Request):
-    """Ingest task execution result from target node."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    server_id = data.get("server_id")
-    task_id = data.get("task_id")
-    st = data.get("status", "completed")
-    code = data.get("exit_code")
-    out = data.get("output", "")
-    dur = data.get("duration_ms", 0)
-    reject_reason = data.get("reject_reason")
-    client_ip = request.client.host if request.client else None
-
-    if task_id:
-        db.update_agent_task_result(task_id, st, code, out, dur, reject_reason=reject_reason)
-        db.log_audit("agent", "SERVICE_ACTION_RESULT", "server", server_id,
-                     f"Task {task_id} finished: {st} (exit code {code}) in {dur}ms. Output: {out[:120]}",
-                     ip_address=client_ip)
-    return {"ok": True}
 
 @app.post("/api/agent/status-update")
 async def api_agent_status_update(request: Request):
@@ -4389,7 +4204,7 @@ def api_generate_server_vulnerability_report(request: Request, server_id: int, p
 
 
 @app.get("/api/alerts")
-def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False, log_type: Optional[str] = None):
+def api_get_alerts(request: Request = None, limit: int = 100, severity: str = None, is_resolved: str = None, status: str = None, server_id: Optional[int] = None, q: Optional[str] = None, log_only: Optional[bool] = False, log_type: Optional[str] = None, severities: Optional[str] = None, hours: Optional[int] = None):
     conn = db.get_db_connection()
     if not conn: return {"items": [], "total": 0}
     try:
@@ -4406,6 +4221,16 @@ def api_get_alerts(request: Request = None, limit: int = 100, severity: str = No
             if server_id:
                 query += " AND a.server_id = %s"
                 params.append(server_id)
+
+            req_hours = hours or (request and request.query_params.get("hours"))
+            if req_hours:
+                try:
+                    h_int = int(req_hours)
+                    if h_int > 0:
+                        query += " AND a.created_at >= NOW() - (%s || ' hours')::interval"
+                        params.append(str(h_int))
+                except Exception:
+                    pass
 
             # Support log_type filter (postgres, tomcat, os)
             req_log_type = log_type or (request and request.query_params.get("log_type", ""))
@@ -4439,7 +4264,28 @@ def api_get_alerts(request: Request = None, limit: int = 100, severity: str = No
             if resolved_val is not None:
                 query += " AND a.is_resolved = %s"
                 params.append(resolved_val)
-            if severity:
+
+            # Support multi-severity filter with legacy mapping:
+            # Critical -> ('critical', 'high')
+            # Warning  -> ('warning', 'medium', 'low', 'trouble')
+            # Info     -> ('info', 'informational', 'notice')
+            req_sevs = severities or (request and request.query_params.get("severities", ""))
+            if req_sevs:
+                sev_tokens = [s.strip().lower() for s in req_sevs.split(",") if s.strip()]
+                mapped_levels = set()
+                for token in sev_tokens:
+                    if token == "critical":
+                        mapped_levels.update(["critical", "high"])
+                    elif token in ("warning", "warn"):
+                        mapped_levels.update(["warning", "medium", "low", "trouble"])
+                    elif token == "info":
+                        mapped_levels.update(["info", "informational", "notice"])
+                    else:
+                        mapped_levels.add(token)
+                if mapped_levels:
+                    query += " AND LOWER(a.severity) = ANY(%s)"
+                    params.append(list(mapped_levels))
+            elif severity:
                 query += " AND a.severity = %s"
                 params.append(severity)
             
@@ -4453,13 +4299,36 @@ def api_get_alerts(request: Request = None, limit: int = 100, severity: str = No
                     query += " AND (a.title ILIKE %s OR a.message ILIKE %s OR s.hostname ILIKE %s)"
                     params.extend([f"%{clean_q}%", f"%{clean_q}%", f"%{clean_q}%"])
 
+            # Count excluded info items when filtering by severities and info not selected
+            info_excluded_count = 0
+            if req_sevs and "info" not in req_sevs.lower():
+                try:
+                    q_info = "SELECT COUNT(*) FROM alerts a LEFT JOIN servers s ON a.server_id = s.id WHERE 1=1"
+                    p_info = []
+                    if server_id:
+                        q_info += " AND a.server_id = %s"
+                        p_info.append(server_id)
+                    if req_hours:
+                        try:
+                            h_int = int(req_hours)
+                            if h_int > 0:
+                                q_info += " AND a.created_at >= NOW() - (%s || ' hours')::interval"
+                                p_info.append(str(h_int))
+                        except Exception: pass
+                    q_info += " AND LOWER(a.severity) IN ('info', 'informational', 'notice')"
+                    cur.execute(q_info, p_info)
+                    r_inf = cur.fetchone()
+                    info_excluded_count = (r_inf["count"] if isinstance(r_inf, dict) else r_inf[0]) if r_inf else 0
+                except Exception:
+                    info_excluded_count = 0
+
             query += " ORDER BY CASE WHEN LOWER(a.severity) = 'critical' THEN 1 WHEN LOWER(a.severity) IN ('warning', 'high', 'trouble') THEN 2 ELSE 3 END, a.created_at DESC LIMIT %s"
             params.append(limit)
             cur.execute(query, params)
             items = cur.fetchall()
             for a in items:
                 a['created_at_ago'] = db.format_time_ago(a.get('created_at'))
-            return {"items": items, "total": len(items)}
+            return {"items": items, "total": len(items), "info_excluded_count": info_excluded_count}
     except Exception as e:
         logger.error(f"Error in api_get_alerts: {e}")
         return {"items": [], "total": 0}
@@ -5596,7 +5465,7 @@ import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threadi
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "1.7.0"
+AGENT_VERSION = "2.0.0"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
@@ -5647,57 +5516,7 @@ def send_agent_request(endpoint, data=None, headers=None, timeout=10):
     raise last_err
 
 # ── AUTO-DETECTED SERVICES STATE & LOGIC ──
-def load_seen_nonces():
-    try:
-        p_path = "/opt/securepulse/.seen_nonces"
-        if os.path.exists(p_path):
-            with open(p_path, "r") as f:
-                return set(line.strip() for line in f if line.strip())
-    except Exception:
-        pass
-    return set()
-
-def persist_seen_nonce(nonce):
-    try:
-        os.makedirs("/opt/securepulse", exist_ok=True)
-        with open("/opt/securepulse/.seen_nonces", "a") as f:
-            f.write(str(nonce) + "\\n")
-    except Exception:
-        pass
-
-def save_pending_task_result(result_item):
-    try:
-        os.makedirs("/opt/securepulse", exist_ok=True)
-        p_path = "/opt/securepulse/.pending_results.json"
-        items = []
-        if os.path.exists(p_path):
-            try:
-                with open(p_path, "r") as f:
-                    items = json.load(f)
-            except Exception:
-                items = []
-        items = [i for i in items if i.get("task_id") != result_item.get("task_id")]
-        items.append(result_item)
-        with open(p_path, "w") as f:
-            json.dump(items, f)
-    except Exception:
-        pass
-
-def remove_pending_task_result(task_id):
-    try:
-        p_path = "/opt/securepulse/.pending_results.json"
-        if os.path.exists(p_path):
-            with open(p_path, "r") as f:
-                items = json.load(f)
-            items = [i for i in items if i.get("task_id") != task_id]
-            with open(p_path, "w") as f:
-                json.dump(items, f)
-    except Exception:
-        pass
-
 known_services = {{}}
-seen_nonces = load_seen_nonces()
-task_results_queue = []
 last_service_discovery = 0
 
 def mask_secrets(text):
@@ -5951,382 +5770,6 @@ def discover_services(force=False):
             sdata["pid"] = None
 
     return list(known_services.values())
-
-def report_task_result(result_item):
-    if os.environ.get("TESTING"):
-        return True
-    tid = result_item.get("task_id")
-    save_pending_task_result(result_item)
-    for endpoint in ["/api/agent/tasks/result", "/api/agent/push", "/api/agent/event"]:
-        try:
-            req_data = result_item if endpoint == "/api/agent/tasks/result" else {{
-                "server_id": result_item.get("server_id"),
-                "task_results": [result_item],
-                "hostname": get_hostname(),
-                "server_ip": TARGET_IP,
-                "machine_id": get_machine_id()
-            }}
-            res_b = send_agent_request(
-                endpoint,
-                data=json.dumps(req_data).encode("utf-8"),
-                headers={{"Content-Type": "application/json"}},
-                timeout=5
-            )
-            if res_b:
-                remove_pending_task_result(tid)
-                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Task {{tid}} result reported successfully via {{endpoint}}.", flush=True)
-                return True
-        except Exception as e_rep:
-            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Reporting task {{tid}} via {{endpoint}} failed: {{e_rep}}", flush=True)
-            time.sleep(0.5)
-    return False
-
-def task_polling_loop():
-    global ASSIGNED_SERVER_ID
-    while True:
-        try:
-            # Retry unconfirmed task results saved on disk
-            try:
-                p_path = "/opt/securepulse/.pending_results.json"
-                if os.path.exists(p_path):
-                    with open(p_path, "r") as f:
-                        disk_results = json.load(f)
-                    for res_i in (disk_results or []):
-                        report_task_result(res_i)
-            except Exception:
-                pass
-
-            sid = check_assigned_server_id()
-            poll_payload = {{
-                "server_id": sid,
-                "agent_version": AGENT_VERSION,
-                "hostname": get_hostname(),
-                "server_ip": TARGET_IP,
-                "machine_id": get_machine_id()
-            }}
-            res_bytes = None
-            for ep in ["/api/agent/tasks/poll", "/api/agent/tasks"]:
-                try:
-                    res_bytes = send_agent_request(ep, data=json.dumps(poll_payload).encode("utf-8"), timeout=5)
-                    if res_bytes: break
-                except Exception:
-                    continue
-            if res_bytes:
-                res = json.loads(res_bytes.decode())
-                if res.get("server_id") and ASSIGNED_SERVER_ID is None:
-                    ASSIGNED_SERVER_ID = int(res["server_id"])
-                tasks = res.get("tasks", [])
-                if tasks:
-                    print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Poll] Fetched {{len(tasks)}} pending task(s) from SOC backend.", flush=True)
-                    threading.Thread(target=execute_agent_tasks, args=(tasks,), daemon=True).start()
-        except Exception as e_poll:
-            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Poll] Polling error: {{e_poll}}", flush=True)
-        time.sleep(5)
-
-def execute_agent_tasks(tasks):
-    global AGENT_TOKEN, seen_nonces, task_results_queue, ASSIGNED_SERVER_ID
-    if not tasks: return
-
-    sid = check_assigned_server_id()
-
-    for task in tasks:
-        tid = task.get("task_id")
-        action = task.get("action", "").lower()
-        service_id = task.get("service_id", "")
-        managed_by = task.get("managed_by", "systemd")
-        unit_name = task.get("unit_name")
-        container_id = task.get("container_id")
-        restart_cmd = task.get("restart_cmd")
-        run_user = task.get("run_user") or "root"
-        nonce = task.get("nonce", "")
-        ts = task.get("timestamp", 0)
-        sig = task.get("signature", "")
-
-        t_start = time.time()
-        print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Starting task {{tid}}: action={{action}}, service={{service_id}}, managed_by={{managed_by}}", flush=True)
-
-        # 1. Missing secret check
-        if not AGENT_TOKEN or str(AGENT_TOKEN).strip() in ("None", "null", ""):
-            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Refusing task {{tid}}: agent has no secret configured.", flush=True)
-            res_item = {{
-                "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 401,
-                "output": "Task rejected: agent has no secret.",
-                "reject_reason": "missing_secret", "duration_ms": int((time.time() - t_start) * 1000)
-            }}
-            task_results_queue.append(res_item)
-            report_task_result(res_item)
-            continue
-
-        # 2. Expiry check (strict 60s window)
-        now = int(time.time())
-        if ts and ts > 0 and abs(now - ts) > 60:
-            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Refusing task {{tid}}: timestamp {{ts}} expired (window 60s, now {{now}}).", flush=True)
-            res_item = {{
-                "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 401,
-                "output": "Task rejected: signature expired (replay protection).",
-                "reject_reason": "timestamp_expired", "duration_ms": int((time.time() - t_start) * 1000)
-            }}
-            task_results_queue.append(res_item)
-            report_task_result(res_item)
-            continue
-
-        # 3. Nonce replay check
-        if nonce and nonce in seen_nonces:
-            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Refusing task {{tid}}: duplicate nonce {{nonce}}.", flush=True)
-            res_item = {{
-                "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 401,
-                "output": "Task rejected: duplicate nonce (replay protection).",
-                "reject_reason": "duplicate_nonce", "duration_ms": int((time.time() - t_start) * 1000)
-            }}
-            task_results_queue.append(res_item)
-            report_task_result(res_item)
-            continue
-        if nonce:
-            seen_nonces.add(nonce)
-            persist_seen_nonce(nonce)
-
-        # 4. Cryptographic HMAC Signature Verification (NO bypasses!)
-        cmd_str = (restart_cmd or "").strip()
-        recipe_hash = hashlib.sha256(cmd_str.encode('utf-8')).hexdigest()[:16]
-        unit_ident = str(unit_name or container_id or "").strip()
-        run_usr = str(run_user or "root").strip()
-        expected_payload = f"{{tid}}:{{action}}:{{service_id}}:{{unit_ident}}:{{run_usr}}:{{recipe_hash}}:{{nonce}}:{{ts}}"
-        expected_sig = hmac.new(AGENT_TOKEN.encode('utf-8'), expected_payload.encode('utf-8'), hashlib.sha256).hexdigest()
-
-        if not hmac.compare_digest(str(sig), expected_sig):
-            print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Cryptographic signature MISMATCH for task {{tid}}. Verification failed.", flush=True)
-            res_item = {{
-                "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 401,
-                "output": "Task rejected: cryptographic signature verification failed (HMAC mismatch).",
-                "reject_reason": "bad_signature", "duration_ms": int((time.time() - t_start) * 1000)
-            }}
-            task_results_queue.append(res_item)
-            report_task_result(res_item)
-            continue
-
-        print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Cryptographic signature VERIFIED successfully for task {{tid}}.", flush=True)
-
-        # 5. Acknowledge task pickup immediately
-        for ep in ["/api/agent/tasks/status", "/api/agent/push"]:
-            try:
-                st_payload = {{"task_id": tid, "status": "acknowledged", "server_id": sid}}
-                send_agent_request(ep, data=json.dumps(st_payload).encode("utf-8"), timeout=3)
-                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Acknowledged task {{tid}} via {{ep}}.", flush=True)
-                break
-            except Exception:
-                pass
-
-        # 6. Report running state
-        for ep in ["/api/agent/tasks/status", "/api/agent/push"]:
-            try:
-                st_payload = {{"task_id": tid, "status": "running", "server_id": sid}}
-                send_agent_request(ep, data=json.dumps(st_payload).encode("utf-8"), timeout=3)
-                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Transitioned task {{tid}} to 'running' state via {{ep}}.", flush=True)
-                break
-            except Exception:
-                pass
-
-        # 7. Action: rescan
-        if action == "rescan":
-            discover_services(force=True)
-            res_item = {{
-                "server_id": sid, "task_id": tid, "status": "succeeded", "exit_code": 0,
-                "output": f"Service rescan completed: {{len(known_services)}} services detected.",
-                "duration_ms": int((time.time() - t_start) * 1000)
-            }}
-            task_results_queue.append(res_item)
-            report_task_result(res_item)
-            continue
-
-        # 8. Protected Services Verification
-        target_check = (unit_name or service_id or "").lower()
-        if any(p == target_check or p in target_check for p in ["sshd", "ssh.service", "securepulse", "auditd"]):
-            res_item = {{
-                "server_id": sid, "task_id": tid, "status": "rejected", "exit_code": 400,
-                "output": "Refused: Service '" + str(target_check) + "' is protected and cannot be modified.",
-                "reject_reason": "protected_service", "duration_ms": int((time.time() - t_start) * 1000)
-            }}
-            task_results_queue.append(res_item)
-            report_task_result(res_item)
-            continue
-
-        # 9. Shell character check
-        bad_chars = [';', '&', '|', chr(96), chr(36), '(', ')', '<', '>', chr(10)]
-        if any(c in (unit_name or '') for c in bad_chars) or any(c in (container_id or '') for c in bad_chars):
-            res_item = {{
-                "server_id": sid, "task_id": tid, "status": "rejected", "exit_code": 400,
-                "output": "Refused: Illegal shell injection characters in target identifier.",
-                "reject_reason": "shell_injection", "duration_ms": int((time.time() - t_start) * 1000)
-            }}
-            task_results_queue.append(res_item)
-            report_task_result(res_item)
-            continue
-
-        # 10. Pre-restart syntax verification for HAProxy & Nginx
-        if "haproxy" in target_check and action in ("restart", "reload"):
-            cfg_file = "/etc/haproxy/haproxy.cfg"
-            chk_cmd = ["haproxy", "-c", "-f", cfg_file] if os.path.isfile(cfg_file) else ["haproxy", "-c", "-q"]
-            p_chk = subprocess.run(chk_cmd, capture_output=True, text=True)
-            if p_chk.returncode != 0:
-                err_out = (p_chk.stdout + chr(10) + p_chk.stderr).strip()
-                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] HAProxy config validation FAILED: {{err_out}}", flush=True)
-                res_item = {{
-                    "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 400,
-                    "output": f"Pre-restart config check failed (haproxy -c): {{err_out}}",
-                    "reject_reason": "config_test_failed", "duration_ms": int((time.time() - t_start) * 1000)
-                }}
-                task_results_queue.append(res_item)
-                report_task_result(res_item)
-                continue
-
-        if "nginx" in target_check and action in ("restart", "reload"):
-            p_chk = subprocess.run(["nginx", "-t"], capture_output=True, text=True)
-            if p_chk.returncode != 0:
-                err_out = (p_chk.stdout + chr(10) + p_chk.stderr).strip()
-                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Nginx config validation FAILED: {{err_out}}", flush=True)
-                res_item = {{
-                    "server_id": sid, "task_id": tid, "status": "failed", "exit_code": 400,
-                    "output": f"Pre-restart config check failed (nginx -t): {{err_out}}",
-                    "reject_reason": "config_test_failed", "duration_ms": int((time.time() - t_start) * 1000)
-                }}
-                task_results_queue.append(res_item)
-                report_task_result(res_item)
-                continue
-
-        # 11. Execute Action
-        exit_code = 1
-        output = ""
-        status_str = "failed"
-        try:
-            if managed_by == "systemd":
-                unit = unit_name or service_id.replace("unit:", "")
-                if not unit.endswith(".service"): unit += ".service"
-                if "haproxy" in unit.lower() and subprocess.run(["which", "systemd-run"], capture_output=True).returncode == 0:
-                    cmd = ["systemd-run", "--no-block", "systemctl", action, unit]
-                else:
-                    cmd = ["systemctl", action, unit]
-                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Executing: {{' '.join(cmd)}}", flush=True)
-                p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-                exit_code = p.returncode
-                out = (p.stdout + p.stderr).strip()
-                time.sleep(1)
-                chk = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True)
-                new_state = chk.stdout.strip()
-                print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Systemd result: exit_code={{exit_code}}, state='{{new_state}}'", flush=True)
-                if exit_code == 0:
-                    status_str = "succeeded"
-                    output = f"systemctl {{action}} {{unit}} succeeded." + chr(10) + "Verification: Unit '" + str(unit) + "' state is '" + str(new_state) + "'."
-                else:
-                    status_str = "failed"
-                    output = f"systemctl {{action}} {{unit}} failed (code {{exit_code}})." + chr(10) + "Verification: Unit '" + str(unit) + "' state is '" + str(new_state) + "'." + (chr(10) + out if out else "")
-
-            elif managed_by == "docker":
-                cid = container_id or service_id.replace("docker:", "")
-                cmd = ["docker", action, cid]
-                p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-                exit_code = p.returncode
-                out = (p.stdout + p.stderr).strip()
-                time.sleep(1)
-                chk = subprocess.run(["docker", "inspect", "-f", "{{{{.State.Status}}}}", cid], capture_output=True, text=True)
-                status_str = "succeeded" if exit_code == 0 else "failed"
-                output = f"docker {{action}} {{cid}} (status: {{chk.stdout.strip()}}): {{out}}"
-
-            elif managed_by == "process":
-                s_data = known_services.get(service_id, {{}})
-                pid_val = s_data.get("pid")
-                cwd_val = s_data.get("working_dir") or ""
-                listen_ports = s_data.get("ports") or []
-
-                if action in ("restart", "stop"):
-                    if pid_val:
-                        try:
-                            subprocess.run(["kill", "-15", str(pid_val)], capture_output=True, timeout=5)
-                        except Exception:
-                            pass
-                        time.sleep(2)
-                        if subprocess.run(["kill", "-0", str(pid_val)], capture_output=True).returncode == 0:
-                            try:
-                                subprocess.run(["kill", "-9", str(pid_val)], capture_output=True, timeout=5)
-                            except Exception:
-                                pass
-                        time.sleep(1)
-
-                if action in ("restart", "start"):
-                    start_cmd = restart_cmd
-                    if not start_cmd:
-                        cand_sh = os.path.join(cwd_val, "bin", "startup.sh") if cwd_val else ""
-                        if cand_sh and os.path.isfile(cand_sh):
-                            start_cmd = f"cd '{{os.path.dirname(cand_sh)}}' && setsid nohup sh ./startup.sh >/dev/null 2>&1 &"
-                        elif cwd_val and os.path.isfile(os.path.join(cwd_val, "startup.sh")):
-                            start_cmd = f"cd '{{cwd_val}}' && setsid nohup sh ./startup.sh >/dev/null 2>&1 &"
-
-                    if start_cmd:
-                        print(f"[{{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}}] [Task Exec] Starting process under user {{run_user}}: {{start_cmd}}", flush=True)
-                        if run_user and run_user != "root":
-                            p = subprocess.run(["su", "-s", "/bin/sh", run_user, "-c", start_cmd], capture_output=True, text=True, timeout=30)
-                        else:
-                            p = subprocess.run(["sh", "-c", start_cmd], capture_output=True, text=True, timeout=30)
-                        time.sleep(2)
-
-                        verified = False
-                        new_pid = None
-                        chk_p = subprocess.run(["pgrep", "-f", str(unit_name or service_id)], capture_output=True, text=True)
-                        p_list = chk_p.stdout.strip().split()
-                        if p_list:
-                            new_pid = p_list[-1]
-                            verified = True
-
-                        if not verified and listen_ports:
-                            chk_net = subprocess.run(["ss", "-tulpn"], capture_output=True, text=True)
-                            for pt in listen_ports:
-                                if f":{{pt}}" in chk_net.stdout:
-                                    verified = True
-                                    break
-
-                        if verified or p.returncode == 0:
-                            exit_code = 0
-                            status_str = "succeeded"
-                            output = f"Process service {{action}} succeeded." + (f" New PID: {{new_pid}}." if new_pid else "")
-                        else:
-                            exit_code = 1
-                            status_str = "failed"
-                            output = "Process startup script executed, but verification failed."
-                    else:
-                        exit_code = 1
-                        status_str = "failed"
-                        output = "No valid startup command or working directory found for this process service."
-                elif action == "stop":
-                    exit_code = 0
-                    status_str = "succeeded"
-                    output = f"Process service {{service_id}} stopped."
-            else:
-                exit_code = 400
-                status_str = "failed"
-                output = "Unknown managed_by type: " + str(managed_by)
-
-        except subprocess.TimeoutExpired:
-            exit_code = 124
-            status_str = "failed"
-            output = "Execution timed out after 60 seconds."
-        except Exception as ex_exec:
-            exit_code = 1
-            status_str = "failed"
-            output = "Execution error: " + str(ex_exec)
-
-        discover_services(force=True)
-
-        dur_ms = int((time.time() - t_start) * 1000)
-
-        result_item = {{
-            "server_id": sid,
-            "task_id": tid,
-            "status": status_str,
-            "exit_code": exit_code,
-            "output": mask_secrets(output),
-            "duration_ms": dur_ms
-        }}
-        task_results_queue.append(result_item)
-        report_task_result(result_item)
 
 def get_hostname():
     try: return socket.gethostname()
@@ -7563,9 +7006,6 @@ def main():
     # Initial background inventory collection on agent startup (Agent v1.6)
     threading.Thread(target=collect_and_send_inventory, kwargs={{"force_full": True}}, daemon=True).start()
 
-    # Dedicated fast 5-second task polling thread (Agent v1.7)
-    threading.Thread(target=task_polling_loop, daemon=True).start()
-
     push_count = 0
     while True:
         try:
@@ -7615,8 +7055,7 @@ def main():
                 "file_changes": file_changes,
                 "audit_events": audit_events,
                 "discovered_log_paths": list(discovered_paths.keys()),
-                "detected_services": discover_services(),
-                "task_results": task_results_queue[:]
+                "detected_services": discover_services()
             }}
 
             data = json.dumps(payload).encode("utf-8")
@@ -7652,7 +7091,7 @@ def main():
                 commit_audit_checkpoint()
             except:
                 pass
-            # Cache server_id returned from SOC so execute_agent_tasks can use it immediately
+            # Cache server_id returned from SOC
             if res_data.get("server_id") and ASSIGNED_SERVER_ID is None:
                 ASSIGNED_SERVER_ID = int(res_data["server_id"])
             elif sid and ASSIGNED_SERVER_ID is None:
@@ -7670,13 +7109,6 @@ def main():
             # On-demand inventory scan requested from SOC ("Scan now" button)
             if res_data.get("inventory_scan_requested"):
                 threading.Thread(target=collect_and_send_inventory, kwargs={{"force_full": True}}, daemon=True).start()
-
-            # Clear delivered task results
-            task_results_queue.clear()
-
-            # Process pending signed tasks from SOC Command Center
-            if res_data.get("pending_tasks"):
-                threading.Thread(target=execute_agent_tasks, args=(res_data.get("pending_tasks"),), daemon=True).start()
 
             # Also push structured logs
             if log_lines:
@@ -8300,39 +7732,49 @@ async def api_promote_alert(alert_id: int, request: Request):
 
 
 @app.get("/api/cases")
-async def api_get_cases():
+async def api_get_cases(request: Request = None):
     conn = db.get_db_connection()
     cases = []
     if conn:
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM cases ORDER BY id DESC LIMIT 50;")
+                cur.execute("SELECT * FROM cases ORDER BY id DESC LIMIT 100;")
                 cases = [dict(r) for r in cur.fetchall()]
         except Exception:
             pass
         finally:
             conn.close()
     if not cases:
-        incidents = db.get_incidents()
+        inc_data = db.get_incidents()
+        incidents = inc_data.get("items", []) if isinstance(inc_data, dict) else (inc_data or [])
         if incidents:
-            cases = [{"id": inc.get("id"), "title": inc.get("title"), "status": inc.get("status", "open"), "priority": inc.get("severity", "warning"), "due_at": None, "created_at": str(inc.get("created_at"))} for inc in incidents]
+            cases = [{
+                "id": inc.get("id"),
+                "title": inc.get("title") or inc.get("alert_type") or "Security Incident",
+                "status": inc.get("status", "open"),
+                "priority": inc.get("severity", "warning"),
+                "server_id": inc.get("server_id"),
+                "due_at": None,
+                "created_at": str(inc.get("created_at") or datetime.now().isoformat())
+            } for inc in incidents[:100]]
         else:
             cases = [
-                {"id": 101, "title": "Unauthorized Sudo Escalation Incident", "status": "open", "priority": "critical", "due_at": None, "created_at": datetime.now().isoformat()},
-                {"id": 102, "title": "External SSH Brute Force Infiltration", "status": "investigating", "priority": "high", "due_at": None, "created_at": datetime.now().isoformat()}
+                {"id": 101, "title": "Unauthorized Sudo Escalation Incident", "status": "open", "priority": "critical", "server_id": None, "due_at": None, "created_at": datetime.now().isoformat()},
+                {"id": 102, "title": "External SSH Brute Force Infiltration", "status": "investigating", "priority": "high", "server_id": None, "due_at": None, "created_at": datetime.now().isoformat()}
             ]
     return cases
 
 @app.get("/api/cases/{case_id}/details")
 async def api_get_case_details(case_id: int):
-    incidents = db.get_incidents()
+    inc_data = db.get_incidents()
+    incidents = inc_data.get("items", []) if isinstance(inc_data, dict) else (inc_data or [])
     inc = None
     for i in incidents:
         if i.get("id") == case_id:
             inc = i
             break
     if not inc:
-        inc = {"id": case_id, "title": f"Investigation Case #{case_id}", "status": "open", "priority": "high", "due_at": None, "created_at": datetime.now().isoformat()}
+        inc = {"id": case_id, "title": f"Investigation Case #{case_id}", "status": "open", "priority": "high", "server_id": None, "due_at": None, "created_at": datetime.now().isoformat()}
     return {"ok": True, "case": inc}
 
 # Agent Approvals APIs
@@ -9008,272 +8450,6 @@ async def api_get_detected_services(server_id: int, request: Request):
     services = db.get_detected_services(server_id)
     return {"ok": True, "services": services}
 
-@app.post("/api/servers/{server_id}/services/action")
-@app.post("/api/assets/{server_id}/services/action")
-async def api_service_action(server_id: int, request: Request):
-    client_ip = request.client.host if request.client else None
-    user = get_session_user(request)
-    uname = user.get("username", "anonymous") if user else "anonymous"
-
-    if not is_admin_user(request):
-        db.log_audit(uname, "DENIED", "server", server_id, "Non-admin attempted service action", ip_address=client_ip)
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-
-    has_access, err_msg = verify_server_project_scope(server_id, request)
-    if not has_access:
-        db.log_audit(uname, "DENIED", "server", server_id, f"Project boundary violation: {err_msg}", ip_address=client_ip)
-        return JSONResponse(status_code=403, content={"ok": False, "message": err_msg})
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    service_id = (body.get("service_id") or "").strip()
-    action = (body.get("action") or "").strip().lower()
-    reason = (body.get("reason") or "").strip()
-
-    if action not in ("restart", "stop", "start"):
-        return JSONResponse(status_code=400, content={"ok": False, "message": "Invalid action. Must be start, stop, or restart."})
-
-    if not service_id:
-        return JSONResponse(status_code=400, content={"ok": False, "message": "service_id is required."})
-
-    # Shell injection defense: strict alphanumeric, colons, dots, underscores, dashes, at-signs
-    if re.search(r'[;&|`$()<>' + chr(10) + r'\s]', service_id):
-        db.log_audit(uname, "SECURITY_TAMPER_ATTEMPT", "server", server_id, f"Illegal characters in service_id: {service_id}", ip_address=client_ip)
-        return JSONResponse(status_code=400, content={"ok": False, "message": "Invalid service identifier: Illegal shell characters detected."})
-
-    # Check protected services
-    service_id_lower = service_id.lower()
-    for protected in PROTECTED_SYSTEM_SERVICES:
-        if protected in service_id_lower:
-            return JSONResponse(status_code=400, content={
-                "ok": False,
-                "message": f"Protected system service '{service_id}' cannot be stopped or restarted from the dashboard."
-            })
-
-    # Stop action requires non-empty reason
-    if action == "stop" and not reason:
-        return JSONResponse(status_code=400, content={"ok": False, "message": "Reason is required before stopping a service."})
-
-    # Rate limiting: 1 pending action per service, 10s cooldown
-    recent = db.get_recent_service_action(server_id, service_id, seconds=10)
-    if recent:
-        st = recent.get("status")
-        if st in ("pending", "dispatched", "running"):
-            return JSONResponse(status_code=429, content={
-                "ok": False,
-                "message": f"Action '{recent.get('action')}' is already in progress for '{service_id}'. Please wait for completion or cancel it."
-            })
-        else:
-            return JSONResponse(status_code=429, content={
-                "ok": False,
-                "message": f"Cooldown active: A service action for '{service_id}' was recently executed. Ready to retry shortly."
-            })
-
-    # Resolve service attributes from detected or managed services
-    detected_list = db.get_detected_services(server_id)
-    managed_list = db.get_managed_services(server_id)
-
-    target_service = None
-    for s in detected_list:
-        if s.get("id") == service_id or s.get("unit_name") == service_id or s.get("name") == service_id:
-            target_service = s
-            break
-    if not target_service:
-        for s in managed_list:
-            if s.get("name") == service_id or s.get("unit_name") == service_id:
-                target_service = s
-                break
-
-    if not target_service:
-        return JSONResponse(status_code=400, content={"ok": False, "message": f"Service '{service_id}' not found in asset services inventory."})
-
-    managed_by = target_service.get("managed_by") or ("systemd" if target_service.get("unit_name") else "process")
-    s_full = (str(service_id) + " " + str(target_service.get("name") or "") + " " + str(target_service.get("type") or "")).lower()
-    if ("tomcat" in s_full or "catalina" in s_full) and not target_service.get("unit_name"):
-        managed_by = "process"
-    unit_name = target_service.get("unit_name")
-    container_id = target_service.get("container_id")
-    # For systemd services, restart_cmd is strictly None (systemctl action unit only)
-    if managed_by == "systemd":
-        restart_cmd = None
-    else:
-        raw_cmd = target_service.get("restart_cmd") or ""
-        # Strip control characters (\x00-\x1f) and transient arguments (-sf <pid>, sockpair)
-        clean_cmd = re.sub(r'[\x00-\x1f\x7f]', '', raw_cmd).strip()
-        clean_cmd = re.sub(r'-sf\s+\d+', '', clean_cmd)
-        clean_cmd = re.sub(r'-x\s+sockpair@\d+', '', clean_cmd)
-        restart_cmd = clean_cmd if clean_cmd else None
-    run_user = target_service.get("user") or target_service.get("run_user") or "root"
-
-    # Queue task
-    task_id = db.create_agent_task(
-        server_id=server_id,
-        action=action,
-        service_id=service_id,
-        managed_by=managed_by,
-        unit_name=unit_name,
-        container_id=container_id,
-        restart_cmd=restart_cmd,
-        run_user=run_user,
-        reason=reason,
-        created_by=uname
-    )
-
-    if not task_id:
-        return JSONResponse(status_code=500, content={"ok": False, "message": "Failed to queue agent task."})
-
-    db.log_audit(
-        uname, "SERVICE_ACTION_REQUESTED", "server", server_id,
-        f"Queued '{action}' for service '{service_id}'. Reason: {reason or 'N/A'}",
-        ip_address=client_ip
-    )
-
-    return {"ok": True, "task_id": task_id, "message": f"Service action '{action}' queued successfully."}
-
-@app.get("/api/servers/{server_id}/tasks/{task_id}")
-@app.get("/api/assets/{server_id}/tasks/{task_id}")
-async def api_get_task_status(server_id: int, task_id: str, request: Request):
-    has_access, err_msg = verify_server_project_scope(server_id, request)
-    if not has_access:
-        return JSONResponse(status_code=403, content={"ok": False, "message": err_msg})
-    task = db.get_agent_task(task_id)
-    if not task:
-        return JSONResponse(status_code=404, content={"ok": False, "message": "Task not found."})
-    srv = db.get_server_by_id(server_id) or {}
-    last_seen_dt = srv.get("last_seen")
-    last_seen_str = str(last_seen_dt) if last_seen_dt else "never"
-    server_info = {
-        "id": server_id,
-        "hostname": srv.get("hostname", ""),
-        "ip": srv.get("ip_address") or srv.get("ip") or "",
-        "status": srv.get("status", "unknown"),
-        "agent_version": srv.get("agent_version", "unknown"),
-        "last_seen": last_seen_str,
-        "is_online": srv.get("status") == "online"
-    }
-    return {"ok": True, "task": task, "server": server_info}
-
-@app.post("/api/servers/{server_id}/tasks/{task_id}/cancel")
-@app.post("/api/assets/{server_id}/tasks/{task_id}/cancel")
-async def api_cancel_task(server_id: int, task_id: str, request: Request):
-    if not is_admin_user(request):
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    has_access, err_msg = verify_server_project_scope(server_id, request)
-    if not has_access:
-        return JSONResponse(status_code=403, content={"ok": False, "message": err_msg})
-    user = get_session_user(request)
-    uname = user.get("username", "admin") if user else "admin"
-    cancelled = db.cancel_agent_task(server_id, task_id, cancelled_by=uname)
-    if cancelled:
-        db.log_audit(uname, "SERVICE_ACTION_CANCELLED", "server", server_id, f"Cancelled agent task {task_id}")
-        return {"ok": True, "message": "Task cancelled successfully."}
-    return JSONResponse(status_code=400, content={"ok": False, "message": "Task could not be cancelled (already running or completed)."})
-
-@app.get("/api/admin/tasks/stuck")
-async def api_admin_get_stuck_tasks(request: Request):
-    """Read-only query listing tasks stuck in pending/dispatched/running or timed out."""
-    if not is_admin_user(request):
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    conn = db.get_db_connection()
-    if not conn:
-        return JSONResponse(status_code=500, content={"ok": False, "message": "Database connection failed."})
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, server_id, task_id, action, service_id, managed_by, unit_name,
-                       restart_cmd, status, exit_code, output, created_by, created_at,
-                       picked_up_at, started_at, completed_at, reject_reason,
-                       COALESCE(dispatch_count, 0) as dispatch_count
-                FROM agent_tasks
-                WHERE status IN ('queued', 'pending', 'dispatched', 'running', 'timed out')
-                ORDER BY id DESC;
-            """)
-            rows = cur.fetchall()
-            tasks = [dict(r) for r in rows] if rows else []
-            return {"ok": True, "count": len(tasks), "tasks": tasks}
-    except Exception as e:
-        logger.error(f"Error querying stuck tasks: {e}")
-        return JSONResponse(status_code=500, content={"ok": False, "message": str(e)})
-    finally:
-        conn.close()
-
-@app.post("/api/admin/tasks/stuck/cancel")
-async def api_admin_cancel_stuck_tasks(request: Request):
-    """Admin-confirmed action to cancel stuck/timed-out tasks with an audit entry."""
-    client_ip = request.client.host if request.client else None
-    user = get_session_user(request)
-    uname = user.get("username", "admin") if user else "admin"
-    if not is_admin_user(request):
-        db.log_audit(uname, "DENIED", "server", 0, "Non-admin attempted cancelling stuck tasks", ip_address=client_ip)
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    task_ids = body.get("task_ids")
-    conn = db.get_db_connection()
-    if not conn:
-        return JSONResponse(status_code=500, content={"ok": False, "message": "Database connection failed."})
-    try:
-        with conn.cursor() as cur:
-            if task_ids and isinstance(task_ids, list):
-                cur.execute("""
-                    UPDATE agent_tasks
-                    SET status = 'cancelled', output = %s, completed_at = NOW()
-                    WHERE task_id = ANY(%s) AND status IN ('queued', 'pending', 'dispatched', 'running', 'timed out')
-                    RETURNING task_id;
-                """, (f"Cancelled by administrator {uname}.", task_ids))
-            else:
-                cur.execute("""
-                    UPDATE agent_tasks
-                    SET status = 'cancelled', output = %s, completed_at = NOW()
-                    WHERE status IN ('queued', 'pending', 'dispatched', 'running', 'timed out')
-                    RETURNING task_id;
-                """, (f"Cancelled by administrator {uname} (bulk cleanup).",))
-            rows = cur.fetchall()
-            c_ids = [r[0] if not isinstance(r, dict) else r["task_id"] for r in rows] if rows else []
-            conn.commit()
-            db.log_audit(uname, "TASKS_CLEANUP_CANCELLED", "server", 0, f"Cancelled {len(c_ids)} stuck/timed-out tasks: {c_ids}", ip_address=client_ip)
-            return {"ok": True, "cancelled_count": len(c_ids), "task_ids": c_ids}
-    except Exception as e:
-        logger.error(f"Error cancelling stuck tasks: {e}")
-        return JSONResponse(status_code=500, content={"ok": False, "message": str(e)})
-    finally:
-        conn.close()
-
-@app.get("/api/admin/servers/duplicates")
-async def api_admin_get_duplicate_servers(request: Request):
-    """Read-only query identifying duplicate server records (same IP/hostname/machine-id) for reviewed merge."""
-    if not is_admin_user(request):
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    conn = db.get_db_connection()
-    if not conn:
-        return JSONResponse(status_code=500, content={"ok": False, "message": "Database connection failed."})
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT 
-                    COALESCE(NULLIF(ip_address, ''), NULLIF(ip, '')) as resolved_ip,
-                    hostname,
-                    machine_id,
-                    array_agg(id ORDER BY id ASC) as server_ids,
-                    count(*) as duplicate_count
-                FROM servers
-                GROUP BY resolved_ip, hostname, machine_id
-                HAVING count(*) > 1;
-            """)
-            rows = cur.fetchall()
-            duplicates = [dict(r) for r in rows] if rows else []
-            return {"ok": True, "count": len(duplicates), "duplicates": duplicates}
-    except Exception as e:
-        logger.error(f"Error checking duplicate servers: {e}")
-        return JSONResponse(status_code=500, content={"ok": False, "message": str(e)})
-    finally:
-        conn.close()
-
 @app.post("/api/servers/{server_id}/services/rescan")
 @app.post("/api/assets/{server_id}/services/rescan")
 async def api_rescan_services(server_id: int, request: Request):
@@ -9290,133 +8466,14 @@ async def api_rescan_services(server_id: int, request: Request):
     if fresh_services:
         db.save_detected_services(server_id, fresh_services)
 
-    task_id = db.create_agent_task(
-        server_id=server_id,
-        action="rescan",
-        service_id="all",
-        managed_by="systemd",
-        created_by=uname
-    )
-    db.log_audit(uname, "SERVICE_RESCAN_REQUESTED", "server", server_id, "Triggered service discovery rescan", ip_address=client_ip)
-    return {"ok": True, "task_id": task_id, "services": fresh_services, "message": "Service rescan dispatched to agent."}
-
-@app.post("/api/servers/{server_id}/services/pin")
-@app.post("/api/assets/{server_id}/services/pin")
-async def api_pin_service(server_id: int, request: Request):
-    client_ip = request.client.host if request.client else None
-    user = get_session_user(request)
-    uname = user.get("username", "anonymous") if user else "anonymous"
-
-    if not is_admin_user(request):
-        db.log_audit(uname, "DENIED", "server", server_id, "Non-admin attempted to pin service", ip_address=client_ip)
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-
-    try: body = await request.json()
-    except Exception: body = {}
-    s_obj = body.get("service") or {}
-    s_name = s_obj.get("name") or s_obj.get("unit_name")
-    if not s_name:
-        return JSONResponse(status_code=400, content={"ok": False, "message": "Service details required."})
-
-    managed = db.get_managed_services(server_id)
-    managed = [s for s in managed if s.get("name", "").lower() != s_name.lower()]
-    managed.append({
-        "name": s_name,
-        "user": s_obj.get("user") or "root",
-        "path": s_obj.get("cmdline") or s_obj.get("unit_name") or "",
-        "unit_name": s_obj.get("unit_name"),
-        "managed_by": s_obj.get("managed_by", "systemd"),
-        "restart_cmd": s_obj.get("restart_cmd") or ""
-    })
-    db.save_managed_services(server_id, managed)
-    db.log_audit(uname, "PIN_MANAGED_SERVICE", "server", server_id, f"Pinned service '{s_name}' to managed playbook", ip_address=client_ip)
-    return {"ok": True, "services": managed, "message": f"Pinned '{s_name}' to managed services."}
-
-@app.get("/api/servers/{server_id}/services")
-@app.get("/api/assets/{server_id}/services")
-async def api_get_services(server_id: int):
-    services = db.get_managed_services(server_id)
-    return {"ok": True, "services": services}
-
-@app.post("/api/servers/{server_id}/services")
-@app.post("/api/assets/{server_id}/services")
-async def api_add_service(server_id: int, request: Request):
-    if not is_admin_user(request):
-        uname = request.session.get('username', 'anonymous')
-        client_ip = request.client.host if request.client else None
-        db.log_audit(uname, 'DENIED', 'server', server_id, "Non-admin attempted to add managed service", ip_address=client_ip)
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    body = await request.json()
-    name = body.get("name", "").strip()
-    user = body.get("user", "root").strip()
-    path = body.get("path", "").strip()
-    restart_cmd = body.get("restart_cmd", "").strip()
-
-    if not name or not path:
-        return JSONResponse(status_code=400, content={"ok": False, "message": "Name and Path are required"})
-
-    services = db.get_managed_services(server_id)
-    # Remove if existing service with same name
-    services = [s for s in services if s.get("name", "").lower() != name.lower()]
-    services.append({
-        "name": name,
-        "user": user,
-        "path": path,
-        "restart_cmd": restart_cmd
-    })
-    ok = db.save_managed_services(server_id, services)
-    if not ok:
-        return JSONResponse(status_code=500, content={"ok": False, "message": "Failed to persist managed service to database"})
-    uname = request.session.get('username', 'system')
-    db.log_audit(uname, 'ADD_MANAGED_SERVICE', 'server', server_id, f"Added managed service {name}")
-    return {"ok": True, "services": services}
-
-@app.delete("/api/servers/{server_id}/services/{service_name}")
-@app.delete("/api/assets/{server_id}/services/{service_name}")
-async def api_delete_service(server_id: int, service_name: str, request: Request):
-    if not is_admin_user(request):
-        uname = request.session.get('username', 'anonymous')
-        client_ip = request.client.host if request.client else None
-        db.log_audit(uname, 'DENIED', 'server', server_id, f"Non-admin attempted to delete managed service '{service_name}'", ip_address=client_ip)
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    services = db.get_managed_services(server_id)
-    services = [s for s in services if s.get("name", "").lower() != service_name.lower()]
-    ok = db.save_managed_services(server_id, services)
-    if not ok:
-        return JSONResponse(status_code=500, content={"ok": False, "message": "Failed to persist service deletion to database"})
-    uname = request.session.get('username', 'system')
-    db.log_audit(uname, 'DELETE_MANAGED_SERVICE', 'server', server_id, f"Deleted managed service {service_name}")
-    return {"ok": True, "services": services}
-
-@app.post("/api/servers/{server_id}/restart-services")
-@app.post("/api/assets/{server_id}/restart-services")
-async def api_restart_all_services(server_id: int, request: Request):
-    if not is_admin_user(request):
-        uname = request.session.get('username', 'anonymous')
-        client_ip = request.client.host if request.client else None
-        db.log_audit(uname, 'DENIED', 'server', server_id, "Non-admin attempted to run restart playbook", ip_address=client_ip)
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    results = db.restart_managed_services(server_id)
-    uname = request.session.get('username', 'system')
-    db.log_audit(uname, 'RUN_RESTART_PLAYBOOK', 'server', server_id, f"Executed restart playbook on {len(results)} services")
-    return {"ok": True, "results": results}
-
-@app.post("/api/servers/{server_id}/services/{service_name}/restart")
-@app.post("/api/assets/{server_id}/services/{service_name}/restart")
-async def api_restart_single_service(server_id: int, service_name: str, request: Request):
-    if not is_admin_user(request):
-        uname = request.session.get('username', 'anonymous')
-        client_ip = request.client.host if request.client else None
-        db.log_audit(uname, 'DENIED', 'server', server_id, f"Non-admin attempted to restart service '{service_name}'", ip_address=client_ip)
-        return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
-    results = db.restart_managed_services(server_id, service_name=service_name)
-    return {"ok": True, "results": results}
+    db.log_audit(uname, "SERVICE_RESCAN_REQUESTED", "server", server_id, "Triggered read-only service discovery refresh", ip_address=client_ip)
+    return {"ok": True, "services": fresh_services, "message": "Service discovery refreshed."}
 
 @app.get("/api/servers/{server_id}/export-report")
 async def api_export_server_report(server_id: int):
     server = db.get_server_by_id(server_id)
     events = db.get_server_events(server_id, 50)
-    services = db.get_managed_services(server_id)
+    services = db.get_detected_services(server_id)
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -13142,6 +12199,9 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                 total_events_in_db = get_scalar(cur.fetchone(), 0)
 
                 cap_limit = 5000 if output_format != "csv" else 50000
+                if "info" in req_severities_clean and output_format != "csv":
+                    cap_limit = 500
+
                 cur.execute(f"""
                     SELECT id, event_time, node, source_type, event_type, client_ip, user_name, method, url_path, status_code, severity, status, closed_by, closed_at, closed_note
                     FROM app_events
@@ -13170,6 +12230,12 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                 else:
                     where_clauses.append("i.last_event_at >= %s AND i.last_event_at <= %s")
                     params.extend([start_dt, end_dt])
+
+                    # Apply severity filter to Incidents in SQL
+                    if req_severities_clean:
+                        where_clauses.append("LOWER(i.severity) = ANY(%s)")
+                        params.append(req_severities_clean)
+
                     if apply_filters:
                         if status_filter == "open":
                             where_clauses.append("i.status IN ('Open', 'Investigating', 'open')")
@@ -13217,36 +12283,45 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                         elif status_filter == "closed":
                             where_clauses.append("s.status = 'closed'")
 
+                user_params = list(params)
+                user_filter_sql = ""
+                if req_severities_clean:
+                    user_filter_sql = "WHERE LOWER(u.peak_severity) = ANY(%s)"
+                    user_params.append(req_severities_clean)
+
                 cur.execute(f"""
-                    SELECT 
-                        COALESCE(e.user_name, e.client_ip) AS identifier,
-                        e.client_ip,
-                        e.user_name,
-                        COUNT(*) AS total_requests,
-                        COUNT(*) FILTER (WHERE e.severity IN ('medium', 'high', 'critical')) AS attack_events,
-                        MAX(e.event_time) AS last_seen,
-                        MIN(e.event_time) AS first_seen,
-                        CASE 
-                            WHEN bool_or(e.severity = 'critical') THEN 'critical'
-                            WHEN bool_or(e.severity = 'high') THEN 'high'
-                            WHEN bool_or(e.severity = 'medium') THEN 'medium'
-                            WHEN bool_or(e.severity = 'low') THEN 'low'
-                            ELSE 'info'
-                        END AS peak_severity,
-                        MAX(e.url_path) AS recent_path,
-                        COALESCE(s.status, 'open') as status,
-                        s.closed_by, s.closed_at, s.closed_note
-                    FROM app_events e
-                    LEFT JOIN app_user_status s ON s.application_id = e.application_id AND s.identifier = COALESCE(e.user_name, e.client_ip)
-                    WHERE {' AND '.join(where_clauses)}
-                    GROUP BY COALESCE(e.user_name, e.client_ip), e.client_ip, e.user_name, s.status, s.closed_by, s.closed_at, s.closed_note
+                    SELECT * FROM (
+                        SELECT 
+                            COALESCE(e.user_name, e.client_ip) AS identifier,
+                            e.client_ip,
+                            e.user_name,
+                            COUNT(*) AS total_requests,
+                            COUNT(*) FILTER (WHERE e.severity IN ('medium', 'high', 'critical')) AS attack_events,
+                            MAX(e.event_time) AS last_seen,
+                            MIN(e.event_time) AS first_seen,
+                            CASE 
+                                WHEN bool_or(e.severity = 'critical') THEN 'critical'
+                                WHEN bool_or(e.severity = 'high') THEN 'high'
+                                WHEN bool_or(e.severity = 'medium') THEN 'medium'
+                                WHEN bool_or(e.severity = 'low') THEN 'low'
+                                ELSE 'info'
+                            END AS peak_severity,
+                            MAX(e.url_path) AS recent_path,
+                            COALESCE(s.status, 'open') as status,
+                            s.closed_by, s.closed_at, s.closed_note
+                        FROM app_events e
+                        LEFT JOIN app_user_status s ON s.application_id = e.application_id AND s.identifier = COALESCE(e.user_name, e.client_ip)
+                        WHERE {' AND '.join(where_clauses)}
+                        GROUP BY COALESCE(e.user_name, e.client_ip), e.client_ip, e.user_name, s.status, s.closed_by, s.closed_at, s.closed_note
+                    ) u
+                    {user_filter_sql}
                     ORDER BY 
-                        (CASE WHEN e.user_name IS NOT NULL AND e.user_name != '-' AND e.user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
+                        (CASE WHEN u.user_name IS NOT NULL AND u.user_name != '-' AND u.user_name != 'Anonymous' THEN 0 ELSE 1 END) ASC,
                         last_seen DESC,
                         attack_events DESC,
                         total_requests DESC
                     LIMIT 2000;
-                """, tuple(params))
+                """, tuple(user_params))
                 raw_users = cur.fetchall()
                 total_users_in_db = len(raw_users)
                 for r in raw_users:
@@ -13313,8 +12388,14 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                 ip_address=client_ip
             )
 
-            is_capped = len(events_data) >= 5000
-            cap_note = f"Showing 5,000 of {total_events_in_db:,} matching rows. Download CSV for full dataset." if is_capped else None
+            is_info_capped = bool("info" in req_severities_clean and output_format != "csv" and len(events_data) >= 500)
+            is_capped = len(events_data) >= 5000 or is_info_capped
+            if is_info_capped:
+                cap_note = "Event rows capped at 500 (INFO enabled). Export to CSV for complete historical dataset."
+            elif is_capped:
+                cap_note = f"Showing 5,000 of {total_events_in_db:,} matching rows. Download CSV for full dataset."
+            else:
+                cap_note = None
 
             return {
                 "status": "ok",

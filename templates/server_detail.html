@@ -115,14 +115,14 @@
     </div>
     {% endif %}
 
-    {% if server.agent_version and server.agent_version < '1.7.0' %}
+    {% if server.agent_version and server.agent_version < '2.0.0' %}
     <div class="card glass fade-in" style="background:rgba(245,158,11,0.08); border:1px solid var(--amber); margin-bottom:20px">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 18px">
             <div style="display:flex; align-items:center; gap:12px">
                 <span style="font-size:20px">⚠️</span>
                 <div>
                     <strong style="color:var(--amber); font-size:12px">Push Agent Outdated (v{{ server.agent_version }}):</strong>
-                    <span style="font-size:11px; color:var(--text2)">Target node is running an older agent version. Fast service restart/stop and automated task execution require Agent v1.7.0+.</span>
+                    <span style="font-size:11px; color:var(--text2)">Target node is running an older agent version. Upgrade to Agent v2.0.0 (Pure Detection & Telemetry). Remote service control has been decommissioned.</span>
                 </div>
             </div>
             <div style="display:flex; gap:8px; align-items:center">
@@ -179,10 +179,10 @@
                         <span id="maint-status-text" class="text-sub">Maintenance Disabled</span>
                     </div>
                     
-                    <div id="maint-window-section" style="display:none">
+                    <div id="maint-window-section" style="display:none; margin-top:14px">
                         <label class="text-sub" style="display:block; margin-bottom:8px; font-size:11px">Set Timed Maintenance Window</label>
                         <div style="display:flex; gap:10px">
-                            <select id="maint-hours" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; flex:1; font-size:11px">
+                            <select id="maint-hours" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:5px 10px; border-radius:4px; max-width:200px; font-size:11px">
                                 <option value="1">1 Hour</option>
                                 <option value="2">2 Hours</option>
                                 <option value="4">4 Hours</option>
@@ -194,30 +194,10 @@
                         <p id="maint-until-text" class="text-meta" style="margin-top:10px; color:var(--amber); font-size:11px"></p>
                     </div>
                 </div>
-
-                <!-- Pinned Managed Services (Restart Playbook) -->
-                <div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-                        <div>
-                            <h4 style="color:var(--cyan); font-size:14px; letter-spacing:1px; margin:0">PINNED SERVICES (RESTART PLAYBOOK)</h4>
-                            <p class="text-sub" style="font-size:11px; margin:2px 0 0 0">Services pinned to automated sequential restart playbook</p>
-                        </div>
-                        {% if can_manage_services %}
-                        <button type="button" class="btn btn-primary" id="btn-run-playbook" style="padding:4px 12px; font-size:11px" onclick="restartServices()">
-                            ▶ Run Restart Playbook
-                        </button>
-                        {% else %}
-                        <span class="badge badge-gray" style="font-size:10px" title="Admin only">Admin only</span>
-                        {% endif %}
-                    </div>
-                    <div id="services-list" style="display:flex; flex-direction:column; gap:8px; max-height:160px; overflow-y:auto; margin-bottom:10px">
-                        <div class="center-spinner"><div class="spinner" style="width:20px; height:20px"></div></div>
-                    </div>
-                </div>
             </div>
 
             <!-- Auto-Detected Services Section -->
-            <div style="margin-bottom:25px">
+            <div style="margin-bottom:10px">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:14px">
                     <div>
                         <h4 style="color:var(--cyan); font-size:14px; letter-spacing:1px; margin:0; display:flex; align-items:center; gap:8px">
@@ -282,7 +262,7 @@
                                 <th style="padding:10px 12px">CPU / RAM</th>
                                 <th style="padding:10px 12px">User</th>
                                 <th style="padding:10px 12px">Managed By</th>
-                                <th style="padding:10px 12px; text-align:right">Actions</th>
+                                <th style="padding:10px 12px">Evidence</th>
                             </tr>
                         </thead>
                         <tbody id="detected-services-tbody">
@@ -291,132 +271,35 @@
                     </table>
                 </div>
             </div>
-
-            <!-- Manual Add Service Form (Fallback) -->
-            <div style="background:rgba(0,200,255,0.02); border:1px dashed var(--border); padding:16px; border-radius:6px">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
-                    <p class="text-meta" style="margin:0; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:var(--cyan)">Add Manual Service Fallback (For unlisted custom processes)</p>
-                    {% if not can_manage_services %}
-                    <span class="badge badge-gray" style="font-size:9px">Admin only</span>
-                    {% endif %}
-                </div>
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px">
-                    <input type="text" id="new-service-name" placeholder="Service Name (e.g. Tomcat-1)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if not can_manage_services %}disabled{% endif %}>
-                    <input type="text" id="new-service-user" placeholder="Run as User (e.g. tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if not can_manage_services %}disabled{% endif %}>
-                </div>
-                <div style="margin-bottom:10px">
-                    <input type="text" id="new-service-path" placeholder="Binary/Startup Path (e.g. /opt/tomcat8)" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if not can_manage_services %}disabled{% endif %}>
-                </div>
-                <div style="margin-bottom:12px">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
-                        <label class="text-meta" style="font-size:10px">Optional Restart Command (Admin only · Executed on target host · Secrets masked)</label>
-                    </div>
-                    <input type="text" id="new-service-restart-cmd" placeholder="e.g. pkill -f tomcat && sudo -u mannan sh /app/apache-tomcat/bin/startup.sh" class="mono" style="background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:11px; width:100%" {% if not can_manage_services %}disabled{% endif %}>
-                </div>
-                {% if can_manage_services %}
-                <button type="button" class="btn btn-ghost" style="width:100%; font-size:11px; padding:7px; border-color:var(--cyan)" onclick="addService()">+ Add Managed Service</button>
-                {% else %}
-                <div class="text-meta" style="font-size:10px; text-align:center; color:var(--text-muted)">Manual service additions require Administrator privileges.</div>
-                {% endif %}
-            </div>
         </div>
     </div>
 
-    <!-- Service Action Modal -->
-    <div id="service-action-overlay" onclick="closeServiceActionModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:998; backdrop-filter:blur(4px)"></div>
-    <div id="service-action-modal" class="glass" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:28px; border-radius:var(--radius-lg); z-index:999; width:480px; max-width:90vw; box-shadow:0 30px 80px rgba(0,0,0,0.9); border:1px solid var(--border)">
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px">
-            <h3 id="modal-action-title" style="margin:0; font-size:15px; font-weight:700; letter-spacing:0.5px">SERVICE ACTION</h3>
-            <button class="btn btn-ghost" style="padding:2px 8px; font-size:14px" onclick="closeServiceActionModal()">✕</button>
+    <!-- Audit Subsystem Diagnostics -->
+    <div class="card" style="margin-bottom:20px">
+        <div class="card-header">
+            <h3 class="card-title">&#128737; Audit Subsystem & Attribution Health</h3>
+            <span class="badge badge-success" id="audit-health-badge">SSSD Verified</span>
         </div>
-        
-        <div id="modal-service-details" style="background:var(--bg3); padding:12px 14px; border-radius:6px; margin-bottom:14px; font-size:12px">
-            <div>Asset: <strong style="color:var(--cyan)">{{ server.hostname }}</strong></div>
-            <div style="margin-top:4px">Target Service: <strong id="modal-service-name" class="mono" style="color:var(--text)">—</strong></div>
-            <div style="margin-top:4px">Action: <span id="modal-action-badge" class="badge badge-info">—</span></div>
-        </div>
-
-        <!-- Protected Service Alert -->
-        <div id="modal-protected-alert" style="display:none; background:rgba(255,51,102,0.1); border:1px solid var(--red); color:var(--red); padding:12px; border-radius:6px; font-size:11px; margin-bottom:14px">
-            <strong>⚠️ PROTECTED SERVICE:</strong> This is a protected critical service (<span id="modal-protected-name"></span>) and cannot be stopped or restarted from the dashboard.
-        </div>
-
-        <!-- Dashboard Port Warning Alert -->
-        <div id="modal-dashboard-port-alert" style="display:none; background:rgba(245,158,11,0.1); border:1px solid var(--amber); color:var(--amber); padding:12px; border-radius:6px; font-size:11px; margin-bottom:14px">
-            <strong>⚠️ CAUTION:</strong> This service appears to handle incoming web/dashboard traffic. Stopping it may interrupt your connection to this host.
-        </div>
-
-        <!-- Reason field for Stop action -->
-        <div id="modal-stop-reason-container" style="display:none; margin-bottom:14px">
-            <label class="stat-label" style="display:block; margin-bottom:6px; font-size:10px">REASON FOR STOPPING SERVICE (REQUIRED FOR AUDIT LOG):</label>
-            <input type="text" id="modal-stop-reason" placeholder="e.g. Scheduled upgrade, memory leak triage..." class="mono" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 10px; border-radius:4px; font-size:11px">
-        </div>
-
-        <!-- Progress & Result Box -->
-        <div id="modal-progress-box" style="display:none; margin-bottom:14px; background:var(--bg2); border:1px solid var(--border); padding:12px; border-radius:6px">
-            <div id="modal-progress-status" style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:600">
-                <div class="spinner" style="width:16px; height:16px"></div>
-                <span>Dispatching signed command to agent...</span>
+        <div class="card-body" style="padding:16px; font-size:12px; line-height:1.7">
+            <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
+                <span class="text-sub">Domain User NSS Resolution:</span>
+                <strong style="color:var(--green)" id="diag-nss-status">&#10003; SSSD (BCITSJAIINFRA.LOCAL)</strong>
             </div>
-            <pre id="modal-progress-output" class="mono" style="margin-top:10px; max-height:140px; overflow-y:auto; font-size:10px; background:var(--bg3); padding:8px; border-radius:4px; color:var(--text2); white-space:pre-wrap; display:none"></pre>
-        </div>
-
-        <div style="display:flex; justify-content:flex-end; gap:10px">
-            <button type="button" class="btn btn-glass" onclick="closeServiceActionModal()">Cancel</button>
-            <button type="button" class="btn btn-primary" id="btn-modal-confirm-action" onclick="submitServiceAction()">Confirm Action</button>
-        </div>
-    </div>
-
-    <!-- Audit Diagnostics, Health & Java 8 Rule Generator -->
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px">
-        <!-- Card 1: Audit Subsystem Diagnostics -->
-        <div class="card">
-            <div class="card-header">
-                <h3 class="card-title">&#128737; Audit Subsystem & Attribution Health</h3>
-                <span class="badge badge-success" id="audit-health-badge">SSSD Verified</span>
+            <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
+                <span class="text-sub">Kernel Loginuid Tracking:</span>
+                <strong style="color:var(--cyan)" id="diag-loginuid-status">&#10003; pam_loginuid Active</strong>
             </div>
-            <div class="card-body" style="padding:16px; font-size:12px; line-height:1.7">
-                <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
-                    <span class="text-sub">Domain User NSS Resolution:</span>
-                    <strong style="color:var(--green)" id="diag-nss-status">&#10003; SSSD (BCITSJAIINFRA.LOCAL)</strong>
-                </div>
-                <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
-                    <span class="text-sub">Kernel Loginuid Tracking:</span>
-                    <strong style="color:var(--cyan)" id="diag-loginuid-status">&#10003; pam_loginuid Active</strong>
-                </div>
-                <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
-                    <span class="text-sub">Unverified Attribution Count:</span>
-                    <strong id="diag-unverified-count">0</strong>
-                </div>
-                <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
-                    <span class="text-sub">SIEM Raw Forensic Store:</span>
-                    <strong style="color:var(--cyan)"><span id="diag-raw-count">0</span> records (90-Day Retention)</strong>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px">
-                    <span class="text-sub">Active Timed Change Window:</span>
-                    <div style="display:flex; align-items:center; gap:8px"><span id="diag-change-window" style="font-weight:600; color:var(--text2)">None Active</span><button class="btn btn-glass" style="font-size:10px; padding:2px 8px; cursor:pointer" onclick="createTimedWindow()">+ Set Window</button></div>
-                </div>
+            <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
+                <span class="text-sub">Unverified Attribution Count:</span>
+                <strong id="diag-unverified-count">0</strong>
             </div>
-        </div>
-
-        <!-- Card 2: Java 8 Audit Exclusion Rule (Mitra 2 / Tomcat) -->
-        <div class="card">
-            <div class="card-header">
-                <h3 class="card-title">&#9881; Java 8 Audit Exclusion Rule Generator</h3>
-                <span class="badge badge-info">Mitra 2 (Java 8)</span>
+            <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px">
+                <span class="text-sub">SIEM Raw Forensic Store:</span>
+                <strong style="color:var(--cyan)"><span id="diag-raw-count">0</span> records (90-Day Retention)</strong>
             </div>
-            <div class="card-body" style="padding:16px; font-size:12px">
-                <p class="text-sub" style="margin:0 0 10px 0; font-size:11.5px">
-                    Excludes benign Tomcat temp/work writes from generating 20,000+ <code>app_mod</code> alerts while preserving forensic recording of /application modifications:
-                </p>
-                <div style="position:relative; background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:10px 12px; margin-bottom:10px">
-                    <pre id="java-exclusion-rule" class="mono" style="margin:0; font-size:10.5px; color:var(--cyan); white-space:pre-wrap; word-break:break-all">-a never,exit -F arch=b64 -F dir=/application -F exe=/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java
--w /application -p wa -k app_mod</pre>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center">
-                    <span class="text-meta" style="font-size:10px">Target: <code>/etc/audit/rules.d/securepulse.rules</code></span>
-                    <button class="btn btn-glass" style="font-size:11px; padding:4px 12px" onclick="copyJavaRule()">&#128203; Copy Rule</button>
-                </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px">
+                <span class="text-sub">Active Timed Change Window:</span>
+                <div style="display:flex; align-items:center; gap:8px"><span id="diag-change-window" style="font-weight:600; color:var(--text2)">None Active</span><button class="btn btn-glass" style="font-size:10px; padding:2px 8px; cursor:pointer" onclick="createTimedWindow()">+ Set Window</button></div>
             </div>
         </div>
     </div>
@@ -460,11 +343,7 @@
     const CURRENT_USER_ROLE = "{{ session.get('user_role', 'normal') }}";
     const IS_ADMIN = {{ 'true' if can_manage_services else 'false' }};
 
-    let managedServices = [];
     let detectedServicesList = [];
-    let activeActionTarget = null;
-    let activeActionType = null;
-    let actionPollTimer = null;
 
     function goBack() {
         const params = new URLSearchParams(window.location.search);
@@ -498,11 +377,22 @@
         }
     }
 
-    function copyJavaRule() {
-        const text = document.getElementById('java-exclusion-rule').innerText;
-        navigator.clipboard.writeText(text).then(() => {
-            showToast('Java 8 exclusion rule copied to clipboard', 'success');
-        });
+    function relTime(dateStr) {
+        if (!dateStr) return 'recent';
+        try {
+            const d = new Date(dateStr + (dateStr.endsWith('Z') || dateStr.includes('+') ? '' : 'Z'));
+            const now = new Date();
+            const diffSec = Math.floor((now - d) / 1000);
+            if (diffSec < 60) return `${Math.max(1, diffSec)}s ago`;
+            const diffMin = Math.floor(diffSec / 60);
+            if (diffMin < 60) return `${diffMin}m ago`;
+            const diffHr = Math.floor(diffMin / 60);
+            if (diffHr < 24) return `${diffHr}h ago`;
+            const diffDays = Math.floor(diffHr / 24);
+            return `${diffDays}d ago`;
+        } catch(e) {
+            return 'recent';
+        }
     }
 
     async function loadAuditHealthAndUserActivity() {
@@ -520,7 +410,7 @@
                 const cwEl = document.getElementById('diag-change-window');
                 if (cwEl) {
                     if (h.timed_change_window) {
-                        cwEl.innerHTML = `<span style="color:var(--amber)">Active (${h.timed_change_window.title})</span>`;
+                        cwEl.innerHTML = `<span style="color:var(--amber)">Active (${escapeHtml(h.timed_change_window.title)})</span>`;
                     } else {
                         cwEl.textContent = 'None Active (Standard Policy)';
                     }
@@ -557,6 +447,88 @@
             }
         } catch(e) {
             console.error('Audit health error:', e);
+            const uList = document.getElementById('server-user-activity-list');
+            if (uList) {
+                uList.innerHTML = `
+                    <div class="empty-state" style="padding:20px; text-align:center; color:var(--red)">
+                        <p style="margin:0 0 8px 0">Unable to load user activity: ${escapeHtml(e.message || 'Error')}</p>
+                        <button class="btn btn-glass" style="font-size:11px; padding:3px 10px" onclick="loadAuditHealthAndUserActivity()">Retry</button>
+                    </div>`;
+            }
+        }
+    }
+
+    async function loadServerEvents() {
+        const eventsEl = document.getElementById('server-events-list');
+        try {
+            const eventsData = await apiFetch(`/api/events?server_id=${serverId}&limit=50`);
+            const eventItems = Array.isArray(eventsData) ? eventsData : (eventsData.items || []);
+            const totalEvt = eventsData.total ?? eventItems.length ?? 0;
+            const badgeEl = document.getElementById('events-count-badge');
+            if (badgeEl) badgeEl.textContent = totalEvt + ' events';
+            const totalEl = document.getElementById('server-total-events');
+            if (totalEl) totalEl.textContent = totalEvt;
+
+            if (eventItems.length > 0) {
+                const lastLoginEl = document.getElementById('server-last-login');
+                if (lastLoginEl) lastLoginEl.textContent = relTime(eventItems[0].created_at || eventItems[0].timestamp);
+                eventsEl.innerHTML = eventItems.map(e => `
+                    <div class="feed-item feed-item--${e.severity || 'info'}" style="display:grid; grid-template-columns:1fr auto; gap:10px; align-items:start; padding:10px; border-bottom:1px solid var(--border)">
+                        <div>
+                            <span class="mono" style="font-weight:600; font-size:13px; color:var(--cyan)">${escapeHtml(e.event_type || 'EVENT')}</span>
+                            <p class="text-sub" style="margin:3px 0 0 0">${escapeHtml(e.description || e.message || 'Event recorded')}</p>
+                        </div>
+                        <span class="text-meta" style="white-space:nowrap">${new Date(e.created_at || e.timestamp || Date.now()).toLocaleString()}</span>
+                    </div>
+                `).join('');
+            } else {
+                eventsEl.innerHTML = '<div class="empty-state" style="padding:20px; text-align:center"><p class="text-meta">No events recorded for this asset</p></div>';
+            }
+        } catch(e) {
+            console.error('Events load error:', e);
+            eventsEl.innerHTML = `
+                <div class="empty-state" style="padding:20px; text-align:center; color:var(--red)">
+                    <p style="margin:0 0 8px 0">Unable to load events: ${escapeHtml(e.message || 'Network error')}</p>
+                    <button class="btn btn-glass" style="font-size:11px; padding:3px 10px" onclick="loadServerEvents()">Retry</button>
+                </div>`;
+        }
+    }
+
+    async function loadServerAlerts() {
+        const alertsEl = document.getElementById('server-alerts-list');
+        try {
+            const alertsData = await apiFetch(`/api/alerts?server_id=${serverId}&limit=30`);
+            const alertItems = Array.isArray(alertsData) ? alertsData : (alertsData.items || []);
+            const openCount = alertItems.filter(a => !a.is_resolved).length;
+            const openEl = document.getElementById('server-open-alerts');
+            if (openEl) openEl.textContent = openCount;
+            const badgeEl = document.getElementById('alerts-count-badge');
+            if (badgeEl) badgeEl.textContent = openCount + ' open';
+
+            if (alertItems.length > 0) {
+                alertsEl.innerHTML = alertItems.map(a => `
+                    <div class="alert-item alert-item--${a.severity || 'warning'}" style="padding:10px; border-bottom:1px solid var(--border); opacity: ${a.is_resolved ? 0.6 : 1}">
+                        <div style="display:flex; justify-content:space-between; align-items:center">
+                            <span class="alert-title" style="font-weight:600">${escapeHtml(a.title || a.alert_type || 'Security Alert')}</span>
+                            <span class="badge ${a.is_resolved ? 'badge-gray' : (a.severity === 'critical' ? 'badge-critical' : 'badge-warning')}">${a.is_resolved ? 'Resolved' : 'Open'}</span>
+                        </div>
+                        <p class="alert-msg text-sub" style="margin:4px 0">${escapeHtml(a.message || '')}</p>
+                        <div style="display:flex; justify-content:space-between; margin-top:6px; align-items:center">
+                            <span class="text-meta">${relTime(a.created_at)}</span>
+                            ${!a.is_resolved ? `<button class="btn btn-ghost" style="padding:3px 10px; font-size:11px" onclick="resolveDetailAlert(${a.id}, this)">Resolve</button>` : ''}
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                alertsEl.innerHTML = '<div class="empty-state" style="padding:20px; text-align:center"><p class="text-meta">No alerts recorded for this asset</p></div>';
+            }
+        } catch(e) {
+            console.error('Alerts load error:', e);
+            alertsEl.innerHTML = `
+                <div class="empty-state" style="padding:20px; text-align:center; color:var(--red)">
+                    <p style="margin:0 0 8px 0">Unable to load alert history: ${escapeHtml(e.message || 'Network error')}</p>
+                    <button class="btn btn-glass" style="font-size:11px; padding:3px 10px" onclick="loadServerAlerts()">Retry</button>
+                </div>`;
         }
     }
 
@@ -586,76 +558,15 @@
             } else {
                 document.getElementById('maint-until-text').textContent = '';
             }
+        } catch(e) {
+            console.error('Server metadata error:', e);
+        }
 
-            // Load Managed Services
-            try {
-                const srvRes = await apiFetch(`/api/servers/${serverId}/services`);
-                managedServices = srvRes.services || [];
-            } catch(e) {
-                if (s.managed_services) {
-                    if (typeof s.managed_services === 'string') {
-                        try { managedServices = JSON.parse(s.managed_services); }
-                        catch(err) { managedServices = []; }
-                    } else if (Array.isArray(s.managed_services)) {
-                        managedServices = s.managed_services;
-                    }
-                }
-            }
-            renderServices();
-
-            // Load Detected Services
-            await loadDetectedServices();
-
-            // Load Events
-            const eventsData = await apiFetch(`/api/events?server_id=${serverId}&limit=50`);
-            const eventItems = Array.isArray(eventsData) ? eventsData : (eventsData.items || []);
-            const totalEvt = eventsData.total ?? eventItems.length ?? 0;
-            document.getElementById('server-total-events').textContent = totalEvt;
-            document.getElementById('events-count-badge').textContent = totalEvt + ' events';
-
-            const eventsEl = document.getElementById('server-events-list');
-            if (eventItems.length > 0) {
-                document.getElementById('server-last-login').textContent = relTime(eventItems[0].created_at || eventItems[0].timestamp);
-                eventsEl.innerHTML = eventItems.map(e => `
-                    <div class="feed-item feed-item--${e.severity || 'info'}" style="display:grid; grid-template-columns:1fr auto; gap:10px; align-items:start; padding:10px; border-bottom:1px solid var(--border)">
-                        <div>
-                            <span class="mono" style="font-weight:600; font-size:13px; color:var(--cyan)">${e.event_type || 'EVENT'}</span>
-                            <p class="text-sub" style="margin:3px 0 0 0">${e.description || e.message || 'Event recorded'}</p>
-                        </div>
-                        <span class="text-meta" style="white-space:nowrap">${new Date(e.created_at || e.timestamp || Date.now()).toLocaleString()}</span>
-                    </div>
-                `).join('');
-            } else {
-                eventsEl.innerHTML = '<div class="empty-state" style="padding:20px; text-align:center"><p class="text-meta">No events recorded for this asset</p></div>';
-            }
-
-            // Load Alerts
-            const alertsData = await apiFetch(`/api/alerts?server_id=${serverId}&limit=30`);
-            const alertItems = Array.isArray(alertsData) ? alertsData : (alertsData.items || []);
-            const openCount = alertItems.filter(a => !a.is_resolved).length;
-            document.getElementById('server-open-alerts').textContent = openCount;
-            document.getElementById('alerts-count-badge').textContent = openCount + ' open';
-
-            const alertsEl = document.getElementById('server-alerts-list');
-            if (alertItems.length > 0) {
-                alertsEl.innerHTML = alertItems.map(a => `
-                    <div class="alert-item alert-item--${a.severity || 'warning'}" style="padding:10px; border-bottom:1px solid var(--border); opacity: ${a.is_resolved ? 0.6 : 1}">
-                        <div style="display:flex; justify-content:space-between; align-items:center">
-                            <span class="alert-title" style="font-weight:600">${a.title || a.alert_type || 'Security Alert'}</span>
-                            <span class="badge ${a.is_resolved ? 'badge-gray' : (a.severity === 'critical' ? 'badge-critical' : 'badge-warning')}">${a.is_resolved ? 'Resolved' : 'Open'}</span>
-                        </div>
-                        <p class="alert-msg text-sub" style="margin:4px 0">${a.message || ''}</p>
-                        <div style="display:flex; justify-content:space-between; margin-top:6px; align-items:center">
-                            <span class="text-meta">${relTime(a.created_at)}</span>
-                            ${!a.is_resolved ? `<button class="btn btn-ghost" style="padding:3px 10px; font-size:11px" onclick="resolveDetailAlert(${a.id}, this)">Resolve</button>` : ''}
-                        </div>
-                    </div>
-                `).join('');
-            } else {
-                alertsEl.innerHTML = '<div class="empty-state" style="padding:20px; text-align:center"><p class="text-meta">No alerts recorded for this asset</p></div>';
-            }
-
-        } catch (e) { console.error('Server detail error:', e); }
+        // Run panel loaders in independent error-isolated tasks
+        loadDetectedServices();
+        loadServerEvents();
+        loadServerAlerts();
+        loadAuditHealthAndUserActivity();
     }
 
     async function resolveDetailAlert(id, btn) {
@@ -663,15 +574,14 @@
         try {
             await apiFetch(`/api/alerts/${id}/resolve`, { method: 'POST' });
             showToast('Alert resolved', 'success');
-            loadServerData();
-    loadAuditHealthAndUserActivity();
+            loadServerAlerts();
         } catch (e) {
             btn.disabled = false;
-            showToast('Failed to resolve alert', 'error');
+            showToast('Failed to resolve alert: ' + e.message, 'error');
         }
     }
 
-    // ── DETECTED SERVICES LOGIC ──
+    // ── DETECTED SERVICES LOGIC (DETECTION ONLY - NO CONTROLS) ──
     async function loadDetectedServices() {
         try {
             const res = await apiFetch(`/api/servers/${serverId}/detected-services`);
@@ -680,7 +590,13 @@
             filterDetectedServices();
         } catch (e) {
             console.error('Failed to load detected services:', e);
-            document.getElementById('detected-services-tbody').innerHTML = `<tr><td colspan="9" style="text-align:center; padding:16px; color:var(--text-muted)">Unable to load detected services.</td></tr>`;
+            document.getElementById('detected-services-tbody').innerHTML = `
+                <tr>
+                    <td colspan="9" style="text-align:center; padding:16px; color:var(--red)">
+                        Unable to load detected services.
+                        <button class="btn btn-glass" style="margin-left:8px; font-size:10px; padding:2px 8px" onclick="loadDetectedServices()">Retry</button>
+                    </td>
+                </tr>`;
         }
     }
 
@@ -701,7 +617,7 @@
             if (statusFilter && (s.status || '').toLowerCase() !== statusFilter) return false;
             if (typeFilter && (s.type || '').toLowerCase() !== typeFilter) return false;
             if (query) {
-                const combined = `${s.name || ''} ${s.type || ''} ${s.unit_name || ''} ${s.user || ''} ${(s.ports || []).join(' ')}`.toLowerCase();
+                const combined = `${s.name || ''} ${s.type || ''} ${s.unit_name || ''} ${s.user || ''} ${(s.ports || []).join(' ')} ${s.evidence || ''}`.toLowerCase();
                 if (!combined.includes(query)) return false;
             }
             return true;
@@ -729,8 +645,8 @@
             const cpu = (s.cpu_percent !== undefined && s.cpu_percent !== null) ? `${s.cpu_percent}%` : '—';
             const ram = (s.ram_percent !== undefined && s.ram_percent !== null) ? `${s.ram_percent}%` : '—';
 
-            // Check if service is protected
-            const isProtected = ['sshd', 'ssh', 'securepulse', 'auditd', 'init', 'dbus'].some(p => (s.name || '').toLowerCase().includes(p) || (s.unit_name || '').toLowerCase().includes(p));
+            // Evidence of classification
+            const evidenceStr = s.evidence || s.unit_name || (s.managed_by === 'systemd' ? `${s.name}.service` : (s.working_dir ? `process in ${s.working_dir}` : 'host process'));
 
             return `
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s" onmouseover="this.style.background='rgba(255,255,255,0.02)'" onmouseout="this.style.background='transparent'">
@@ -741,14 +657,14 @@
                         </span>
                     </td>
                     <td style="padding:10px 12px">
-                        <div style="font-weight:600; color:var(--text)">${s.name || 'Unnamed'}</div>
-                        <div class="mono text-meta" style="font-size:10px; color:var(--text-muted)">${s.unit_name || s.container_id || (s.pid ? 'PID: ' + (Array.isArray(s.pid)?s.pid.join(','):s.pid) : '')}</div>
+                        <div style="font-weight:600; color:var(--text)">${escapeHtml(s.name || 'Unnamed')}</div>
+                        <div class="mono text-meta" style="font-size:10px; color:var(--text-muted)">${escapeHtml(s.unit_name || s.container_id || (s.pid ? 'PID: ' + (Array.isArray(s.pid)?s.pid.join(','):s.pid) : ''))}</div>
                     </td>
                     <td style="padding:10px 12px">
-                        <span class="badge badge-info" style="font-size:9px">${s.type || 'Service'}</span>
+                        <span class="badge badge-info" style="font-size:9px">${escapeHtml(s.type || 'Service')}</span>
                     </td>
                     <td style="padding:10px 12px; color:var(--text-sub); white-space:nowrap">
-                        ${s.uptime || '—'}
+                        ${escapeHtml(s.uptime || '—')}
                     </td>
                     <td style="padding:10px 12px">
                         <div style="display:flex; flex-wrap:wrap; gap:3px">${portsStr}</div>
@@ -757,341 +673,17 @@
                         ${cpu} / ${ram}
                     </td>
                     <td style="padding:10px 12px; color:var(--text-sub)">
-                        ${s.user || 'root'}
+                        ${escapeHtml(s.user || 'root')}
                     </td>
                     <td style="padding:10px 12px">
-                        <span class="badge badge-gray" style="font-size:9px">${s.managed_by || 'systemd'}</span>
+                        <span class="badge badge-gray" style="font-size:9px">${escapeHtml(s.managed_by || 'process')}</span>
                     </td>
-                    <td style="padding:10px 12px; text-align:right; white-space:nowrap">
-                        ${!IS_ADMIN ? `
-                            <span class="badge badge-gray" style="font-size:9px" title="Admin only">Admin only</span>
-                        ` : `
-                            <div style="display:inline-flex; gap:6px; align-items:center">
-                                ${st === 'running' ? `
-                                    <button class="btn btn-glass" style="padding:2px 7px; font-size:10px; color:var(--amber); border-color:rgba(245,158,11,0.4)" onclick="openServiceActionModal(${JSON.stringify(s).replace(/"/g, '&quot;')}, 'restart')">Restart</button>
-                                    <button class="btn btn-glass" style="padding:2px 7px; font-size:10px; color:var(--red); border-color:rgba(255,51,102,0.4)" onclick="openServiceActionModal(${JSON.stringify(s).replace(/"/g, '&quot;')}, 'stop')">Stop</button>
-                                ` : `
-                                    <button class="btn btn-glass" style="padding:2px 7px; font-size:10px; color:var(--green); border-color:rgba(16,185,129,0.4)" onclick="openServiceActionModal(${JSON.stringify(s).replace(/"/g, '&quot;')}, 'start')">Start</button>
-                                `}
-                                <button class="btn btn-ghost" style="padding:2px 6px; font-size:10px; color:var(--cyan)" title="Save as pinned managed service" onclick="pinServiceAsManaged(${JSON.stringify(s).replace(/"/g, '&quot;')})">📌 Pin</button>
-                            </div>
-                        `}
+                    <td style="padding:10px 12px; color:var(--text-muted); font-size:10.5px">
+                        <span class="mono" title="${escapeHtml(evidenceStr)}">${escapeHtml(evidenceStr)}</span>
                     </td>
                 </tr>
             `;
         }).join('');
-    }
-
-    // ── SERVICE ACTION MODAL & SAFE DISPATCH ──
-    function openServiceActionModal(serviceObj, action) {
-        if (!IS_ADMIN) {
-            showToast('Administrator privileges required to execute service actions.', 'error');
-            return;
-        }
-
-        activeActionTarget = serviceObj;
-        activeActionType = action;
-
-        const modal = document.getElementById('service-action-modal');
-        const overlay = document.getElementById('service-action-overlay');
-        const titleEl = document.getElementById('modal-action-title');
-        const sNameEl = document.getElementById('modal-service-name');
-        const badgeEl = document.getElementById('modal-action-badge');
-        const protectedAlert = document.getElementById('modal-protected-alert');
-        const protectedName = document.getElementById('modal-protected-name');
-        const portAlert = document.getElementById('modal-dashboard-port-alert');
-        const stopReasonContainer = document.getElementById('modal-stop-reason-container');
-        const stopReasonInput = document.getElementById('modal-stop-reason');
-        const progressBox = document.getElementById('modal-progress-box');
-        const confirmBtn = document.getElementById('btn-modal-confirm-action');
-
-        titleEl.textContent = `${action.toUpperCase()} SERVICE`;
-        sNameEl.textContent = `${serviceObj.name || serviceObj.unit_name} (${serviceObj.managed_by || 'systemd'})`;
-        badgeEl.textContent = action.toUpperCase();
-        badgeEl.className = `badge ${action === 'stop' ? 'badge-critical' : action === 'restart' ? 'badge-warning' : 'badge-green'}`;
-
-        stopReasonContainer.style.display = action === 'stop' ? 'block' : 'none';
-        stopReasonInput.value = '';
-        progressBox.style.display = 'none';
-
-        // Check protected service
-        const sLower = (serviceObj.name || '' + serviceObj.unit_name || '').toLowerCase();
-        const isProtected = ['sshd', 'ssh', 'securepulse', 'auditd', 'init', 'dbus'].some(p => sLower.includes(p));
-
-        if (isProtected) {
-            protectedAlert.style.display = 'block';
-            protectedName.textContent = serviceObj.name || serviceObj.unit_name;
-            confirmBtn.disabled = true;
-            confirmBtn.style.opacity = '0.5';
-        } else {
-            protectedAlert.style.display = 'none';
-            confirmBtn.disabled = false;
-            confirmBtn.style.opacity = '1';
-        }
-
-        // Check if service listens on dashboard port or is haproxy
-        const ports = serviceObj.ports || [];
-        const isPortSensitive = ports.some(p => {
-            const num = parseInt(String(p).split('/')[0], 10);
-            return num === 80 || num === 443 || num === 3443 || num === 8000;
-        }) || sLower.includes('haproxy');
-
-        if (isPortSensitive) {
-            portAlert.style.display = 'block';
-            const alertText = document.getElementById('modal-port-alert-text');
-            if (alertText) {
-                if (action === 'restart') {
-                    alertText.textContent = "This service (e.g. HAProxy/web) carries traffic for this SOC Dashboard. Restarting will briefly reload sockets (~2-3s). The agent will execute the restart and report the result once connectivity resumes.";
-                } else {
-                    alertText.textContent = "Caution: Stopping this service may interrupt your connection to the dashboard on this host.";
-                }
-            }
-        } else {
-            portAlert.style.display = 'none';
-        }
-
-        overlay.style.display = 'block';
-        modal.style.display = 'block';
-    }
-
-    function closeServiceActionModal() {
-        if (actionPollTimer) {
-            clearInterval(actionPollTimer);
-            actionPollTimer = null;
-        }
-        document.getElementById('service-action-overlay').style.display = 'none';
-        document.getElementById('service-action-modal').style.display = 'none';
-        activeActionTarget = null;
-        activeActionType = null;
-    }
-
-    async function cancelCurrentTask(taskId) {
-        try {
-            const res = await apiFetch(`/api/servers/${serverId}/tasks/${taskId}/cancel`, { method: 'POST' });
-            if (res.ok) {
-                showToast('Task cancelled successfully', 'info');
-                const progressStatus = document.getElementById('modal-progress-status');
-                progressStatus.innerHTML = `<span style="color:var(--amber)">🛑 Task Cancelled by Administrator.</span>`;
-                const confirmBtn = document.getElementById('btn-modal-confirm-action');
-                confirmBtn.disabled = false;
-                confirmBtn.textContent = 'Close';
-                confirmBtn.onclick = () => { closeServiceActionModal(); loadServerData(); };
-                if (actionPollTimer) {
-                    clearInterval(actionPollTimer);
-                    actionPollTimer = null;
-                }
-            } else {
-                showToast(res.message || 'Could not cancel task', 'warning');
-            }
-        } catch (e) {
-            showToast('Failed to cancel task: ' + e.message, 'error');
-        }
-    }
-
-    function copyAgentUpdateCmd() {
-        const cmd = `curl -sSL "${window.location.origin}/setup_node.sh?node_name=${encodeURIComponent('{{ server.hostname }}')}&ip=${encodeURIComponent('{{ server.ip_address }}')}" | sudo bash`;
-        navigator.clipboard.writeText(cmd).then(() => {
-            showToast('Update command copied to clipboard!', 'success');
-        }).catch(() => {
-            prompt('Copy agent update command:', cmd);
-        });
-    }
-
-    async function submitServiceAction() {
-        if (!activeActionTarget || !activeActionType) return;
-        if (!IS_ADMIN) return showToast('Admin role required', 'error');
-
-        const stopReasonInput = document.getElementById('modal-stop-reason');
-        let reason = stopReasonInput.value.trim();
-        if (activeActionType === 'stop' && !reason) {
-            showToast('A reason is required before stopping a service.', 'warning');
-            stopReasonInput.focus();
-            return;
-        }
-
-        const confirmBtn = document.getElementById('btn-modal-confirm-action');
-        const progressBox = document.getElementById('modal-progress-box');
-        const progressStatus = document.getElementById('modal-progress-status');
-        const progressOutput = document.getElementById('modal-progress-output');
-
-        confirmBtn.disabled = true;
-        progressBox.style.display = 'block';
-        progressStatus.innerHTML = `<div class="spinner" style="width:16px; height:16px"></div><span>Queuing authenticated task for target agent...</span>`;
-        progressOutput.style.display = 'none';
-        progressOutput.textContent = '';
-
-        try {
-            const res = await apiFetch(`/api/servers/${serverId}/services/action`, {
-                method: 'POST',
-                body: JSON.stringify({
-                    service_id: activeActionTarget.id || activeActionTarget.unit_name || activeActionTarget.name,
-                    action: activeActionType,
-                    reason: reason
-                })
-            });
-
-            if (!res.ok) {
-                progressStatus.innerHTML = `<span style="color:var(--red)">❌ Failed: ${res.message || 'Action rejected'}</span>`;
-                confirmBtn.disabled = false;
-                return;
-            }
-
-            const taskId = res.task_id;
-            const startTime = Date.now();
-            progressStatus.innerHTML = `
-                <div style="display:flex; align-items:center; gap:8px">
-                    <div class="spinner" style="width:14px; height:14px"></div>
-                    <span style="color:var(--cyan)">● Queued in agent queue (${new Date().toLocaleTimeString()})...</span>
-                </div>`;
-
-            // Poll task status
-            let attempts = 0;
-            actionPollTimer = setInterval(async () => {
-                attempts++;
-                try {
-                    const taskRes = await apiFetch(`/api/servers/${serverId}/tasks/${taskId}`);
-                    const t = taskRes.task;
-                    const srv = taskRes.server || {};
-
-                    if (t) {
-                        const elapsed = Math.round((Date.now() - startTime) / 1000);
-                        let stateHtml = '';
-
-                        const isAgentStale = !srv.is_online || (elapsed > 15 && (!srv.last_seen || srv.last_seen === 'never'));
-                        const staleWarningHtml = isAgentStale ? `
-                            <div style="color:var(--amber); margin-bottom:8px; line-height:1.4">
-                                ⚠️ <strong>Agent not responding</strong>: Last heartbeat: ${srv.last_seen || 'unknown'}, Agent version: ${srv.agent_version || 'unknown'}.
-                            </div>` : '';
-
-                        if (t.status === 'queued' || t.status === 'pending') {
-                            if (elapsed > 15) {
-                                stateHtml = `
-                                    ${staleWarningHtml}
-                                    <div style="display:flex; gap:8px; align-items:center">
-                                        <button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel Task</button>
-                                        <span style="font-size:11px; color:var(--text-muted)">Waiting for node poll (${elapsed}s elapsed)...</span>
-                                    </div>
-                                `;
-                            } else {
-                                stateHtml = `<div class="spinner" style="width:14px; height:14px"></div><span>Queued in agent queue (${elapsed}s elapsed)...</span>`;
-                            }
-                        } else if (t.status === 'dispatched') {
-                            stateHtml = `
-                                ${staleWarningHtml}
-                                <div style="display:flex; justify-content:space-between; align-items:center">
-                                    <div style="display:flex; align-items:center; gap:8px">
-                                        <div class="spinner" style="width:14px; height:14px"></div>
-                                        <span style="color:var(--blue)">● Dispatched to agent (${elapsed}s)... Waiting for acknowledgment.</span>
-                                    </div>
-                                    ${elapsed > 10 ? `<button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel</button>` : ''}
-                                </div>
-                            `;
-                        } else if (t.status === 'acknowledged') {
-                            stateHtml = `
-                                <div style="display:flex; justify-content:space-between; align-items:center">
-                                    <div style="display:flex; align-items:center; gap:8px">
-                                        <div class="spinner" style="width:14px; height:14px"></div>
-                                        <span style="color:var(--cyan)">● Acknowledged by agent (${elapsed}s)... Starting execution.</span>
-                                    </div>
-                                    ${elapsed > 15 ? `<button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel</button>` : ''}
-                                </div>
-                            `;
-                        } else if (t.status === 'running') {
-                            stateHtml = `
-                                <div style="display:flex; justify-content:space-between; align-items:center">
-                                    <div style="display:flex; align-items:center; gap:8px">
-                                        <div class="spinner" style="width:14px; height:14px"></div>
-                                        <span style="color:var(--cyan)">⚡ Executing ${activeActionType.toUpperCase()} on '${activeActionTarget.name}' (${elapsed}s)...</span>
-                                    </div>
-                                    ${elapsed > 15 ? `<button class="btn btn-sm btn-glass" style="color:var(--red); border-color:var(--red); padding:2px 8px; font-size:11px" onclick="cancelCurrentTask('${taskId}')">Cancel</button>` : ''}
-                                </div>
-                            `;
-                        } else if (t.status === 'completed' || t.status === 'succeeded') {
-                            clearInterval(actionPollTimer);
-                            actionPollTimer = null;
-                            if (t.exit_code === 0) {
-                                stateHtml = `<span style="color:var(--green)">✅ ${activeActionType.toUpperCase()} Succeeded (Duration: ${t.duration_ms || 0}ms)</span>`;
-                                showToast(`Service action '${activeActionType}' succeeded!`, 'success');
-                            } else {
-                                stateHtml = `<span style="color:var(--red)">⚠️ Action Completed with Exit Code ${t.exit_code}</span>`;
-                                showToast(`Service action returned exit code ${t.exit_code}`, 'warning');
-                            }
-                            if (t.output) {
-                                progressOutput.style.display = 'block';
-                                progressOutput.textContent = t.output;
-                            }
-                            confirmBtn.disabled = false;
-                            confirmBtn.textContent = 'Close & Refresh';
-                            confirmBtn.onclick = () => {
-                                closeServiceActionModal();
-                                loadServerData();
-                            };
-                        } else if (t.status === 'rejected') {
-                            clearInterval(actionPollTimer);
-                            actionPollTimer = null;
-                            stateHtml = `<span style="color:var(--red)">❌ Task Rejected: ${t.output || t.reject_reason || 'Verification failure'}</span>`;
-                            if (t.output) {
-                                progressOutput.style.display = 'block';
-                                progressOutput.textContent = t.output;
-                            }
-                            confirmBtn.disabled = false;
-                        } else if (t.status === 'timed out') {
-                            clearInterval(actionPollTimer);
-                            actionPollTimer = null;
-                            stateHtml = `<span style="color:var(--red)">⏱ Task Timed Out: Agent did not complete execution within 120s.</span>`;
-                            confirmBtn.disabled = false;
-                        } else if (t.status === 'cancelled') {
-                            clearInterval(actionPollTimer);
-                            actionPollTimer = null;
-                            stateHtml = `<span style="color:var(--amber)">🛑 Task Cancelled by Administrator.</span>`;
-                            confirmBtn.disabled = false;
-                        } else if (t.status === 'failed') {
-                            clearInterval(actionPollTimer);
-                            actionPollTimer = null;
-                            stateHtml = `<span style="color:var(--red)">❌ Action Failed: ${t.output || 'Execution error'}</span>`;
-                            if (t.output) {
-                                progressOutput.style.display = 'block';
-                                progressOutput.textContent = t.output;
-                            }
-                            confirmBtn.disabled = false;
-                        }
-
-                        progressStatus.innerHTML = stateHtml;
-                    }
-
-                    if (attempts > 80) { // 120 seconds
-                        clearInterval(actionPollTimer);
-                        actionPollTimer = null;
-                        progressStatus.innerHTML = `<span style="color:var(--amber)">⏱ Task dispatch timed out after 120s.</span>`;
-                        confirmBtn.disabled = false;
-                    }
-                } catch (err) {
-                    console.warn('Task poll reconnecting...', err);
-                }
-            }, 1500);
-
-        } catch (e) {
-            let msg = e.message || 'Dispatch failed';
-            if (msg.includes('Rate limit') || msg.includes('cooldown') || msg.includes('progress') || msg.includes('already in progress')) {
-                let remaining = 30;
-                progressStatus.innerHTML = `<span style="color:var(--amber)">⏱ Cooldown Active: Ready to retry in <strong id="cooldown-cd">${remaining}</strong>s...</span>`;
-                confirmBtn.disabled = true;
-                const cdTimer = setInterval(() => {
-                    remaining--;
-                    const cdEl = document.getElementById('cooldown-cd');
-                    if (cdEl) cdEl.textContent = remaining;
-                    if (remaining <= 0) {
-                        clearInterval(cdTimer);
-                        progressStatus.innerHTML = `<span style="color:var(--green)">⚡ Ready to retry. Click Confirm Action below.</span>`;
-                        confirmBtn.disabled = false;
-                    }
-                }, 1000);
-            } else {
-                progressStatus.innerHTML = `<span style="color:var(--red)">❌ Error: ${msg}</span>`;
-                confirmBtn.disabled = false;
-            }
-            showToast('Service Action: ' + msg, 'warning');
-        }
     }
 
     async function triggerRescan() {
@@ -1120,53 +712,13 @@
         }
     }
 
-    async function pinServiceAsManaged(serviceObj) {
-        if (!IS_ADMIN) return showToast('Admin role required', 'error');
-        try {
-            const res = await apiFetch(`/api/servers/${serverId}/services/pin`, {
-                method: 'POST',
-                body: JSON.stringify({ service: serviceObj })
-            });
-            showToast(`Pinned '${serviceObj.name}' to Managed Services Playbook`, 'success');
-            managedServices = res.services || [];
-            renderServices();
-        } catch (e) {
-            showToast('Failed to pin service: ' + e.message, 'error');
-        }
-    }
-
-    // ── PINNED MANAGED SERVICES LIST ──
-    function renderServices() {
-        const el = document.getElementById('services-list');
-        if (!managedServices || managedServices.length === 0) {
-            el.innerHTML = '<p class="text-meta" style="font-size:11px; padding:10px; text-align:center">No services pinned yet. Pin services from Detected Services above.</p>';
-            return;
-        }
-        el.innerHTML = managedServices.map((s, idx) => `
-            <div class="service-row" style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,200,255,0.04); padding:8px 12px; border-radius:6px; border:1px solid var(--border)">
-                <div class="service-info" style="flex:1">
-                    <div style="display:flex; align-items:center; gap:8px">
-                        <span class="mono" style="font-size:10px; color:var(--text-muted)">#${idx + 1}</span>
-                        <span class="mono" style="font-size:12px; font-weight:700; color:var(--cyan)">${s.name}</span>
-                        <span class="badge badge-info" style="font-size:9px">User: ${s.user || s.username || 'root'}</span>
-                    </div>
-                    <div class="mono text-meta" style="font-size:10px; margin-top:2px">${s.path || s.unit_name || ''}</div>
-                    ${s.restart_cmd ? `<div class="mono" style="font-size:10px; color:var(--text-muted); margin-top:2px">Cmd: ${s.restart_cmd}</div>` : ''}
-                </div>
-                <div class="service-actions" style="display:flex; gap:6px; align-items:center">
-                    ${IS_ADMIN ? `
-                        <button type="button" class="btn btn-glass" style="padding:3px 8px; font-size:10px; color:var(--green); border-color:var(--green)" onclick="restartSingleService('${s.name}', this)">
-                            ▶ Restart
-                        </button>
-                        <button type="button" class="btn btn-ghost" style="padding:3px 6px; color:var(--red)" title="Delete Service" onclick="removeService('${s.name}')">
-                            <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                        </button>
-                    ` : `
-                        <span class="badge badge-gray" style="font-size:9px">Admin only</span>
-                    `}
-                </div>
-            </div>
-        `).join('');
+    function copyAgentUpdateCmd() {
+        const cmd = `curl -sSL "${window.location.origin}/setup_node.sh?node_name=${encodeURIComponent('{{ server.hostname }}')}&ip=${encodeURIComponent('{{ server.ip_address }}')}" | sudo bash`;
+        navigator.clipboard.writeText(cmd).then(() => {
+            showToast('Update command copied to clipboard!', 'success');
+        }).catch(() => {
+            prompt('Copy agent update command:', cmd);
+        });
     }
 
     async function toggleMaintenance() {
@@ -1195,79 +747,6 @@
             loadServerData();
         } catch (e) { 
             alert('Failed to set window: ' + e.message); 
-        }
-    }
-
-    async function addService() {
-        if (!IS_ADMIN) return showToast('Administrator privileges required.', 'error');
-        const name = document.getElementById('new-service-name').value.trim();
-        const user = document.getElementById('new-service-user').value.trim();
-        const path = document.getElementById('new-service-path').value.trim();
-        const restartCmd = document.getElementById('new-service-restart-cmd').value.trim();
-        if (!name || !user || !path) return showToast('Name, User, and Path required', 'warning');
-        
-        try {
-            const res = await apiFetch(`/api/servers/${serverId}/services`, {
-                method: 'POST',
-                body: JSON.stringify({ name: name, user: user, path: path, restart_cmd: restartCmd })
-            });
-            showToast('Service added successfully', 'success');
-            managedServices = res.services || [];
-            renderServices();
-            document.getElementById('new-service-name').value = '';
-            document.getElementById('new-service-user').value = '';
-            document.getElementById('new-service-path').value = '';
-            document.getElementById('new-service-restart-cmd').value = '';
-        } catch (e) {
-            alert('Failed to add service: ' + e.message);
-        }
-    }
-
-    async function removeService(serviceName) {
-        if (!IS_ADMIN) return showToast('Administrator privileges required.', 'error');
-        if (!confirm(`Delete service ${serviceName}?`)) return;
-        try {
-            const res = await apiFetch(`/api/servers/${serverId}/services/${encodeURIComponent(serviceName)}`, {
-                method: 'DELETE'
-            });
-            showToast('Service removed', 'success');
-            managedServices = res.services || [];
-            renderServices();
-        } catch (e) {
-            alert('Failed to remove service: ' + e.message);
-        }
-    }
-
-    async function restartSingleService(serviceName, btn) {
-        if (!IS_ADMIN) return showToast('Administrator privileges required.', 'error');
-        if (!confirm(`Restart managed service '${serviceName}' now?`)) return;
-        btn.disabled = true;
-        btn.textContent = '⏳ ...';
-        try {
-            const res = await apiFetch(`/api/servers/${serverId}/services/${encodeURIComponent(serviceName)}/restart`, {
-                method: 'POST'
-            });
-            showToast(`Restart task queued for '${serviceName}'`, 'info');
-            loadServerData();
-        } catch (e) {
-            showToast('Service restart failed: ' + e.message, 'error');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = '▶ Restart';
-        }
-    }
-
-    async function restartServices() {
-        if (!IS_ADMIN) return showToast('Administrator privileges required.', 'error');
-        if (!confirm('Run restart playbook for all pinned managed services sequentially?')) return;
-        try {
-            const res = await apiFetch(`/api/servers/${serverId}/restart-services`, {
-                method: 'POST'
-            });
-            showToast(res.message || 'Playbook execution queued', 'success');
-            loadServerData();
-        } catch (e) {
-            alert('Failed to run restart playbook: ' + e.message);
         }
     }
 

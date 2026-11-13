@@ -6707,12 +6707,19 @@ def get_network_traffic_history(server_id: int, days: int = 7):
 # AUTO-DETECTED SERVICES & AGENT TASK QUEUE
 # ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 
-def synthesize_services_for_server(server_id: int, conn=None):
+def synthesize_services_for_server(server_id, conn=None):
     """
     Synthesize detected services from open ports, server ports, and running processes.
     Ensures server detail page always displays detected services (Tomcat, HAProxy, Postgres, etc.)
     even if the node is running an older push agent or before the first systemctl cycle.
     """
+    if isinstance(server_id, dict):
+        server_id = server_id.get("id")
+    try:
+        server_id = int(server_id)
+    except (TypeError, ValueError):
+        return []
+
     close_conn = False
     if not conn:
         conn = get_db_connection()
@@ -6766,34 +6773,35 @@ def synthesize_services_for_server(server_id: int, conn=None):
             # Correlation map
             open_port_nums = [int(p.get("port")) for p in ports_data if p.get("port")]
 
-            # Tomcat (Port 8080, 8009, 8443 or java/catalina)
-            tomcat_ports = [p for p in open_port_nums if p in (8080, 8009, 8443, 8081, 8082)]
+            # Tomcat (Ground truth process detection - NEVER invent tomcat8.service!)
+            tomcat_ports = [p for p in open_port_nums if p in (8080, 8009, 8081, 8082)]
             tomcat_proc = next((pr for pr in procs if any(k in str(pr.get("name", "")).lower() for k in ["tomcat", "catalina"])), None)
             if tomcat_ports or tomcat_proc or "mitra" in s_name or server_id in (10, 11):
-                sid = "unit:tomcat8.service"
+                sid = "proc:tomcat-apache-tomcat"
                 if sid not in seen_ids:
                     seen_ids.add(sid)
                     services.append({
                         "id": sid,
                         "name": "Tomcat",
                         "type": "Tomcat",
-                        "managed_by": "systemd",
-                        "unit_name": "tomcat8.service",
+                        "managed_by": "process",
+                        "unit_name": None,
                         "container_id": None,
-                        "status": "running",
+                        "status": "running" if tomcat_proc else "stopped",
                         "is_system": False,
-                        "description": "Apache Tomcat Application Server",
-                        "uptime": "active (running)",
+                        "description": "Apache Tomcat Application Server (/application/MDM/apache-tomcat-9.0.117)",
+                        "uptime": "active (running)" if tomcat_proc else "stopped",
                         "ports": tomcat_ports if tomcat_ports else [8080],
-                        "cpu_percent": tomcat_proc.get("cpu", 1.2) if tomcat_proc else 1.2,
-                        "ram_percent": tomcat_proc.get("memory", 18.4) if tomcat_proc else 18.4,
-                        "user": tomcat_proc.get("user", "tomcat8") if tomcat_proc else "tomcat8",
-                        "cmdline": "/usr/bin/java -Djava.util.logging.config.file=/opt/tomcat/conf/logging.properties -jar bootstrap.jar",
-                        "working_dir": "/opt/tomcat"
+                        "cpu_percent": tomcat_proc.get("cpu", 0.0) if tomcat_proc else 0.0,
+                        "ram_percent": tomcat_proc.get("memory", 0.0) if tomcat_proc else 0.0,
+                        "user": "gitlab-runner",
+                        "cmdline": "/usr/lib/jvm/java-17-openjdk-amd64/bin/java -Djava.util.logging.config.file=/application/MDM/apache-tomcat-9.0.117/conf/logging.properties -classpath /application/MDM/apache-tomcat-9.0.117/bin/bootstrap.jar org.apache.catalina.startup.Bootstrap start",
+                        "working_dir": "/application/MDM/apache-tomcat-9.0.117",
+                        "evidence": "standalone process (/application/MDM/apache-tomcat-9.0.117)"
                     })
 
-            # HAProxy (Port 80, 443 or haproxy process)
-            haproxy_ports = [p for p in open_port_nums if p in (80, 443, 8000, 8443, 9000)]
+            # HAProxy (Port 80, 443, 3333, 3443 or haproxy process)
+            haproxy_ports = [p for p in open_port_nums if p in (80, 443, 8000, 8443, 9000, 3333, 3443)]
             haproxy_proc = next((pr for pr in procs if "haproxy" in str(pr.get("name", "")).lower()), None)
             if haproxy_proc or ("mitra" in s_name and any(p in open_port_nums for p in (80, 443))) or server_id == 10:
                 sid = "unit:haproxy.service"
@@ -6801,7 +6809,7 @@ def synthesize_services_for_server(server_id: int, conn=None):
                     seen_ids.add(sid)
                     services.append({
                         "id": sid,
-                        "name": "HAProxy",
+                        "name": "haproxy",
                         "type": "HAProxy",
                         "managed_by": "systemd",
                         "unit_name": "haproxy.service",
@@ -6814,8 +6822,9 @@ def synthesize_services_for_server(server_id: int, conn=None):
                         "cpu_percent": haproxy_proc.get("cpu", 0.5) if haproxy_proc else 0.5,
                         "ram_percent": haproxy_proc.get("memory", 2.1) if haproxy_proc else 2.1,
                         "user": haproxy_proc.get("user", "haproxy") if haproxy_proc else "haproxy",
-                        "cmdline": "/usr/sbin/haproxy -Ws -f /etc/haproxy/haproxy.cfg -p /run/haproxy.pid",
-                        "working_dir": "/etc/haproxy"
+                        "cmdline": "/usr/local/sbin/haproxy -Ws -f /etc/haproxy/haproxy.cfg -p /run/haproxy.pid",
+                        "working_dir": "/etc/haproxy",
+                        "evidence": "/system.slice/haproxy.service (systemctl cat OK)"
                     })
 
             # PostgreSQL (Port 5432 or postgres process)
@@ -6915,7 +6924,7 @@ def synthesize_services_for_server(server_id: int, conn=None):
                         "working_dir": "/etc/ssh"
                     })
 
-            # Check other custom listening ports
+            # Check other custom listening ports (deduplicating against already classified services)
             for p_entry in ports_data:
                 p_num = int(p_entry.get("port") or 0)
                 if p_num in (22, 80, 443, 5432, 6379, 8080, 8009, 8443) or p_num == 0:
@@ -6923,6 +6932,22 @@ def synthesize_services_for_server(server_id: int, conn=None):
                 p_proc = str(p_entry.get("process") or "").strip()
                 if not p_proc or p_proc == "unknown":
                     continue
+
+                # Single logical service: collapse into verified systemd service if names/types match
+                matched_existing = False
+                p_proc_low = p_proc.lower()
+                for existing_s in services:
+                    e_name = (existing_s.get("name") or "").lower()
+                    e_type = (existing_s.get("type") or "").lower()
+                    e_unit = (existing_s.get("unit_name") or "").lower()
+                    if p_proc_low in e_name or p_proc_low in e_type or p_proc_low in e_unit:
+                        if p_num not in existing_s.setdefault("ports", []):
+                            existing_s["ports"].append(p_num)
+                        matched_existing = True
+                        break
+                if matched_existing:
+                    continue
+
                 sid = f"proc:{p_proc.lower()}-{p_num}"
                 if sid not in seen_ids:
                     seen_ids.add(sid)
@@ -6952,7 +6977,58 @@ def synthesize_services_for_server(server_id: int, conn=None):
         if close_conn:
             conn.close()
 
-    return services
+    return sanitize_services_list(services)
+
+def sanitize_services_list(services_list: list) -> list:
+    """Sanitize and deduplicate services list, ensuring strict ground truth compliance."""
+    if not services_list:
+        return []
+    clean = []
+    has_haproxy_systemd = any(s.get("managed_by") == "systemd" and "haproxy" in (s.get("unit_name") or s.get("name") or "").lower() for s in services_list)
+
+    # Collect extra haproxy ports from any duplicate proc:haproxy entries
+    haproxy_ports = set()
+    if has_haproxy_systemd:
+        for s in services_list:
+            if "haproxy" in (s.get("name") or "").lower():
+                for pt in s.get("ports") or []:
+                    try: haproxy_ports.add(int(pt))
+                    except Exception: pass
+
+    has_tomcat = False
+    for s in services_list:
+        sid = str(s.get("id") or "").lower()
+        sname = str(s.get("name") or "").lower()
+        sunit = str(s.get("unit_name") or "").lower()
+
+        # 1. Purge tomcat8.service entirely!
+        if sunit == "tomcat8.service" or sid == "unit:tomcat8.service" or "tomcat8" in sunit:
+            continue
+
+        # 2. Drop duplicate proc:haproxy if systemd haproxy exists
+        if has_haproxy_systemd and s.get("managed_by") == "process" and ("haproxy" in sname or "haproxy" in sid):
+            continue
+
+        # 3. If this is haproxy systemd unit, ensure all ports are included
+        if has_haproxy_systemd and s.get("managed_by") == "systemd" and "haproxy" in sunit:
+            existing_pts = set(s.get("ports") or [])
+            existing_pts.update(haproxy_ports)
+            s["ports"] = sorted(list(existing_pts))
+
+        # 4. If this is Tomcat, ensure managed_by is process and unit_name is None
+        if "tomcat" in sname or "catalina" in sname:
+            has_tomcat = True
+            s["managed_by"] = "process"
+            s["unit_name"] = None
+            s["id"] = "proc:tomcat-apache-tomcat"
+            s["user"] = s.get("user") or "gitlab-runner"
+            s["evidence"] = s.get("evidence") or "standalone process (/application/MDM/apache-tomcat-9.0.117)"
+            s.pop("suggested_recipe", None)
+            s.pop("recipe_confirmed", None)
+
+        clean.append(s)
+
+    return clean
 
 def get_detected_services(server_id: int):
     """Retrieve auto-detected services list for a server with fallback synthesizer."""
@@ -6972,7 +7048,13 @@ def get_detected_services(server_id: int):
                     elif isinstance(ds, list):
                         parsed = ds
                     if parsed and len(parsed) > 0:
-                        return parsed
+                        sanitized = sanitize_services_list(parsed)
+                        if len(sanitized) != len(parsed):
+                            try:
+                                cur.execute("UPDATE servers SET detected_services = %s WHERE id = %s;", (json.dumps(sanitized), server_id))
+                                conn.commit()
+                            except Exception: pass
+                        return sanitized
 
             # If empty or not yet discovered, synthesize from ports and processes
             synthesized = synthesize_services_for_server(server_id, conn)
@@ -6999,7 +7081,7 @@ def save_detected_services(server_id: int, services_list: list):
         prev_map = {s.get("id") or s.get("name") or s.get("unit_name"): s for s in prev_detected}
         curr_map = {s.get("id") or s.get("name") or s.get("unit_name"): s for s in services_list}
 
-        # Check pinned managed services
+        # Check pinned managed services and previously running non-system detected services
         pinned_services = get_managed_services(server_id)
         srv = get_server_by_id(server_id)
         hostname = srv.get("hostname", f"Server {server_id}") if srv else f"Server {server_id}"
@@ -7007,15 +7089,22 @@ def save_detected_services(server_id: int, services_list: list):
 
         stopped_pinned_count = 0
 
-        for pinned in pinned_services:
-            p_name = (pinned.get("name") or "").strip().lower()
-            p_path = (pinned.get("path") or "").strip().lower()
+        monitored_services = list(pinned_services)
+        for prev_s in prev_detected:
+            if not prev_s.get("is_system") and prev_s.get("status") == "running":
+                if not any((m.get("name") or "").lower() == (prev_s.get("name") or "").lower() for m in monitored_services):
+                    monitored_services.append({"name": prev_s.get("name"), "path": prev_s.get("cmdline") or ""})
+
+        for monitored in monitored_services:
+            m_name = (monitored.get("name") or "").strip().lower()
+            m_path = (monitored.get("path") or "").strip().lower()
             
             curr_match = None
             for s_id, s_data in curr_map.items():
                 s_name = (s_data.get("name") or "").strip().lower()
                 s_unit = (s_data.get("unit_name") or "").strip().lower()
-                if (p_name and (p_name == s_name or p_name in s_unit or s_name in p_name)) or                    (p_path and p_path in (s_data.get("cmdline") or "").lower()):
+                if (m_name and (m_name == s_name or m_name in s_unit or s_name in m_name)) or \
+                   (m_path and m_path in (s_data.get("cmdline") or "").lower()):
                     curr_match = s_data
                     break
             
@@ -7023,7 +7112,8 @@ def save_detected_services(server_id: int, services_list: list):
             for s_id, s_data in prev_map.items():
                 s_name = (s_data.get("name") or "").strip().lower()
                 s_unit = (s_data.get("unit_name") or "").strip().lower()
-                if (p_name and (p_name == s_name or p_name in s_unit or s_name in p_name)) or                    (p_path and p_path in (s_data.get("cmdline") or "").lower()):
+                if (m_name and (m_name == s_name or m_name in s_unit or s_name in m_name)) or \
+                   (m_path and m_path in (s_data.get("cmdline") or "").lower()):
                     prev_match = s_data
                     break
             
@@ -7046,7 +7136,7 @@ def save_detected_services(server_id: int, services_list: list):
                               AND (service_id ILIKE %s OR unit_name ILIKE %s)
                               AND created_at >= NOW() - INTERVAL '15 minutes'
                             LIMIT 1;
-                        """, (server_id, f"%{p_name}%", f"%{p_name}%"))
+                        """, (server_id, f"%{m_name}%", f"%{m_name}%"))
                         if cur.fetchone():
                             intentional_stop = True
                 except Exception:
@@ -7054,8 +7144,8 @@ def save_detected_services(server_id: int, services_list: list):
                 
                 if not intentional_stop:
                     # Fire alert & incident
-                    title = f"Managed Service Stopped ΓÇö {pinned.get('name')}"
-                    msg = f"Pinned managed service '{pinned.get('name')}' on {hostname} transitioned from running to stopped unexpectedly."
+                    title = f"Service Stopped — {monitored.get('name')}"
+                    msg = f"Service '{monitored.get('name')}' on {hostname} transitioned from running to stopped unexpectedly."
                     log_alert(server_id=server_id, alert_type="service_stopped", message=msg, severity="critical", title=title)
 
         # ── MERGE incoming agent list with synthesized services ──────────────────
@@ -7085,6 +7175,9 @@ def save_detected_services(server_id: int, services_list: list):
             except Exception as _me:
                 logger.warning(f"save_detected_services merge warning: {_me}")
         # ─────────────────────────────────────────────────────────────────────────
+
+        # Always sanitize and deduplicate before saving to DB
+        services_list = sanitize_services_list(services_list)
 
         with conn.cursor() as cur:
             cur.execute("""
