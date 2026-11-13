@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Standalone Agent Generator & Deployer
-Extracts and configures the latest v1.7.0 BSMART SOC Node Agent directly from app.py
+Extracts and configures the latest v2.0.0 BSMART SOC Node Agent directly from app.py
 and deploys it to /opt/securepulse/node_push_agent.py with zero dependency on Docker or curl.
 """
 import os, sys, re, subprocess
