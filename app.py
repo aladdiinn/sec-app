@@ -10625,59 +10625,176 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
 
     return "HTTP_ACCESS", "info", None, None, {}
 
-POSTGRES_LOG_RE = re.compile(
-    r'^(?P<time>[0-9\-]+ [0-9:\.]+ (?:UTC|[A-Z]+))\s+\[(?P<pid>\d+)\]\s+(?:(?P<user>[^@\s]+)@(?P<db>[^\s]+)\s+)?(?P<level>[A-Z]+):\s+(?P<msg>.+)$'
-)
+PG_LOG_PATTERNS = [
+    # 1. JVVNL production format: [timestamp]user@host->db:app [pid]LEVEL: msg
+    re.compile(r'^\[(?P<time>[^\]]+)\](?P<user>[^@\s]+)@(?P<client>[^->\s]+)->(?P<db>[^:\s]+):(?P<app>.*?)\s*\[(?P<pid>\d+)\](?P<level>[A-Z]+):\s+(?P<msg>.+)$'),
+    # 2. Key-value format: timestamp [pid] [line] user=%u,db=%d,client=%h,app=%a LEVEL: msg
+    re.compile(r'^(?P<time>[0-9\-]+ [0-9:\.]+(?: [A-Z]+)?)\s+\[(?P<pid>\d+)\](?:\s*\[\d+-\d+\])?:?\s+user=(?P<user>[^,]*),db=(?P<db>[^,]*),client=(?P<client>[^,]*),app=(?P<app>[^\s]*)\s+(?P<level>[A-Z]+):\s+(?P<msg>.+)$'),
+    # 3. Standard user@db format: timestamp [pid] user@db LEVEL: msg
+    re.compile(r'^(?P<time>[0-9\-]+ [0-9:\.]+(?: [A-Z]+)?)\s+\[(?P<pid>\d+)\](?:\s*\[\d+-\d+\])?:?\s+(?:(?P<user>[^@\s]+)@(?P<db>[^\s]+)\s+)?(?P<level>[A-Z]+):\s+(?P<msg>.+)$')
+]
 
-def evaluate_postgres_security_event(raw_line: str):
-    """Real-time heuristics detecting database threats from PostgreSQL logs."""
-    # Guard: Must be PostgreSQL log or contain PostgreSQL identifiers
-    is_pg = bool(POSTGRES_LOG_RE.match(raw_line)) or any(k in raw_line.lower() for k in ("postgres", "psql", "pg_", "statement:", "org.postgresql"))
+def parse_postgres_raw_log(raw_line: str):
+    """Multi-prefix parser for PostgreSQL logs extracting user, client host, database, application, pid, and level."""
+    for pat in PG_LOG_PATTERNS:
+        m = pat.match(raw_line)
+        if m:
+            d = m.groupdict()
+            c_host = d.get('client') or None
+            if c_host in ('-', 'unknown', ''):
+                c_host = None
+            return {
+                'matched': True,
+                'time': d.get('time'),
+                'user': d.get('user') or None,
+                'client_ip': c_host,
+                'db_name': d.get('db') or None,
+                'app_name': (d.get('app') or '').strip() or None,
+                'pid': int(d.get('pid')) if d.get('pid') and d.get('pid').isdigit() else None,
+                'level': (d.get('level') or 'INFO').upper(),
+                'msg': d.get('msg', '').strip()
+            }
+    m_level = re.search(r'\b(LOG|FATAL|ERROR|WARNING|INFO|DETAIL|HINT|STATEMENT):\s+(.+)$', raw_line)
+    if m_level:
+        return {
+            'matched': False,
+            'time': None,
+            'user': None,
+            'client_ip': None,
+            'db_name': None,
+            'app_name': None,
+            'pid': None,
+            'level': m_level.group(1).upper(),
+            'msg': m_level.group(2).strip()
+        }
+    return {
+        'matched': False,
+        'time': None,
+        'user': None,
+        'client_ip': None,
+        'db_name': None,
+        'app_name': None,
+        'pid': None,
+        'level': 'INFO',
+        'msg': raw_line.strip()
+    }
+
+def evaluate_postgres_security_event(raw_line: str, project_id: Optional[int] = None, app_id: Optional[int] = None, recent_context: Optional[dict] = None):
+    """
+    Real-time heuristics detecting database threats from PostgreSQL logs.
+    Strictly distinguishes application DML queries (LOG: execute ... UPDATE ...) from real FATAL auth failures.
+    """
+    parsed = parse_postgres_raw_log(raw_line)
+    is_pg = parsed['matched'] or any(k in raw_line.lower() for k in ('postgres', 'psql', 'pg_', 'statement:', 'org.postgresql', 'fatal:', 'log:'))
     if not is_pg:
-        return "NON_PG_LOG", "info", None, None, None, None, "INFO"
-    m = POSTGRES_LOG_RE.match(raw_line)
-    db_user = None
-    db_name = None
-    level = "INFO"
-    msg = raw_line
+        return 'NON_PG_LOG', 'info', None, None, None, None, None, 'INFO', {}
 
-    if m:
-        db_user = m.group("user")
-        db_name = m.group("db")
-        level = m.group("level")
-        msg = m.group("msg")
-
+    level = parsed['level']
+    msg = parsed['msg']
+    user = parsed['user']
+    client_ip = parsed['client_ip']
+    db_name = parsed['db_name']
+    app_name = parsed['app_name']
     msg_lower = msg.lower()
 
-    # 1. Password authentication failure or unauthorized/non-existent role / pgbouncer probe
-    if ("password authentication failed" in msg_lower or ("role" in msg_lower and "does not exist" in msg_lower) or "authentication failed" in msg_lower or "login failed" in msg_lower or "no such user" in msg_lower or "auth failed" in msg_lower or "no pg_hba.conf entry" in msg_lower):
-        m_u = re.search(r'(?:for user|role|user:?)\s+["\']?([^"\'\s,]+)["\']?', msg, re.IGNORECASE)
-        u = m_u.group(1) if m_u else (db_user or "unknown")
-        return "DB_AUTH_FAILURE", "high", f"Database Authentication Failed (User: {u})", "T1110 - Brute Force", u, db_name, level
+    # 1. Self-collector / agent traffic exclusion (socadmin, 127.0.0.1, push agent)
+    if user in ('socadmin', 'bsmart_soc') or client_ip in ('127.0.0.1', 'localhost', '::1'):
+        return 'DB_MAINTENANCE', 'info', 'SOC Agent Telemetry', None, user, client_ip, db_name, level, {}
 
-    # 2. Destructive DDL / Dropping tables or databases
-    if re.search(r'statement:\s*(DROP\s+TABLE|DROP\s+DATABASE|DROP\s+SCHEMA|TRUNCATE)', msg, re.IGNORECASE):
-        return "DB_DESTRUCTIVE_DDL", "critical", "Destructive Database DDL Command (DROP/TRUNCATE)", "T1485 - Data Destruction", db_user, db_name, level
+    # 2. Per-app allowlists (Pillar 4)
+    if app_id and db.is_db_operation_allowlisted(app_id, db_user=user, client_ip=client_ip, db_name=db_name):
+        return 'ALLOWLIST_HIT', 'info', f'Allowlisted Database Operation ({user or "all"})', None, user, client_ip, db_name, level, {'why_it_fired': 'Matched active per-application allowlist'}
 
-    # 3. Privilege Escalation / Superuser Grants
-    # True privilege escalation: altering/creating superusers, granting OS execution roles, or database takeover
-    if re.search(r'statement:\s*(?:ALTER|CREATE)\s+(?:USER|ROLE).*SUPERUSER', msg, re.IGNORECASE) or \
-       re.search(r'statement:\s*GRANT\s+(?:pg_execute_server_program|pg_read_server_files|pg_write_server_files)', msg, re.IGNORECASE) or \
-       re.search(r'statement:\s*GRANT\s+ALL\s+PRIVILEGES\s+ON\s+DATABASE', msg, re.IGNORECASE):
-        return "DB_PRIVILEGE_ESCALATION", "critical", "Database Superuser Privilege Escalation", "T1078 - Valid Accounts", db_user, db_name, level
-    elif re.search(r'statement:\s*GRANT\s+ALL', msg, re.IGNORECASE):
-        # Routine internal maintenance (e.g. GRANT ALL ON ALL TABLES IN SCHEMA public TO app_user)
-        return "DB_MAINTENANCE", "info", "Routine Database Schema Permission Sync", "Benign Maintenance", db_user, db_name, level
+    # 3. DML / Statement / Timing checks (execute, statement, parse, bind, duration)
+    # Even if payload string contains 'auth failed', DML statements are NOT database auth failures!
+    is_dml_or_timing = level == 'LOG' or any(msg_lower.startswith(k) for k in ('execute ', 'statement:', 'parse ', 'bind ', 'duration:', 'connection received'))
+    if is_dml_or_timing:
+        # Destructive DDL / Dropping tables or databases
+        if re.search(r'statement:\s*(DROP\s+TABLE|DROP\s+DATABASE|DROP\s+SCHEMA|TRUNCATE)', msg, re.IGNORECASE):
+            return 'DB_DESTRUCTIVE_DDL', 'critical', 'Destructive Database DDL Command (DROP/TRUNCATE)', 'T1485 - Data Destruction', user, client_ip, db_name, level, {}
 
-    # 4. Connection pool starvation / DoS
-    if "remaining connection slots are reserved" in msg_lower or "too many connections" in msg_lower:
-        return "DB_CONNECTION_EXHAUSTION", "high", "Database Connection Pool Starvation", "T1499 - Endpoint Denial of Service", db_user, db_name, level
+        # Privilege Escalation / Superuser Grants
+        if re.search(r'statement:\s*(?:ALTER|CREATE)\s+(?:USER|ROLE).*\bSUPERUSER\b', msg, re.IGNORECASE) or \
+           re.search(r'statement:\s*GRANT\s+(?:pg_execute_server_program|pg_read_server_files|pg_write_server_files)\b', msg, re.IGNORECASE) or \
+           re.search(r'statement:\s*GRANT\s+ALL\s+PRIVILEGES\s+ON\s+DATABASE\b', msg, re.IGNORECASE):
+            return 'DB_PRIVILEGE_ESCALATION', 'critical', 'Database Superuser Privilege Escalation', 'T1078 - Valid Accounts', user, client_ip, db_name, level, {}
+        elif re.search(r'statement:\s*GRANT\s+ALL\b', msg, re.IGNORECASE):
+            return 'DB_MAINTENANCE', 'info', 'Routine Database Schema Permission Sync', 'Benign Maintenance', user, client_ip, db_name, level, {}
 
-    # 5. SQL Syntax error / probe from injection attempts
-    if "syntax error at or near" in msg_lower or "union query must have the same number of columns" in msg_lower:
-        return "DB_SQL_ERROR", "medium", "Database Query Syntax Error / SQLi Probe", "T1190 - Exploit Public-Facing Application", db_user, db_name, level
+        # Routine application DML
+        return 'DB_LOG', 'info', None, None, user, client_ip, db_name, level, {}
 
-    return "DB_LOG", "info", None, None, db_user, db_name, level
+    # 4. Real Authentication Failures (Pillars 1 & 3)
+    # Strictly requires FATAL / ERROR / WARNING level
+    is_auth_failure = False
+    if level in ('FATAL', 'ERROR', 'WARNING'):
+        if 'password authentication failed' in msg_lower or \
+           'no pg_hba.conf entry' in msg_lower or \
+           ('role' in msg_lower and 'does not exist' in msg_lower and not msg_lower.startswith('execute') and not msg_lower.startswith('statement')) or \
+           'authentication failed for user' in msg_lower or \
+           'pam authentication failed' in msg_lower:
+            is_auth_failure = True
+
+    if is_auth_failure:
+        m_u = re.search(r'(?:for user|role)\s+["\']?([^"\'\s,]+)["\']?', msg, re.IGNORECASE)
+        target_user = m_u.group(1) if m_u else (user or 'unknown')
+
+        internal_src = is_ip_internal(client_ip, project_id)
+        is_admin_role = target_user.lower() in ('postgres', 'root', 'superuser', 'rdsadmin', 'administrator')
+
+        signals = []
+        if not internal_src:
+            signals.append(f'External Source IP ({client_ip or "unknown"})')
+        if is_admin_role:
+            signals.append(f'Privileged Administrative Target Role ({target_user})')
+
+        ctx = recent_context or {}
+        distinct_users = ctx.get('distinct_users_count', 1)
+        velocity_per_min = ctx.get('velocity_per_min', 1)
+        has_success_after_fail = ctx.get('success_after_fail', False)
+
+        if distinct_users >= 3:
+            signals.append(f'Credential Spraying: {distinct_users} distinct DB roles targeted')
+        if has_success_after_fail:
+            signals.append('Compromise Indicator: Successful authorization followed authentication failures')
+
+        # Correlated Multi-Signal Severity Matrix:
+        if has_success_after_fail:
+            sev = 'critical'
+        elif len(signals) >= 2 or (not internal_src and is_admin_role) or distinct_users >= 3:
+            sev = 'high'
+        elif not internal_src or is_admin_role or velocity_per_min >= 10:
+            sev = 'medium'
+        else:
+            # Single or repeated internal retry on ordinary user
+            sev = 'low' if velocity_per_min <= 3 else 'medium'
+
+        evidence_dict = {
+            'signals': signals,
+            'target_user': target_user,
+            'client_ip': client_ip or 'missing in log_line_prefix (%h recommended)',
+            'db_name': db_name,
+            'app_name': app_name,
+            'internal_src': internal_src,
+            'is_admin_role': is_admin_role,
+            'confidence': 'HIGH' if len(signals) >= 2 else 'MEDIUM'
+        }
+
+        title = f'Database Authentication Failure ({target_user})'
+        if sev in ('low', 'medium') and internal_src:
+            title += ' - Stale / Misconfigured Credential'
+
+        return 'DB_AUTH_FAILURE', sev, title, 'T1110 - Brute Force', target_user, client_ip, db_name, level, evidence_dict
+
+    # 5. Connection pool starvation / DoS
+    if 'remaining connection slots are reserved' in msg_lower or 'too many connections' in msg_lower:
+        return 'DB_CONNECTION_EXHAUSTION', 'high', 'Database Connection Pool Starvation', 'T1499 - Endpoint Denial of Service', user, client_ip, db_name, level, {}
+
+    # 6. SQL Syntax error
+    if 'syntax error at or near' in msg_lower or 'union query must have the same number of columns' in msg_lower:
+        return 'DB_SQL_ERROR', 'low', 'Database Query Syntax Error / SQLi Probe', 'T1190 - Exploit Public-Facing Application', user, client_ip, db_name, level, {}
+
+    return 'DB_LOG', 'info', None, None, user, client_ip, db_name, level, {}
 
 STATIC_EXT_RE = re.compile(r'\.(?:png|jpe?g|gif|svg|ico|css|js|woff2?|ttf|eot|map|webp)$', re.IGNORECASE)
 ATTACK_PATH_TOKENS = (
@@ -10802,29 +10919,47 @@ def api_app_events(request: Request, payload: dict = Body(...)):
 
         # 1. PostgreSQL log evaluation
         if source_type in ("postgres", "database") or role == "database":
-            ev_type, sev, rule_title, mitre_tag, db_user, db_name, db_lvl = evaluate_postgres_security_event(raw_line)
+            res = evaluate_postgres_security_event(raw_line, project_id=project_id, app_id=actual_app_id)
+            if len(res) == 9:
+                ev_type, sev, rule_title, mitre_tag, db_user, c_ip, db_name, db_lvl, ev_dict = res
+            elif len(res) == 8:
+                ev_type, sev, rule_title, mitre_tag, db_user, c_ip, db_name, db_lvl = res
+                ev_dict = {}
+            else:
+                ev_type, sev, rule_title, mitre_tag, db_user, db_name, db_lvl = res
+                c_ip = None
+                ev_dict = {}
+
             if "syntax error" in raw_line.lower() or "error" in raw_line.lower():
                 with _cross_log_lock:
                     _recent_cross_log_db_errors.append((time.time(), raw_line, actual_app_id))
             if sev == "info" and any(k in raw_line.lower() for k in ["checkpoint starting", "checkpoint complete", "connection authorized"]):
                 continue
 
+            # Triplicate collapse: skip redundant parse/bind timing lines if execute statement is present in same batch
+            if sev == "info" and ev_type == "DB_LOG" and any(raw_line.lower().startswith(p) for p in ("duration:", "parse ", "bind ")):
+                continue
+
             bulk_events.append((
                 now_dt, actual_app_id, comp_id, node_name, source_type, ev_type,
-                None, db_user, None, None, None, 0, sev, psycopg2.extras.Json(ev),
+                c_ip, db_user, None, None, None, 0, sev, psycopg2.extras.Json(ev),
                 db_user, db_name, raw_line[:500]
             ))
             if sev in ("medium", "high", "critical"):
+                attacker_k = f"db_user:{db_user}" if db_user else (f"ip:{c_ip}" if c_ip else "unknown")
                 security_incidents_to_process.append({
                     "type": "db",
                     "sev": sev,
                     "rule_title": rule_title,
                     "mitre_tag": mitre_tag,
-                    "attacker_key": f"db_user:{db_user or 'unknown'}",
+                    "attacker_key": attacker_k,
                     "user": db_user,
-                    "ip": None,
+                    "ip": c_ip,
                     "summary": f"{rule_title or ev_type} on {db_name or 'postgres'}",
-                    "raw_line": raw_line
+                    "raw_line": raw_line,
+                    "event_type": ev_type,
+                    "evidence": ev_dict,
+                    "confidence": ev_dict.get("confidence", "MEDIUM")
                 })
                 if sev == "critical": highest_severity = "critical"
                 elif sev == "high" and highest_severity != "critical": highest_severity = "high"
@@ -11068,6 +11203,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
                         SELECT id, events_count, severity, mitre_tactics, alert_dispatched
                         FROM app_incidents
                         WHERE application_id = %s AND attacker_key = %s AND status = 'Open'
+                          AND last_event_at >= NOW() - INTERVAL '30 minutes'
                         ORDER BY id DESC LIMIT 1;
                     """, (actual_app_id, attacker_key))
                     existing_inc = cur.fetchone()

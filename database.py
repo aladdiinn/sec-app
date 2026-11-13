@@ -6503,6 +6503,46 @@ def is_request_allowlisted(application_id: int, path: str, client_ip: str, user:
     return False
 
 
+def is_db_operation_allowlisted(application_id: int, db_user: str = None, client_ip: str = None, db_name: str = None) -> bool:
+    """Check if database event matches an active per-application allowlist rule and track hits."""
+    if not application_id:
+        return False
+    allowlists = get_app_allowlists(application_id)
+    if not allowlists:
+        return False
+
+    for al in allowlists:
+        ptype = al.get("pattern_type")
+        pval = al.get("pattern_value", "")
+        matched = False
+        if ptype in ("user_name", "db_user"):
+            if db_user and pval.lower() == db_user.lower():
+                matched = True
+        elif ptype in ("ip_subnet", "client_ip"):
+            if client_ip and pval and (pval in client_ip or client_ip in pval):
+                matched = True
+        elif ptype == "db_name":
+            if db_name and pval.lower() == db_name.lower():
+                matched = True
+
+        if matched:
+            try:
+                conn = get_db_connection()
+                if conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            UPDATE app_detection_allowlists
+                            SET hit_count = COALESCE(hit_count, 0) + 1, last_hit_at = NOW()
+                            WHERE id = %s;
+                        """, (al.get("id"),))
+                        conn.commit()
+                    conn.close()
+            except Exception:
+                pass
+            return True
+    return False
+
+
 def get_project_subnets(project_id: int):
     """Get configured internal CIDR subnets for a project."""
     conn = get_db_connection()
