@@ -670,10 +670,6 @@
             const now = new Date();
             const c = caseDetails.case || { id: caseId, title: 'Security Incident', server_id: null };
             
-            // Compute real tamper-evident SHA-256 digest from case metadata and alerts count
-            const rawPayload = `CASE_ID:${c.id}|TITLE:${c.title}|STATUS:${c.status}|TIMESTAMP:${now.toISOString()}|ALERTS_COUNT:${caseAlerts.length}`;
-            const documentDigest = await computeSha256(rawPayload);
-
             // Filter alerts specifically to this case or incident title
             let caseAlerts = alerts.filter(a => a.case_id == caseId || a.id == caseId);
             if (caseAlerts.length === 0) {
@@ -682,6 +678,10 @@
             if (caseAlerts.length === 0 && c.server_id) {
                  caseAlerts = alerts.filter(a => a.server_id === c.server_id);
             }
+
+            // Compute real tamper-evident SHA-256 digest from case metadata and alerts count
+            const rawPayload = `CASE_ID:${c.id}|TITLE:${c.title}|STATUS:${c.status}|TIMESTAMP:${now.toISOString()}|ALERTS_COUNT:${caseAlerts.length}`;
+            const documentDigest = await computeSha256(rawPayload);
             
             // Filter audit logs similarly
             const caseLogs = logs.filter(l => l.target_id == caseId || (c.server_id && l.target_id == c.server_id));
