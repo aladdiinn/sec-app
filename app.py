@@ -10919,7 +10919,8 @@ def api_app_events(request: Request, payload: dict = Body(...)):
 
         # 1. PostgreSQL log evaluation
         if source_type in ("postgres", "database") or role == "database":
-            res = evaluate_postgres_security_event(raw_line, project_id=project_id, app_id=actual_app_id)
+            proj_id = comp.get("project_id") if isinstance(comp, dict) else None
+            res = evaluate_postgres_security_event(raw_line, project_id=proj_id, app_id=actual_app_id)
             if len(res) == 9:
                 ev_type, sev, rule_title, mitre_tag, db_user, c_ip, db_name, db_lvl, ev_dict = res
             elif len(res) == 8:
