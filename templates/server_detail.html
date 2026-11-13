@@ -345,6 +345,16 @@
 
     let detectedServicesList = [];
 
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     function goBack() {
         const params = new URLSearchParams(window.location.search);
         const from = params.get('from');
@@ -585,8 +595,9 @@
     async function loadDetectedServices() {
         try {
             const res = await apiFetch(`/api/servers/${serverId}/detected-services`);
-            detectedServicesList = res.services || [];
-            document.getElementById('detected-services-count').textContent = detectedServicesList.length;
+            detectedServicesList = Array.isArray(res) ? res : (res.services || []);
+            const countEl = document.getElementById('detected-services-count');
+            if (countEl) countEl.textContent = detectedServicesList.length;
             filterDetectedServices();
         } catch (e) {
             console.error('Failed to load detected services:', e);
