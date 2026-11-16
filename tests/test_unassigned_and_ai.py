@@ -101,6 +101,17 @@ class TestAiAlertAnalysis(unittest.TestCase):
         self.assertIn("[REDACTED_SECRET]", masked)
         self.assertIn("euid=root", masked, "System root effective user must be preserved for accurate SOC context")
 
+        # Ensure Java exception phrases and normal words like 'user data' do NOT trigger fake USER_1
+        java_ex = "Fatal Java exception: Caused by: java.lang.OutOfMemoryError: GC overhead limit exceeded"
+        san_java = ses_mailer.sanitize_alert_for_external_ai(java_ex)
+        self.assertNotIn("USER_1", san_java)
+        self.assertIn("java.lang.OutOfMemoryError", san_java)
+
+        snapd_log = "cannot create user data directory: cannot create snap home dir: mkdir /nonexistent: permission denied"
+        san_snap = ses_mailer.sanitize_alert_for_external_ai(snapd_log)
+        self.assertNotIn("USER_1", san_snap)
+        self.assertIn("user data directory", san_snap)
+
     def test_structured_conflict_detection(self):
         """
         Structured conflict detection:

@@ -200,7 +200,7 @@ def log_startup_ses_check_once():
     )
 
 # ── Data Sanitization for External AI ─────────────────────────────────────────
-def sanitize_alert_for_external_ai(text: str) -> str:
+def sanitize_alert_for_external_ai(text: str, context_maps: dict = None) -> str:
     """
     Masks IP addresses, authentication tokens, hostnames, and credentials before external LLM calls.
     Uses coherent pseudonyms (USER_1, HOST_1, IP_1) so multi-stage context is retained without leaking PII.
@@ -215,7 +215,7 @@ def sanitize_alert_for_external_ai(text: str) -> str:
     s = re.sub(r'sp-token-[a-zA-Z0-9_-]+', '[REDACTED_SECRET]', s)
 
     # 2. Stable Hostname map shared across URLs and text headers
-    host_map = {}
+    host_map = context_maps.get("host_map") if (context_maps is not None and "host_map" in context_maps) else {}
     def _get_host_pseudo(h):
         clean_h = h.strip().rstrip('.')
         if clean_h.lower() in ('localhost', '127.0.0.1'):
@@ -231,7 +231,7 @@ def sanitize_alert_for_external_ai(text: str) -> str:
         port = m.group(3) or ''
         rest = m.group(4) or ''
         return f"{proto}{_get_host_pseudo(host)}{port}{rest}"
-    s = re.sub(r'(https?://)([a-zA-Z0-9_\.-]+)(:\d+)?([^\s"\']*)', _replace_url, s, flags=re.I)
+    s = re.sub(r"""(https?://)([a-zA-Z0-9_.-]+)(:\d+)?(/[^\s"']*)?""", _replace_url, s, flags=re.I)
 
     # Sanitize host/server references
     def _replace_host(m):
@@ -242,7 +242,7 @@ def sanitize_alert_for_external_ai(text: str) -> str:
     s = re.sub(r'\b(host(?:name)?|server|node)([=:\s]+)([a-zA-Z0-9_\.-]+)', _replace_host, s, flags=re.I)
 
     # 3. Stable IP pseudonyms (IPv4 and IPv6)
-    ip_map = {}
+    ip_map = context_maps.get("ip_map") if (context_maps is not None and "ip_map" in context_maps) else {}
     def _replace_ip(m):
         ip = m.group(0)
         if ip not in ip_map:
@@ -252,17 +252,27 @@ def sanitize_alert_for_external_ai(text: str) -> str:
     s = re.sub(r'\b(?:[0-9a-fA-F]{1,4}:){1,7}:?[0-9a-fA-F]{1,4}\b', _replace_ip, s)
 
     # 4. Stable User pseudonyms (distinguishing auid/login vs euid if present)
-    user_map = {}
+    user_map = context_maps.get("user_map") if (context_maps is not None and "user_map" in context_maps) else {}
     def _replace_user(m):
         prefix = m.group(1)
         sep = m.group(2)
         u = m.group(3)
         if u.lower() in ('root', 'daemon', 'nobody', 'system'):
             return f"{prefix}{sep}{u.lower()}"
+        if u.lower() in ('data', 'home', 'dir', 'directory', 'space', 'group', 'input', 'account'):
+            return m.group(0)
         if u not in user_map:
             user_map[u] = f"USER_{len(user_map)+1}"
         return f"{prefix}{sep}{user_map[u]}"
-    s = re.sub(r'\b(user(?:name)?|auid|euid|login|account|by)([=:\s]+)([a-zA-Z0-9_\.-]+)', _replace_user, s, flags=re.I)
+
+    # Specifically match audit/log user assignments and alert titles, NEVER match 'Caused by:' or general prose
+    s = re.sub(r'\b(user(?:name)?|auid|euid|login)\s*([=:])\s*([a-zA-Z0-9_\.-]+)', _replace_user, s, flags=re.I)
+    s = re.sub(r'\b(Alert\s+by)\s+([a-zA-Z0-9_\.-]+)', lambda m: f"{m.group(1)} {user_map.setdefault(m.group(2), f'USER_{len(user_map)+1}') if m.group(2).lower() not in ('root','system') else m.group(2)}", s, flags=re.I)
+
+    if context_maps is not None:
+        context_maps["host_map"] = host_map
+        context_maps["ip_map"] = ip_map
+        context_maps["user_map"] = user_map
 
     return s
 
@@ -292,9 +302,10 @@ def generate_comprehensive_alert_analysis(alert_data: dict) -> dict:
     title = alert_data.get("title", "Security Alert")
     engine_sev = (alert_data.get("severity") or "warning").lower()
     raw_evidence = alert_data.get("evidence") or alert_data.get("message") or alert_data.get("why_it_fired") or ""
-    sanitized_evidence = sanitize_alert_for_external_ai(str(raw_evidence))
-    server_ip = sanitize_alert_for_external_ai(str(alert_data.get("server_ip") or alert_data.get("ip") or ""))
-    username = sanitize_alert_for_external_ai(str(alert_data.get("username") or "root"))
+    ctx_maps = {"host_map": {}, "ip_map": {}, "user_map": {}}
+    sanitized_evidence = sanitize_alert_for_external_ai(str(raw_evidence), ctx_maps)
+    server_ip = sanitize_alert_for_external_ai(str(alert_data.get("server_ip") or alert_data.get("ip") or ""), ctx_maps)
+    username = sanitize_alert_for_external_ai(str(alert_data.get("username") or "root"), ctx_maps)
     
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if not gemini_key:
@@ -363,6 +374,19 @@ No markdown fences, no extra text."""
         data["configured"] = True
         data["model_name"] = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
         data["generated_at"] = datetime.now(timezone.utc).isoformat()
+
+        # Unmask pseudonyms back to real names/IPs for dashboard display
+        reverse_map = {}
+        for real, pseudo in {**ctx_maps.get("host_map", {}), **ctx_maps.get("ip_map", {}), **ctx_maps.get("user_map", {})}.items():
+            reverse_map[pseudo] = real
+        if reverse_map:
+            for field in ("summary", "likely_cause", "risk_impact", "recommendations", "possible_fp"):
+                val = data.get(field)
+                if isinstance(val, str):
+                    for pseudo, real in sorted(reverse_map.items(), key=lambda x: len(x[0]), reverse=True):
+                        val = re.sub(r'\b' + re.escape(pseudo) + r'\b', real, val)
+                    data[field] = val
+
         return data
 
     except Exception as e:
