@@ -30,18 +30,10 @@ def build():
 CONFIG_FILE = os.environ.get("SECUREPULSE_CONFIG", "/opt/securepulse/config.json")
 
 # Load dynamic persistent configuration if present (preserves node identity across updates)
-if os.path.exists(CONFIG_FILE):
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as _f_cfg:
-            _cdata = json.load(_f_cfg)
-            if _cdata.get("SOC_URL"): SOC_URL = _cdata["SOC_URL"].rstrip("/")
-            if _cdata.get("TARGET_IP"): TARGET_IP = _cdata["TARGET_IP"]
-            if _cdata.get("TARGET_NAME"): TARGET_NAME = _cdata["TARGET_NAME"]
-            if _cdata.get("AGENT_TOKEN"): AGENT_TOKEN = _cdata["AGENT_TOKEN"]
-            if _cdata.get("ASSIGNED_SERVER_ID") is not None:
-                ASSIGNED_SERVER_ID = int(_cdata["ASSIGNED_SERVER_ID"])
-    except Exception as _e_cfg:
-        pass
+try:
+    _recover_legacy_credentials()
+except Exception:
+    pass
 '''
     pos = src.find('ASSIGNED_SERVER_ID =')
     if pos != -1:
@@ -235,9 +227,9 @@ def check_and_apply_update(manifest, sid):
         cfg_file = "/opt/securepulse/config.json"
         cfg_data = {
             "SOC_URL": SOC_URL,
-            "TARGET_IP": TARGET_IP,
-            "TARGET_NAME": TARGET_NAME,
-            "AGENT_TOKEN": AGENT_TOKEN,
+            "TARGET_IP": get_node_ip(),
+            "TARGET_NAME": get_node_name(),
+            "AGENT_TOKEN": str(AGENT_TOKEN) if not str(AGENT_TOKEN).startswith("$") else "",
             "ASSIGNED_SERVER_ID": ASSIGNED_SERVER_ID
         }
         with open(cfg_file, "w", encoding="utf-8") as f:

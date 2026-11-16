@@ -696,7 +696,7 @@ function formatLocal(dateStr) {
                 const isSrvRead = s.is_read === true || s.is_read === 'true';
                 const readTag = isSrvRead ? '<div class="badge-read-tag" style="margin-top:4px">✓ Marked as Read</div>' : '';
                 const agentV = s.agent_version || '1.6.2';
-                const targetV = '{{ latest_agent_version or "2.1.1" }}';
+                const targetV = '{{ latest_agent_version or "2.1.2" }}';
                 const upStat = s.update_status || (agentV < targetV ? 'update_available' : 'up_to_date');
                 let statusPill = '';
                 if (upStat === 'up_to_date') {
@@ -825,7 +825,7 @@ function formatLocal(dateStr) {
     }
 
     async function triggerAgentUpdate(id) {
-        const targetV = '{{ latest_agent_version or "2.1.1" }}';
+        const targetV = '{{ latest_agent_version or "2.1.2" }}';
         if(!confirm(`Initiate autonomous self-update to v${targetV} for this agent?`)) return;
         try {
             const res = await apiFetch(`/api/servers/${id}/update-agent`, {

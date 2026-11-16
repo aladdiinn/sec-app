@@ -49,6 +49,21 @@ class TestAgentAutoUpdate(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
+    def _run_coro(self, coro):
+        stack = [coro]
+        val = None
+        while stack:
+            try:
+                curr = stack[-1]
+                val = curr.send(val)
+                if hasattr(val, 'send'):
+                    stack.append(val)
+                    val = None
+            except StopIteration as e:
+                stack.pop()
+                val = e.value
+        return val
+
     def test_u1_signature_verification_and_selftest(self):
         """U1: Valid artifact must pass SHA-256 and Ed25519 signature checks and --selftest."""
         self.assertTrue(os.path.exists(self.artifact_path), f"Artifact missing at {self.artifact_path}")
@@ -286,6 +301,102 @@ ASSIGNED_SERVER_ID = 21
         self.assertEqual(res["window_end"], "05:00")
         self.assertEqual(res["failure_threshold_pct"], 15.0)
         self.assertEqual(res["fleet"]["total"], 3)
+
+    @patch("app.db.save_agent_data")
+    @patch("app.db.get_server_by_ip")
+    @patch("app.db.get_server_by_id")
+    @patch("app.db.get_db_connection")
+    def test_u12_agent_push_token_auth_and_docker_fallback(self, mock_db_conn, mock_get_srv_id, mock_get_srv_ip, mock_save_data):
+        """U13: Agent push must resolve server_id via agent_token and Docker bridge fallback."""
+        from unittest.mock import AsyncMock
+        import app
+        mock_get_srv_ip.return_value = None
+        mock_get_srv_id.side_effect = lambda sid: {"id": sid, "name": "soc-server"} if sid else None
+
+        mock_cur = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+        mock_db_conn.return_value = mock_conn
+
+        # Case A: Match by token
+        mock_cur.fetchone.return_value = {"id": 42}
+        req = MagicMock()
+        req.client.host = "192.168.1.50"
+        req.headers = {"x-agent-token": "sp-tok-secret-42"}
+        async def json_data_token():
+            return {
+                "server_id": None,
+                "server_ip": "$NODE_IP",
+                "hostname": "Target-Node",
+                "cpu_percent": 12.0
+            }
+        req.json = json_data_token
+
+        res = self._run_coro(app.api_agent_push(req))
+        self.assertEqual(res.status_code, 200)
+        body = json.loads(res.body.decode())
+        self.assertEqual(body["server_id"], 42)
+
+        # Case B: Match by Docker bridge NAT IP (172.18.0.1) for local SOC host
+        req_docker = MagicMock()
+        req_docker.client.host = "172.18.0.1"
+        req_docker.headers = {}
+        async def json_data_docker():
+            return {
+                "server_id": None,
+                "server_ip": "$NODE_IP",
+                "hostname": "ubuntu-DEV",
+                "cpu_percent": 8.0
+            }
+        req_docker.json = json_data_docker
+        mock_cur.fetchone.return_value = {"id": 1}
+        res_docker = self._run_coro(app.api_agent_push(req_docker))
+        self.assertEqual(res_docker.status_code, 200)
+        body_docker = json.loads(res_docker.body.decode())
+        self.assertEqual(body_docker["server_id"], 1)
+
+    def test_u13_agent_credential_recovery_and_persistence(self):
+        """U14: Agent must recover legacy credentials from backup file and persist to config.json."""
+        test_cfg = os.path.join(self.test_dir, "config.json")
+        test_bak = os.path.join(self.test_dir, "node_push_agent.py.backup")
+
+        with open(test_bak, "w", encoding="utf-8") as f:
+            f.write('''
+TARGET_IP = "192.168.150.15"
+TARGET_NAME = "Jvvnl -Mitra 1"
+AGENT_TOKEN = "sp-token-legacy-mitra-15"
+ASSIGNED_SERVER_ID = 15
+SOC_URL = "https://192.168.10.201:3443"
+''')
+
+        os.environ["SECUREPULSE_CONFIG"] = test_cfg
+        try:
+            with patch("glob.glob", return_value=[test_bak]), \
+                 patch("os.path.isfile", side_effect=lambda p: p in (test_cfg, test_bak)):
+                import agent_extracted
+                agent_extracted.CONFIG_FILE = test_cfg
+                agent_extracted.TARGET_IP = "$NODE_IP"
+                agent_extracted.TARGET_NAME = "$NODE_NAME"
+                agent_extracted.AGENT_TOKEN = "$TOKEN"
+                agent_extracted.ASSIGNED_SERVER_ID = None
+
+                agent_extracted._recover_legacy_credentials()
+
+                self.assertEqual(agent_extracted.TARGET_IP, "192.168.150.15")
+                self.assertEqual(agent_extracted.TARGET_NAME, "Jvvnl -Mitra 1")
+                self.assertEqual(agent_extracted.AGENT_TOKEN, "sp-token-legacy-mitra-15")
+                self.assertEqual(agent_extracted.ASSIGNED_SERVER_ID, 15)
+
+                self.assertTrue(os.path.exists(test_cfg))
+                with open(test_cfg, "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+                self.assertEqual(saved["TARGET_IP"], "192.168.150.15")
+                self.assertEqual(saved["TARGET_NAME"], "Jvvnl -Mitra 1")
+                self.assertEqual(saved["AGENT_TOKEN"], "sp-token-legacy-mitra-15")
+                self.assertEqual(saved["ASSIGNED_SERVER_ID"], 15)
+        finally:
+            if "SECUREPULSE_CONFIG" in os.environ:
+                del os.environ["SECUREPULSE_CONFIG"]
 
 if __name__ == "__main__":
     unittest.main()
