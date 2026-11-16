@@ -28,17 +28,25 @@ def build():
     # 2. Add config file loader
     cfg_loader = '''
 CONFIG_FILE = os.environ.get("SECUREPULSE_CONFIG", "/opt/securepulse/config.json")
-
-# Load dynamic persistent configuration if present (preserves node identity across updates)
-try:
-    _recover_legacy_credentials()
-except Exception:
-    pass
 '''
     pos = src.find('ASSIGNED_SERVER_ID =')
     if pos != -1:
         line_end = src.find('\n', pos)
         src = src[:line_end+1] + cfg_loader + src[line_end+1:]
+
+    # Invoke _recover_legacy_credentials() after its definition has been loaded
+    inv_marker = '# ── INVENTORY & SCHEDULE STATE ──'
+    inv_pos = src.find(inv_marker)
+    if inv_pos != -1:
+        recover_call = '''
+# Load dynamic persistent configuration if present (preserves node identity across updates)
+try:
+    _recover_legacy_credentials()
+except Exception:
+    pass
+
+'''
+        src = src[:inv_pos] + recover_call + src[inv_pos:]
 
     # 3. Embed Ed25519 verification functions
     with open(os.path.join(root_dir, "agent_verifier.py"), "r", encoding="utf-8") as vf:

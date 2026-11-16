@@ -373,19 +373,15 @@ SOC_URL = "https://192.168.10.201:3443"
         try:
             with patch("glob.glob", return_value=[test_bak]), \
                  patch("os.path.isfile", side_effect=lambda p: p in (test_cfg, test_bak)):
-                import agent_extracted
-                agent_extracted.CONFIG_FILE = test_cfg
-                agent_extracted.TARGET_IP = "$NODE_IP"
-                agent_extracted.TARGET_NAME = "$NODE_NAME"
-                agent_extracted.AGENT_TOKEN = "$TOKEN"
-                agent_extracted.ASSIGNED_SERVER_ID = None
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("agent_artifact_test", self.artifact_path)
+                agent_mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(agent_mod)
 
-                agent_extracted._recover_legacy_credentials()
-
-                self.assertEqual(agent_extracted.TARGET_IP, "192.168.150.15")
-                self.assertEqual(agent_extracted.TARGET_NAME, "Jvvnl -Mitra 1")
-                self.assertEqual(agent_extracted.AGENT_TOKEN, "sp-token-legacy-mitra-15")
-                self.assertEqual(agent_extracted.ASSIGNED_SERVER_ID, 15)
+                self.assertEqual(agent_mod.TARGET_IP, "192.168.150.15")
+                self.assertEqual(agent_mod.TARGET_NAME, "Jvvnl -Mitra 1")
+                self.assertEqual(agent_mod.AGENT_TOKEN, "sp-token-legacy-mitra-15")
+                self.assertEqual(agent_mod.ASSIGNED_SERVER_ID, 15)
 
                 self.assertTrue(os.path.exists(test_cfg))
                 with open(test_cfg, "r", encoding="utf-8") as f:

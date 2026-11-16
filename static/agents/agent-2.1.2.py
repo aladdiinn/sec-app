@@ -10,12 +10,6 @@ AGENT_TOKEN = "$TOKEN"
 ASSIGNED_SERVER_ID = int("$ASSIGNED_ID") if "$ASSIGNED_ID".isdigit() else None
 
 CONFIG_FILE = os.environ.get("SECUREPULSE_CONFIG", "/opt/securepulse/config.json")
-
-# Load dynamic persistent configuration if present (preserves node identity across updates)
-try:
-    _recover_legacy_credentials()
-except Exception:
-    pass
 PUSH_INTERVAL = 15  # seconds (responsive real-time log ingestion)
 
 def get_node_ip():
@@ -131,6 +125,13 @@ def _recover_legacy_credentials():
     get_node_ip()
     get_node_name()
     _save_persistent_config()
+
+
+# Load dynamic persistent configuration if present (preserves node identity across updates)
+try:
+    _recover_legacy_credentials()
+except Exception:
+    pass
 
 # ── INVENTORY & SCHEDULE STATE ──
 scheduled_inventory_hour = random.randint(1, 4)
