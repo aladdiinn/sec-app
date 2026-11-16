@@ -4513,11 +4513,21 @@ async def api_get_project_members(project_id: int):
     all_servers = db.get_servers()
     projects = db.get_projects()
     proj_map = {p["id"]: p.get("name") for p in projects}
+    is_target_unassigned = db.is_unassigned_project(project_id)
 
     for s in all_servers:
-        s["assigned"] = (s.get("project_id") == project_id)
-        other_pid = s.get("project_id")
-        s["project_name"] = proj_map.get(other_pid, "") if (other_pid and other_pid != project_id) else ""
+        s_pid = s.get("project_id")
+        if is_target_unassigned:
+            s["assigned"] = bool(s_pid == project_id or s_pid is None or s_pid == 0 or db.is_unassigned_project(s_pid))
+        else:
+            s["assigned"] = bool(s_pid == project_id)
+        
+        if s_pid and s_pid != project_id:
+            s["project_name"] = proj_map.get(s_pid, "")
+        elif (s_pid is None or s_pid == 0 or db.is_unassigned_project(s_pid)) and not is_target_unassigned:
+            s["project_name"] = "Unassigned"
+        else:
+            s["project_name"] = ""
 
     all_apps = []
     try:
@@ -4525,9 +4535,18 @@ async def api_get_project_members(project_id: int):
     except Exception:
         pass
     for a in all_apps:
-        a["assigned"] = (a.get("project_id") == project_id)
-        other_pid = a.get("project_id")
-        a["project_name"] = proj_map.get(other_pid, "") if (other_pid and other_pid != project_id) else ""
+        a_pid = a.get("project_id")
+        if is_target_unassigned:
+            a["assigned"] = bool(a_pid == project_id or a_pid is None or a_pid == 0 or db.is_unassigned_project(a_pid))
+        else:
+            a["assigned"] = bool(a_pid == project_id)
+        
+        if a_pid and a_pid != project_id:
+            a["project_name"] = proj_map.get(a_pid, "")
+        elif (a_pid is None or a_pid == 0 or db.is_unassigned_project(a_pid)) and not is_target_unassigned:
+            a["project_name"] = "Unassigned"
+        else:
+            a["project_name"] = ""
 
     all_servers.sort(key=lambda x: (x.get("hostname") or x.get("name") or "").lower())
     all_apps.sort(key=lambda x: (x.get("name") or "").lower())
@@ -4695,8 +4714,9 @@ async def api_assign_project_assets(project_id: int, request: Request):
                     p_track = p_row["vpn_tracking_enabled"] if p_row else False
                     p_subnet = p_row["vpn_subnet"] if p_row else ""
 
-                    # Unassign servers previously assigned to this project
-                    cur.execute("UPDATE servers SET project_id = NULL WHERE project_id = %s;", (project_id,))
+                    u_id = db.get_unassigned_project_id()
+                    # Unassign servers previously assigned to this project -> move to Unassigned
+                    cur.execute("UPDATE servers SET project_id = %s WHERE project_id = %s;", (u_id, project_id))
                     # Assign selected server_ids to this project
                     if server_ids and isinstance(server_ids, list):
                         for sid in server_ids:
@@ -4795,15 +4815,16 @@ async def api_update_project(project_id: int, request: Request):
 
             cur.execute("UPDATE projects SET name = %s, description = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = %s;", (name, desc, vpn_tracking, vpn_subnet, project_id))
             
+            u_id = db.get_unassigned_project_id()
             if server_ids is not None and isinstance(server_ids, list):
                 int_sids = [int(x) for x in server_ids]
-                cur.execute("UPDATE servers SET project_id = NULL WHERE project_id = %s AND NOT (id = ANY(%s));", (project_id, int_sids if int_sids else [-1]))
+                cur.execute("UPDATE servers SET project_id = %s WHERE project_id = %s AND NOT (id = ANY(%s));", (u_id, project_id, int_sids if int_sids else [-1]))
                 if int_sids:
                     cur.execute("UPDATE servers SET project_id = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = ANY(%s);", (project_id, vpn_tracking, vpn_subnet, int_sids))
 
             if app_ids is not None and isinstance(app_ids, list):
                 int_aids = [int(x) for x in app_ids]
-                cur.execute("UPDATE applications SET project_id = NULL WHERE project_id = %s AND NOT (id = ANY(%s));", (project_id, int_aids if int_aids else [-1]))
+                cur.execute("UPDATE applications SET project_id = %s WHERE project_id = %s AND NOT (id = ANY(%s));", (u_id, project_id, int_aids if int_aids else [-1]))
                 cur.execute("DELETE FROM project_apps WHERE project_id = %s AND NOT (application_id = ANY(%s));", (project_id, int_aids if int_aids else [-1]))
                 if int_aids:
                     cur.execute("UPDATE applications SET project_id = %s WHERE id = ANY(%s);", (project_id, int_aids))

@@ -1907,7 +1907,7 @@ def _build_pid_filter(field_name: str, project_id):
     if is_unassigned_project(project_id):
         u_id = get_unassigned_project_id()
         if u_id is not None:
-            return f" AND {field_name} = %s ", [u_id]
+            return f" AND ({field_name} = %s OR {field_name} IS NULL OR {field_name} = 0) ", [u_id]
         return f" AND ({field_name} IS NULL OR {field_name} = 0) ", []
     if isinstance(project_id, (list, tuple, set)):
         pids = [int(p) for p in project_id if str(p).isdigit()]
@@ -1951,6 +1951,7 @@ def get_servers(project_id=None):
             where_sql = "WHERE " + " AND ".join(where_parts)
             query = f"""
                 SELECT s.*, 
+                       p.name as project_name,
                        (SELECT COUNT(*) FROM alerts a WHERE a.server_id = s.id AND a.is_resolved IS NOT TRUE) as alert_count,
                        (SELECT COUNT(*) FROM alerts a WHERE a.server_id = s.id AND a.severity = 'critical' AND a.is_resolved IS NOT TRUE) as critical_alert_count,
                        (SELECT COUNT(*) FROM alerts a WHERE a.server_id = s.id AND (a.severity = 'warning' OR a.severity = 'high' OR a.severity = 'medium') AND a.is_resolved IS NOT TRUE) as trouble_alert_count,
@@ -1966,6 +1967,7 @@ def get_servers(project_id=None):
                           AND ac.enabled = TRUE
                        ) as app_components
                 FROM servers s 
+                LEFT JOIN projects p ON s.project_id = p.id
                 {where_sql} 
                 ORDER BY s.id ASC;
             """
@@ -1974,6 +1976,7 @@ def get_servers(project_id=None):
             ret = []
             for r in results:
                 d = dict(r)
+                d['project_name'] = d.get('project_name') or 'Unassigned'
                 d['severity'] = d.get('computed_severity', 'info')
                 # Strict security: A record with no approved_by must never display as UP/approved
                 if not d.get('approved_by'):
@@ -1999,11 +2002,17 @@ def get_server_by_id(server_id: int):
                 conn.commit()
             except Exception:
                 pass
-            cur.execute("SELECT * FROM servers WHERE id = %s;", (server_id,))
+            cur.execute("""
+                SELECT s.*, p.name as project_name 
+                FROM servers s 
+                LEFT JOIN projects p ON s.project_id = p.id 
+                WHERE s.id = %s;
+            """, (server_id,))
             row = cur.fetchone()
             if not row:
                 return None
             s = dict(row)
+            s["project_name"] = s.get("project_name") or "Unassigned" 
             s["name"] = s.get("name") or s.get("hostname")
             s["ip"] = s.get("ip") or s.get("ip_address")
             s["api_token"] = s.get("api_token") or s.get("agent_token") or "sp-token-12345"
@@ -3363,6 +3372,16 @@ def get_projects(allowed_project_ids=None):
     if not conn: return []
     try:
         with conn.cursor() as cur:
+            u_id = get_unassigned_project_id()
+            if u_id:
+                try:
+                    cur.execute("UPDATE servers SET project_id = %s WHERE project_id IS NULL OR project_id = 0;", (u_id,))
+                    cur.execute("UPDATE applications SET project_id = %s WHERE project_id IS NULL OR project_id = 0;", (u_id,))
+                    if hasattr(conn, 'commit'):
+                        conn.commit()
+                except Exception:
+                    pass
+
             cur.execute("""
                 SELECT p.id, p.name, p.description, p.created_at, p.vpn_tracking_enabled, p.vpn_subnet, p.is_default, p.is_system,
                        COUNT(DISTINCT s.id) as server_count,
@@ -3370,7 +3389,7 @@ def get_projects(allowed_project_ids=None):
                        COUNT(DISTINCT CASE WHEN (a.severity = 'warning' OR a.severity = 'high') AND (a.is_resolved IS NOT TRUE) THEN a.id END) as warning_count,
                        COUNT(DISTINCT CASE WHEN a.is_resolved IS NOT TRUE THEN a.id END) as total_alerts
                 FROM projects p
-                LEFT JOIN servers s ON s.project_id = p.id
+                LEFT JOIN servers s ON (s.project_id = p.id OR ((p.is_default IS TRUE OR LOWER(TRIM(p.name)) = 'unassigned') AND (s.project_id IS NULL OR s.project_id = 0)))
                 LEFT JOIN alerts a ON a.server_id = s.id
                 GROUP BY p.id, p.name, p.description, p.created_at, p.vpn_tracking_enabled, p.vpn_subnet, p.is_default, p.is_system
                 ORDER BY CASE WHEN (p.is_default IS TRUE OR LOWER(TRIM(p.name)) = 'unassigned') THEN 0 ELSE 1 END, p.name ASC;
@@ -3402,23 +3421,40 @@ def get_projects(allowed_project_ids=None):
                 p["user_count"] = len(p["assigned_users"])
 
                 # Fetch assigned servers details for cards & quick remove
-                cur.execute("""
-                    SELECT id, name, hostname, ip, ip_address, status, severity
-                    FROM servers
-                    WHERE project_id = %s
-                    ORDER BY LOWER(COALESCE(hostname, name)) ASC;
-                """, (pid,))
+                is_unassigned = bool(p.get("is_default") or is_unassigned_project(pid))
+                if is_unassigned:
+                    cur.execute("""
+                        SELECT id, name, hostname, ip, ip_address, status, severity
+                        FROM servers
+                        WHERE (project_id = %s OR project_id IS NULL OR project_id = 0)
+                        ORDER BY LOWER(COALESCE(hostname, name)) ASC;
+                    """, (pid,))
+                else:
+                    cur.execute("""
+                        SELECT id, name, hostname, ip, ip_address, status, severity
+                        FROM servers
+                        WHERE project_id = %s
+                        ORDER BY LOWER(COALESCE(hostname, name)) ASC;
+                    """, (pid,))
                 p["assigned_servers"] = cur.fetchall() or []
                 p["server_count"] = len(p["assigned_servers"])
 
                 # Fetch assigned applications details for cards & quick remove
                 try:
-                    cur.execute("""
-                        SELECT id, name, primary_url, status, environment
-                        FROM applications
-                        WHERE project_id = %s
-                        ORDER BY LOWER(name) ASC;
-                    """, (pid,))
+                    if is_unassigned:
+                        cur.execute("""
+                            SELECT id, name, primary_url, status, environment
+                            FROM applications
+                            WHERE (project_id = %s OR project_id IS NULL OR project_id = 0)
+                            ORDER BY LOWER(name) ASC;
+                        """, (pid,))
+                    else:
+                        cur.execute("""
+                            SELECT id, name, primary_url, status, environment
+                            FROM applications
+                            WHERE project_id = %s
+                            ORDER BY LOWER(name) ASC;
+                        """, (pid,))
                     p["assigned_apps"] = cur.fetchall() or []
                 except Exception:
                     p["assigned_apps"] = []

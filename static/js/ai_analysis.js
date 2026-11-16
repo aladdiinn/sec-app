@@ -11,7 +11,7 @@ window.AiAnalysisComponent = {
 
     renderPanelHtml(targetId, targetType, severity) {
         return `
-        <div id="ai-panel-${targetType}-${targetId}" class="ai-analysis-panel" style="background:rgba(15,23,42,0.85); border:1px solid rgba(56,189,248,0.25); border-radius:6px; padding:12px; font-size:12px; margin-top:8px;">
+        <div id="ai-panel-${targetType}-${targetId}" class="ai-analysis-panel" style="background:rgba(15,23,42,0.85); border:1px solid rgba(56,189,248,0.25); border-radius:6px; padding:12px 14px; font-size:12px; margin-top:10px; width:100%; box-sizing:border-box;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                 <div style="display:flex; align-items:center; gap:6px;">
                     <span style="font-size:14px;">✨</span>
@@ -24,7 +24,7 @@ window.AiAnalysisComponent = {
                 <p style="color:var(--text3, #94a3b8); font-size:11.5px; margin:0 0 8px 0; line-height:1.4;">
                     Get an advisory AI assessment with root-cause analysis, false-positive indicators, and recommended triage steps.
                 </p>
-                <button class="btn btn-glass" onclick="event.stopPropagation(); AiAnalysisComponent.load(${targetId}, '${targetType}', '${severity}', false)" style="font-size:11px; padding:5px 12px; border-color:var(--cyan); color:var(--cyan); font-weight:600;">
+                <button class="btn btn-glass" onclick="event.stopPropagation(); AiAnalysisComponent.load(${targetId}, '${targetType}', '${severity}', false)" style="font-size:11px; padding:5px 14px; border-color:var(--cyan); color:var(--cyan); font-weight:600;">
                     ✨ Analyze with AI
                 </button>
             </div>
@@ -72,7 +72,6 @@ window.AiAnalysisComponent = {
 
     renderAnalysisResult(targetId, targetType, severity, a) {
         const contentEl = document.getElementById(`ai-content-${targetType}-${targetId}`);
-        const statusEl = document.getElementById(`ai-status-${targetType}-${targetId}`);
         if (!contentEl) return;
 
         let conflictHtml = '';
@@ -91,13 +90,35 @@ window.AiAnalysisComponent = {
 
         contentEl.innerHTML = `
             ${conflictHtml}
-            <div style="display:flex; flex-direction:column; gap:6px; color:var(--text, #f8fafc); font-size:12px; line-height:1.45;">
-                <div><strong style="color:var(--cyan);">Summary:</strong> ${this.escapeHtml(a.summary || 'N/A')}</div>
-                <div><strong style="color:#94a3b8;">Likely Cause:</strong> ${this.escapeHtml(a.likely_cause || 'N/A')}</div>
-                <div><strong style="color:#94a3b8;">Risk &amp; Impact:</strong> ${this.escapeHtml(a.risk_impact || 'N/A')}</div>
-                <div><strong style="color:#38bdf8;">Recommended Steps:</strong> ${this.escapeHtml(a.recommendations || 'N/A')}</div>
-                ${a.possible_fp ? `<div style="color:var(--amber, #fbbf24); font-size:11.5px;"><strong>False-Positive Indicators:</strong> ${this.escapeHtml(a.possible_fp)}</div>` : ''}
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:10px; margin-top:4px;">
+                <div style="background:rgba(0,0,0,0.22); padding:10px 12px; border-radius:4px; border:1px solid rgba(255,255,255,0.06); display:flex; flex-direction:column; gap:8px;">
+                    <div>
+                        <strong style="color:var(--cyan); font-size:11.5px; display:block; margin-bottom:2px;">Summary:</strong>
+                        <span style="font-size:12px; color:var(--text, #f8fafc); line-height:1.45;">${this.escapeHtml(a.summary || 'N/A')}</span>
+                    </div>
+                    <div>
+                        <strong style="color:#94a3b8; font-size:11.5px; display:block; margin-bottom:2px;">Likely Cause:</strong>
+                        <span style="font-size:12px; color:var(--text2, #cbd5e1); line-height:1.45;">${this.escapeHtml(a.likely_cause || 'N/A')}</span>
+                    </div>
+                </div>
+
+                <div style="background:rgba(0,0,0,0.22); padding:10px 12px; border-radius:4px; border:1px solid rgba(255,255,255,0.06); display:flex; flex-direction:column; gap:8px;">
+                    <div>
+                        <strong style="color:#38bdf8; font-size:11.5px; display:block; margin-bottom:2px;">Risk &amp; Impact:</strong>
+                        <span style="font-size:12px; color:var(--text, #f8fafc); line-height:1.45;">${this.escapeHtml(a.risk_impact || 'N/A')}</span>
+                    </div>
+                    <div>
+                        <strong style="color:#34d399; font-size:11.5px; display:block; margin-bottom:2px;">Recommended Steps:</strong>
+                        <span style="font-size:12px; color:var(--text2, #cbd5e1); line-height:1.45;">${this.escapeHtml(a.recommendations || 'N/A')}</span>
+                    </div>
+                </div>
             </div>
+
+            ${a.possible_fp ? `
+                <div style="margin-top:8px; background:rgba(245,158,11,0.1); border-left:3px solid var(--amber, #f59e0b); padding:6px 10px; border-radius:3px; font-size:11.5px; color:var(--amber, #fbbf24);">
+                    <strong>False-Positive Indicators:</strong> ${this.escapeHtml(a.possible_fp)}
+                </div>
+            ` : ''}
 
             <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.08); padding-top:8px; margin-top:8px; flex-wrap:wrap; gap:6px;">
                 <div style="display:flex; gap:8px; align-items:center; font-size:10.5px; color:var(--text3, #64748b);">
@@ -109,7 +130,7 @@ window.AiAnalysisComponent = {
                     ↺ Regenerate
                 </button>
             </div>
-            <div style="font-size:9.5px; color:#64748b; margin-top:4px;">
+            <div style="font-size:9.5px; color:#64748b; margin-top:3px;">
                 Advisory analysis only. Does not alter engine severity or operational status.
             </div>
         `;

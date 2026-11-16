@@ -703,33 +703,27 @@
 
         return `
         <div>
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; margin-bottom:12px; align-items:start;">
-                <div>
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px">
-                        <h4 style="font-size:14px; font-weight:600; color:var(--text); margin:0">${escapeHtml(inc.title || 'Security Incident')}</h4>
-                        <div style="display:flex; gap:6px; align-items:center">
-                            <button class="btn btn-glass" onclick="toggleReadSingle(${inc.id}, ${!inc.is_read})" style="font-size:11px; padding:4px 8px">
-                                ${inc.is_read ? 'Mark as Unread' : 'Mark as Read'}
-                            </button>
-                            ${(st === 'closed' || st === 'resolved') 
-                                ? `<button class="btn btn-glass" onclick="reopenSingle(${inc.id})" style="font-size:11px; padding:4px 8px; color:var(--cyan)">↺ Reopen</button>`
-                                : `<button class="btn btn-glass" onclick="openCloseModalSingle(${inc.id})" style="font-size:11px; padding:4px 8px; color:#f87171">✕ Close</button>`
-                            }
-                            <button class="btn btn-glass" onclick="submitVerdict('incident', ${inc.id}, 'true_positive', '${safeTitle}')" style="font-size:11px; padding:4px 8px; color:var(--green)" title="Confirm True Positive">✓ True Pos</button>
-                            <button class="btn btn-glass" onclick="promptFalsePositive('incident', ${inc.id}, '${safeTitle}')" style="font-size:11px; padding:4px 8px; color:var(--amber)" title="Mark as False Positive">✕ False Pos</button>
-                            <button class="btn btn-glass" onclick="deleteIncidentItem(${inc.id})" style="font-size:11px; padding:4px 8px; color:var(--red)" title="Delete record">🗑️</button>
-                        </div>
-                    </div>
-
-                    <p style="font-size:13px; color:var(--text2); line-height:1.5; margin:0 0 8px 0">${escapeHtml(inc.description || 'No description provided')}</p>
-                    ${evBox}
-                    ${closedInfo}
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:16px;">
+                <div style="flex:1; min-width:0;">
+                    <h4 style="font-size:15px; font-weight:700; color:var(--text); margin:0 0 4px 0; line-height:1.35;">${escapeHtml(inc.title || 'Security Incident')}</h4>
+                    <p style="font-size:13px; color:var(--text2); line-height:1.5; margin:0">${escapeHtml(inc.description || 'No description provided')}</p>
                 </div>
-                <div>
-                    ${aiPanelHtml}
+                <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; flex-shrink:0;">
+                    <button class="btn btn-glass" onclick="toggleReadSingle(${inc.id}, ${!inc.is_read})" style="font-size:11px; padding:4px 8px">
+                        ${inc.is_read ? 'Mark as Unread' : 'Mark as Read'}
+                    </button>
+                    ${(st === 'closed' || st === 'resolved') 
+                        ? `<button class="btn btn-glass" onclick="reopenSingle(${inc.id})" style="font-size:11px; padding:4px 8px; color:var(--cyan)">↺ Reopen</button>`
+                        : `<button class="btn btn-glass" onclick="openCloseModalSingle(${inc.id})" style="font-size:11px; padding:4px 8px; color:#f87171">✕ Close</button>`
+                    }
+                    <button class="btn btn-glass" onclick="submitVerdict('incident', ${inc.id}, 'true_positive', '${safeTitle}')" style="font-size:11px; padding:4px 8px; color:var(--green)" title="Confirm True Positive">✓ True Pos</button>
+                    <button class="btn btn-glass" onclick="promptFalsePositive('incident', ${inc.id}, '${safeTitle}')" style="font-size:11px; padding:4px 8px; color:var(--amber)" title="Mark as False Positive">✕ False Pos</button>
+                    <button class="btn btn-glass" onclick="deleteIncidentItem(${inc.id})" style="font-size:11px; padding:4px 8px; color:var(--red)" title="Delete record">🗑️</button>
                 </div>
             </div>
 
+            ${evBox}
+            ${closedInfo}
             <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:11.5px; color:var(--text3); margin-top:10px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px">
                 <span>Target: <b style="color:var(--text)">${escapeHtml(inc.hostname || 'Unknown')}</b></span>
                 <span>Assigned: <b style="color:var(--text)">${escapeHtml(inc.assigned_to || 'Unassigned')}</b></span>
@@ -737,6 +731,7 @@
                 ${inc.first_seen ? `<span>First Seen: <b style="color:var(--text)">${new Date(inc.first_seen).toLocaleString()}</b></span>` : ''}
                 ${inc.last_seen ? `<span>Last Seen: <b style="color:var(--text)">${new Date(inc.last_seen).toLocaleString()}</b></span>` : ''}
             </div>
+            ${aiPanelHtml}
         </div>`;
     }
 

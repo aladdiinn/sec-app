@@ -586,6 +586,12 @@ def create_application(conn, name: str, primary_url: str, environment: str = "Pr
     """Creates a new application record and optional project mapping."""
     if not conn:
         return None
+    if project_id is None:
+        try:
+            import database as db
+            project_id = db.get_unassigned_project_id()
+        except Exception:
+            pass
     settings_json = psycopg2.extras.Json(settings or {})
     try:
         with conn.cursor() as cur:
@@ -666,8 +672,21 @@ def get_applications(conn, project_id=None, status_filter=None):
                 else:
                     where_clauses.append("1=0")
             else:
-                where_clauses.append("a.project_id = %s")
-                params.append(int(project_id))
+                try:
+                    import database as db
+                    if db.is_unassigned_project(project_id):
+                        u_id = db.get_unassigned_project_id()
+                        if u_id is not None:
+                            where_clauses.append("(a.project_id = %s OR a.project_id IS NULL OR a.project_id = 0)")
+                            params.append(u_id)
+                        else:
+                            where_clauses.append("(a.project_id IS NULL OR a.project_id = 0)")
+                    else:
+                        where_clauses.append("a.project_id = %s")
+                        params.append(int(project_id))
+                except Exception:
+                    where_clauses.append("a.project_id = %s")
+                    params.append(int(project_id))
 
         sql = f"""
             SELECT 

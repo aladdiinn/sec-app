@@ -3542,36 +3542,31 @@ function renderModalIncidentDetails(inc, ev, targetName, fullDate) {
     const aiPanelHtml = window.AiAnalysisComponent ? window.AiAnalysisComponent.renderPanelHtml(inc.id, 'incident', inc.severity) : '';
 
     return `
-    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; margin-bottom:10px; align-items:start;">
-        <div>
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:12px;">
-                <div>
-                    <div style="font-size:14px; font-weight:700; color:var(--text); margin-bottom:4px;">${escapeHtml(titleText)}</div>
-                    <div style="font-size:12.5px; color:var(--text2); line-height:1.5;">${escapeHtml(descText)}</div>
-                    ${occ > 1 ? `<div style="font-size:11px; color:#38bdf8; margin-top:6px; font-weight:600;">🔄 Aggregated: Occurred ${occ} times between ${inc.first_seen ? new Date(inc.first_seen).toLocaleTimeString() : 'start'} and ${inc.last_seen ? new Date(inc.last_seen).toLocaleTimeString() : 'now'}</div>` : ''}
-                </div>
-                <div style="display:flex; gap:6px; flex-wrap:wrap; flex-shrink:0;">
-                    ${!isClosed ? `
-                        <button class="btn btn-glass" onclick="resolveModalSingleAlert(${inc.id})" style="font-size:11px; padding:4px 10px; color:#34d399; border-color:rgba(52,211,153,0.4)">✓ Mark Closed</button>
-                        <button class="btn btn-glass" onclick="triageModalSingleAlert(${inc.id}, 'false_positive')" style="font-size:11px; padding:4px 10px; color:#94a3b8; border-color:rgba(148,163,184,0.3)">False Positive</button>
-                        <button class="btn btn-glass" onclick="triageModalSingleAlert(${inc.id}, 'true_positive')" style="font-size:11px; padding:4px 10px; color:#f87171; border-color:rgba(239,68,68,0.4)">True Positive</button>
-                    ` : `
-                        <button class="btn btn-glass" onclick="reopenModalAlert(${inc.id})" style="font-size:11px; padding:4px 10px; color:var(--cyan); border-color:rgba(56,189,248,0.4)">Reopen</button>
-                    `}
-                </div>
+    <div style="margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:16px;">
+            <div style="flex:1; min-width:0;">
+                <div style="font-size:15px; font-weight:700; color:var(--text); margin-bottom:4px; line-height:1.35;">${escapeHtml(titleText)}</div>
+                <div style="font-size:12.5px; color:var(--text2); line-height:1.5;">${escapeHtml(descText)}</div>
+                ${occ > 1 ? `<div style="font-size:11px; color:#38bdf8; margin-top:6px; font-weight:600;">🔄 Aggregated: Occurred ${occ} times between ${inc.first_seen ? new Date(inc.first_seen).toLocaleTimeString() : 'start'} and ${inc.last_seen ? new Date(inc.last_seen).toLocaleTimeString() : 'now'}</div>` : ''}
             </div>
-            ${evBox}
+            <div style="display:flex; gap:6px; flex-wrap:wrap; flex-shrink:0;">
+                ${!isClosed ? `
+                    <button class="btn btn-glass" onclick="resolveModalSingleAlert(${inc.id})" style="font-size:11px; padding:4px 10px; color:#34d399; border-color:rgba(52,211,153,0.4)">✓ Mark Closed</button>
+                    <button class="btn btn-glass" onclick="triageModalSingleAlert(${inc.id}, 'false_positive')" style="font-size:11px; padding:4px 10px; color:#94a3b8; border-color:rgba(148,163,184,0.3)">False Positive</button>
+                    <button class="btn btn-glass" onclick="triageModalSingleAlert(${inc.id}, 'true_positive')" style="font-size:11px; padding:4px 10px; color:#f87171; border-color:rgba(239,68,68,0.4)">True Positive</button>
+                ` : `
+                    <button class="btn btn-glass" onclick="reopenModalAlert(${inc.id})" style="font-size:11px; padding:4px 10px; color:var(--cyan); border-color:rgba(56,189,248,0.4)">Reopen</button>
+                `}
+            </div>
         </div>
-        <div>
-            ${aiPanelHtml}
+        ${evBox}
+        <div style="display:flex; gap:20px; font-size:11.5px; color:var(--text3); border-top:1px solid rgba(255,255,255,0.06); padding-top:8px; margin-bottom:8px;">
+            <span>Assigned: <strong style="color:var(--text2)">${escapeHtml(inc.assigned_to || 'Unassigned')}</strong></span>
+            <span>Target: <strong style="color:var(--text2)">${targetName}</strong></span>
+            <span>Logged: <span style="font-family:var(--mono, monospace)">${fullDate}</span></span>
         </div>
-    </div>
-    <div style="display:flex; gap:20px; font-size:11.5px; color:var(--text3); border-top:1px solid rgba(255,255,255,0.06); padding-top:8px;">
-        <span>Assigned: <strong style="color:var(--text2)">${escapeHtml(inc.assigned_to || 'Unassigned')}</strong></span>
-        <span>Target: <strong style="color:var(--text2)">${targetName}</strong></span>
-        <span>Logged: <span style="font-family:var(--mono, monospace)">${fullDate}</span></span>
-    </div>
-    `;
+        ${aiPanelHtml}
+    </div>`;
 }
 
 async function resolveModalSingleAlert(alertId) {
