@@ -1911,7 +1911,10 @@ def get_unassigned_project_id():
             """)
             r = cur.fetchone()
             if r:
-                _UNASSIGNED_PROJECT_ID_CACHE = r["id"] if isinstance(r, dict) else r[0]
+                if isinstance(r, dict):
+                    _UNASSIGNED_PROJECT_ID_CACHE = r.get("id")
+                elif hasattr(r, "__getitem__") and len(r) > 0:
+                    _UNASSIGNED_PROJECT_ID_CACHE = r[0]
                 return _UNASSIGNED_PROJECT_ID_CACHE
     except Exception as e:
         logger.error(f"Error in get_unassigned_project_id: {e}")

@@ -124,6 +124,14 @@ jobs:
         run: |
           python replay_detections.py
 
+      - name: Run Website Rename, Unassigned Assets, AI Analysis & Auto-Update Tests
+        env:
+          TESTING: "1"
+          SECRET_KEY: "test-secret-key-32-chars-long-abc"
+          DB_PASSWORD: "testpassword"
+        run: |
+          python -m unittest tests/test_website_rename.py tests/test_unassigned_and_ai.py tests/test_unassigned_membership_fix.py tests/test_agent_autoupdate.py
+
   # ============================================================================
   # Stage 2: Docker Image Build & Push to GHCR
   # ============================================================================

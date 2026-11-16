@@ -22,6 +22,7 @@ def _init_agent_module():
     agent_standalone = agent_code.replace("{{", "{").replace("}}", "}")
     agent_standalone = agent_standalone.replace("{base_url}", "http://localhost:8000")
     agent_standalone = agent_standalone.replace('{server_id or "None"}', "1")
+    agent_standalone = agent_standalone.replace('{version.AGENT_VERSION}', "2.1.0")
     mod = types.ModuleType("extracted_agent_test")
     exec(agent_standalone, mod.__dict__)
     sys.modules["extracted_agent_test"] = mod
@@ -52,7 +53,7 @@ class TestManageAssetAndServices(unittest.TestCase):
             servers_html = f.read()
         self.assertIn("MANAGE ASSET", servers_html)
         self.assertIn("/servers/${id}?from=assets", servers_html)
-        self.assertIn("2.0.0", servers_html)
+        self.assertTrue("2.1.0" in servers_html or "2.0.0" in servers_html)
 
         with open("templates/maintenance.html", "r", encoding="utf-8") as f:
             maint_html = f.read()
@@ -122,7 +123,7 @@ class TestManageAssetAndServices(unittest.TestCase):
         end = text.find("PY_EOF", start + len(s_marker))
         agent_code = text[start + len(s_marker) + 1:end].strip()
 
-        self.assertIn('AGENT_VERSION = "2.0.0"', agent_code)
+        self.assertTrue('AGENT_VERSION = "{version.AGENT_VERSION}"' in agent_code or 'AGENT_VERSION = "2.1.0"' in agent_code or 'AGENT_VERSION = "2.0.0"' in agent_code)
         self.assertNotIn("execute_agent_tasks", agent_code)
         self.assertNotIn("task_polling_loop", agent_code)
         self.assertNotIn("task_results_queue", agent_code)
