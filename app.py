@@ -3,10 +3,11 @@
 # EMBEDDED REAL-TIME HOST SECURITY WATCHER + FIM (FILE INTEGRITY MONITORING)
 # Continuously monitors SSH logs, shell commands, process execution, and FIM
 # ══════════════════════════════════════════════════════════════════════════════
-import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac, uuid, hashlib, base64
+import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac, uuid, hashlib, base64, collections, asyncio
 import geoip_service
 geoip_service.ensure_database_downloaded_async()
 import psycopg2, psycopg2.extras
+import ses_mailer
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -997,6 +998,9 @@ if os.path.exists(static_dir):
 
 # Jinja2 Templates setup looking in templates and templets
 templates = Jinja2Templates(directory=["templates", "templets"])
+import display_labels
+templates.env.globals["labels"] = display_labels.LABELS
+templates.env.globals["get_label"] = display_labels.get_label
 
 
 
@@ -1087,7 +1091,8 @@ def render_template(request: Request, name: str, context: dict = None):
         "hide_nav": False,
         "error": None,
         "project_id": proj_id,
-        "current_project": current_project
+        "current_project": current_project,
+        "labels": display_labels.LABELS
     }
     ctx.update(context)
     return templates.TemplateResponse(request, name, ctx)
@@ -4439,6 +4444,8 @@ async def api_create_project(request: Request):
     name = (body.get("name") or "").strip()
     if not name:
         return JSONResponse(status_code=400, content={"ok": False, "message": "Project name is required."})
+    if name.lower() == "unassigned":
+        return JSONResponse(status_code=400, content={"ok": False, "message": "The project name 'Unassigned' is reserved for the system default project."})
     desc = (body.get("description") or "").strip()
     server_ids = body.get("server_ids", [])
     app_ids = body.get("app_ids", [])
@@ -4483,7 +4490,7 @@ async def api_create_project(request: Request):
                 conn.commit()
 
             uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
-            db.log_audit(uname, "CREATE_PROJECT", "project", pid, f"Created project '{name}' with {len(server_ids)} assets, {len(app_ids)} app nodes")
+            db.log_audit(uname, "CREATE_PROJECT", "project", pid, f"Created project '{name}' with {len(server_ids)} assets, {len(app_ids)} websites")
             return {"ok": True, "id": pid, "message": f"Project '{name}' created successfully"}
     except Exception as e:
         if hasattr(conn, 'rollback'):
@@ -4580,15 +4587,16 @@ async def api_save_project_members(project_id: int, request: Request):
             apps_to_add = new_app_ids - cur_app_ids
             apps_to_remove = cur_app_ids - new_app_ids
 
+            u_id = db.get_unassigned_project_id()
             if servers_to_remove:
-                cur.execute("UPDATE servers SET project_id = NULL WHERE project_id = %s AND id = ANY(%s);", (project_id, list(servers_to_remove)))
+                cur.execute("UPDATE servers SET project_id = %s WHERE project_id = %s AND id = ANY(%s);", (u_id, project_id, list(servers_to_remove)))
             
             if servers_to_add:
                 cur.execute("UPDATE servers SET project_id = %s, vpn_tracking_enabled = %s, vpn_subnet = %s WHERE id = ANY(%s);", (project_id, p_track, p_subnet, list(servers_to_add)))
 
             if apps_to_remove:
                 try:
-                    cur.execute("UPDATE applications SET project_id = NULL WHERE project_id = %s AND id = ANY(%s);", (project_id, list(apps_to_remove)))
+                    cur.execute("UPDATE applications SET project_id = %s WHERE project_id = %s AND id = ANY(%s);", (u_id, project_id, list(apps_to_remove)))
                     cur.execute("DELETE FROM project_apps WHERE project_id = %s AND application_id = ANY(%s);", (project_id, list(apps_to_remove)))
                 except Exception:
                     pass
@@ -4644,10 +4652,11 @@ async def api_quick_remove_project_member(project_id: int, member_type: str, mem
             p_row = cur.fetchone()
             pname = (p_row["name"] if isinstance(p_row, dict) else p_row[0]) if p_row else f"#{project_id}"
 
+            u_id = db.get_unassigned_project_id()
             if m_type in ('server', 'asset', 'server_id'):
-                cur.execute("UPDATE servers SET project_id = NULL WHERE id = %s AND project_id = %s;", (member_id, project_id))
-            elif m_type in ('app', 'app_node', 'application'):
-                cur.execute("UPDATE applications SET project_id = NULL WHERE id = %s AND project_id = %s;", (member_id, project_id))
+                cur.execute("UPDATE servers SET project_id = %s WHERE id = %s AND project_id = %s;", (u_id, member_id, project_id))
+            elif m_type in ('app', 'app_node', 'application', 'website'):
+                cur.execute("UPDATE applications SET project_id = %s WHERE id = %s AND project_id = %s;", (u_id, member_id, project_id))
                 try:
                     cur.execute("DELETE FROM project_apps WHERE project_id = %s AND application_id = %s;", (project_id, member_id))
                 except Exception:
@@ -4754,6 +4763,8 @@ async def api_assign_project_groups(project_id: int, request: Request):
 async def api_update_project(project_id: int, request: Request):
     if not is_admin_user(request):
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
+    if db.is_unassigned_project(project_id):
+        return JSONResponse(status_code=400, content={"ok": False, "message": "The system 'Unassigned' project cannot be renamed or modified."})
     try:
         body = await request.json()
     except Exception:
@@ -4761,6 +4772,8 @@ async def api_update_project(project_id: int, request: Request):
     name = (body.get("name") or "").strip()
     if not name:
         return JSONResponse(status_code=400, content={"ok": False, "message": "Project name is required."})
+    if name.lower() == "unassigned":
+        return JSONResponse(status_code=400, content={"ok": False, "message": "The project name 'Unassigned' is reserved for the system default project."})
     desc = (body.get("description") or "").strip()
     vpn_tracking = bool(body.get("vpn_tracking_enabled", False))
     vpn_subnet = (body.get("vpn_subnet") or "").strip()
@@ -4839,6 +4852,8 @@ async def api_update_server_network(server_id: int, request: Request):
 async def api_delete_project(project_id: int, request: Request):
     if not is_admin_user(request):
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Super Admin privileges required."})
+    if db.is_unassigned_project(project_id):
+        return JSONResponse(status_code=400, content={"ok": False, "message": "The system 'Unassigned' project cannot be deleted."})
     
     project = db.get_project_by_id(project_id)
     pname = project.get("name") if project else f"Project #{project_id}"
@@ -8010,6 +8025,236 @@ async def api_bulk_incident_action(request: Request):
         ids=ids, action=action, username=username, note=note,
         assignee=assignee, reason=reason, verdict=verdict
     )
+
+# ── AI Analysis Guards & Endpoint ─────────────────────────────────────────────
+_AI_IN_FLIGHT_CALLS = set()
+_AI_LOCK_MUTEX = threading.Lock()
+_AI_CALL_TIMESTAMPS = collections.deque()
+_AI_TIMESTAMPS_LOCK = threading.Lock()
+
+@app.post("/api/alerts/{item_id}/ai-analysis")
+@app.post("/api/incidents/{item_id}/ai-analysis")
+@app.post("/api/app-incidents/{item_id}/ai-analysis")
+def api_alert_ai_analysis(item_id: int, request: Request):
+    """
+    Unified AI Threat Analysis Endpoint (Advisory only).
+    Supports alerts, server incidents, and app/website incidents.
+    Enforces authentication, project scoping, one pending call per alert,
+    global rate limiting, daily cap, settings toggle, sha256 caching, and 20s timeout.
+    """
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required to run AI analysis.")
+
+    # Determine requested type from query param or URL path
+    req_type = request.query_params.get("type", "").lower()
+    path = request.url.path
+    if "/app-incidents/" in path or req_type in ("app_incident", "app", "application"):
+        target_type = "app_incident"
+    elif "/incidents/" in path or req_type in ("incident", "server_incident"):
+        target_type = "incident"
+    elif req_type == "alert":
+        target_type = "alert"
+    else:
+        target_type = "auto"
+
+    regenerate = request.query_params.get("regenerate", "false").lower() in ("true", "1", "yes")
+
+    # 1. Fetch item & determine project_id for scoping
+    conn = db.get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    
+    alert_data = None
+    resolved_type = target_type
+    try:
+        with conn.cursor() as cur:
+            if target_type in ("app_incident", "auto"):
+                cur.execute("""
+                    SELECT ai.id, ai.title, ai.severity, ai.status, ai.client_ip, ai.user_name,
+                           ai.application_id, a.name AS app_name, a.project_id
+                    FROM app_incidents ai
+                    LEFT JOIN applications a ON ai.application_id = a.id
+                    WHERE ai.id = %s
+                """, (item_id,))
+                row = cur.fetchone()
+                if row:
+                    resolved_type = "app_incident"
+                    row = dict(row)
+                    alert_data = {
+                        "title": row.get("title") or "Website Security Incident",
+                        "severity": row.get("severity") or "warning",
+                        "evidence": f"{row.get('title')} (Client IP: {row.get('client_ip') or 'N/A'}, User: {row.get('user_name') or 'N/A'})",
+                        "server_ip": row.get("client_ip") or "",
+                        "username": row.get("user_name") or "",
+                        "project_id": row.get("project_id")
+                    }
+
+            if not alert_data and target_type in ("incident", "auto"):
+                cur.execute("""
+                    SELECT i.id, i.title, i.severity, i.description, i.status, i.server_id,
+                           i.evidence_data, s.hostname, s.ip_address, s.project_id
+                    FROM incidents i
+                    LEFT JOIN servers s ON i.server_id = s.id
+                    WHERE i.id = %s
+                """, (item_id,))
+                row = cur.fetchone()
+                if row:
+                    resolved_type = "incident"
+                    row = dict(row)
+                    ev_dict = row.get("evidence_data") or {}
+                    if isinstance(ev_dict, str):
+                        try: ev_dict = json.loads(ev_dict)
+                        except Exception: ev_dict = {}
+                    ev_text = ev_dict.get("why_it_fired") or ev_dict.get("raw_log_redacted") or row.get("description") or row.get("title")
+                    alert_data = {
+                        "title": row.get("title") or "Host Security Incident",
+                        "severity": row.get("severity") or "warning",
+                        "evidence": ev_text,
+                        "server_ip": row.get("ip_address") or row.get("hostname") or "",
+                        "username": ev_dict.get("process_user") or "unknown",
+                        "project_id": row.get("project_id")
+                    }
+
+            if not alert_data and target_type in ("alert", "auto"):
+                cur.execute("""
+                    SELECT a.id, a.title, a.alert_type, a.severity, a.message, a.server_id,
+                           a.evidence_data, s.hostname, s.ip_address, s.project_id
+                    FROM alerts a
+                    LEFT JOIN servers s ON a.server_id = s.id
+                    WHERE a.id = %s
+                """, (item_id,))
+                row = cur.fetchone()
+                if row:
+                    resolved_type = "alert"
+                    row = dict(row)
+                    ev_dict = row.get("evidence_data") or {}
+                    if isinstance(ev_dict, str):
+                        try: ev_dict = json.loads(ev_dict)
+                        except Exception: ev_dict = {}
+                    ev_text = ev_dict.get("why_it_fired") or row.get("message") or row.get("title")
+                    alert_data = {
+                        "title": row.get("title") or row.get("alert_type") or "Security Alert",
+                        "severity": row.get("severity") or "warning",
+                        "evidence": ev_text,
+                        "server_ip": row.get("ip_address") or row.get("hostname") or "",
+                        "username": "unknown",
+                        "project_id": row.get("project_id")
+                    }
+    finally:
+        conn.close()
+
+    if not alert_data:
+        raise HTTPException(status_code=404, detail=f"No {target_type} found with ID {item_id}")
+
+    # 2. Authorization: Project Scoping check
+    if not is_admin_user(request):
+        allowed_pids = db.get_user_allowed_project_ids(user["id"])
+        item_pid = alert_data.get("project_id")
+        if item_pid is not None and item_pid not in allowed_pids:
+            raise HTTPException(status_code=403, detail="Access denied: You do not have permission to view assets in this project.")
+
+    # 3. Settings check: Is AI enabled?
+    try:
+        ai_enabled = db.get_setting("ai_analysis_enabled", "true")
+        if str(ai_enabled).lower() in ("false", "0", "no"):
+            return JSONResponse(status_code=403, content={"ok": False, "message": "AI analysis is disabled in system settings."})
+    except Exception:
+        pass
+
+    # 4. Global Rate Limiting (sliding window: max 30 calls per minute)
+    now = time.time()
+    with _AI_TIMESTAMPS_LOCK:
+        while _AI_CALL_TIMESTAMPS and now - _AI_CALL_TIMESTAMPS[0] > 60:
+            _AI_CALL_TIMESTAMPS.popleft()
+        if len(_AI_CALL_TIMESTAMPS) >= 30:
+            db.log_ai_call(
+                alert_id=item_id if resolved_type == "alert" else None,
+                incident_id=item_id if resolved_type != "alert" else None,
+                status="rate_limited",
+                error_message="Global rate limit exceeded (30 req/min)"
+            )
+            return JSONResponse(status_code=429, content={"ok": False, "message": "Global AI analysis rate limit reached. Please wait a moment."})
+        _AI_CALL_TIMESTAMPS.append(now)
+
+    # 5. Daily Cap (e.g. 200 calls per 24 hours)
+    try:
+        daily_count = db.get_ai_daily_call_count()
+        daily_cap = int(db.get_setting("ai_daily_cap", "200"))
+        if daily_count >= daily_cap:
+            db.log_ai_call(
+                alert_id=item_id if resolved_type == "alert" else None,
+                incident_id=item_id if resolved_type != "alert" else None,
+                status="rate_limited",
+                error_message=f"Daily quota cap ({daily_cap}) reached"
+            )
+            return JSONResponse(status_code=429, content={"ok": False, "message": f"Daily AI quota reached ({daily_cap} analyses/day). Contact SOC administrator."})
+    except Exception as e:
+        logger.debug(f"Daily cap check error: {e}")
+
+    # 6. Cache Key = SHA256 of rule + evidence hash
+    rule_name = alert_data.get("title", "")
+    evidence_str = str(alert_data.get("evidence", ""))
+    cache_key = hashlib.sha256(f"{resolved_type}::{item_id}::{rule_name}::{evidence_str}".encode("utf-8")).hexdigest()
+
+    if not regenerate:
+        cached_result = db.get_ai_analysis_cache(cache_key)
+        if cached_result:
+            return {"ok": True, "analysis": cached_result, "cached": True}
+
+    # 7. Deduplicate Concurrent Requests (One pending call per alert)
+    lock_key = f"{resolved_type}:{item_id}"
+    with _AI_LOCK_MUTEX:
+        if lock_key in _AI_IN_FLIGHT_CALLS:
+            return JSONResponse(status_code=429, content={"ok": False, "message": "Analysis already in progress for this alert. Please wait a moment."})
+        _AI_IN_FLIGHT_CALLS.add(lock_key)
+
+    try:
+        # Check cache once more
+        if not regenerate:
+            cached_result = db.get_ai_analysis_cache(cache_key)
+            if cached_result:
+                return {"ok": True, "analysis": cached_result, "cached": True}
+
+        # 8. Execute AI analysis
+        start_t = time.time()
+        try:
+            result = ses_mailer.generate_comprehensive_alert_analysis(alert_data)
+        except Exception as e:
+            duration_ms = int((time.time() - start_t) * 1000)
+            db.log_ai_call(
+                alert_id=item_id if resolved_type == "alert" else None,
+                incident_id=item_id if resolved_type != "alert" else None,
+                status="error",
+                error_message=str(e),
+                duration_ms=duration_ms
+            )
+            return JSONResponse(status_code=500, content={"ok": False, "message": f"AI analysis error: {e}"})
+
+        duration_ms = int((time.time() - start_t) * 1000)
+
+        # 9. Save Cache & Log Call
+        db.save_ai_analysis_cache(
+            cache_key=cache_key,
+            alert_id=item_id if resolved_type == "alert" else None,
+            incident_id=item_id if resolved_type != "alert" else None,
+            analysis_json=result,
+            model_name=result.get("model_name", "gemini-2.5-flash"),
+            confidence=result.get("confidence", "Medium"),
+            has_conflict=bool(result.get("has_conflict", False))
+        )
+        db.log_ai_call(
+            alert_id=item_id if resolved_type == "alert" else None,
+            incident_id=item_id if resolved_type != "alert" else None,
+            model_name=result.get("model_name", "gemini-2.5-flash"),
+            status="success",
+            duration_ms=duration_ms
+        )
+
+        return {"ok": True, "analysis": result, "cached": False}
+    finally:
+        with _AI_LOCK_MUTEX:
+            _AI_IN_FLIGHT_CALLS.discard(lock_key)
 
 @app.post("/api/vulnerabilities/bulk-action")
 async def api_bulk_vulnerability_action(request: Request):
@@ -12491,7 +12736,7 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                     "APP_REPORT_CSV_DOWNLOAD",
                     "application",
                     str(app_id),
-                    f"Downloaded CSV report for app '{app_data.get('name')}', range: {range_label}",
+                    f"Downloaded CSV report for website '{app_data.get('name')}', range: {range_label}",
                     ip_address=client_ip
                 )
                 csv_buffer.seek(0)
@@ -12521,7 +12766,7 @@ def api_generate_app_report(request: Request, app_id: int, payload: dict = Body(
                 "APP_REPORT_GENERATE",
                 "application",
                 str(app_id),
-                f"Generated {rep_type} report for app '{app_data.get('name')}', range: {range_label}, rows: events={len(events_data)}, incs={len(incidents_data)}, users={len(users_data)}",
+                f"Generated {rep_type} report for website '{app_data.get('name')}', range: {range_label}, rows: events={len(events_data)}, incs={len(incidents_data)}, users={len(users_data)}",
                 ip_address=client_ip
             )
 

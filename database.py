@@ -1091,11 +1091,61 @@ def init_db():
                 try: cur.execute(f"ALTER TABLE server_log_configs ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass
 
+
+            # Stage 2 & 3 Schema Additions: Projects Unassigned & AI Analysis
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version VARCHAR(64) PRIMARY KEY,
+                    applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS project_backfill_log (
+                    id SERIAL PRIMARY KEY,
+                    asset_type VARCHAR(32) NOT NULL,
+                    asset_id INT NOT NULL,
+                    old_project_id INT,
+                    new_project_id INT NOT NULL,
+                    backfilled_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_backfill_asset ON project_backfill_log(asset_type, asset_id);
+
+                CREATE TABLE IF NOT EXISTS ai_analysis_cache (
+                    id SERIAL PRIMARY KEY,
+                    alert_id INT,
+                    incident_id INT,
+                    cache_key VARCHAR(128) UNIQUE NOT NULL,
+                    analysis_json JSONB NOT NULL,
+                    model_name VARCHAR(64) DEFAULT 'gemini-2.5-flash',
+                    confidence VARCHAR(16) DEFAULT 'HIGH',
+                    has_conflict BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_ai_cache_alert ON ai_analysis_cache(alert_id);
+                CREATE INDEX IF NOT EXISTS idx_ai_cache_incident ON ai_analysis_cache(incident_id);
+                CREATE INDEX IF NOT EXISTS idx_ai_cache_key ON ai_analysis_cache(cache_key);
+
+                CREATE TABLE IF NOT EXISTS ai_log (
+                    id SERIAL PRIMARY KEY,
+                    alert_id INT,
+                    incident_id INT,
+                    model_name VARCHAR(64),
+                    prompt_tokens INT DEFAULT 0,
+                    completion_tokens INT DEFAULT 0,
+                    status VARCHAR(32) NOT NULL,
+                    error_message TEXT,
+                    duration_ms INT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_ai_log_created_at ON ai_log(created_at);
+            """)
+
             # Projects Alter
             for col, col_type in [
                 ('server_ids', "TEXT DEFAULT '[]'"),
                 ('vpn_subnet', 'VARCHAR(255)'),
-                ('vpn_tracking_enabled', 'BOOLEAN DEFAULT FALSE')
+                ('vpn_tracking_enabled', 'BOOLEAN DEFAULT FALSE'),
+                ('is_default', 'BOOLEAN DEFAULT FALSE'),
+                ('is_system', 'BOOLEAN DEFAULT FALSE')
             ]:
                 try: cur.execute(f"ALTER TABLE projects ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except: pass
@@ -1310,6 +1360,10 @@ def init_db():
             backfill_historical_audit_attributions()
         except Exception as ex_bf:
             logger.debug(f"backfill_historical_audit_attributions on init_db: {ex_bf}")
+        try:
+            ensure_unassigned_project_and_backfill(conn)
+        except Exception as ex_unassigned:
+            logger.debug(f"ensure_unassigned_project on init_db: {ex_unassigned}")
 
         conn.close()
         logger.info("Database schema initialized successfully.")
@@ -1805,10 +1859,56 @@ def get_server_counts():
     finally:
         conn.close()
 
+_UNASSIGNED_PROJECT_ID_CACHE = None
+
+def get_unassigned_project_id():
+    """Returns the ID of the system Unassigned project, cached in memory."""
+    global _UNASSIGNED_PROJECT_ID_CACHE
+    if _UNASSIGNED_PROJECT_ID_CACHE is not None:
+        return _UNASSIGNED_PROJECT_ID_CACHE
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id FROM projects 
+                WHERE is_default = TRUE OR LOWER(TRIM(name)) = 'unassigned' 
+                ORDER BY is_default DESC, id ASC 
+                LIMIT 1;
+            """)
+            r = cur.fetchone()
+            if r:
+                _UNASSIGNED_PROJECT_ID_CACHE = r["id"] if isinstance(r, dict) else r[0]
+                return _UNASSIGNED_PROJECT_ID_CACHE
+    except Exception as e:
+        logger.error(f"Error in get_unassigned_project_id: {e}")
+    finally:
+        conn.close()
+    return _UNASSIGNED_PROJECT_ID_CACHE
+
+def is_unassigned_project(project_id) -> bool:
+    """Check if the given project_id is the system Unassigned project."""
+    if project_id is None:
+        return False
+    u_id = get_unassigned_project_id()
+    if u_id is not None:
+        try:
+            if int(project_id) == int(u_id):
+                return True
+        except (ValueError, TypeError):
+            pass
+    return str(project_id).strip().lower() == "unassigned"
+
 def _build_pid_filter(field_name: str, project_id):
     """Build SQL WHERE clause fragment and parameter list for single or multiple project_ids."""
     if project_id is None or project_id == "":
         return "", []
+    if is_unassigned_project(project_id):
+        u_id = get_unassigned_project_id()
+        if u_id is not None:
+            return f" AND {field_name} = %s ", [u_id]
+        return f" AND ({field_name} IS NULL OR {field_name} = 0) ", []
     if isinstance(project_id, (list, tuple, set)):
         pids = [int(p) for p in project_id if str(p).isdigit()]
         if not pids:
@@ -2384,14 +2484,7 @@ def approve_request(app_id: int, approved_by: str = "admin"):
                 cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (clean_hostname, clean_hostname))
                 existing_srv = cur.fetchone()
 
-            pid = 1
-            try:
-                cur.execute("SELECT id FROM projects ORDER BY id ASC LIMIT 1;")
-                prow = cur.fetchone()
-                if prow:
-                    pid = prow.get("id") if isinstance(prow, dict) else prow[0]
-            except Exception:
-                pass
+            pid = get_unassigned_project_id() or 1
 
             srv_ip = ip or "127.0.0.1"
             srv_host = clean_hostname or f"node-{srv_ip}"
@@ -3271,7 +3364,7 @@ def get_projects(allowed_project_ids=None):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT p.id, p.name, p.description, p.created_at, p.vpn_tracking_enabled, p.vpn_subnet,
+                SELECT p.id, p.name, p.description, p.created_at, p.vpn_tracking_enabled, p.vpn_subnet, p.is_default, p.is_system,
                        COUNT(DISTINCT s.id) as server_count,
                        COUNT(DISTINCT CASE WHEN s.severity = 'critical' OR (a.severity = 'critical' AND a.is_resolved IS NOT TRUE) THEN s.id END) as critical_count,
                        COUNT(DISTINCT CASE WHEN (a.severity = 'warning' OR a.severity = 'high') AND (a.is_resolved IS NOT TRUE) THEN a.id END) as warning_count,
@@ -3279,8 +3372,8 @@ def get_projects(allowed_project_ids=None):
                 FROM projects p
                 LEFT JOIN servers s ON s.project_id = p.id
                 LEFT JOIN alerts a ON a.server_id = s.id
-                GROUP BY p.id, p.name, p.description, p.created_at, p.vpn_tracking_enabled, p.vpn_subnet
-                ORDER BY p.id ASC;
+                GROUP BY p.id, p.name, p.description, p.created_at, p.vpn_tracking_enabled, p.vpn_subnet, p.is_default, p.is_system
+                ORDER BY CASE WHEN (p.is_default IS TRUE OR LOWER(TRIM(p.name)) = 'unassigned') THEN 0 ELSE 1 END, p.name ASC;
             """)
             projects = cur.fetchall() or []
 
@@ -3331,6 +3424,8 @@ def get_projects(allowed_project_ids=None):
                     p["assigned_apps"] = []
                 p["app_count"] = len(p["assigned_apps"])
 
+                p["is_default"] = bool(p.get("is_default") or (p.get("name") or "").lower() == "unassigned")
+                p["is_system"] = bool(p.get("is_system") or (p.get("name") or "").lower() == "unassigned")
                 p["icon"] = ""
                 p["critical_count"] = p.get("critical_count", 0)
                 p["warning_count"] = p.get("warning_count", 0)
@@ -3404,6 +3499,11 @@ def get_settings():
         return {}
     finally:
         conn.close()
+
+def get_setting(key, default=None):
+    """Retrieve a single setting value by key with fallback."""
+    settings = get_settings()
+    return settings.get(key, default)
 
 def save_setting(key, value):
     conn = get_db_connection()
@@ -4703,6 +4803,9 @@ def update_server(server_id: int, **kwargs):
         conn.close()
 
 def delete_project(project_id: int):
+    if is_unassigned_project(project_id):
+        return ProjectOpResult(False, "The system 'Unassigned' project cannot be deleted.")
+
     conn = get_db_connection()
     if not conn:
         return ProjectOpResult(False, "Database connection unavailable")
@@ -4711,21 +4814,25 @@ def delete_project(project_id: int):
             conn.autocommit = False
         with conn.cursor() as cur:
             # Verify project exists
-            cur.execute("SELECT id, name FROM projects WHERE id = %s;", (project_id,))
+            cur.execute("SELECT id, name, is_default, is_system FROM projects WHERE id = %s;", (project_id,))
             p_row = cur.fetchone()
             if not p_row:
                 return ProjectOpResult(False, f"Project #{project_id} not found")
             p_name = p_row["name"] if isinstance(p_row, dict) else p_row[1]
+            if (p_row.get("is_default") if isinstance(p_row, dict) else p_row[2]) or p_name.lower() == 'unassigned':
+                return ProjectOpResult(False, "The system 'Unassigned' project cannot be deleted.")
 
-            # 1. Unassign all servers from this project
+            u_id = get_unassigned_project_id()
+
+            # 1. Unassign all servers from this project -> move to Unassigned
             try:
-                cur.execute("UPDATE servers SET project_id = NULL WHERE project_id = %s;", (project_id,))
+                cur.execute("UPDATE servers SET project_id = %s WHERE project_id = %s;", (u_id, project_id))
             except Exception as e_srv:
                 logger.warning(f"Error unassigning servers in project {project_id}: {e_srv}")
 
-            # 2. Unassign all applications from this project
+            # 2. Unassign all applications from this project -> move to Unassigned
             try:
-                cur.execute("UPDATE applications SET project_id = NULL WHERE project_id = %s;", (project_id,))
+                cur.execute("UPDATE applications SET project_id = %s WHERE project_id = %s;", (u_id, project_id))
             except Exception as e_app:
                 logger.warning(f"Error unassigning applications in project {project_id}: {e_app}")
 
@@ -6192,6 +6299,8 @@ def get_applications(project_id=None, status_filter=None):
         conn.close()
 
 def create_application(name, primary_url, environment="Production", description="", project_id=None, settings=None, created_by="system", status="WAITING"):
+    if project_id is None:
+        project_id = get_unassigned_project_id()
     conn = get_db_connection()
     if not conn: return None
     try:
@@ -7931,3 +8040,186 @@ def get_server_audit_health(server_id: int) -> dict:
         "auditd_retention": "Active (Rotated local + DB store)",
         "java_runtime_detected": "/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java" if server_id in (10, 11, 2) else "Standard / Default"
     }
+
+
+def ensure_unassigned_project_and_backfill(conn=None):
+    """
+    Idempotent, concurrency-safe initialization of the system 'Unassigned' project.
+    Performs backfill of orphaned servers & websites into Unassigned,
+    records detailed IDs in project_backfill_log for reversibility,
+    and logs a single audit entry with the acting system user.
+    """
+    global _UNASSIGNED_PROJECT_ID_CACHE
+    should_close = False
+    if conn is None:
+        conn = get_db_connection()
+        should_close = True
+    if not conn:
+        return None
+
+    try:
+        with conn.cursor() as cur:
+            # 1. Unique index on lower(trim(name)) to prevent duplicates across concurrent workers
+            try:
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_lower_name ON projects (LOWER(TRIM(name)));")
+                if hasattr(conn, 'commit'): conn.commit()
+            except Exception:
+                pass
+
+            # 2. Insert or update Unassigned project atomically
+            cur.execute("""
+                INSERT INTO projects (name, description, is_default, is_system, created_at)
+                VALUES ('Unassigned', 'Default system workspace for servers and websites not linked to a specific project', TRUE, TRUE, NOW())
+                ON CONFLICT (LOWER(TRIM(name))) DO UPDATE 
+                SET is_default = TRUE, is_system = TRUE
+                RETURNING id;
+            """)
+            row = cur.fetchone()
+            unassigned_id = (row["id"] if isinstance(row, dict) else row[0]) if row else None
+            if not unassigned_id:
+                cur.execute("SELECT id FROM projects WHERE is_default = TRUE OR LOWER(TRIM(name)) = 'unassigned' LIMIT 1;")
+                r = cur.fetchone()
+                unassigned_id = (r["id"] if isinstance(r, dict) else r[0]) if r else None
+
+            if hasattr(conn, 'commit'): conn.commit()
+            _UNASSIGNED_PROJECT_ID_CACHE = unassigned_id
+
+            # 3. Check migration idempotency
+            try:
+                cur.execute("SELECT 1 FROM schema_migrations WHERE version = '20261116_unassigned_project';")
+                if cur.fetchone():
+                    return unassigned_id
+            except Exception:
+                pass
+
+            # 4. Perform Backfill Migration (Reversible via project_backfill_log)
+            # Find orphaned servers
+            cur.execute("SELECT id FROM servers WHERE project_id IS NULL OR project_id = 0;")
+            s_rows = cur.fetchall() or []
+            srv_ids = [r["id"] if isinstance(r, dict) else r[0] for r in s_rows]
+
+            # Find orphaned websites (applications)
+            cur.execute("SELECT id FROM applications WHERE project_id IS NULL OR project_id = 0;")
+            a_rows = cur.fetchall() or []
+            app_ids = [r["id"] if isinstance(r, dict) else r[0] for r in a_rows]
+
+            for sid in srv_ids:
+                cur.execute("""
+                    INSERT INTO project_backfill_log (asset_type, asset_id, old_project_id, new_project_id)
+                    VALUES ('server', %s, NULL, %s);
+                """, (sid, unassigned_id))
+            if srv_ids:
+                cur.execute("UPDATE servers SET project_id = %s WHERE id = ANY(%s);", (unassigned_id, srv_ids))
+
+            for aid in app_ids:
+                cur.execute("""
+                    INSERT INTO project_backfill_log (asset_type, asset_id, old_project_id, new_project_id)
+                    VALUES ('website', %s, NULL, %s);
+                """, (aid, unassigned_id))
+            if app_ids:
+                cur.execute("UPDATE applications SET project_id = %s WHERE id = ANY(%s);", (unassigned_id, app_ids))
+
+            # 5. Record ONE audit entry with acting system user
+            cur.execute("""
+                INSERT INTO audit_logs (username, action, target_type, target_id, detail, timestamp)
+                VALUES ('system', 'BACKFILL_UNASSIGNED_PROJECT', 'project', %s, %s, NOW());
+            """, (unassigned_id, f"Backfilled {len(srv_ids)} servers and {len(app_ids)} websites into Unassigned (reversible via project_backfill_log)"))
+
+            # 6. Mark migration applied
+            cur.execute("INSERT INTO schema_migrations (version, applied_at) VALUES ('20261116_unassigned_project', NOW()) ON CONFLICT (version) DO NOTHING;")
+            if hasattr(conn, 'commit'): conn.commit()
+            return unassigned_id
+    except Exception as e:
+        logger.error(f"Error in ensure_unassigned_project_and_backfill: {e}")
+        if hasattr(conn, 'rollback'):
+            try: conn.rollback()
+            except Exception: pass
+        return None
+    finally:
+        if should_close:
+            conn.close()
+
+def get_ai_analysis_cache(cache_key: str):
+    """Retrieve cached AI analysis by cache key."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT analysis_json, model_name, confidence, has_conflict, created_at FROM ai_analysis_cache WHERE cache_key = %s;", (cache_key,))
+            r = cur.fetchone()
+            if r:
+                data = r["analysis_json"] if isinstance(r, dict) else r[0]
+                if isinstance(data, str):
+                    try: import json; data = json.loads(data)
+                    except Exception: pass
+                if isinstance(data, dict):
+                    data["model_name"] = r["model_name"] if isinstance(r, dict) else r[1]
+                    data["confidence"] = r["confidence"] if isinstance(r, dict) else r[2]
+                    data["has_conflict"] = bool(r["has_conflict"] if isinstance(r, dict) else r[3])
+                    data["created_at"] = str(r["created_at"] if isinstance(r, dict) else r[4])
+                    data["cached"] = True
+                return data
+            return None
+    except Exception as e:
+        logger.error(f"Error getting ai analysis cache: {e}")
+        return None
+    finally:
+        conn.close()
+
+def save_ai_analysis_cache(cache_key: str, alert_id=None, incident_id=None, analysis_json=None, model_name="gemini-2.5-flash", confidence="HIGH", has_conflict=False):
+    """Store AI analysis result in ai_analysis_cache."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            import json
+            cur.execute("""
+                INSERT INTO ai_analysis_cache (cache_key, alert_id, incident_id, analysis_json, model_name, confidence, has_conflict, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (cache_key) DO UPDATE
+                SET analysis_json = EXCLUDED.analysis_json,
+                    model_name = EXCLUDED.model_name,
+                    confidence = EXCLUDED.confidence,
+                    has_conflict = EXCLUDED.has_conflict,
+                    created_at = NOW();
+            """, (cache_key, alert_id, incident_id, json.dumps(analysis_json or {}), model_name, confidence, has_conflict))
+            if hasattr(conn, 'commit'): conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error saving ai analysis cache: {e}")
+        return False
+    finally:
+        conn.close()
+
+def log_ai_call(alert_id=None, incident_id=None, model_name="gemini-2.5-flash", prompt_tokens=0, completion_tokens=0, status="success", error_message=None, duration_ms=0):
+    """Log an AI model call in ai_log for rate-limiting, auditing, and cost control."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO ai_log (alert_id, incident_id, model_name, prompt_tokens, completion_tokens, status, error_message, duration_ms, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW());
+            """, (alert_id, incident_id, model_name, prompt_tokens, completion_tokens, status, error_message, duration_ms))
+            if hasattr(conn, 'commit'): conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error logging ai call: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_ai_daily_call_count() -> int:
+    """Return count of AI calls in last 24 hours."""
+    conn = get_db_connection()
+    if not conn: return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) as cnt FROM ai_log WHERE created_at >= NOW() - INTERVAL '24 hours' AND status != 'rate_limited';")
+            r = cur.fetchone()
+            return (r["cnt"] if isinstance(r, dict) else r[0]) if r else 0
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+

@@ -132,7 +132,7 @@
         <select class="sort-select" id="sortSelect" onchange="sortProjects()">
             <option value="name">Sort by Name</option>
             <option value="servers">Sort by Assets</option>
-            <option value="apps">Sort by App Nodes</option>
+            <option value="apps">Sort by Websites</option>
             <option value="groups">Sort by Groups</option>
         </select>
     </div>
@@ -172,17 +172,17 @@
             </div>
         </div>
 
-        <!-- Member Selection (Assets & App Nodes) -->
+        <!-- Member Selection (Assets & Websites) -->
         <div style="margin-bottom:20px">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
                 <label class="stat-label" style="color:var(--cyan)">ASSIGN PROJECT MEMBERS</label>
-                <span class="text-meta" id="create-selection-summary" style="font-size:11px">Selected: 0 assets, 0 app nodes</span>
+                <span class="text-meta" id="create-selection-summary" style="font-size:11px">Selected: 0 assets, 0 websites</span>
             </div>
 
-            <!-- Tabs: [ Assets ] [ App Nodes ] -->
+            <!-- Tabs: [ Assets ] [ Websites ] -->
             <div style="display:flex; gap:8px; margin-bottom:8px">
                 <button type="button" id="create-tab-assets" class="member-tab-btn active" onclick="switchCreateTab('assets')">Assets</button>
-                <button type="button" id="create-tab-apps" class="member-tab-btn" onclick="switchCreateTab('apps')">App Nodes</button>
+                <button type="button" id="create-tab-apps" class="member-tab-btn" onclick="switchCreateTab('apps')">Websites</button>
             </div>
 
             <!-- Search + Select All -->
@@ -217,13 +217,13 @@
         <button class="btn btn-glass" style="padding:4px 10px; font-size:12px" onclick="closeManageMembersModal()">✕</button>
     </div>
 
-    <!-- Tabs: [ Assets ] [ App Nodes ] -->
+    <!-- Tabs: [ Assets ] [ Websites ] -->
     <div style="display:flex; gap:8px; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:8px">
         <button type="button" id="member-tab-assets-btn" class="member-tab-btn active" onclick="switchManageMemberTab('assets')">
             Assets (<span id="manage-assets-count-badge">0</span>)
         </button>
         <button type="button" id="member-tab-apps-btn" class="member-tab-btn" onclick="switchManageMemberTab('apps')">
-            App Nodes (<span id="manage-apps-count-badge">0</span>)
+            Websites (<span id="manage-apps-count-badge">0</span>)
         </button>
     </div>
 
@@ -241,7 +241,7 @@
 
     <!-- Footer -->
     <div style="display:flex; justify-content:space-between; align-items:center">
-        <span class="text-meta" id="manage-selected-count" style="font-weight:600; color:var(--text)">0 assets, 0 app nodes selected</span>
+        <span class="text-meta" id="manage-selected-count" style="font-weight:600; color:var(--text)">0 assets, 0 websites selected</span>
         <div style="display:flex; gap:10px">
             <button class="btn btn-glass" onclick="closeManageMembersModal()">Cancel</button>
             <button class="btn btn-primary" id="btn-save-members" onclick="saveProjectMembers()">Save Assignments</button>
@@ -262,7 +262,7 @@
         Checking linked assets, apps, and groups...
     </p>
     <div style="background:rgba(255,59,92,0.08); border:1px solid rgba(255,59,92,0.25); border-radius:6px; padding:12px; margin-bottom:24px; font-size:11px; color:var(--text-sub)">
-        ℹ️ <strong>Safety Guarantee:</strong> Assets and app nodes are <strong>NOT</strong> deleted; they are only unassigned. Existing alerts and incidents keep all historical data.
+        ℹ️ <strong>Safety Guarantee:</strong> Assets and websites are <strong>NOT</strong> deleted; they are only unassigned. Existing alerts and incidents keep all historical data.
     </div>
     <div style="display:flex; justify-content:flex-end; gap:12px">
         <button class="btn btn-glass" onclick="closeDeleteConfirmModal()">Cancel</button>
@@ -342,7 +342,14 @@ function renderProjectCard(p) {
     let adminControlsTop = '';
     let adminControlsBottom = '';
 
-    if (IS_ADMIN) {
+    const isUnassigned = (p.is_default || (p.name || '').toLowerCase() === 'unassigned');
+    if (isUnassigned) {
+        adminControlsTop = `
+        <div>
+            <span class="badge" style="background:rgba(245,158,11,0.2); border:1px solid #f59e0b; color:#f59e0b; font-size:10px; font-weight:700; padding:3px 8px; border-radius:4px;">DEFAULT</span>
+        </div>
+        `;
+    } else if (IS_ADMIN) {
         adminControlsTop = `
         <div>
             <button onclick="event.stopPropagation(); openEditModal(${id})"
@@ -378,6 +385,12 @@ function renderProjectCard(p) {
                 ${adminControlsTop}
             </div>
             <p class="text-meta" style="margin-bottom:14px; line-height:1.5; height:36px; overflow:hidden">${escapeHtml(desc)}</p>
+            ${isUnassigned && (serverCount === 0 && appCount === 0) ? `
+                <div style="color:var(--green); font-size:11.5px; margin-bottom:8px; display:flex; align-items:center; gap:6px; font-weight:600">
+                    <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green)"></span>
+                    All services assigned to projects
+                </div>
+            ` : ''}
         </div>
 
         <div>
@@ -385,7 +398,7 @@ function renderProjectCard(p) {
                 <span class="text-meta">SERVERS ASSIGNED</span>
                 <div style="display:flex; gap:6px">
                     <span class="badge ${serverCount > 0 ? 'badge-info' : 'badge-secondary'}">${serverCount} assets</span>
-                    <span class="badge ${appCount > 0 ? 'badge-success' : 'badge-secondary'}">${appCount} app nodes</span>
+                    <span class="badge ${appCount > 0 ? 'badge-success' : 'badge-secondary'}">${appCount} websites</span>
                 </div>
             </div>
 
@@ -478,11 +491,11 @@ async function requestDeleteProject(id, name) {
         const apps = res.app_nodes || 0;
         const groups = res.groups || 0;
         textEl.innerHTML = `Are you sure you want to delete project <strong>${escapeHtml(name)}</strong>?<br><br>
-        This project has <strong>${assets} assets</strong>, <strong>${apps} app nodes</strong>, and <strong>${groups} groups</strong>.<br>
-        Assets and app nodes are <strong>NOT</strong> deleted; they are only unassigned.`;
+        This project has <strong>${assets} assets</strong>, <strong>${apps} websites</strong>, and <strong>${groups} groups</strong>.<br>
+        Assets and websites are <strong>NOT</strong> deleted; they are only unassigned.`;
     } catch (e) {
         textEl.innerHTML = `Are you sure you want to delete project <strong>${escapeHtml(name)}</strong>?<br><br>
-        Assets and app nodes are <strong>NOT</strong> deleted; they are only unassigned.`;
+        Assets and websites are <strong>NOT</strong> deleted; they are only unassigned.`;
     }
 }
 
@@ -630,7 +643,7 @@ function renderCreateMembersList() {
         });
 
         if (filtered.length === 0) {
-            listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">No matching app nodes found</div>';
+            listEl.innerHTML = '<div style="text-align:center; padding:15px; color:var(--text-sub); font-size:11px">No matching websites found</div>';
             updateCreateSelectionSummary();
             return;
         }
@@ -647,7 +660,7 @@ function renderCreateMembersList() {
                     <span style="font-family:var(--mono); color:var(--text); font-weight:600">${escapeHtml(a.name)}</span>
                     <span style="font-size:10px; color:var(--text-sub)">(${escapeHtml(a.primary_url || 'No URL')})</span>
                 </div>
-                <span class="badge badge-secondary" style="font-size:8.5px">APP NODE</span>
+                <span class="badge badge-secondary" style="font-size:8.5px">WEBSITE</span>
             </label>
             `;
         }).join('');
@@ -696,7 +709,7 @@ function selectAllCreateMembers(check) {
 function updateCreateSelectionSummary() {
     const serverCnt = createSelectedServerIds.size;
     const appCnt = createSelectedAppIds.size;
-    document.getElementById('create-selection-summary').textContent = `Selected: ${serverCnt} asset${serverCnt !== 1 ? 's' : ''}, ${appCnt} app node${appCnt !== 1 ? 's' : ''}`;
+    document.getElementById('create-selection-summary').textContent = `Selected: ${serverCnt} asset${serverCnt !== 1 ? 's' : ''}, ${appCnt} website${appCnt !== 1 ? 's' : ''}`;
 }
 
 function closeCreateModal() {
@@ -836,7 +849,7 @@ function renderManageMembersList() {
         });
 
         if (filtered.length === 0) {
-            listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">No matching app nodes found</div>';
+            listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-sub); font-size:11px">No matching websites found</div>';
             updateManageSelectionCounter();
             return;
         }
@@ -867,7 +880,7 @@ function renderManageMembersList() {
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:6px">
-                    <span class="badge badge-secondary" style="font-size:8.5px">APP NODE</span>
+                    <span class="badge badge-secondary" style="font-size:8.5px">WEBSITE</span>
                     ${badgeHtml}
                 </div>
             </label>
@@ -929,7 +942,7 @@ function selectAllManageMembers(check) {
 function updateManageSelectionCounter() {
     const serverCnt = manageSelectedServerIds.size;
     const appCnt = manageSelectedAppIds.size;
-    document.getElementById('manage-selected-count').textContent = `${serverCnt} asset${serverCnt !== 1 ? 's' : ''}, ${appCnt} app node${appCnt !== 1 ? 's' : ''} selected`;
+    document.getElementById('manage-selected-count').textContent = `${serverCnt} asset${serverCnt !== 1 ? 's' : ''}, ${appCnt} website${appCnt !== 1 ? 's' : ''} selected`;
 }
 
 function closeManageMembersModal() {

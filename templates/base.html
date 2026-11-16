@@ -142,10 +142,10 @@
                     <span>TOTAL ASSETS</span>
                 </a>
 
-                <!-- 4. Total Apps -->
+                <!-- 4. Total Websites -->
                 <a href="/apps" data-nav="apps" class="nav-item {% if active == 'apps' %}active{% endif %}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-                    <span>TOTAL APPS</span>
+                    <span>TOTAL WEBSITES</span>
                 </a>
 
                 <!-- 5. Projects -->
@@ -654,6 +654,7 @@
             }).catch(e => console.error(e));
         });
     </script>
+    <script src="/static/js/ai_analysis.js"></script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>
