@@ -27,6 +27,7 @@ from datetime import datetime, timezone, timedelta
 import psycopg2
 import psycopg2.extras
 from werkzeug.security import generate_password_hash, check_password_hash
+import version
 
 logger = logging.getLogger("security_monitor.database")
 
@@ -252,12 +253,34 @@ def init_db():
                 ("is_maintenance", "BOOLEAN DEFAULT FALSE"),
                 ("is_read", "BOOLEAN DEFAULT FALSE"),
                 ("read_at", "TIMESTAMP WITH TIME ZONE"),
-                ("registered_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP")
+                ("registered_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
+                ("last_update_attempt", "TIMESTAMP WITH TIME ZONE"),
+                ("update_error", "TEXT"),
+                ("exclude_from_autoupdate", "BOOLEAN DEFAULT FALSE"),
+                ("is_canary", "BOOLEAN DEFAULT FALSE")
             ]:
                 try:
                     cur.execute(f"ALTER TABLE servers ADD COLUMN IF NOT EXISTS {col} {col_type};")
                 except Exception:
                     pass
+
+            # Create autonomous agent update events audit table
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS agent_update_events (
+                        id SERIAL PRIMARY KEY,
+                        server_id INT,
+                        from_version VARCHAR(32),
+                        to_version VARCHAR(32),
+                        status VARCHAR(32),
+                        error_message TEXT,
+                        ip_address VARCHAR(64),
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_agent_update_events_server ON agent_update_events(server_id, created_at DESC);
+                """)
+            except Exception:
+                pass
 
             # Demote session and /temp/ alerts/incidents to warning, and attribute AUID 1005 to mannan
             try:
@@ -514,6 +537,15 @@ def init_db():
                     key TEXT PRIMARY KEY,
                     value TEXT
                 );
+
+            INSERT INTO settings (key, value) VALUES
+                ('autoupdate_enabled', 'true'),
+                ('autoupdate_window_start', '02:00'),
+                ('autoupdate_window_end', '05:00'),
+                ('autoupdate_stage', 'canary'),
+                ('autoupdate_failure_threshold_pct', '15'),
+                ('autoupdate_circuit_broken', 'false')
+            ON CONFLICT (key) DO NOTHING;
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS server_log_configs (
@@ -2501,18 +2533,18 @@ def approve_request(app_id: int, approved_by: str = "admin"):
             if not existing_srv:
                 cur.execute("""
                     INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, approved_at, approved_by, last_seen, project_id, agent_version, machine_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s, NOW(), %s, '1.6.2', %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s, NOW(), %s, %s, %s)
                     RETURNING id;
-                """, (srv_host, srv_host, srv_ip, srv_ip, "Linux (Ubuntu)", token, token, approved_by, pid, machine_id))
+                """, (srv_host, srv_host, srv_ip, srv_ip, "Linux (Ubuntu)", token, token, approved_by, pid, version.AGENT_VERSION, machine_id))
                 new_srv = cur.fetchone()
                 sid = new_srv["id"] if new_srv else None
             else:
                 sid = existing_srv["id"] if isinstance(existing_srv, dict) else existing_srv[0]
                 cur.execute("""
                     UPDATE servers 
-                    SET status = 'online', agent_token = %s, api_token = %s, approved_at = NOW(), approved_by = %s, last_seen = NOW(), agent_version = '1.6.2'
+                    SET status = 'online', agent_token = %s, api_token = %s, approved_at = NOW(), approved_by = %s, last_seen = NOW(), agent_version = %s
                     WHERE id = %s;
-                """, (token, token, approved_by, sid))
+                """, (token, token, approved_by, version.AGENT_VERSION, sid))
 
             conn.commit()
             log_audit(approved_by, "AGENT_APPROVAL", "server", sid or app_id, f"Approved server asset '{srv_host}' ({srv_ip})", ip_address=srv_ip, machine_id=machine_id)
@@ -6063,7 +6095,7 @@ def record_server_inventory(server_id: int, payload: dict) -> dict:
                         """, insert_tuples)
 
             # Update servers table summary
-            agent_ver = payload.get("agent_version") or "1.6.2"
+            agent_ver = payload.get("agent_version") or version.AGENT_VERSION
             cur.execute("""
                 UPDATE servers SET
                     os_info = COALESCE(%s, os_info),
@@ -8256,6 +8288,317 @@ def get_ai_daily_call_count() -> int:
             return (r["cnt"] if isinstance(r, dict) else r[0]) if r else 0
     except Exception:
         return 0
+    finally:
+        conn.close()
+
+# ══════════════════════════════════════════════════════════════════════════
+# AUTONOMOUS AGENT AUTO-UPDATE & STAGED ROLLOUT ENGINE
+# ══════════════════════════════════════════════════════════════════════════
+
+def record_agent_update_event(server_id, from_version, to_version, status, error_message=None, ip_address=None):
+    """
+    Records an agent update attempt/status in agent_update_events table and
+    synchronizes the servers table status, last_update_attempt, and error.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO agent_update_events (server_id, from_version, to_version, status, error_message, ip_address)
+                VALUES (%s, %s, %s, %s, %s, %s);
+            """, (server_id, str(from_version or ""), str(to_version or ""), str(status or ""), error_message, ip_address))
+
+            # Update servers table state
+            if status in ("up_to_date", "success"):
+                cur.execute("""
+                    UPDATE servers SET
+                        agent_version = %s,
+                        update_status = 'up_to_date',
+                        target_agent_version = NULL,
+                        update_error = NULL,
+                        last_update_attempt = NOW()
+                    WHERE id = %s;
+                """, (to_version or version.AGENT_VERSION, server_id))
+            elif status == "failed":
+                cur.execute("""
+                    UPDATE servers SET
+                        update_status = 'failed',
+                        update_error = %s,
+                        last_update_attempt = NOW()
+                    WHERE id = %s;
+                """, (error_message or "Update failed", server_id))
+            elif status in ("updating", "downloading"):
+                cur.execute("""
+                    UPDATE servers SET
+                        update_status = %s,
+                        last_update_attempt = NOW()
+                    WHERE id = %s;
+                """, (status, server_id))
+            if hasattr(conn, 'commit'):
+                conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error recording agent update event: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_agent_fleet_status():
+    """
+    Returns aggregated fleet statistics for autonomous agent updates:
+    - total server count
+    - breakdown by agent_version
+    - breakdown by update_status
+    - canary and excluded counts
+    - failure rate percentage and circuit breaker state
+    - recent update history events
+    """
+    conn = get_db_connection()
+    if not conn:
+        return {
+            "total": 0, "target_version": version.AGENT_VERSION, "versions": {}, "status": {},
+            "canary_count": 0, "excluded_count": 0,
+            "failure_rate_pct": 0.0, "circuit_broken": False,
+            "recent_events": []
+        }
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    id, name, hostname, ip, ip_address, agent_version, update_status, 
+                    is_canary, exclude_from_autoupdate, is_maintenance,
+                    last_update_attempt, update_error
+                FROM servers;
+            """)
+            servers = cur.fetchall() or []
+
+            versions = {}
+            statuses = {"up_to_date": 0, "update_available": 0, "updating": 0, "failed": 0, "unsupported": 0}
+            canary_cnt = 0
+            excluded_cnt = 0
+
+            for s in servers:
+                v = s.get("agent_version") or "unknown"
+                versions[v] = versions.get(v, 0) + 1
+
+                st = s.get("update_status") or "up_to_date"
+                statuses[st] = statuses.get(st, 0) + 1
+
+                if s.get("is_canary"):
+                    canary_cnt += 1
+                if s.get("exclude_from_autoupdate"):
+                    excluded_cnt += 1
+
+            total_servers = len(servers)
+            failed_count = statuses.get("failed", 0)
+            failure_rate = round((failed_count / total_servers * 100), 1) if total_servers > 0 else 0.0
+
+            cur.execute("SELECT value FROM settings WHERE key = 'autoupdate_circuit_broken';")
+            cb_row = cur.fetchone()
+            circuit_broken = (cb_row.get("value") if cb_row else "false") == "true"
+
+            cur.execute("""
+                SELECT e.id, e.server_id, s.hostname, e.from_version, e.to_version, 
+                       e.status, e.error_message, e.ip_address, e.created_at
+                FROM agent_update_events e
+                LEFT JOIN servers s ON e.server_id = s.id
+                ORDER BY e.created_at DESC
+                LIMIT 15;
+            """)
+            recent_events = cur.fetchall() or []
+
+            return {
+                "total": total_servers,
+                "target_version": version.AGENT_VERSION,
+                "versions": versions,
+                "status": statuses,
+                "canary_count": canary_cnt,
+                "excluded_count": excluded_cnt,
+                "failure_rate_pct": failure_rate,
+                "circuit_broken": circuit_broken,
+                "recent_events": recent_events
+            }
+    except Exception as e:
+        logger.error(f"Error in get_agent_fleet_status: {e}")
+        return {
+            "total": 0, "target_version": version.AGENT_VERSION, "versions": {}, "status": {},
+            "canary_count": 0, "excluded_count": 0,
+            "failure_rate_pct": 0.0, "circuit_broken": False,
+            "recent_events": []
+        }
+    finally:
+        conn.close()
+
+def is_in_update_window(start_str=None, end_str=None, now_dt=None) -> bool:
+    """
+    Checks if current time falls within the configured maintenance window (e.g. 02:00 to 05:00).
+    Properly handles windows that cross midnight (e.g. 23:00 to 04:00).
+    """
+    if start_str is None or end_str is None:
+        settings = get_settings()
+        start_str = settings.get("autoupdate_window_start", "02:00")
+        end_str = settings.get("autoupdate_window_end", "05:00")
+
+    if not now_dt:
+        now_dt = datetime.now()
+
+    try:
+        sh, sm = [int(x) for x in start_str.strip().split(":")]
+        eh, em = [int(x) for x in end_str.strip().split(":")]
+        now_time = now_dt.time()
+        from datetime import time as dt_time
+        start_t = dt_time(sh, sm)
+        end_t = dt_time(eh, em)
+
+        if start_t <= end_t:
+            return start_t <= now_time <= end_t
+        else:
+            return now_time >= start_t or now_time <= end_t
+    except Exception as e:
+        logger.warning(f"Error parsing update window '{start_str}' - '{end_str}': {e}")
+        return True
+
+def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=None):
+    """
+    Evaluates whether the given server is eligible for an autonomous agent update.
+    Returns the update manifest dictionary if eligible, or None.
+    """
+    if not server_id:
+        return None
+
+    settings = get_settings()
+    if settings.get("autoupdate_enabled", "true").lower() != "true":
+        return None
+
+    if settings.get("autoupdate_circuit_broken", "false").lower() == "true":
+        return None
+
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, name, hostname, ip, agent_version, update_status, 
+                       is_canary, exclude_from_autoupdate, is_maintenance, 
+                       last_update_attempt
+                FROM servers WHERE id = %s;
+            """, (server_id,))
+            s = cur.fetchone()
+            if not s:
+                return None
+
+            if s.get("exclude_from_autoupdate") or s.get("is_maintenance"):
+                return None
+
+            # Check supported version
+            if not version.is_supported_version(current_version):
+                if s.get("update_status") != "unsupported":
+                    cur.execute("UPDATE servers SET update_status = 'unsupported' WHERE id = %s;", (server_id,))
+                    if hasattr(conn, 'commit'): conn.commit()
+                return None
+
+            # Check if up to date
+            if not version.is_newer_version(version.AGENT_VERSION, current_version):
+                if s.get("update_status") not in ("up_to_date", None):
+                    cur.execute("UPDATE servers SET update_status = 'up_to_date', target_agent_version = NULL WHERE id = %s;", (server_id,))
+                    if hasattr(conn, 'commit'): conn.commit()
+                return None
+
+            # Check failure backoff: if failed less than 60 minutes ago, skip
+            if s.get("update_status") == "failed" and s.get("last_update_attempt"):
+                attempt_time = s.get("last_update_attempt")
+                if isinstance(attempt_time, datetime):
+                    now_ts = datetime.now(timezone.utc)
+                    att_ts = attempt_time if attempt_time.tzinfo else attempt_time.replace(tzinfo=timezone.utc)
+                    if (now_ts - att_ts).total_seconds() < 3600:
+                        return None
+
+            # Staged Rollout evaluation
+            stage = settings.get("autoupdate_stage", "canary").lower()
+            if stage == "paused":
+                return None
+
+            is_canary = bool(s.get("is_canary"))
+            in_window = is_in_update_window()
+
+            # Window check: canaries can update anytime for fast testing, but regular fleet waits for window
+            if not in_window and not is_canary and stage != "all_immediate":
+                if s.get("update_status") != "update_available":
+                    cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
+                    if hasattr(conn, 'commit'): conn.commit()
+                return None
+
+            if stage == "canary":
+                if not is_canary:
+                    if s.get("update_status") != "update_available":
+                        cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
+                        if hasattr(conn, 'commit'): conn.commit()
+                    return None
+            elif stage == "staged_25":
+                if not is_canary and (server_id % 4 != 0):
+                    return None
+            elif stage == "staged_50":
+                if not is_canary and (server_id % 2 != 0):
+                    return None
+
+            # Check circuit breaker: check fleet failure rate
+            cur.execute("""
+                SELECT COUNT(*) as total, 
+                       COUNT(CASE WHEN update_status = 'failed' THEN 1 END) as failed_cnt
+                FROM servers;
+            """)
+            counts = cur.fetchone()
+            tot = counts.get("total", 0) if counts else 0
+            f_cnt = counts.get("failed_cnt", 0) if counts else 0
+            thresh = float(settings.get("autoupdate_failure_threshold_pct", "15"))
+            if tot > 0 and (f_cnt / tot * 100) >= thresh:
+                cur.execute("INSERT INTO settings (key, value) VALUES ('autoupdate_circuit_broken', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true';")
+                if hasattr(conn, 'commit'): conn.commit()
+                log_audit("system", "AUTOUPDATE_CIRCUIT_BREAKER", "fleet", 0, f"Autonomous update paused: failure rate ({round(f_cnt/tot*100, 1)}%) exceeded threshold ({thresh}%)")
+                return None
+
+            # Eligible! Load signed manifest
+            manifest_path = os.path.join(os.path.dirname(__file__), "static", "agents", f"agent-{version.AGENT_VERSION}.py.manifest.json")
+            if os.path.exists(manifest_path):
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+                    return manifest
+            else:
+                logger.warning(f"Agent manifest not found at {manifest_path}")
+                return None
+    except Exception as e:
+        logger.error(f"Error evaluating agent rollout for server {server_id}: {e}")
+        return None
+    finally:
+        conn.close()
+
+def set_server_autoupdate_flags(server_id, is_canary=None, exclude_from_autoupdate=None):
+    """Update canary or auto-update exclusion flags for a server."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            updates = []
+            params = []
+            if is_canary is not None:
+                updates.append("is_canary = %s")
+                params.append(bool(is_canary))
+            if exclude_from_autoupdate is not None:
+                updates.append("exclude_from_autoupdate = %s")
+                params.append(bool(exclude_from_autoupdate))
+            if not updates:
+                return True
+            params.append(server_id)
+            cur.execute(f"UPDATE servers SET {', '.join(updates)} WHERE id = %s;", params)
+            if hasattr(conn, 'commit'): conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error setting server autoupdate flags: {e}")
+        return False
     finally:
         conn.close()
 

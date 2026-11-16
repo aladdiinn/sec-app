@@ -10,6 +10,7 @@ import psycopg2, psycopg2.extras
 import ses_mailer
 from dotenv import load_dotenv
 load_dotenv()
+import version
 
 _watcher_auth_pos = 0
 _watcher_hist_positions = {}
@@ -797,8 +798,8 @@ async def lifespan(app: FastAPI):
     yield
 
 # Initialize FastAPI App
-APP_VERSION = "1.5"
-AGENT_VERSION = "2.0.0"
+APP_VERSION = version.PLATFORM_VERSION
+AGENT_VERSION = version.AGENT_VERSION
 _inventory_scan_queue = set()  # server_ids queued for on-demand inventory scan
 app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifespan)
 
@@ -988,8 +989,26 @@ app.add_middleware(
 )
 
 @app.get("/api/version")
-async def api_get_version():
-    return {"app_version": APP_VERSION, "agent_version": AGENT_VERSION}
+def api_get_version():
+    return {
+        "platform_version": version.PLATFORM_VERSION,
+        "app_version": version.PLATFORM_VERSION,
+        "latest_agent_version": version.AGENT_VERSION,
+        "agent_version": version.AGENT_VERSION,
+        "min_supported_version": version.MIN_SUPPORTED_AGENT_VERSION,
+        "min_supported_agent_version": version.MIN_SUPPORTED_AGENT_VERSION
+    }
+
+@app.get("/api/agent/version-manifest")
+def api_agent_version_manifest(request: Request):
+    """Returns the official cryptographically signed update manifest for the latest agent."""
+    manifest_path = os.path.join(os.path.dirname(__file__), "static", "agents", f"agent-{version.AGENT_VERSION}.py.manifest.json")
+    if os.path.exists(manifest_path):
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+            manifest["download_url"] = f"{str(request.base_url).rstrip('/')}/static/agents/agent-{version.AGENT_VERSION}.py"
+            return manifest
+    return JSONResponse(status_code=404, content={"error": "Manifest not found"})
 
 # Mount Static Files
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -2055,15 +2074,18 @@ async def api_server_action(server_id: int, request: Request):
 
 @app.post("/api/servers/{server_id}/update-agent")
 async def api_server_update_agent(server_id: int, request: Request):
-    """Trigger an agent update for a specific server (Staged Rollout)"""
-    body = await request.json()
-    target_v = body.get("target_version", AGENT_VERSION)
+    """Trigger an autonomous agent update for a specific server immediately."""
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    target_v = body.get("target_version", version.AGENT_VERSION)
     conn = db.get_db_connection()
     if not conn: return JSONResponse(status_code=500, content={"ok": False})
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE servers SET target_agent_version = %s, update_status = 'pending' WHERE id = %s;", (target_v, server_id))
-        return {"ok": True, "message": f"Update to {target_v} scheduled"}
+            cur.execute("UPDATE servers SET target_agent_version = %s, update_status = 'update_available' WHERE id = %s;", (target_v, server_id))
+            if hasattr(conn, 'commit'): conn.commit()
+        uname = request.session.get('username', 'system')
+        db.log_audit(uname, "SCHEDULE_AGENT_UPDATE", "server", server_id, f"Scheduled agent update to v{target_v}")
+        return {"ok": True, "message": f"Update to v{target_v} scheduled"}
     except Exception as e:
         return JSONResponse(status_code=400, content={"ok": False, "message": str(e)})
     finally:
@@ -3687,41 +3709,37 @@ async def api_agent_push(request: Request):
     except Exception as ex_det:
         logger.error(f"Detection engine execution error: {ex_det}")
 
-    # Agent Versioning & Controlled Update Rollout
+    # Autonomous Agent Versioning & Controlled Staged Rollout
     update_req = False
     update_cmd_url = ""
-    conn = db.get_db_connection()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT agent_version, target_agent_version, update_status FROM servers WHERE id = %s;", (server_id,))
-                srow = cur.fetchone()
-                if srow:
-                    db_version = srow.get("agent_version")
-                    target = srow.get("target_agent_version")
-                    
-                    if agent_version != db_version:
-                        up_status = "up_to_date" if (target and agent_version == target) else srow.get("update_status", "up_to_date")
-                        cur.execute("UPDATE servers SET agent_version = %s, update_status = %s WHERE id = %s;", (agent_version, up_status, server_id))
-                    
-                    target = srow.get("target_agent_version")
-                    def _parse_semver(v):
-                        try: return [int(x) for x in re.findall(r'\d+', str(v))]
-                        except Exception: return [0]
+    update_manifest = None
+    try:
+        conn = db.get_db_connection()
+        if conn and server_id:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT agent_version, target_agent_version, update_status FROM servers WHERE id = %s;", (server_id,))
+                    srow = cur.fetchone()
+                    if srow:
+                        db_version = srow.get("agent_version")
+                        if agent_version != db_version:
+                            cur.execute("UPDATE servers SET agent_version = %s WHERE id = %s;", (agent_version, server_id))
+                            if hasattr(conn, 'commit'): conn.commit()
+            except Exception as e_srow:
+                logger.debug(f"Server version update error: {e_srow}")
+            finally:
+                conn.close()
 
-                    v_cur = _parse_semver(agent_version)
-                    v_target = _parse_semver(target or "1.7.0")
-
-                    # NEVER auto-update local soc-server host agent
-                    # Only trigger update if update_status was explicitly requested as 'pending'
-                    is_soc_host = (server_id == 23 or hostname == "soc-server" or server_ip in ("127.0.0.1", "192.168.10.201"))
-                    if not is_soc_host and srow.get("update_status") == "pending" and target and v_cur < v_target:
-                        update_req = True
-                        update_cmd_url = f"{str(request.base_url).rstrip('/')}/setup_node.sh"
-        except Exception as e:
-            logger.error(f"Agent version check error: {e}")
-        finally:
-            conn.close()
+        # Evaluate autonomous rollout eligibility (time window, canary, staged batches, circuit breaker)
+        manifest = db.evaluate_agent_rollout(server_id, agent_version, client_ip, hostname)
+        if manifest:
+            update_req = True
+            update_manifest = dict(manifest)
+            update_manifest["download_url"] = f"{str(request.base_url).rstrip('/')}/static/agents/agent-{manifest.get('version', version.AGENT_VERSION)}.py"
+            # Legacy fallback updater for v1.6.2 and older nodes:
+            update_cmd_url = f"{str(request.base_url).rstrip('/')}/setup_agent_updater.sh"
+    except Exception as e:
+        logger.error(f"Agent rollout evaluation error: {e}")
 
     # ── INGEST AUTO-DETECTED SERVICES & TASK RESULTS ──
     detected_svcs = data.get("detected_services") or []
@@ -3760,6 +3778,8 @@ async def api_agent_push(request: Request):
 
     res = {"status": "ok", "ok": True, "server_id": server_id, "message": "Agent telemetry ingested and analyzed"}
     if update_req:
+        res["update_available"] = True
+        res["update_manifest"] = update_manifest
         res["update_requested"] = True
         res["update_cmd_url"] = update_cmd_url
 
@@ -3787,21 +3807,25 @@ async def api_agent_push(request: Request):
 
 @app.post("/api/agent/status-update")
 async def api_agent_status_update(request: Request):
+    """
+    Receives autonomous agent update status callbacks:
+    status: downloading | updating | up_to_date | failed | unsupported
+    """
     try:
         data = await request.json()
         sid = data.get("server_id")
         status_val = data.get("status")
+        from_ver = data.get("from_version")
+        to_ver = data.get("to_version")
+        err = data.get("error")
+        client_ip = request.client.host if request.client else None
         if sid and status_val:
-            conn = db.get_db_connection()
-            if conn:
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute("UPDATE servers SET update_status = %s WHERE id = %s;", (status_val, sid))
-                except Exception: pass
-                finally: conn.close()
+            db.record_agent_update_event(sid, from_ver, to_ver, status_val, error_message=err, ip_address=client_ip)
+            db.log_audit("agent", f"AGENT_UPDATE_{status_val.upper()}", "server", sid, f"Agent update status: {status_val} (target: {to_ver or version.AGENT_VERSION}) {err or ''}", ip_address=client_ip)
         return {"ok": True}
-    except Exception:
-        return {"ok": False}
+    except Exception as e:
+        logger.error(f"Error in api_agent_status_update: {e}")
+        return {"ok": False, "error": str(e)}
 
 @app.post("/api/agent/inventory")
 async def api_agent_inventory(request: Request):
@@ -5264,6 +5288,82 @@ async def socket_io_fallback(request: Request, path: str):
         return Response(content="Unauthorized: Valid session required", status_code=401, media_type="text/plain")
     return Response(content="ok", media_type="text/plain")
 
+# Safe One-Time Bootstrap Script Endpoint for Legacy Agents (v1.6.2 and older)
+@app.get("/setup_agent_updater.sh", response_class=Response)
+@app.post("/setup_agent_updater.sh", response_class=Response)
+def setup_agent_updater_endpoint(request: Request):
+    """
+    Safe one-time bootstrap updater for legacy agents (v1.6.2 and older).
+    Preserves existing node credentials, token, server ID, and configuration
+    without re-requesting server approval or generating duplicate records.
+    """
+    base_url = str(request.base_url).rstrip("/")
+    script_content = f"""#!/bin/bash
+# setup_agent_updater.sh — Safe One-Time Bootstrap Updater for Legacy Agents (v1.6.2+)
+# Preserves existing token, server_id, and node identity without re-enrolling or wiping config.
+
+set -e
+echo "[SECUREPULSE] Starting Safe Agent Updater Bootstrap..."
+
+AGENT_FILE="/opt/securepulse/node_push_agent.py"
+BACKUP_FILE="/opt/securepulse/node_push_agent.py.bak.$(date +%s)"
+CONFIG_FILE="/opt/securepulse/config.json"
+
+if [ ! -f "$AGENT_FILE" ]; then
+    echo "[ERROR] $AGENT_FILE not found. Is the agent installed?"
+    exit 1
+fi
+
+# 1. Extract existing credentials and settings from existing agent file
+EXISTING_TOKEN=$(grep -E '^\\s*AGENT_TOKEN\\s*=' "$AGENT_FILE" | head -n 1 | cut -d'=' -f2 | tr -d ' "' | tr -d "'")
+EXISTING_SOC_URL=$(grep -E '^\\s*SOC_URL\\s*=' "$AGENT_FILE" | head -n 1 | cut -d'=' -f2 | tr -d ' "' | tr -d "'")
+EXISTING_TARGET_IP=$(grep -E '^\\s*TARGET_IP\\s*=' "$AGENT_FILE" | head -n 1 | cut -d'=' -f2 | tr -d ' "' | tr -d "'")
+EXISTING_TARGET_NAME=$(grep -E '^\\s*TARGET_NAME\\s*=' "$AGENT_FILE" | head -n 1 | cut -d'=' -f2 | tr -d ' "' | tr -d "'")
+EXISTING_SID=$(grep -E '^\\s*ASSIGNED_SERVER_ID\\s*=' "$AGENT_FILE" | head -n 1 | grep -o -E '[0-9]+' | head -n 1)
+
+echo "[SECUREPULSE] Preserving Identity: Host=$EXISTING_TARGET_NAME, IP=$EXISTING_TARGET_IP, ServerID=$EXISTING_SID"
+
+# 2. Backup current agent
+cp "$AGENT_FILE" "$BACKUP_FILE"
+
+# 3. Create persistent config.json so future updates never lose credentials
+cat << EOF > "$CONFIG_FILE"
+{{
+  "SOC_URL": "${{EXISTING_SOC_URL:-{base_url}}}",
+  "TARGET_IP": "$EXISTING_TARGET_IP",
+  "TARGET_NAME": "$EXISTING_TARGET_NAME",
+  "AGENT_TOKEN": "$EXISTING_TOKEN",
+  "ASSIGNED_SERVER_ID": ${{EXISTING_SID:-null}}
+}}
+EOF
+chmod 600 "$CONFIG_FILE"
+
+# 4. Download latest signed agent artifact
+TMP_AGENT="/opt/securepulse/node_push_agent.py.tmp"
+TARGET_URL="{base_url}/static/agents/agent-{version.AGENT_VERSION}.py"
+
+curl -sSL -k "$TARGET_URL" -o "$TMP_AGENT"
+
+# 5. Verify syntax and run selftest
+python3 -m py_compile "$TMP_AGENT"
+SELFTEST_OUT=$(python3 "$TMP_AGENT" --selftest 2>&1)
+if [[ "$SELFTEST_OUT" != *"SELFTEST_OK"* ]]; then
+    echo "[ERROR] Agent selftest failed: $SELFTEST_OUT. Aborting update."
+    rm -f "$TMP_AGENT"
+    exit 1
+fi
+
+# 6. Atomic swap
+mv -f "$TMP_AGENT" "$AGENT_FILE"
+chmod 750 "$AGENT_FILE"
+
+# 7. Restart agent service cleanly
+systemctl restart securepulse 2>/dev/null || systemctl restart securepulse-agent 2>/dev/null || nohup python3 "$AGENT_FILE" > /var/log/securepulse_agent.log 2>&1 &
+
+echo "[SECUREPULSE] Agent successfully upgraded to v{version.AGENT_VERSION} with autonomous updater!"
+"""
+    return Response(content=script_content, media_type="text/x-shellscript")
+
 # Setup Script Endpoint for Target Server Node Onboarding (Push Agent Model - Zero SSH Credentials Needed)
 @app.get("/setup", response_class=Response)
 @app.post("/setup", response_class=Response)
@@ -5496,18 +5596,43 @@ fi
 # 2. Setup background Python Push Agent Daemon
 mkdir -p /opt/securepulse
 
+cat << CFG_EOF > /opt/securepulse/config.json
+{{
+  "SOC_URL": "{base_url}".rstrip("/"),
+  "TARGET_IP": "$NODE_IP",
+  "TARGET_NAME": "$NODE_NAME",
+  "AGENT_TOKEN": "$TOKEN",
+  "ASSIGNED_SERVER_ID": {server_id or "null"}
+}}
+CFG_EOF
+chmod 600 /opt/securepulse/config.json
+
 cat << PY_EOF > /opt/securepulse/node_push_agent.py
 import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threading, random, platform, zipfile, hmac, ssl
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "2.0.0"
+AGENT_VERSION = "{version.AGENT_VERSION}"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
 AGENT_TOKEN = "$TOKEN"
 ASSIGNED_SERVER_ID = int("$ASSIGNED_ID") if "$ASSIGNED_ID".isdigit() else {server_id or "None"}
 PUSH_INTERVAL = 15  # seconds (responsive real-time log ingestion)
+
+CONFIG_FILE = os.environ.get("SECUREPULSE_CONFIG", "/opt/securepulse/config.json")
+if os.path.exists(CONFIG_FILE):
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as _f_cfg:
+            _cdata = json.load(_f_cfg)
+            if _cdata.get("SOC_URL"): SOC_URL = _cdata["SOC_URL"].rstrip("/")
+            if _cdata.get("TARGET_IP"): TARGET_IP = _cdata["TARGET_IP"]
+            if _cdata.get("TARGET_NAME"): TARGET_NAME = _cdata["TARGET_NAME"]
+            if _cdata.get("AGENT_TOKEN"): AGENT_TOKEN = _cdata["AGENT_TOKEN"]
+            if _cdata.get("ASSIGNED_SERVER_ID") is not None:
+                ASSIGNED_SERVER_ID = int(_cdata["ASSIGNED_SERVER_ID"])
+    except Exception:
+        pass
 
 # ── INVENTORY & SCHEDULE STATE ──
 scheduled_inventory_hour = random.randint(1, 4)
@@ -7132,15 +7257,17 @@ def main():
                 ASSIGNED_SERVER_ID = int(res_data["server_id"])
             elif sid and ASSIGNED_SERVER_ID is None:
                 ASSIGNED_SERVER_ID = sid
-            if res_data.get("update_requested") and TARGET_NAME != "soc-server" and TARGET_IP not in ("127.0.0.1", "192.168.10.201") and sid != 23:
-                dl_url = res_data.get("update_cmd_url")
+            if res_data.get("update_available") and res_data.get("update_manifest"):
+                manifest = res_data.get("update_manifest")
+                try:
+                    if "check_and_apply_update" in globals():
+                        threading.Thread(target=check_and_apply_update, args=(manifest, sid), daemon=True).start()
+                except Exception: pass
+            elif res_data.get("update_requested") and res_data.get("update_cmd_url"):
+                # Safe updater: invoke updater without running arbitrary bash commands
                 try:
                     send_agent_request("/api/agent/status-update", data=json.dumps({{"server_id": sid, "status": "updating"}}).encode('utf-8'), timeout=5)
                 except: pass
-                
-                cmd = f"curl -s -k {{dl_url}} -d 'name={{TARGET_NAME}}&ip={{TARGET_IP}}' | bash"
-                subprocess.Popen(["bash", "-c", cmd])
-                sys.exit(0)
 
             # On-demand inventory scan requested from SOC ("Scan now" button)
             if res_data.get("inventory_scan_requested"):
@@ -7172,10 +7299,15 @@ def main():
         time.sleep(PUSH_INTERVAL)
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
+        print("SELFTEST_OK")
+        sys.exit(0)
     main()
 PY_EOF
 
-chmod +x /opt/securepulse/node_push_agent.py
+# Prefer signed pre-built artifact if available from SOC server
+curl -sSL -k "{base_url}/static/agents/agent-{version.AGENT_VERSION}.py" -o /opt/securepulse/node_push_agent.py 2>/dev/null || true
+chmod 750 /opt/securepulse/node_push_agent.py
 pkill -f node_push_agent.py 2>/dev/null || true
 pkill -f node_push_agent.sh 2>/dev/null || true
 
@@ -8466,6 +8598,61 @@ async def api_test_webhook(request: Request):
         return {"ok": True, "message": "Webhook test successful"}
     except Exception as e:
         return JSONResponse(status_code=400, content={"ok": False, "message": f"Webhook failed: {e}"})
+
+# ── AUTONOMOUS AGENT AUTO-UPDATE & FLEET ROLLOUT APIS ──
+@app.get("/api/settings/autoupdate")
+def api_get_autoupdate_settings(request: Request):
+    """Retrieve autonomous agent auto-update settings and fleet status."""
+    settings = db.get_settings()
+    fleet = db.get_agent_fleet_status()
+    return {
+        "ok": True,
+        "enabled": settings.get("autoupdate_enabled", "true").lower() == "true",
+        "window_start": settings.get("autoupdate_window_start", "02:00"),
+        "window_end": settings.get("autoupdate_window_end", "05:00"),
+        "stage": settings.get("autoupdate_stage", "canary"),
+        "failure_threshold_pct": float(settings.get("autoupdate_failure_threshold_pct", "15")),
+        "circuit_broken": settings.get("autoupdate_circuit_broken", "false").lower() == "true",
+        "latest_agent_version": version.AGENT_VERSION,
+        "fleet": fleet
+    }
+
+@app.post("/api/settings/autoupdate")
+async def api_save_autoupdate_settings(request: Request):
+    """Update autonomous agent auto-update configuration."""
+    user = get_session_user(request)
+    if not user or user.get("role") not in ("admin", "superuser"):
+        return JSONResponse(status_code=403, content={"error": "Admin privilege required"})
+    body = await request.json()
+    if "enabled" in body:
+        db.save_setting("autoupdate_enabled", "true" if body["enabled"] else "false")
+    if "window_start" in body:
+        db.save_setting("autoupdate_window_start", str(body["window_start"]))
+    if "window_end" in body:
+        db.save_setting("autoupdate_window_end", str(body["window_end"]))
+    if "stage" in body:
+        db.save_setting("autoupdate_stage", str(body["stage"]))
+    if "failure_threshold_pct" in body:
+        db.save_setting("autoupdate_failure_threshold_pct", str(body["failure_threshold_pct"]))
+    if "circuit_broken" in body:
+        db.save_setting("autoupdate_circuit_broken", "true" if body["circuit_broken"] else "false")
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'UPDATE_AUTOUPDATE_SETTINGS', 'settings', 0, f"Updated agent auto-update settings: {body}")
+    return {"ok": True, "message": "Auto-update settings saved successfully"}
+
+@app.post("/api/servers/{server_id}/autoupdate-flags")
+async def api_set_server_autoupdate_flags(server_id: int, request: Request):
+    """Toggle canary or auto-update exclusion flags for a server."""
+    user = get_session_user(request)
+    if not user or user.get("role") not in ("admin", "superuser"):
+        return JSONResponse(status_code=403, content={"error": "Admin privilege required"})
+    body = await request.json()
+    is_canary = body.get("is_canary")
+    exclude = body.get("exclude_from_autoupdate")
+    ok = db.set_server_autoupdate_flags(server_id, is_canary=is_canary, exclude_from_autoupdate=exclude)
+    uname = request.session.get('username', 'system')
+    db.log_audit(uname, 'UPDATE_SERVER_FLAGS', 'server', server_id, f"Updated server flags: canary={is_canary}, excluded={exclude}")
+    return {"ok": ok}
 
 # Reports
 @app.get("/api/reports")

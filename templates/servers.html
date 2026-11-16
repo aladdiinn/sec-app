@@ -695,10 +695,22 @@ function formatLocal(dateStr) {
                 }
                 const isSrvRead = s.is_read === true || s.is_read === 'true';
                 const readTag = isSrvRead ? '<div class="badge-read-tag" style="margin-top:4px">✓ Marked as Read</div>' : '';
-                const isOutdated = s.agent_version && s.agent_version < '2.0.0';
-                const vColor = isOutdated ? 'var(--amber)' : 'var(--text3)';
-                const vTitle = isOutdated ? 'Agent outdated (v' + s.agent_version + '): update required for detection v2.0.0' : 'Agent up to date';
-                const typeBadge = `<div style="text-align:right">${rawBadge}${readTag}<div style="font-family:monospace; font-size:9px; color:${vColor}; margin-top:4px" title="${vTitle}">v${s.agent_version || '1.5'}${isOutdated ? ' <span style="font-size:8px; border:1px solid var(--amber); border-radius:3px; padding:1px 3px; color:var(--amber)">outdated</span>' : ''}</div></div>`;
+                const agentV = s.agent_version || '1.6.2';
+                const upStat = s.update_status || (agentV < '2.1.0' ? 'update_available' : 'up_to_date');
+                let statusPill = '';
+                if (upStat === 'up_to_date') {
+                    statusPill = ' <span style="font-size:8px; border:1px solid rgba(16,185,129,0.4); border-radius:3px; padding:1px 4px; color:var(--green)">Up to date</span>';
+                } else if (upStat === 'update_available') {
+                    statusPill = ' <span style="font-size:8px; border:1px solid rgba(0,212,255,0.4); border-radius:3px; padding:1px 4px; color:var(--cyan)">Update available</span>';
+                } else if (upStat === 'updating') {
+                    statusPill = ' <span style="font-size:8px; border:1px solid rgba(245,158,11,0.5); border-radius:3px; padding:1px 4px; color:var(--amber)">Updating...</span>';
+                } else if (upStat === 'failed') {
+                    statusPill = ` <span style="font-size:8px; border:1px solid rgba(239,68,68,0.5); border-radius:3px; padding:1px 4px; color:var(--red)" title="${s.update_error || 'Update failed'}">Update failed</span>`;
+                } else if (upStat === 'unsupported') {
+                    statusPill = ' <span style="font-size:8px; border:1px solid rgba(239,68,68,0.5); border-radius:3px; padding:1px 4px; color:var(--red)">Unsupported</span>';
+                }
+                const canaryPill = s.is_canary ? ' <span style="font-size:8px; border:1px solid #a855f7; border-radius:3px; padding:1px 3px; color:#c084fc">CANARY</span>' : '';
+                const typeBadge = `<div style="text-align:right">${rawBadge}${readTag}<div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${agentV}${canaryPill}${statusPill}</div></div>`;
                 
                 let alertBox = '<div class="service-alert-box sab-normal"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>NORMAL</strong> – All checks operational</div>';
                 if (isDown) {
@@ -812,16 +824,30 @@ function formatLocal(dateStr) {
     }
 
     async function triggerAgentUpdate(id) {
-        if(!confirm("Initiate staged rollout update for this agent?")) return;
+        if(!confirm("Initiate autonomous self-update to v2.1.0 for this agent?")) return;
         try {
             const res = await apiFetch(`/api/servers/${id}/update-agent`, {
                 method: 'POST',
-                body: JSON.stringify({target_version: "0.3"})
+                body: JSON.stringify({target_version: "2.1.0"})
             });
             showToast(res.message || "Update scheduled", "success");
             loadServers();
         } catch(e) {
             showToast("Failed to schedule update", "error");
+        }
+    }
+
+    async function toggleServerCanary(id, currentCanary) {
+        try {
+            await apiFetch(`/api/servers/${id}/autoupdate-flags`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ is_canary: !currentCanary })
+            });
+            showToast(`Server ${!currentCanary ? 'marked as Canary' : 'removed from Canary'}`, 'success');
+            loadServers();
+        } catch(e) {
+            showToast('Failed to toggle canary flag', 'error');
         }
     }
 

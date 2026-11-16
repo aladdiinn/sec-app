@@ -1566,7 +1566,20 @@ function renderServicesGrid() {
             nodeIcon = renderAssetChassisIcon('#0284c7');
         }
         const isSrvRead = item.isRead || s.is_read === true || s.is_read === 'true';
-        const typeBadge = `<div style="text-align:right">${rawBadge}${isSrvRead ? '<div class="badge-read-tag" style="margin-top:2px">✓ Read</div>' : ''}<div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">v${s.agent_version || '1.5'}</div></div>`;
+        const agentV = s.agent_version || '1.6.2';
+        const upStat = s.update_status || (agentV < '2.1.0' ? 'update_available' : 'up_to_date');
+        let statusPill = '';
+        if (upStat === 'up_to_date') {
+            statusPill = ' <span style="font-size:7px; border:1px solid rgba(16,185,129,0.4); border-radius:2px; padding:0 3px; color:var(--green)">Up to date</span>';
+        } else if (upStat === 'update_available') {
+            statusPill = ' <span style="font-size:7px; border:1px solid rgba(0,212,255,0.4); border-radius:2px; padding:0 3px; color:var(--cyan)">Update available</span>';
+        } else if (upStat === 'updating') {
+            statusPill = ' <span style="font-size:7px; border:1px solid rgba(245,158,11,0.5); border-radius:2px; padding:0 3px; color:var(--amber)">Updating...</span>';
+        } else if (upStat === 'failed') {
+            statusPill = ` <span style="font-size:7px; border:1px solid rgba(239,68,68,0.5); border-radius:2px; padding:0 3px; color:var(--red)" title="${s.update_error || 'Update failed'}">Failed</span>`;
+        }
+        const canaryPill = s.is_canary ? ' <span style="font-size:7px; border:1px solid #a855f7; border-radius:2px; padding:0 2px; color:#c084fc">CANARY</span>' : '';
+        const typeBadge = `<div style="text-align:right">${rawBadge}${isSrvRead ? '<div class="badge-read-tag" style="margin-top:2px">✓ Read</div>' : ''}<div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">v${agentV}${canaryPill}${statusPill}</div></div>`;
 
         const cpu = s.cpu_percent || 0;
         const ram = s.memory_percent || 0;

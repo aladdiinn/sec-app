@@ -82,8 +82,90 @@ input:checked + .slider:before { transform: translateX(14px); background-color: 
             </div>
             <div style="display:flex; justify-content:flex-end">
                 <button type="submit" class="btn btn-primary" id="btn-web">Save Webhook</button>
+            </div>
+        </form>
     </div>
-    
+
+    {% if user and (user.role == 'admin' or user.role == 'superuser') %}
+    <!-- Autonomous Agent Auto-Updates & Staged Rollout (Admin Only) -->
+    <div class="card glass" style="margin-bottom:24px">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+            <div>
+                <h3 class="card-title" style="margin-bottom:4px">Autonomous Agent Updates &amp; Staged Rollout</h3>
+                <div style="font-size:12px; color:var(--text3)">Self-updating Ed25519-signed telemetry agents with automated circuit breaker and rollback</div>
+            </div>
+            <span id="autoupdate-target-badge" class="badge" style="font-size:11px; padding:4px 10px; background:rgba(0,212,255,0.1); color:var(--cyan); border:1px solid rgba(0,212,255,0.3)">Target: v2.1.0</span>
+        </div>
+
+        <!-- Fleet Distribution Overview -->
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:16px" id="fleet-stats-bar">
+            <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">Fleet Size</div>
+                <div style="font-size:16px; font-weight:700; color:var(--text); margin-top:4px" id="fleet-stat-total">--</div>
+            </div>
+            <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">Up to Date</div>
+                <div style="font-size:16px; font-weight:700; color:var(--green); margin-top:4px" id="fleet-stat-uptodate">--</div>
+            </div>
+            <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">Updates Pending</div>
+                <div style="font-size:16px; font-weight:700; color:var(--cyan); margin-top:4px" id="fleet-stat-pending">--</div>
+            </div>
+            <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">Circuit Breaker</div>
+                <div style="font-size:14px; font-weight:700; color:var(--green); margin-top:4px" id="fleet-stat-circuit">HEALTHY</div>
+            </div>
+        </div>
+
+        <form onsubmit="saveAutoUpdateSettings(event)">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:16px">
+                <div style="display:flex; align-items:center; gap:12px; padding:12px; background:rgba(255,255,255,0.02); border-radius:6px; border:1px solid var(--border)">
+                    <label class="switch">
+                        <input type="checkbox" id="autoupdate_enabled">
+                        <span class="slider"></span>
+                    </label>
+                    <div>
+                        <div style="font-weight:600; font-size:13px">Enable Autonomous Auto-Update</div>
+                        <div style="font-size:11px; color:var(--text3)">Agents self-update automatically during maintenance window</div>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="text-meta">Rollout Strategy</label>
+                    <select id="autoupdate_stage" class="glass" style="width:100%; padding:8px">
+                        <option value="canary">Canary First (1 canary node first, then staged)</option>
+                        <option value="staged_25">Staged 25% (Canary + 25% of fleet)</option>
+                        <option value="staged_50">Staged 50% (Canary + 50% of fleet)</option>
+                        <option value="all">Full Fleet (100% of fleet)</option>
+                        <option value="paused">Paused (Halt all agent updates)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px; margin-bottom:16px">
+                <div>
+                    <label class="text-meta">Update Window Start (HH:MM)</label>
+                    <input id="autoupdate_window_start" type="time" class="glass" style="width:100%; padding:8px" value="02:00">
+                </div>
+                <div>
+                    <label class="text-meta">Update Window End (HH:MM)</label>
+                    <input id="autoupdate_window_end" type="time" class="glass" style="width:100%; padding:8px" value="05:00">
+                </div>
+                <div>
+                    <label class="text-meta">Max Failure Threshold (%)</label>
+                    <input id="autoupdate_failure_threshold_pct" type="number" step="1" min="1" max="100" class="glass" style="width:100%; padding:8px" value="15">
+                </div>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px">
+                <button type="button" class="btn btn-glass" onclick="resetCircuitBreaker()" id="btn-reset-cb" style="display:none; color:var(--amber)">Reset Circuit Breaker</button>
+                <div style="display:flex; gap:10px; margin-left:auto">
+                    <button type="submit" class="btn btn-primary" id="btn-save-autoupdate">Save Auto-Update Settings</button>
+                </div>
+            </div>
+        </form>
+    </div>
+
     {% if user and (user.role == 'admin' or user.role == 'superuser') %}
     <!-- Email Notifications & SES Health (Admin Only) -->
     <div class="card glass" style="margin-bottom:24px">
@@ -223,6 +305,7 @@ async function loadSettings() {
 
         loadSesStatus();
         loadEmailLogs();
+        loadAutoUpdateSettings();
     } catch (err) {
         showToast('Failed to load settings', 'error');
     }
@@ -423,6 +506,105 @@ async function loadEmailLogs() {
         }).join('');
     } catch (e) {
         console.error('Error loading email logs:', e);
+    }
+}
+
+async function loadAutoUpdateSettings() {
+    try {
+        const res = await apiFetch('/api/settings/autoupdate');
+        if (!res || !res.ok) return;
+
+        if (document.getElementById('autoupdate_enabled')) {
+            document.getElementById('autoupdate_enabled').checked = (res.enabled === true);
+        }
+        if (document.getElementById('autoupdate_stage')) {
+            document.getElementById('autoupdate_stage').value = res.stage || 'canary';
+        }
+        if (document.getElementById('autoupdate_window_start')) {
+            document.getElementById('autoupdate_window_start').value = res.window_start || '02:00';
+        }
+        if (document.getElementById('autoupdate_window_end')) {
+            document.getElementById('autoupdate_window_end').value = res.window_end || '05:00';
+        }
+        if (document.getElementById('autoupdate_failure_threshold_pct')) {
+            document.getElementById('autoupdate_failure_threshold_pct').value = res.failure_threshold_pct || 15;
+        }
+
+        const fleet = res.fleet || {};
+        if (document.getElementById('fleet-stat-total')) {
+            document.getElementById('fleet-stat-total').innerText = fleet.total || 0;
+        }
+        const statuses = fleet.status || {};
+        if (document.getElementById('fleet-stat-uptodate')) {
+            document.getElementById('fleet-stat-uptodate').innerText = statuses.up_to_date || 0;
+        }
+        if (document.getElementById('fleet-stat-pending')) {
+            document.getElementById('fleet-stat-pending').innerText = statuses.update_available || 0;
+        }
+
+        const cbEl = document.getElementById('fleet-stat-circuit');
+        const resetBtn = document.getElementById('btn-reset-cb');
+        if (cbEl) {
+            if (res.circuit_broken) {
+                cbEl.innerText = 'TRIPPED (PAUSED)';
+                cbEl.style.color = 'var(--red)';
+                if (resetBtn) resetBtn.style.display = 'inline-block';
+            } else {
+                cbEl.innerText = 'HEALTHY';
+                cbEl.style.color = 'var(--green)';
+                if (resetBtn) resetBtn.style.display = 'none';
+            }
+        }
+    } catch (e) {
+        console.error('Error loading auto-update settings:', e);
+    }
+}
+
+async function saveAutoUpdateSettings(event) {
+    if (event) event.preventDefault();
+    const btn = document.getElementById('btn-save-autoupdate');
+    const oldText = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = 'Saving...'; }
+
+    try {
+        const payload = {
+            enabled: document.getElementById('autoupdate_enabled')?.checked ?? true,
+            stage: document.getElementById('autoupdate_stage')?.value ?? 'canary',
+            window_start: document.getElementById('autoupdate_window_start')?.value ?? '02:00',
+            window_end: document.getElementById('autoupdate_window_end')?.value ?? '05:00',
+            failure_threshold_pct: parseInt(document.getElementById('autoupdate_failure_threshold_pct')?.value ?? '15', 10)
+        };
+        const res = await apiFetch('/api/settings/autoupdate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+            showToast('Auto-update settings saved successfully', 'success');
+            loadAutoUpdateSettings();
+        } else {
+            showToast(res.error || 'Failed to save settings', 'error');
+        }
+    } catch (e) {
+        showToast('Error saving settings: ' + (e.message || e), 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = oldText; }
+    }
+}
+
+async function resetCircuitBreaker() {
+    try {
+        const res = await apiFetch('/api/settings/autoupdate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ circuit_broken: false })
+        });
+        if (res.ok) {
+            showToast('Circuit breaker reset. Rollout resumed.', 'success');
+            loadAutoUpdateSettings();
+        }
+    } catch (e) {
+        showToast('Failed to reset circuit breaker: ' + e, 'error');
     }
 }
 
