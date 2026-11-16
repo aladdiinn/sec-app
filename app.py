@@ -3564,9 +3564,6 @@ async def api_agent_push(request: Request):
         data = await request.json()
     except Exception:
         data = {}
-    try:
-        logger.warning(f"DEBUG AGENT PUSH: rx={data.get('network_rx_bytes')} tx={data.get('network_tx_bytes')} agent_v={data.get('agent_version')} machine_id={data.get('machine_id')}")
-    except: pass
     
     server_id = data.get("server_id")
     server_ip = (data.get("server_ip") or "").strip()
@@ -3695,9 +3692,6 @@ async def api_agent_push(request: Request):
 
     # Inject resolved server_id back into data
     data["server_id"] = server_id
-
-    if os.environ.get("TESTING"):
-        return JSONResponse(content={"status": "ok", "ok": True, "server_id": server_id, "message": "Agent telemetry ingested (TESTING)"})
 
     db.save_agent_data(server_id, data)
 
@@ -5817,8 +5811,6 @@ for _candidate in ["http://127.0.0.1:8001", "https://192.168.10.201:3443", "http
 
 def send_agent_request(endpoint, data=None, headers=None, timeout=10):
     global SOC_URL
-    if os.environ.get("TESTING"):
-        return b'{{"ok": true, "status": "ok"}}'
     hdrs = headers or {{"Content-Type": "application/json"}}
     ordered = [SOC_URL] + [u for u in CANDIDATE_SOC_URLS if u != SOC_URL]
     last_err = None

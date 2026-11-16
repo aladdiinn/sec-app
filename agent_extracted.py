@@ -142,14 +142,12 @@ except Exception:
     _ssl_ctx = None
 
 CANDIDATE_SOC_URLS = [SOC_URL]
-for _candidate in ["https://192.168.10.201:3443", "https://127.0.0.1:3443", "http://127.0.0.1:8000"]:
+for _candidate in ["http://127.0.0.1:8001", "https://192.168.10.201:3443", "https://127.0.0.1:3443", "http://127.0.0.1:8000"]:
     if _candidate not in CANDIDATE_SOC_URLS:
         CANDIDATE_SOC_URLS.append(_candidate)
 
 def send_agent_request(endpoint, data=None, headers=None, timeout=10):
     global SOC_URL
-    if os.environ.get("TESTING"):
-        return b'{"ok": true, "status": "ok"}'
     hdrs = dict(headers or {})
     if "Content-Type" not in hdrs and data is not None:
         hdrs["Content-Type"] = "application/json"
@@ -430,8 +428,6 @@ def discover_services(force=False):
     return list(known_services.values())
 
 def report_task_result(result_item):
-    if os.environ.get("TESTING"):
-        return True
     for attempt in range(5):
         try:
             send_agent_request(
