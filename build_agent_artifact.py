@@ -332,7 +332,7 @@ def check_and_apply_update(manifest, sid):
     src = entry_pattern.sub(new_entry, src)
 
     out_agent_path = os.path.join(agents_dir, f"agent-{version.AGENT_VERSION}.py")
-    with open(out_agent_path, "w", encoding="utf-8") as f:
+    with open(out_agent_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(src)
 
     print(f"[BUILD] Written agent artifact to {out_agent_path} ({len(src)} bytes)")

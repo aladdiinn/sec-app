@@ -91,14 +91,24 @@ def verify_manifest(agent_bytes: bytes, manifest: Dict[str, Any], pubkey_hex: Op
     if not manifest:
         return False
 
+    expected_sha = manifest.get("sha256", "").strip().lower()
+    actual_sha = hashlib.sha256(agent_bytes).hexdigest().lower()
+
+    # Robust line ending check: if CRLF/LF platform checkout differs, test canonical LF
+    if expected_sha and actual_sha != expected_sha:
+        lf_bytes = agent_bytes.replace(b"\r\n", b"\n")
+        if hashlib.sha256(lf_bytes).hexdigest().lower() == expected_sha:
+            agent_bytes = lf_bytes
+            actual_sha = expected_sha
+        else:
+            return False
+
     # 1. Size check
     expected_size = manifest.get("size")
     if expected_size and len(agent_bytes) != expected_size:
         return False
 
     # 2. SHA-256 Digest check
-    expected_sha = manifest.get("sha256", "").strip().lower()
-    actual_sha = hashlib.sha256(agent_bytes).hexdigest().lower()
     if expected_sha and actual_sha != expected_sha:
         return False
 
