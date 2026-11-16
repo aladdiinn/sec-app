@@ -94,7 +94,7 @@ input:checked + .slider:before { transform: translateX(14px); background-color: 
                 <h3 class="card-title" style="margin-bottom:4px">Autonomous Agent Updates &amp; Staged Rollout</h3>
                 <div style="font-size:12px; color:var(--text3)">Self-updating Ed25519-signed telemetry agents with automated circuit breaker and rollback</div>
             </div>
-            <span id="autoupdate-target-badge" class="badge" style="font-size:11px; padding:4px 10px; background:rgba(0,212,255,0.1); color:var(--cyan); border:1px solid rgba(0,212,255,0.3)">Target: v2.1.0</span>
+            <span id="autoupdate-target-badge" class="badge" style="font-size:11px; padding:4px 10px; background:rgba(0,212,255,0.1); color:var(--cyan); border:1px solid rgba(0,212,255,0.3)">Target: v{{ latest_agent_version or "2.1.1" }}</span>
         </div>
 
         <!-- Fleet Distribution Overview -->
@@ -528,6 +528,9 @@ async function loadAutoUpdateSettings() {
         }
         if (document.getElementById('autoupdate_failure_threshold_pct')) {
             document.getElementById('autoupdate_failure_threshold_pct').value = res.failure_threshold_pct || 15;
+        }
+        if (res.target_version && document.getElementById('autoupdate-target-badge')) {
+            document.getElementById('autoupdate-target-badge').innerText = `Target: v${res.target_version}`;
         }
 
         const fleet = res.fleet || {};

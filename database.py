@@ -8526,26 +8526,38 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
 
             is_canary = bool(s.get("is_canary"))
             in_window = is_in_update_window()
+            explicit_update = (s.get("target_agent_version") == version.AGENT_VERSION)
 
-            # Window check: canaries can update anytime for fast testing, but regular fleet waits for window
-            if not in_window and not is_canary and stage != "all_immediate":
-                if s.get("update_status") != "update_available":
-                    cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
-                    if hasattr(conn, 'commit'): conn.commit()
-                return None
-
-            if stage == "canary":
-                if not is_canary:
+            if not explicit_update:
+                # Full fleet immediate rollout bypasses window and canary checks
+                if stage in ("all", "all_immediate"):
+                    pass
+                elif not in_window and not is_canary:
                     if s.get("update_status") != "update_available":
                         cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
                         if hasattr(conn, 'commit'): conn.commit()
                     return None
-            elif stage == "staged_25":
-                if not is_canary and (server_id % 4 != 0):
-                    return None
-            elif stage == "staged_50":
-                if not is_canary and (server_id % 2 != 0):
-                    return None
+                elif stage == "canary":
+                    if not is_canary:
+                        # If no server in fleet is marked as canary yet, allow the lowest-ID active server to act as canary
+                        cur.execute("SELECT id FROM servers WHERE is_canary = TRUE LIMIT 1;")
+                        has_canary = cur.fetchone()
+                        if not has_canary:
+                            cur.execute("SELECT MIN(id) as min_id FROM servers WHERE exclude_from_autoupdate = FALSE;")
+                            min_s = cur.fetchone()
+                            if min_s and min_s.get("min_id") == server_id:
+                                is_canary = True
+                    if not is_canary:
+                        if s.get("update_status") != "update_available":
+                            cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
+                            if hasattr(conn, 'commit'): conn.commit()
+                        return None
+                elif stage == "staged_25":
+                    if not is_canary and (server_id % 4 != 0):
+                        return None
+                elif stage == "staged_50":
+                    if not is_canary and (server_id % 2 != 0):
+                        return None
 
             # Check circuit breaker: check fleet failure rate
             cur.execute("""

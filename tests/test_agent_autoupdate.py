@@ -163,20 +163,20 @@ class TestAgentAutoUpdate(unittest.TestCase):
         mock_servers = [
             {"id": 21, "name": "Mitra 1", "hostname": "Mitra 1", "agent_version": "1.6.2", "update_status": "update_available", "is_canary": False, "exclude_from_autoupdate": False, "is_maintenance": False},
             {"id": 22, "name": "Mitra 2", "hostname": "Mitra 2", "agent_version": "1.6.2", "update_status": "update_available", "is_canary": False, "exclude_from_autoupdate": False, "is_maintenance": False},
-            {"id": 23, "name": "soc-server", "hostname": "soc-server", "agent_version": "2.1.0", "update_status": "up_to_date", "is_canary": True, "exclude_from_autoupdate": False, "is_maintenance": False}
+            {"id": 23, "name": "soc-server", "hostname": "soc-server", "agent_version": version.AGENT_VERSION, "update_status": "up_to_date", "is_canary": True, "exclude_from_autoupdate": False, "is_maintenance": False}
         ]
         mock_cur.fetchall.side_effect = [
             mock_servers,
-            [{"id": 1, "server_id": 23, "status": "up_to_date", "from_version": "2.0.0", "to_version": "2.1.0"}]
+            [{"id": 1, "server_id": 23, "status": "up_to_date", "from_version": "2.0.0", "to_version": version.AGENT_VERSION}]
         ]
         mock_cur.fetchone.return_value = {"value": "false"}
         mock_get_conn.return_value = mock_conn
 
         fleet_status = db.get_agent_fleet_status()
         self.assertEqual(fleet_status["total"], 3)
-        self.assertEqual(fleet_status["target_version"], "2.1.0")
+        self.assertEqual(fleet_status["target_version"], version.AGENT_VERSION)
         self.assertEqual(fleet_status["versions"]["1.6.2"], 2)
-        self.assertEqual(fleet_status["versions"]["2.1.0"], 1)
+        self.assertEqual(fleet_status["versions"][version.AGENT_VERSION], 1)
         self.assertEqual(fleet_status["canary_count"], 1)
         self.assertEqual(fleet_status["status"]["up_to_date"], 1)
         self.assertEqual(fleet_status["status"]["update_available"], 2)
@@ -241,7 +241,7 @@ ASSIGNED_SERVER_ID = 21
         self.assertEqual(res["public_key"], version.AGENT_ED25519_PUBLIC_KEY_HEX)
         self.assertIn("signature", res)
         self.assertIn("sha256", res)
-        self.assertIn("https://192.168.10.201:3443/static/agents/agent-2.1.0.py", res["download_url"])
+        self.assertIn(f"agent-{version.AGENT_VERSION}.py", res["download_url"])
 
     def test_u10_setup_agent_updater_endpoint(self):
         """U11: /setup_agent_updater.sh endpoint returns valid bash bootstrap script."""
@@ -254,7 +254,7 @@ ASSIGNED_SERVER_ID = 21
         self.assertIn("setup_agent_updater.sh", content)
         self.assertIn("EXISTING_TOKEN=", content)
         self.assertIn("config.json", content)
-        self.assertIn("agent-2.1.0.py", content)
+        self.assertIn(f"agent-{version.AGENT_VERSION}.py", content)
         self.assertIn("--selftest", content)
 
     @patch("database.get_settings")
@@ -272,8 +272,8 @@ ASSIGNED_SERVER_ID = 21
         }
         mock_fleet.return_value = {
             "total": 3,
-            "target_version": "2.1.0",
-            "versions": {"2.1.0": 1, "1.6.2": 2},
+            "target_version": version.AGENT_VERSION,
+            "versions": {version.AGENT_VERSION: 1, "1.6.2": 2},
             "status": {"up_to_date": 1, "update_available": 2},
             "circuit_broken": False
         }

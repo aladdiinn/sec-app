@@ -53,7 +53,7 @@ class TestManageAssetAndServices(unittest.TestCase):
             servers_html = f.read()
         self.assertIn("MANAGE ASSET", servers_html)
         self.assertIn("/servers/${id}?from=assets", servers_html)
-        self.assertTrue("2.1.0" in servers_html or "2.0.0" in servers_html)
+        self.assertTrue(any(v in servers_html for v in ("2.1.1", "2.1.0", "2.0.0", "latest_agent_version", "LATEST_AGENT_VERSION")))
 
         with open("templates/maintenance.html", "r", encoding="utf-8") as f:
             maint_html = f.read()

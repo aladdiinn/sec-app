@@ -1567,7 +1567,8 @@ function renderServicesGrid() {
         }
         const isSrvRead = item.isRead || s.is_read === true || s.is_read === 'true';
         const agentV = s.agent_version || '1.6.2';
-        const upStat = s.update_status || (agentV < '2.1.0' ? 'update_available' : 'up_to_date');
+        const targetV = '{{ latest_agent_version or "2.1.1" }}';
+        const upStat = s.update_status || (agentV < targetV ? 'update_available' : 'up_to_date');
         let statusPill = '';
         if (upStat === 'up_to_date') {
             statusPill = ' <span style="font-size:7px; border:1px solid rgba(16,185,129,0.4); border-radius:2px; padding:0 3px; color:var(--green)">Up to date</span>';

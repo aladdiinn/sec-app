@@ -1503,6 +1503,8 @@ def dashboard_page(request: Request):
     return render_template(request, "dashboard.html", {
         "servers": servers,
         "alerts": alerts,
+        "latest_agent_version": version.AGENT_VERSION,
+        "platform_version": version.PLATFORM_VERSION,
         "SERVICES": "SERVICES",
         "SECURE": "SECURE",
         "CRITICAL": "CRITICAL",
@@ -1519,7 +1521,11 @@ async def servers_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     pid = get_effective_project_id(request); servers = db.get_servers(project_id=pid)
-    return render_template(request, "servers.html", {"servers": servers})
+    return render_template(request, "servers.html", {
+        "servers": servers,
+        "latest_agent_version": version.AGENT_VERSION,
+        "platform_version": version.PLATFORM_VERSION
+    })
 
 @app.get("/apps", response_class=HTMLResponse)
 @app.get("/applications", response_class=HTMLResponse)
@@ -1735,7 +1741,11 @@ async def settings_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    return render_template(request, "settings.html", {"SETTINGS": "SETTINGS"})
+    return render_template(request, "settings.html", {
+        "SETTINGS": "SETTINGS",
+        "latest_agent_version": version.AGENT_VERSION,
+        "platform_version": version.PLATFORM_VERSION
+    })
 
 @app.get("/system-health", response_class=HTMLResponse)
 async def system_health_page(request: Request):
