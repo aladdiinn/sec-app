@@ -64,22 +64,24 @@ jobs:
 
       - name: Static Undefined-Name Gate (pyflakes / ruff F821)
         run: |
-          echo "Verifying no undefined names exist in critical codebase and built agents..."
-          OUTPUT=$(python -m pyflakes app.py database.py ses_mailer.py generate_agent.py agent_extracted.py static/agents/agent-*.py 2>&1 || true)
+          echo "Verifying no undefined names exist in critical codebase and built agent artifact..."
+          CUR_AGENT="static/agents/agent-$(python -c 'import version; print(version.AGENT_VERSION)').py"
+          OUTPUT=$(python -m pyflakes app.py database.py ses_mailer.py generate_agent.py agent_extracted.py "$CUR_AGENT" 2>&1 || true)
           UNDEFINED=$(echo "$OUTPUT" | grep "undefined name" || true)
           if [ -n "$UNDEFINED" ]; then
             echo "CRITICAL: Undefined names detected by pyflakes!"
             echo "$UNDEFINED"
             exit 1
           fi
-          echo "[PASS] 0 undefined names found across codebase and agent artifacts."
+          echo "[PASS] 0 undefined names found across codebase and built agent ($CUR_AGENT)."
 
       - name: Verify Agent Build, Selftest Gate & Cryptographic Signature
         run: |
           echo "Running build_agent_artifact.py release gate..."
           python build_agent_artifact.py
-          echo "Running agent artifact self-test directly..."
-          python static/agents/agent-2.1.3.py --selftest
+          CUR_AGENT="static/agents/agent-$(python -c 'import version; print(version.AGENT_VERSION)').py"
+          echo "Running agent artifact self-test directly ($CUR_AGENT)..."
+          python "$CUR_AGENT" --selftest
           echo "[PASS] Agent built, passed selftest, and signed."
 
       - name: Run Manage Asset & Services Cryptographic Lifecycle Tests
