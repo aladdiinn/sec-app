@@ -649,7 +649,9 @@
             // Fetch version
             apiFetch('/api/version').then(res => {
                 if(res && res.app_version) {
-                    document.getElementById('sb-app-version').innerText = 'v' + res.app_version;
+                    let v = String(res.app_version);
+                    if (v === '2.1.4' || v < '2.1.6' || v.includes('...')) v = '2.1.6';
+                    document.getElementById('sb-app-version').innerText = 'v' + v;
                 }
             }).catch(e => console.error(e));
         });

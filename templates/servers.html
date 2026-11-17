@@ -812,7 +812,7 @@ function formatLocal(dateStr) {
                                 </div>
                                 <div style="font-family:monospace; font-size:11px; color:var(--cyan); margin-top:2px;">${ip}</div>
                             </div>
-                            ${typeBadge}${(s.stopped_services_count > 0 && ((s.managed_services && s.managed_services.length > 0) || s.pinned_services_count > 0)) ? `<span class="badge badge-critical" style="font-size:9px; padding:2px 6px; margin-left:6px; letter-spacing:0.5px" title="${s.stopped_services_count} pinned service(s) down">${s.stopped_services_count} SVC DOWN</span>` : ''}
+                            ${typeBadge}
                         </div>
                         <div class="service-metrics">
                             <div class="service-metrics-item">
