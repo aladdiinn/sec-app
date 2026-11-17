@@ -1972,6 +1972,13 @@ def get_new_log_lines(max_lines_per_file=100):
 # Main loop
 def main():
     global push_count, daily_inventory_done_date, discovered_paths, ASSIGNED_SERVER_ID
+    # Release update lock file on startup to inform watchdog of healthy state
+    if os.path.exists("/tmp/securepulse_update.lock"):
+        try:
+            os.remove("/tmp/securepulse_update.lock")
+            print(f"[{APP_BRAND} Agent] Update lock released on startup.", flush=True)
+        except Exception:
+            pass
     print(f"[{APP_BRAND} Agent] Starting. SOC: {SOC_URL}, Node: {TARGET_NAME} ({TARGET_IP}), Server ID: {ASSIGNED_SERVER_ID}")
     print(f"[{APP_BRAND} Agent] Discovering log paths...")
     discovered_paths = auto_discover_log_paths()
@@ -2074,6 +2081,13 @@ def main():
             elif sid and ASSIGNED_SERVER_ID is None:
                 ASSIGNED_SERVER_ID = sid
                 _save_persistent_config()
+
+            if res_data and (res_data.get("status") in ("ok", "success") or res_data.get("ok")):
+                if os.path.exists("/tmp/securepulse_update.lock"):
+                    try:
+                        os.remove("/tmp/securepulse_update.lock")
+                    except Exception:
+                        pass
 
             if res_data.get("update_requested"):
                 _save_persistent_config()

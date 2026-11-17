@@ -56,7 +56,7 @@ User=root
 WorkingDirectory=/opt/securepulse
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 -u /opt/securepulse/node_push_agent.py
-Restart=on-failure
+Restart=always
 RestartSec=5
 StandardOutput=append:/var/log/securepulse_agent.log
 StandardError=append:/var/log/securepulse_agent.log
