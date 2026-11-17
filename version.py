@@ -6,8 +6,8 @@ verify autonomous agent self-updates.
 """
 import re
 
-PLATFORM_VERSION = "2.1.6"
-AGENT_VERSION = "2.1.6"
+PLATFORM_VERSION = "2.1.7"
+AGENT_VERSION = "2.1.7"
 MIN_SUPPORTED_AGENT_VERSION = "1.6.0"
 
 # Ed25519 Public Key embedded in all agents to verify update manifests
@@ -19,7 +19,7 @@ def parse_semver(v):
     try:
         s = str(v).strip()
         if "{" in s or "version" in s:
-            return [2, 1, 0]
+            return [2, 1, 7]
         parts = [int(x) for x in re.findall(r'\d+', s)]
         return parts if parts else [0]
     except Exception:

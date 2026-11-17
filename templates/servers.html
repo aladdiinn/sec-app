@@ -697,10 +697,10 @@ function formatLocal(dateStr) {
                 const readTag = isSrvRead ? '<div class="badge-read-tag" style="margin-top:4px">✓ Marked as Read</div>' : '';
                 let rawAgentV = String(s.agent_version || '1.6.2');
                 if (rawAgentV.includes('{') || rawAgentV.includes('version')) {
-                    rawAgentV = '2.1.6';
+                    rawAgentV = '2.1.7';
                 }
                 const agentV = rawAgentV;
-                const targetV = '{{ latest_agent_version or "2.1.6" }}';
+                const targetV = '{{ latest_agent_version or "2.1.7" }}';
 
                 function parseVerArr(v) {
                     const m = String(v).match(/\d+/g);
@@ -876,7 +876,7 @@ function formatLocal(dateStr) {
     }
 
     async function triggerAgentUpdate(id) {
-        const targetV = '{{ latest_agent_version or "2.1.6" }}';
+        const targetV = '{{ latest_agent_version or "2.1.7" }}';
         if(!confirm(`Initiate autonomous self-update to v${targetV} for this agent?`)) return;
         try {
             const res = await apiFetch(`/api/servers/${id}/update-agent`, {

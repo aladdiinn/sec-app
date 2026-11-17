@@ -990,12 +990,12 @@ app.add_middleware(
 
 @app.get("/api/version")
 def api_get_version():
-    cur_plat = getattr(version, "PLATFORM_VERSION", "2.1.6")
-    if str(cur_plat) < "2.1.6":
-        cur_plat = "2.1.6"
-    cur_agent = getattr(version, "AGENT_VERSION", "2.1.6")
-    if str(cur_agent) < "2.1.6":
-        cur_agent = "2.1.6"
+    cur_plat = getattr(version, "PLATFORM_VERSION", "2.1.7")
+    if str(cur_plat) < "2.1.7":
+        cur_plat = "2.1.7"
+    cur_agent = getattr(version, "AGENT_VERSION", "2.1.7")
+    if str(cur_agent) < "2.1.7":
+        cur_agent = "2.1.7"
     return {
         "platform_version": cur_plat,
         "app_version": cur_plat,
@@ -5700,7 +5700,7 @@ import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threadi
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "2.1.6"
+AGENT_VERSION = "2.1.7"
 APP_BRAND = "{APP_BRAND}"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"

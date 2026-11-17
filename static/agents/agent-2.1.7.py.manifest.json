@@ -1,0 +1,9 @@
+{
+  "version": "2.1.7",
+  "target_version": "2.1.7",
+  "min_supported_version": "1.6.0",
+  "sha256": "9c0bbaf9acfa4e42442bdfb48e3b1aa8489ceeba02cc43961afb028228cb5c3f",
+  "signature": "ZD/dFrDphCI8eS3JL6Yf2wq5W26NZS2VB8mDUh+x7lb47/7wMN1dloitG4+BnryaP8PtpCxfFM16Qik5orp2Aw==",
+  "size": 96210,
+  "public_key": "e35f2ca46d8d1d6d0af3152e5a324dd56196dbdd69ca30af06461f24cbd9c970"
+}

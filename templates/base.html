@@ -105,7 +105,7 @@
               SOC
           </div>
           <div style="font-family:'Share Tech Mono', monospace; font-size:7.5px; color:#00bfff; letter-spacing:0.5px; margin-top:4px; opacity:0.8; white-space:normal; line-height:1.2;">
-              BY BCITS SMARTER SOLUTIONS <span id="sb-app-version" style="font-weight:bold; color:var(--cyan); opacity:0.8;">v2.1.6</span>
+              BY BCITS SMARTER SOLUTIONS <span id="sb-app-version" style="font-weight:bold; color:var(--cyan); opacity:0.8;">v2.1.7</span>
             </div>
         </div>
                     </div>
@@ -650,7 +650,7 @@
             apiFetch('/api/version').then(res => {
                 if(res && res.app_version) {
                     let v = String(res.app_version);
-                    if (v === '2.1.4' || v < '2.1.6' || v.includes('...')) v = '2.1.6';
+                    if (v === '2.1.4' || v < '2.1.7' || v.includes('...')) v = '2.1.7';
                     document.getElementById('sb-app-version').innerText = 'v' + v;
                 }
             }).catch(e => console.error(e));
