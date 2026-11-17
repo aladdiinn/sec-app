@@ -10646,7 +10646,7 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
             """, (comp["application_id"], comp["application_id"]))
 
             conn.commit()
-            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"], "latest_version": "1.7.3"}
+            return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"], "latest_version": getattr(version, "COLLECTOR_VERSION", "1.8.0")}
     except Exception as e:
         logger.error(f"Error in api_app_heartbeat: {e}")
         return JSONResponse(status_code=500, content={"status": "error", "reason": str(e)})

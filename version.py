@@ -8,6 +8,7 @@ import re
 
 PLATFORM_VERSION = "2.1.7"
 AGENT_VERSION = "2.1.7"
+COLLECTOR_VERSION = "1.8.0"
 MIN_SUPPORTED_AGENT_VERSION = "1.6.0"
 
 # Ed25519 Public Key embedded in all agents to verify update manifests
