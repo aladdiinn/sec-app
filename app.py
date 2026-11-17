@@ -523,17 +523,17 @@ def run_database_retention_loop():
                     # 1. Automatically prune routine INFO events (2xx/3xx) from active partitions & compact tables
                     app_siem_db.auto_prune_and_compact_app_events(conn)
 
-                    # 2. Purge expired daily partitions (default 2 days retention for raw events in PostgreSQL to protect disk)
-                    ret_days = int(os.getenv("APP_EVENTS_RETENTION_DAYS", "2"))
+                    # 2. Purge expired daily partitions (default 90 days / 3 months retention for raw events in PostgreSQL)
+                    ret_days = int(os.getenv("APP_EVENTS_RETENTION_DAYS", "90"))
                     dropped = app_siem_db.purge_expired_app_events_partitions(conn, retention_days=ret_days)
                     if dropped:
                         logger.info(f"[STORAGE-RETENTION] Auto-dropped {len(dropped)} expired partition(s): {dropped}")
                     
-                    # 3. Cleanup older auxiliary metrics & logs to cap database growth
+                    # 3. Cleanup older auxiliary metrics & logs (90 days / 3 months policy)
                     with conn.cursor() as cur:
-                        cur.execute("DELETE FROM network_traffic_history WHERE recorded_at < NOW() - INTERVAL '14 days';")
-                        cur.execute("DELETE FROM commands WHERE executed_at < NOW() - INTERVAL '30 days';")
-                        cur.execute("DELETE FROM login_history WHERE login_time < NOW() - INTERVAL '30 days';")
+                        cur.execute("DELETE FROM network_traffic_history WHERE recorded_at < NOW() - INTERVAL '90 days';")
+                        cur.execute("DELETE FROM commands WHERE executed_at < NOW() - INTERVAL '90 days';")
+                        cur.execute("DELETE FROM login_history WHERE login_time < NOW() - INTERVAL '90 days';")
                         cur.execute("""
                             DELETE FROM logs_eviction_queue 
                             WHERE id NOT IN (
@@ -11888,7 +11888,7 @@ def redact_sensitive_params(text: str) -> str:
 def parse_timeframe_range(timeframe: str, from_date: str = None, to_date: str = None):
     """
     Resolves standard timeframes into UTC start_dt, end_dt, and display label.
-    Supports: 1h, 3h, 8h, 1d, 7d, 15d, 1m (30d), and custom range.
+    Supports: 1h, 3h, 5h, 8h, 10h, 1d, 2d, 3d, 7d, 15d, 1m (30d), 2m (60d), 3m (90d), and custom range.
     """
     now_utc = datetime.now(timezone.utc)
     tf = (timeframe or "7d").lower()
@@ -11896,16 +11896,28 @@ def parse_timeframe_range(timeframe: str, from_date: str = None, to_date: str = 
         return now_utc - timedelta(hours=1), now_utc, "Last 1 Hour"
     elif tf == "3h":
         return now_utc - timedelta(hours=3), now_utc, "Last 3 Hours"
+    elif tf == "5h":
+        return now_utc - timedelta(hours=5), now_utc, "Last 5 Hours"
     elif tf == "8h":
         return now_utc - timedelta(hours=8), now_utc, "Last 8 Hours"
+    elif tf == "10h":
+        return now_utc - timedelta(hours=10), now_utc, "Last 10 Hours"
     elif tf in ("1d", "24h"):
         return now_utc - timedelta(days=1), now_utc, "Last 1 Day"
+    elif tf in ("2d", "48h"):
+        return now_utc - timedelta(days=2), now_utc, "Last 2 Days"
+    elif tf in ("3d", "72h"):
+        return now_utc - timedelta(days=3), now_utc, "Last 3 Days"
     elif tf == "7d":
         return now_utc - timedelta(days=7), now_utc, "Last 7 Days"
     elif tf == "15d":
         return now_utc - timedelta(days=15), now_utc, "Last 15 Days"
     elif tf in ("1m", "30d", "1month"):
         return now_utc - timedelta(days=30), now_utc, "Last 1 Month"
+    elif tf in ("2m", "60d", "2month", "2months"):
+        return now_utc - timedelta(days=60), now_utc, "Last 2 Months"
+    elif tf in ("3m", "90d", "3month", "3months"):
+        return now_utc - timedelta(days=90), now_utc, "Last 3 Months"
     elif tf == "custom" and from_date and to_date:
         try:
             f_dt = datetime.fromisoformat(from_date.replace("Z", "+00:00")) if "T" in from_date else datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)

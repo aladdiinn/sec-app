@@ -451,7 +451,7 @@ def init_app_siem_schema(conn):
     return True
 
 
-def purge_expired_app_events_partitions(conn, retention_days=3):
+def purge_expired_app_events_partitions(conn, retention_days=90):
     """
     Automatically drops daily app_events partitions older than retention_days.
     Instantly reclaims 100% of the disk space without blocking PostgreSQL.
@@ -532,9 +532,9 @@ def auto_prune_and_compact_app_events(conn, batch_size=5000):
                     break
                 time.sleep(0.05)
 
-            # 2. Keep pushed_logs capped to recent records (7 days)
+            # 2. Keep pushed_logs capped to recent records (90 days / 3 months)
             try:
-                cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '7 days';")
+                cur.execute("DELETE FROM pushed_logs WHERE created_at < NOW() - INTERVAL '90 days';")
                 conn.commit()
             except Exception: pass
 
@@ -552,7 +552,7 @@ def auto_prune_and_compact_app_events(conn, batch_size=5000):
         except Exception: pass
     return deleted_count
 
-def delete_old_app_events(conn, retention_days=30, batch_size=5000):
+def delete_old_app_events(conn, retention_days=90, batch_size=5000):
     """
     Deletes events older than retention_days in batches of batch_size.
     Designed for non-blocking background cleanup.

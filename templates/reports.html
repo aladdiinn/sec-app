@@ -133,6 +133,10 @@
                     <option value="2d">Last 2 Days</option>
                     <option value="3d">Last 3 Days</option>
                     <option value="7d" selected>Last 7 Days</option>
+                    <option value="15d">Last 15 Days</option>
+                    <option value="1m">Last 1 Month</option>
+                    <option value="2m">Last 2 Months</option>
+                    <option value="3m">Last 3 Months</option>
                 </select>
             </div>
             <div style="display:flex; gap:8px;">
@@ -157,15 +161,15 @@
         </div>
     </div>
 
-    <!-- NEW App Level Report -->
+    <!-- NEW Website Level Report -->
     <div class="card glass" style="margin-bottom:24px">
-        <h3 class="card-title" style="margin-bottom:8px">App Level Report</h3>
-        <p style="font-size:13px; color:var(--text-sub); margin-bottom:20px">Generate comprehensive security posture, events, incidents, and identity audit reports for an application.</p>
+        <h3 class="card-title" style="margin-bottom:8px">Website Level Report</h3>
+        <p style="font-size:13px; color:var(--text-sub); margin-bottom:20px">Generate comprehensive security posture, events, incidents, and identity audit reports for a website.</p>
 
         <form id="app-gen-form" style="display:grid; grid-template-columns: 2fr 1.2fr 1.5fr auto; gap:14px; align-items:flex-end; margin-bottom:0">
             <div style="position:relative">
-                <label class="text-meta" style="display:block; margin-bottom:6px">Search Application (Name, URL, or ID)</label>
-                <input id="app-report-search" type="text" class="mono" placeholder="Enter App Name or URL e.g. hp-1" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px" required autocomplete="off">
+                <label class="text-meta" style="display:block; margin-bottom:6px">Search Website (Name, URL, or ID)</label>
+                <input id="app-report-search" type="text" class="mono" placeholder="Enter Website Name or URL e.g. hp-1" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px" required autocomplete="off">
                 <input type="hidden" id="app-report-id">
                 <div id="app-autocomplete" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--bg2); border:1px solid var(--border); border-top:none; z-index:100; max-height:220px; overflow-y:auto; border-bottom-left-radius:4px; border-bottom-right-radius:4px; box-shadow:0 4px 6px rgba(0,0,0,0.3);"></div>
             </div>
@@ -176,9 +180,13 @@
                     <option value="3h">Last 3 Hours</option>
                     <option value="8h">Last 8 Hours</option>
                     <option value="1d">Last 1 Day</option>
+                    <option value="2d">Last 2 Days</option>
+                    <option value="3d">Last 3 Days</option>
                     <option value="7d" selected>Last 7 Days</option>
                     <option value="15d">Last 15 Days</option>
                     <option value="1m">Last 1 Month</option>
+                    <option value="2m">Last 2 Months</option>
+                    <option value="3m">Last 3 Months</option>
                     <option value="custom">Custom Range</option>
                 </select>
                 <div id="app-custom-dates" style="display:none; gap:6px; margin-top:6px">
@@ -826,7 +834,7 @@
             if (!query) { showToast('Please enter a server to search', 'error'); return; }
             const timeframe = document.getElementById('srv-timeframe').value;
             
-            let hours = 24;
+            let hours = 168;
             if (timeframe === '1h') hours = 1;
             else if (timeframe === '5h') hours = 5;
             else if (timeframe === '10h') hours = 10;
@@ -834,6 +842,25 @@
             else if (timeframe === '2d') hours = 48;
             else if (timeframe === '3d') hours = 72;
             else if (timeframe === '7d') hours = 168;
+            else if (timeframe === '15d') hours = 360;
+            else if (timeframe === '1m') hours = 720;
+            else if (timeframe === '2m') hours = 1440;
+            else if (timeframe === '3m') hours = 2160;
+
+            const tfLabels = {
+                '1h': 'Last 1 Hour',
+                '5h': 'Last 5 Hours',
+                '10h': 'Last 10 Hours',
+                '1d': 'Last 1 Day',
+                '2d': 'Last 2 Days',
+                '3d': 'Last 3 Days',
+                '7d': 'Last 7 Days',
+                '15d': 'Last 15 Days',
+                '1m': 'Last 1 Month (30 Days)',
+                '2m': 'Last 2 Months (60 Days)',
+                '3m': 'Last 3 Months (90 Days)'
+            };
+            const timeframeLabel = tfLabels[timeframe] || `Last ${hours} Hours`;
             
             const serversRes = await apiFetch('/api/servers');
             const servers = Array.isArray(serversRes) ? serversRes : (serversRes.servers || serversRes.items || []);
@@ -847,7 +874,7 @@
             }
             
             const selectedSevs = getSelectedSeverities('srv');
-            const alertsUrl = `/api/alerts?server_id=${server.id}&severities=${encodeURIComponent(selectedSevs.join(','))}&hours=${hours}&limit=1000`;
+            const alertsUrl = `/api/alerts?server_id=${server.id}&severities=${encodeURIComponent(selectedSevs.join(','))}&hours=${hours}&limit=5000`;
             const alertsRes = await apiFetch(alertsUrl);
             const serverAlerts = Array.isArray(alertsRes) ? alertsRes : (alertsRes.items || []);
             const infoExcludedCount = alertsRes.info_excluded_count !== undefined ? alertsRes.info_excluded_count : 0;
@@ -901,7 +928,7 @@
             renderPDF(
                 `Server Alert Report: ${server.hostname || server.name}`,
                 `Server IP: ${server.ip_address || server.ip || 'Unknown'} | Project ID: ${server.project_id || 'Unassigned'} | Alerts: ${serverAlerts.length}`,
-                `Timeframe: Last ${hours} Hours\nTotal Alerts Logged: ${serverAlerts.length}\nGenerated: ${new Date().toISOString()}`,
+                `Timeframe: ${timeframeLabel}\nTotal Alerts Logged: ${serverAlerts.length}\nGenerated: ${new Date().toISOString()}`,
                 content,
                 isPreview
             );
@@ -916,7 +943,7 @@
 
     
     // ══════════════════════════════════════════════════════════════════
-    // APP LEVEL REPORT CONTROLLER & AUTOCOMPLETE
+    // WEBSITE LEVEL REPORT CONTROLLER & AUTOCOMPLETE
     // ══════════════════════════════════════════════════════════════════
     let appSearchDebounceTimer = null;
     let appSearchResults = [];
@@ -950,7 +977,7 @@
             appSearchResults = items;
             appActiveIndex = -1;
             if (!items || items.length === 0) {
-                dropdown.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:var(--text-sub);">No matching applications found</div>';
+                dropdown.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:var(--text-sub);">No matching websites found</div>';
                 dropdown.style.display = 'block';
                 return;
             }
@@ -998,7 +1025,7 @@
                         );
                         renderDropdown(filtered);
                     } catch (e2) {
-                        dropdown.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:var(--text3);">No matching applications</div>';
+                        dropdown.innerHTML = '<div style="padding:8px 12px; font-size:12px; color:var(--text3);">No matching websites found</div>';
                         dropdown.style.display = 'block';
                     }
                 }
@@ -1061,7 +1088,7 @@
         const query = (searchInput.value || '').trim();
 
         if (!query) {
-            showToast('Please enter an application to search', 'error');
+            showToast('Please enter a website to search', 'error');
             searchInput.focus();
             return null;
         }
@@ -1080,11 +1107,11 @@
                     document.getElementById('app-report-id').value = apps[0].id;
                     searchInput.value = apps[0].name;
                 } else {
-                    showToast(`No application found matching "${query}"`, 'error');
+                    showToast(`No website found matching "${query}"`, 'error');
                     return null;
                 }
             } catch (err) {
-                showToast('Failed to validate application', 'error');
+                showToast('Failed to validate website', 'error');
                 return null;
             }
         }
@@ -1159,7 +1186,7 @@
             // Executive Summary KPIs
             content += `
                 <div class="pdf-section">
-                    <h2 class="pdf-h2">Application Security Posture & Metrics</h2>
+                    <h2 class="pdf-h2">Website Security Posture & Metrics</h2>
                     <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:16px; margin-bottom:24px">
                         <div class="pdf-card" style="text-align:center">
                             <div style="font-size:24px; font-weight:bold; color:#0284c7">${summary.total_events || 0}</div>
@@ -1294,7 +1321,7 @@
                 `;
             }
 
-            const reportTitle = `Application Security Audit: ${app.name || 'App'}`;
+            const reportTitle = `Website Security Audit: ${app.name || 'Website'}`;
             const reportSubtitle = `Target: ${app.primary_url || 'N/A'} | Environment: ${(app.environment || 'production').toUpperCase()} | Project: ${app.project_name || 'Global'}`;
             const reportMeta = `Timeframe: ${data.range_label || timeframe}
 Generated: ${new Date().toISOString()}
@@ -1303,7 +1330,7 @@ Total Telemetry Queried: ${summary.total_events || 0} events from Database`;
             renderPDF(reportTitle, reportSubtitle, reportMeta, content, isPreview);
 
         } catch (err) {
-            showToast(err.message || 'App report generation failed', 'error');
+            showToast(err.message || 'Website report generation failed', 'error');
         } finally {
             btn.disabled = false;
             btn.innerText = originalText;
@@ -1342,7 +1369,7 @@ Total Telemetry Queried: ${summary.total_events || 0} events from Database`;
             const a = document.createElement('a');
             a.style.display = 'none';
             a.href = url;
-            a.download = `app_report_${appId}_${timeframe}.csv`;
+            a.download = `website_report_${appId}_${timeframe}.csv`;
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(url);
