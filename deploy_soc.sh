@@ -69,6 +69,7 @@ UNIT_EOF
 echo "[5/5] Truncating old log and starting securepulse.service..."
 > /var/log/securepulse_agent.log
 systemctl daemon-reload
+systemctl reset-failed securepulse 2>/dev/null || true
 systemctl start securepulse
 
 # Verification
