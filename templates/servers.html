@@ -734,8 +734,7 @@ function formatLocal(dateStr) {
                 } else if (upStat === 'unsupported') {
                     statusPill = ' <span style="font-size:8px; border:1px solid rgba(239,68,68,0.5); border-radius:3px; padding:1px 4px; color:var(--red)">Unsupported</span>';
                 }
-                const canaryPill = s.is_canary ? ' <span style="font-size:8px; border:1px solid #a855f7; border-radius:3px; padding:1px 3px; color:#c084fc">CANARY</span>' : '';
-                const typeBadge = `<div style="text-align:right">${rawBadge}${readTag}<div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${agentV}${canaryPill}${statusPill}</div></div>`;
+                const typeBadge = `<div style="text-align:right">${rawBadge}${readTag}<div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${agentV}${statusPill}</div></div>`;
                 
                 let alertBox = '<div class="service-alert-box sab-normal"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>NORMAL</strong> – All checks operational</div>';
                 if (isDown) {

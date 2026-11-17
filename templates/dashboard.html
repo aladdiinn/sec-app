@@ -1579,8 +1579,7 @@ function renderServicesGrid() {
         } else if (upStat === 'failed') {
             statusPill = ` <span style="font-size:7px; border:1px solid rgba(239,68,68,0.5); border-radius:2px; padding:0 3px; color:var(--red)" title="${s.update_error || 'Update failed'}">Failed</span>`;
         }
-        const canaryPill = s.is_canary ? ' <span style="font-size:7px; border:1px solid #a855f7; border-radius:2px; padding:0 2px; color:#c084fc">CANARY</span>' : '';
-        const typeBadge = `<div style="text-align:right">${rawBadge}${isSrvRead ? '<div class="badge-read-tag" style="margin-top:2px">✓ Read</div>' : ''}<div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">v${agentV}${canaryPill}${statusPill}</div></div>`;
+        const typeBadge = `<div style="text-align:right">${rawBadge}${isSrvRead ? '<div class="badge-read-tag" style="margin-top:2px">✓ Read</div>' : ''}<div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">v${agentV}${statusPill}</div></div>`;
 
         const cpu = s.cpu_percent || 0;
         const ram = s.memory_percent || 0;
