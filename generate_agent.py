@@ -63,6 +63,8 @@ def main():
     except Exception:
         pass
 
+    import version
+    agent_code = agent_code.replace('{version.AGENT_VERSION}', version.AGENT_VERSION)
     agent_code = agent_code.replace('{base_url}', soc_url)
     agent_code = agent_code.replace('$NODE_IP', node_ip)
     agent_code = agent_code.replace('$NODE_NAME', node_name)

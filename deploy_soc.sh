@@ -33,9 +33,9 @@ if [ "$API_READY" -ne 1 ]; then
     echo "[WARNING] SOC API container did not report ready within 30s, proceeding with deployment..."
 fi
 
-# Configure soc-server as canary node for v2.1.4 autonomous rollout
+# Configure soc-server as canary node for v2.1.6 autonomous rollout
 echo "[INFO] Configuring soc-server as canary node in DB..."
-docker exec -i bsmart-soc-db psql -U socadmin -d bsmart_soc -c "UPDATE servers SET is_canary = TRUE, target_agent_version = '2.1.4', update_status = 'update_available' WHERE hostname = 'soc-server' OR ip = '192.168.10.201' OR ip_address = '192.168.10.201';" 2>/dev/null || true
+docker exec -i bsmart-soc-db psql -U socadmin -d bsmart_soc -c "UPDATE servers SET is_canary = TRUE, target_agent_version = '2.1.6', update_status = 'update_available' WHERE hostname = 'soc-server' OR ip = '192.168.10.201' OR ip_address = '192.168.10.201';" 2>/dev/null || true
 docker exec -i bsmart-soc-db psql -U socadmin -d bsmart_soc -c "UPDATE agent_tasks SET status = 'cancelled', output = 'Auto-cancelled on service reload' WHERE status IN ('pending', 'dispatched');" 2>/dev/null || true
 
 # 4. Generate the verified v2.1.3 host agent directly from local repo code
