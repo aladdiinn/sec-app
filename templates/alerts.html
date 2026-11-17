@@ -205,9 +205,9 @@
     <!-- Action, Filters & Density Bar -->
     <div class="card glass" style="margin-bottom:16px; padding:16px 20px">
         <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; justify-content:space-between">
-            <!-- Filters row -->
+            <!-- Filters row with Cascading Project & Server Selectors -->
             <div style="display:flex; gap:12px; flex:1; min-width:320px; flex-wrap:wrap; align-items:center">
-                <div style="width:140px">
+                <div style="width:130px">
                     <label class="stat-label" style="display:block; margin-bottom:4px; font-size:11px">Status</label>
                     <select id="filter-status" class="glass" style="width:100%; padding:7px 10px; font-size:12.5px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="resetPageAndLoad()">
                         <option value="open" selected>Open (Default)</option>
@@ -216,7 +216,7 @@
                     </select>
                 </div>
 
-                <div style="width:130px">
+                <div style="width:125px">
                     <label class="stat-label" style="display:block; margin-bottom:4px; font-size:11px">Read State</label>
                     <select id="filter-read" class="glass" style="width:100%; padding:7px 10px; font-size:12.5px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="resetPageAndLoad()">
                         <option value="all" selected>All Read/Unread</option>
@@ -225,13 +225,29 @@
                     </select>
                 </div>
 
-                <div style="width:130px">
+                <div style="width:125px">
                     <label class="stat-label" style="display:block; margin-bottom:4px; font-size:11px">Severity</label>
                     <select id="filter-sev" class="glass" style="width:100%; padding:7px 10px; font-size:12.5px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="resetPageAndLoad()">
                         <option value="">All Severities</option>
                         <option value="critical">Critical</option>
                         <option value="warning">Warning</option>
                         <option value="info">Info</option>
+                    </select>
+                </div>
+
+                <!-- Project Selector -->
+                <div style="min-width:145px; max-width:175px; flex:1">
+                    <label class="stat-label" style="display:block; margin-bottom:4px; font-size:11px">Project</label>
+                    <select id="filter-project" class="glass" style="width:100%; padding:7px 10px; font-size:12.5px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="onAlertsProjectChange(this.value)">
+                        <option value="">All Projects</option>
+                    </select>
+                </div>
+
+                <!-- Cascading Server Selector -->
+                <div style="min-width:185px; max-width:245px; flex:1.2">
+                    <label class="stat-label" style="display:block; margin-bottom:4px; font-size:11px">Server / Asset</label>
+                    <select id="filter-server" class="glass" style="width:100%; padding:7px 10px; font-size:12.5px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="resetPageAndLoad()">
+                        <option value="">All Servers (All Projects)</option>
                     </select>
                 </div>
 
@@ -425,6 +441,82 @@
     let searchDebounceTimer = null;
     let isAllFilterSelected = false;
 
+    // Project & Server Cascading Filters
+    let allAlertProjects = [];
+    let allAlertServers = [];
+    const currentAlertSessionProjectId = '{{ project_id or "" }}';
+
+    async function initAlertFilters() {
+        try {
+            const [pRes, sRes] = await Promise.all([
+                fetch('/api/projects').then(r => r.json()).catch(() => []),
+                fetch('/api/servers').then(r => r.json()).catch(() => ({ servers: [] }))
+            ]);
+            allAlertProjects = Array.isArray(pRes) ? pRes : (pRes.projects || []);
+            allAlertServers = sRes.servers || [];
+
+            // Check query params in URL
+            const urlParams = new URLSearchParams(window.location.search);
+            let initialPid = urlParams.get('project_id');
+            if (initialPid === null && currentAlertSessionProjectId) {
+                initialPid = currentAlertSessionProjectId;
+            }
+            const initialSid = urlParams.get('server_id') || '';
+
+            populateAlertProjectDropdown(initialPid);
+            populateAlertServerDropdown(initialPid, initialSid);
+        } catch (e) {
+            console.error('Failed to init alert project/server filters:', e);
+        }
+    }
+
+    function populateAlertProjectDropdown(preselectedPid) {
+        const sel = document.getElementById('filter-project');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">All Projects</option>' + 
+            allAlertProjects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+        if (preselectedPid && preselectedPid !== 'all') {
+            sel.value = preselectedPid;
+        } else {
+            sel.value = '';
+        }
+    }
+
+    function populateAlertServerDropdown(selectedPid, preselectedSid) {
+        const sel = document.getElementById('filter-server');
+        if (!sel) return;
+
+        let filteredServers = allAlertServers;
+        let allLabel = 'All Servers (All Projects)';
+
+        if (selectedPid && selectedPid !== 'all') {
+            const proj = allAlertProjects.find(p => String(p.id) === String(selectedPid));
+            const pName = proj ? proj.name : 'Project';
+            allLabel = `★ All Servers (${escapeHtml(pName)})`;
+            filteredServers = allAlertServers.filter(s => String(s.project_id) === String(selectedPid));
+        }
+
+        let optionsHtml = `<option value="">${allLabel}</option>`;
+        filteredServers.forEach(s => {
+            const sname = s.hostname || s.name || `Server #${s.id}`;
+            const ip = s.ip || s.ip_address || '';
+            const ipText = ip ? ` (${ip})` : '';
+            optionsHtml += `<option value="${s.id}">${escapeHtml(sname)}${escapeHtml(ipText)}</option>`;
+        });
+
+        sel.innerHTML = optionsHtml;
+        if (preselectedSid && filteredServers.some(s => String(s.id) === String(preselectedSid))) {
+            sel.value = preselectedSid;
+        } else {
+            sel.value = '';
+        }
+    }
+
+    function onAlertsProjectChange(val) {
+        populateAlertServerDropdown(val, '');
+        resetPageAndLoad();
+    }
+
     // Density toggle logic
     function setDensity(mode) {
         const list = document.getElementById('incidents-list');
@@ -503,6 +595,8 @@
         const read = document.getElementById('filter-read').value;
         const sev = document.getElementById('filter-sev').value;
         const search = document.getElementById('filter-search').value.trim();
+        const proj = document.getElementById('filter-project')?.value;
+        const srv = document.getElementById('filter-server')?.value;
 
         el.innerHTML = '<div style="text-align:center; padding:40px; color:var(--text3); font-size:13px">Loading incidents...</div>';
 
@@ -512,6 +606,14 @@
         if (read && read !== 'all') url += `read=${encodeURIComponent(read)}&`;
         if (sev) url += `severity=${encodeURIComponent(sev)}&`;
         if (search) url += `q=${encodeURIComponent(search)}&`;
+        if (proj) {
+            url += `project_id=${encodeURIComponent(proj)}&`;
+        } else {
+            url += `project_id=all&`;
+        }
+        if (srv) {
+            url += `server_id=${encodeURIComponent(srv)}&`;
+        }
 
         try {
             const res = await apiFetch(url);
@@ -1095,8 +1197,9 @@
         }
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
+    window.addEventListener('DOMContentLoaded', async () => {
         initDensity();
+        await initAlertFilters();
         loadIncidents();
     });
 </script>

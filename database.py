@@ -3023,7 +3023,12 @@ def get_incidents(status=None, severity=None, limit=50, offset=0, project_id=Non
 
             sql_clause, p_params = _build_pid_filter("s.project_id", project_id)
             if sql_clause:
-                where_clauses.append(sql_clause.replace("WHERE ", "").replace("AND ", ""))
+                clean_clause = sql_clause.strip()
+                if clean_clause.upper().startswith("AND "):
+                    clean_clause = clean_clause[4:].strip()
+                elif clean_clause.upper().startswith("WHERE "):
+                    clean_clause = clean_clause[6:].strip()
+                where_clauses.append(clean_clause)
                 params.extend(p_params)
 
             # Status filter: default to open view
@@ -3076,11 +3081,14 @@ def get_incidents(status=None, severity=None, limit=50, offset=0, project_id=Non
                 SELECT i.*, 
                        COALESCE(s.hostname, s.name, 'server-' || i.server_id) as hostname,
                        COALESCE(s.ip, s.ip_address) as server_ip,
+                       s.project_id,
+                       p.name as project_name,
                        COALESCE(i.occurrences, 1) as occurrences,
                        COALESCE(i.first_seen, i.created_at) as first_seen,
                        COALESCE(i.last_seen, i.updated_at, i.created_at) as last_seen
                 FROM incidents i 
                 LEFT JOIN servers s ON i.server_id = s.id 
+                LEFT JOIN projects p ON s.project_id = p.id
                 WHERE {where_sql}
                 ORDER BY 
                     CASE LOWER(i.severity) WHEN 'critical' THEN 1 WHEN 'warning' THEN 2 WHEN 'high' THEN 2 ELSE 3 END,

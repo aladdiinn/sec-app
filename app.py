@@ -4060,7 +4060,13 @@ def api_get_vulns_summary():
 
 
 @app.get("/api/vulnerabilities/fleet-cves")
-def api_get_fleet_cves(severity: Optional[str] = None, status: Optional[str] = "open", server_id: Optional[int] = None):
+def api_get_fleet_cves(
+    request: Request,
+    severity: Optional[str] = None,
+    status: Optional[str] = "open",
+    server_id: Optional[int] = None,
+    project_id: Optional[str] = None
+):
     """Retrieve vulnerability findings fleet-wide with server metadata, status filters, and advisory details."""
     conn = db.get_db_connection()
     if not conn: return {"findings": []}
@@ -4086,10 +4092,37 @@ def api_get_fleet_cves(severity: Optional[str] = None, status: Optional[str] = "
                 where_clauses.append("v.server_id = %s")
                 params.append(int(server_id))
 
+            # Project filter support
+            eff_pid = None
+            if project_id and str(project_id).strip().lower() in ("all", "0", "none"):
+                eff_pid = None
+            elif project_id and str(project_id).strip().lower() == "unassigned":
+                eff_pid = "unassigned"
+            elif project_id and str(project_id).strip().isdigit():
+                eff_pid = int(project_id)
+            elif project_id is None:
+                eff_pid = get_effective_project_id(request)
+
+            if eff_pid == "unassigned":
+                where_clauses.append("(s.project_id IS NULL OR s.project_id = 0)")
+            elif isinstance(eff_pid, (list, tuple, set)):
+                if eff_pid:
+                    placeholders = ", ".join(["%s"] * len(eff_pid))
+                    where_clauses.append(f"s.project_id IN ({placeholders})")
+                    params.extend(eff_pid)
+                else:
+                    where_clauses.append("s.project_id = -9999")
+            elif eff_pid is not None:
+                where_clauses.append("s.project_id = %s")
+                params.append(int(eff_pid))
+
             query = f"""
-                SELECT v.*, a.details, a.cvss_vector, a.source, s.name as server_name, s.hostname, s.ip as server_ip
+                SELECT v.*, a.details, a.cvss_vector, a.source, 
+                       s.name as server_name, s.hostname, s.ip as server_ip,
+                       s.project_id, p.name as project_name
                 FROM server_vulnerabilities v
                 JOIN servers s ON v.server_id = s.id
+                LEFT JOIN projects p ON s.project_id = p.id
                 LEFT JOIN (
                     SELECT DISTINCT ON (cve_id) cve_id, details, cvss_vector, source
                     FROM advisory_cves
@@ -8254,11 +8287,25 @@ async def api_get_incidents(
     severity: Optional[str] = None,
     read: Optional[str] = None,
     server_id: Optional[int] = None,
+    project_id: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = 50,
     offset: int = 0
 ):
-    pid = get_effective_project_id(request)
+    if project_id and str(project_id).strip().lower() in ("all", "0", "none"):
+        pid = None
+        if not is_admin_user(request):
+            uid = request.session.get("user_id")
+            if uid:
+                allowed = db.get_user_allowed_project_ids(uid)
+                pid = allowed if allowed else [-9999]
+    elif project_id and str(project_id).strip().lower() == "unassigned":
+        pid = "unassigned"
+    elif project_id and str(project_id).strip().isdigit():
+        pid = int(project_id)
+    else:
+        pid = get_effective_project_id(request)
+
     return db.get_incidents(
         status=status,
         severity=severity,

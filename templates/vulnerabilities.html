@@ -171,9 +171,25 @@
             </div>
         </div>
 
-        <!-- Filter and Search Toolbar with Dedicated Server Search Dropdown -->
+        <!-- Filter and Search Toolbar with Cascading Project & Server Controls -->
         <div style="padding:14px 18px; border-bottom:1px solid var(--border); background:var(--bg2)">
             <div style="display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; align-items:center">
+                <!-- Dedicated Project Selector -->
+                <div style="position:relative; min-width:170px; max-width:220px; flex:0.75;">
+                    <div style="position:relative; display:flex; align-items:center;">
+                        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2" style="position:absolute; left:10px; color:var(--cyan); pointer-events:none;">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        <select id="vuln-project-select" onchange="onVulnProjectChange(this.value)"
+                            style="width:100%; background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:7px 28px 7px 30px; font-size:12px; color:var(--text); cursor:pointer; appearance:none; -webkit-appearance:none; box-sizing:border-box;">
+                            <option value="">All Projects</option>
+                        </select>
+                        <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" stroke-width="2" style="position:absolute; right:10px; color:var(--text3); pointer-events:none;">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </div>
+                </div>
+
                 <!-- Dedicated Server Search Control -->
                 <div style="position:relative; min-width:280px; flex:1; max-width:380px;">
                     <div style="position:relative; display:flex; align-items:center;">
@@ -289,6 +305,10 @@
 <script>
 let allFindings = [];
 let allServers = [];
+let allProjects = [];
+let selectedProjectId = '';
+let selectedProjectName = '';
+const currentSessionProjectId = '{{ project_id or "" }}';
 let fleetSummary = null;
 let currentFilteredFindings = [];
 let activeSeverity = 'ALL';
@@ -318,22 +338,70 @@ let lastVulnCheckedIndex = -1;
 
 async function loadFleetData() {
     try {
-        const [sumRes, srvRes, cveRes] = await Promise.all([
+        const [sumRes, srvRes, cveRes, projRes] = await Promise.all([
             fetch('/api/vulnerabilities/summary').then(r => r.json()),
             fetch('/api/servers').then(r => r.json()),
-            fetch(`/api/vulnerabilities/fleet-cves?status=${activeStatusFilter}`).then(r => r.json())
+            fetch(`/api/vulnerabilities/fleet-cves?status=${activeStatusFilter}`).then(r => r.json()),
+            fetch('/api/projects').then(r => r.json()).catch(() => [])
         ]);
 
         fleetSummary = sumRes;
         allServers = srvRes.servers || [];
         allFindings = cveRes.findings || [];
+        allProjects = Array.isArray(projRes) ? projRes : (projRes.projects || []);
 
+        populateVulnProjectSelect();
         restorePersistence();
         applyFilters();
         renderServersTable(allServers);
     } catch (e) {
         console.error('Failed to load fleet data:', e);
     }
+}
+
+function populateVulnProjectSelect() {
+    const sel = document.getElementById('vuln-project-select');
+    if (!sel) return;
+    const currentVal = sel.value || selectedProjectId || '';
+    sel.innerHTML = '<option value="">All Projects</option>' + 
+        allProjects.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+    if (currentVal) {
+        sel.value = currentVal;
+    }
+}
+
+function onVulnProjectChange(val) {
+    selectedProjectId = val ? String(val) : '';
+    const proj = allProjects.find(p => String(p.id) === String(selectedProjectId));
+    selectedProjectName = proj ? proj.name : '';
+
+    // Update server search input placeholder
+    const sInput = document.getElementById('server-search-input');
+    if (sInput) {
+        sInput.placeholder = selectedProjectName 
+            ? `Search ${selectedProjectName} servers or select All...` 
+            : 'Search server name, hostname, or IP...';
+        sInput.value = '';
+    }
+
+    // Filter out any selected servers that do not belong to the selected project
+    if (selectedProjectId) {
+        for (const [sid, srv] of selectedServers.entries()) {
+            if (String(srv.project_id) !== String(selectedProjectId)) {
+                selectedServers.delete(sid);
+            }
+        }
+    }
+
+    renderServerChips();
+    applyFilters();
+    updatePersistence();
+}
+
+function resetVulnProject() {
+    const sel = document.getElementById('vuln-project-select');
+    if (sel) sel.value = '';
+    onVulnProjectChange('');
 }
 
 // ── Server Suggestion Dropdown Handling ──────────────────────────────────────
@@ -415,9 +483,15 @@ function renderServerSuggestions(query) {
         else serverCounts[sid].low++;
     });
 
-    let matches = allServers.filter(s => {
+    // Scope servers to selected project if one is active
+    let scopedServers = allServers;
+    if (selectedProjectId) {
+        scopedServers = allServers.filter(s => String(s.project_id) === String(selectedProjectId));
+    }
+
+    let matches = scopedServers.filter(s => {
         if (selectedServers.has(s.id)) return false;
-        if (!q) return true; // empty query lists all servers A-Z
+        if (!q || q === 'all') return true;
         const name = (s.name || '').toLowerCase();
         const host = (s.hostname || '').toLowerCase();
         const ip = (s.ip || s.ip_address || '').toLowerCase();
@@ -426,49 +500,81 @@ function renderServerSuggestions(query) {
 
     matches.sort((a, b) => (a.hostname || a.name || '').localeCompare(b.hostname || b.name || ''));
 
+    focusedSuggestIndex = -1;
+
+    // Header item for "★ All Servers (in Project / Fleet)"
+    const allTitle = selectedProjectId 
+        ? `★ All Servers (${escapeHtml(selectedProjectName || 'Project')})` 
+        : `★ All Servers (All Projects)`;
+    const allSub = selectedProjectId 
+        ? `Show findings across all servers in ${escapeHtml(selectedProjectName || 'this project')} (${scopedServers.length} servers)` 
+        : `Show findings across all ${allServers.length} fleet servers`;
+
+    let html = `
+    <div class="suggest-item" data-idx="0" onclick="selectAllServersInVulnScope()"
+        style="padding:10px 14px; background:rgba(0,212,255,0.08); border-bottom:1px solid rgba(0,212,255,0.22); cursor:pointer; display:flex; justify-content:space-between; align-items:center; transition:background 0.15s;">
+        <div>
+            <div style="font-weight:700; font-size:12.5px; color:var(--cyan)">${allTitle}</div>
+            <div style="font-size:10px; color:var(--text3); margin-top:2px">${allSub}</div>
+        </div>
+        <span class="badge" style="background:rgba(0,212,255,0.2); color:var(--cyan); font-size:10px; font-weight:600; padding:2px 7px;">ALL</span>
+    </div>
+    `;
+
     if (!matches.length) {
-        suggestDropdown.innerHTML = '<div style="padding:14px; text-align:center; color:var(--text3); font-size:12px">No matching server</div>';
-        suggestDropdown.style.display = 'block';
-        return;
+        if (q && q !== 'all') {
+            html += `<div style="padding:12px; text-align:center; color:var(--text3); font-size:12px">No matching server in ${escapeHtml(selectedProjectName || 'fleet')}</div>`;
+        }
+    } else {
+        html += matches.map((s, idx) => {
+            const itemIdx = idx + 1;
+            const sname = s.hostname || s.name || 'Server';
+            const ip = s.ip || s.ip_address || '';
+            const proj = s.project_name || (s.project_id ? `Project #${s.project_id}` : 'Default');
+            
+            const cnt = serverCounts[s.id] || serverCounts[sname.toLowerCase()] || { total: 0, critical: 0, high: 0 };
+            
+            let badgeHtml = '';
+            if (cnt.critical > 0) {
+                badgeHtml = `<span class="vuln-badge vuln-badge-critical" style="font-size:9.5px">${cnt.critical} Critical</span>`;
+            } else if (cnt.high > 0) {
+                badgeHtml = `<span class="vuln-badge vuln-badge-high" style="font-size:9.5px">${cnt.high} High</span>`;
+            } else if (cnt.total > 0) {
+                badgeHtml = `<span class="vuln-badge vuln-badge-medium" style="font-size:9.5px">${cnt.total} Open</span>`;
+            } else {
+                badgeHtml = `<span style="font-size:10px; color:var(--green); font-weight:600">0 CVEs</span>`;
+            }
+
+            return `
+            <div class="suggest-item" data-idx="${itemIdx}" onclick="selectServer(${s.id})"
+                style="padding:10px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s;">
+                <div>
+                    <div style="font-weight:600; font-size:12.5px; color:var(--text)">${escapeHtml(sname)}</div>
+                    <div style="display:flex; gap:8px; align-items:center; margin-top:2px; font-size:10px; color:var(--text3)">
+                        <span style="font-family:monospace; color:var(--cyan)">${ip}</span>
+                        <span>&bull;</span>
+                        <span>${escapeHtml(proj)}</span>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    ${badgeHtml}
+                </div>
+            </div>`;
+        }).join('');
     }
 
-    focusedSuggestIndex = -1;
-    suggestDropdown.innerHTML = matches.map((s, idx) => {
-        const sname = s.hostname || s.name || 'Server';
-        const ip = s.ip || s.ip_address || '';
-        const proj = s.project_name || (s.project_id ? `Project #${s.project_id}` : 'Default');
-        
-        const cnt = serverCounts[s.id] || serverCounts[sname.toLowerCase()] || { total: 0, critical: 0, high: 0 };
-        
-        let badgeHtml = '';
-        if (cnt.critical > 0) {
-            badgeHtml = `<span class="vuln-badge vuln-badge-critical" style="font-size:9.5px">${cnt.critical} Critical</span>`;
-        } else if (cnt.high > 0) {
-            badgeHtml = `<span class="vuln-badge vuln-badge-high" style="font-size:9.5px">${cnt.high} High</span>`;
-        } else if (cnt.total > 0) {
-            badgeHtml = `<span class="vuln-badge vuln-badge-medium" style="font-size:9.5px">${cnt.total} Open</span>`;
-        } else {
-            badgeHtml = `<span style="font-size:10px; color:var(--green); font-weight:600">0 CVEs</span>`;
-        }
-
-        return `
-        <div class="suggest-item" data-idx="${idx}" onclick="selectServer(${s.id})"
-            style="padding:10px 14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s;">
-            <div>
-                <div style="font-weight:600; font-size:12.5px; color:var(--text)">${escapeHtml(sname)}</div>
-                <div style="display:flex; gap:8px; align-items:center; margin-top:2px; font-size:10px; color:var(--text3)">
-                    <span style="font-family:monospace; color:var(--cyan)">${ip}</span>
-                    <span>&bull;</span>
-                    <span>${escapeHtml(proj)}</span>
-                </div>
-            </div>
-            <div style="display:flex; align-items:center; gap:6px;">
-                ${badgeHtml}
-            </div>
-        </div>`;
-    }).join('');
-
+    suggestDropdown.innerHTML = html;
     suggestDropdown.style.display = 'block';
+}
+
+function selectAllServersInVulnScope() {
+    selectedServers.clear();
+    serverInput.value = '';
+    clearInputBtn.style.display = 'none';
+    suggestDropdown.style.display = 'none';
+    renderServerChips();
+    applyFilters();
+    updatePersistence();
 }
 
 document.addEventListener('click', function(e) {
@@ -498,6 +604,15 @@ function removeServer(serverId) {
 
 function clearAllServerFilters() {
     selectedServers.clear();
+    selectedProjectId = '';
+    selectedProjectName = '';
+    const sel = document.getElementById('vuln-project-select');
+    if (sel) sel.value = '';
+    const sInput = document.getElementById('server-search-input');
+    if (sInput) {
+        sInput.placeholder = 'Search server name, hostname, or IP...';
+        sInput.value = '';
+    }
     renderServerChips();
     applyFilters();
     updatePersistence();
@@ -506,18 +621,49 @@ function clearAllServerFilters() {
 function renderServerChips() {
     const bar = document.getElementById('selected-servers-bar');
     const container = document.getElementById('server-chips-container');
-    if (!selectedServers.size) {
+    if (!bar || !container) return;
+
+    let chipsHtml = '';
+
+    // If project is selected
+    if (selectedProjectId) {
+        if (selectedServers.size === 0) {
+            // Project alone (All Servers in this project)
+            chipsHtml += `
+                <span class="badge" style="background:rgba(0,212,255,0.18); color:var(--cyan); border:1px solid rgba(0,212,255,0.5); padding:3px 9px; font-size:11px; display:inline-flex; align-items:center; gap:6px;">
+                    <span>📁 Project: <strong>${escapeHtml(selectedProjectName || 'Project')}</strong> (All Servers)</span>
+                    <span onclick="resetVulnProject()" style="cursor:pointer; font-size:14px; font-weight:bold; margin-left:3px; opacity:0.8;" title="Reset project filter">&times;</span>
+                </span>
+            `;
+        } else {
+            // Project with specific servers
+            chipsHtml += `
+                <span class="badge" style="background:rgba(0,212,255,0.1); color:var(--cyan); border:1px dashed rgba(0,212,255,0.3); padding:3px 9px; font-size:11px; display:inline-flex; align-items:center; gap:6px;">
+                    <span>📁 Project: <strong>${escapeHtml(selectedProjectName || 'Project')}</strong></span>
+                    <span onclick="resetVulnProject()" style="cursor:pointer; font-size:14px; font-weight:bold; margin-left:3px; opacity:0.8;" title="Reset project filter">&times;</span>
+                </span>
+            `;
+        }
+    }
+
+    // Individual server chips
+    if (selectedServers.size > 0) {
+        chipsHtml += Array.from(selectedServers.values()).map(s => `
+            <span class="badge" style="background:rgba(0,212,255,0.15); color:var(--cyan); border:1px solid rgba(0,212,255,0.4); padding:3px 9px; font-size:11px; display:inline-flex; align-items:center; gap:6px;">
+                <strong>${escapeHtml(s.hostname || s.name)}</strong> <span style="font-size:10px; opacity:0.8">(${s.ip || s.ip_address || ''})</span>
+                <span onclick="removeServer(${s.id})" style="cursor:pointer; font-size:14px; font-weight:bold; margin-left:3px; opacity:0.8;" title="Remove filter">&times;</span>
+            </span>
+        `).join('');
+    }
+
+    if (!selectedProjectId && selectedServers.size === 0) {
         bar.style.display = 'none';
         container.innerHTML = '';
         return;
     }
+
     bar.style.display = 'flex';
-    container.innerHTML = Array.from(selectedServers.values()).map(s => `
-        <span class="badge" style="background:rgba(0,212,255,0.15); color:var(--cyan); border:1px solid rgba(0,212,255,0.4); padding:3px 9px; font-size:11px; display:inline-flex; align-items:center; gap:6px;">
-            <strong>${escapeHtml(s.hostname || s.name)}</strong> <span style="font-size:10px; opacity:0.8">(${s.ip || s.ip_address})</span>
-            <span onclick="removeServer(${s.id})" style="cursor:pointer; font-size:14px; font-weight:bold; margin-left:3px; opacity:0.8;" title="Remove filter">&times;</span>
-        </span>
-    `).join('');
+    container.innerHTML = chipsHtml;
 }
 
 // ── Main Filter Application & KPI Updates ────────────────────────────────────
@@ -526,6 +672,16 @@ function applyFilters() {
 
     if (currentTab === 'cves') {
         currentFilteredFindings = allFindings.filter(f => {
+            // Project filter check
+            if (selectedProjectId) {
+                const sid = f.server_id;
+                const srv = allServers.find(s => s.id === sid);
+                const fPid = (srv && srv.project_id != null) ? srv.project_id : f.project_id;
+                if (String(fPid) !== String(selectedProjectId)) {
+                    return false;
+                }
+            }
+
             // Server filter check
             let matchesServer = true;
             if (selectedServers.size > 0) {
@@ -539,6 +695,7 @@ function applyFilters() {
                            (sip && (sip === srv.ip || sip === srv.ip_address));
                 });
             }
+            if (!matchesServer) return false;
 
             // Text search check
             const matchesQuery = !q || 
@@ -546,16 +703,18 @@ function applyFilters() {
                 (f.package_name && f.package_name.toLowerCase().includes(q)) ||
                 (f.server_name && f.server_name.toLowerCase().includes(q)) ||
                 (f.summary && f.summary.toLowerCase().includes(q));
+            if (!matchesQuery) return false;
 
             // Severity check
             let matchesSev = true;
             if (activeSeverity === 'KEV') {
                 matchesSev = f.is_cisa_kev === true;
             } else if (activeSeverity !== 'ALL') {
-                matchesSev = f.severity.toUpperCase() === activeSeverity;
+                matchesSev = (f.severity || '').toUpperCase() === activeSeverity;
             }
+            if (!matchesSev) return false;
 
-            return matchesServer && matchesQuery && matchesSev;
+            return true;
         });
 
         updateKPIsForSelection(currentFilteredFindings);
@@ -566,18 +725,25 @@ function applyFilters() {
                 (s.hostname && s.hostname.toLowerCase().includes(q)) ||
                 (s.ip && s.ip.includes(q)) ||
                 (s.os_info && s.os_info.toLowerCase().includes(q));
+            let matchesProj = true;
+            if (selectedProjectId) {
+                matchesProj = (String(s.project_id) === String(selectedProjectId));
+            }
             let matchesSelected = true;
             if (selectedServers.size > 0) {
                 matchesSelected = selectedServers.has(s.id);
             }
-            return matchesQuery && matchesSelected;
+            return matchesQuery && matchesProj && matchesSelected;
         });
         renderServersTable(filteredSrv);
     }
 }
 
 function updateKPIsForSelection(filteredFindings) {
-    if (!selectedServers.size) {
+    const hasProjectFilter = Boolean(selectedProjectId);
+    const hasServerFilter = selectedServers.size > 0;
+
+    if (!hasProjectFilter && !hasServerFilter) {
         if (fleetSummary) {
             document.getElementById('kpi-total-vulns').innerText = fleetSummary.total_vulnerabilities || 0;
             document.getElementById('kpi-critical').innerText = fleetSummary.critical || 0;
@@ -602,7 +768,13 @@ function updateKPIsForSelection(filteredFindings) {
     });
 
     let rebootCount = 0;
-    selectedServers.forEach(srv => {
+    let relevantServers = [];
+    if (hasServerFilter) {
+        relevantServers = Array.from(selectedServers.values());
+    } else if (hasProjectFilter) {
+        relevantServers = allServers.filter(s => String(s.project_id) === String(selectedProjectId));
+    }
+    relevantServers.forEach(srv => {
         if (srv.reboot_required) rebootCount++;
     });
 
@@ -612,15 +784,23 @@ function updateKPIsForSelection(filteredFindings) {
     document.getElementById('kpi-kev').innerText = kev;
     document.getElementById('kpi-reboot').innerText = rebootCount;
 
-    const srvNames = Array.from(selectedServers.values()).map(s => s.hostname || s.name).join(', ');
-    document.querySelector('.vuln-stats-bar .vuln-stat-card:first-child .vuln-stat-lbl').innerText = (selectedServers.size === 1) ? 'Server Vulnerabilities' : 'Selected Vulnerabilities';
-    document.getElementById('showing-summary-label').innerText = `Showing: ${srvNames}`;
-    document.getElementById('last-sync-label').innerText = `Showing: ${selectedServers.size} of ${allServers.length} Servers Monitored`;
+    if (hasServerFilter) {
+        const srvNames = Array.from(selectedServers.values()).map(s => s.hostname || s.name).join(', ');
+        document.querySelector('.vuln-stats-bar .vuln-stat-card:first-child .vuln-stat-lbl').innerText = (selectedServers.size === 1) ? 'Server Vulnerabilities' : 'Selected Vulnerabilities';
+        document.getElementById('showing-summary-label').innerText = `Showing: ${srvNames}`;
+        document.getElementById('last-sync-label').innerText = `Showing: ${selectedServers.size} of ${allServers.length} Servers Monitored`;
 
-    if (selectedServers.size === 1) {
-        const singleSrv = Array.from(selectedServers.values())[0];
-        updateScanButtonState(singleSrv);
+        if (selectedServers.size === 1) {
+            const singleSrv = Array.from(selectedServers.values())[0];
+            updateScanButtonState(singleSrv);
+        } else {
+            updateScanButtonState(null);
+        }
     } else {
+        // Project filter with All Servers
+        document.querySelector('.vuln-stats-bar .vuln-stat-card:first-child .vuln-stat-lbl').innerText = `${selectedProjectName || 'Project'} Vulnerabilities`;
+        document.getElementById('showing-summary-label').innerText = `Showing: All Servers in ${selectedProjectName || 'Project'}`;
+        document.getElementById('last-sync-label').innerText = `Project: ${relevantServers.length} of ${allServers.length} Servers Monitored`;
         updateScanButtonState(null);
     }
 }
@@ -668,22 +848,67 @@ function selectServerFromPosture(serverId) {
 
 function updatePersistence() {
     const ids = Array.from(selectedServers.keys());
+    const hashParts = [];
+    if (selectedProjectId) {
+        hashParts.push(`project=${encodeURIComponent(selectedProjectId)}`);
+        sessionStorage.setItem('vuln_selected_project', selectedProjectId);
+    } else {
+        sessionStorage.removeItem('vuln_selected_project');
+    }
     if (ids.length) {
-        location.hash = `servers=${ids.join(',')}`;
+        hashParts.push(`servers=${ids.join(',')}`);
         sessionStorage.setItem('vuln_selected_servers', JSON.stringify(ids));
     } else {
-        if (location.hash.startsWith('#servers=')) {
-            history.replaceState(null, null, ' ');
-        }
         sessionStorage.removeItem('vuln_selected_servers');
+    }
+
+    if (hashParts.length) {
+        location.hash = hashParts.join('&');
+    } else if (location.hash.startsWith('#servers=') || location.hash.startsWith('#project=')) {
+        history.replaceState(null, null, ' ');
     }
 }
 
 function restorePersistence() {
+    // 1. Restore Project
+    let pidToRestore = '';
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('project_id')) {
+        pidToRestore = urlParams.get('project_id');
+    } else if (location.hash.includes('project=')) {
+        const match = location.hash.match(/project=([^&]+)/);
+        if (match) pidToRestore = decodeURIComponent(match[1]);
+    } else {
+        try {
+            pidToRestore = sessionStorage.getItem('vuln_selected_project') || '';
+        } catch (e) {}
+    }
+
+    if (!pidToRestore && currentSessionProjectId) {
+        pidToRestore = currentSessionProjectId;
+    }
+
+    if (pidToRestore && pidToRestore !== 'all') {
+        selectedProjectId = String(pidToRestore);
+        const sel = document.getElementById('vuln-project-select');
+        if (sel) sel.value = selectedProjectId;
+        const proj = allProjects.find(p => String(p.id) === String(selectedProjectId));
+        selectedProjectName = proj ? proj.name : '';
+        const sInput = document.getElementById('server-search-input');
+        if (sInput && selectedProjectName) {
+            sInput.placeholder = `Search ${selectedProjectName} servers or select All...`;
+        }
+    }
+
+    // 2. Restore Servers
     let idsToRestore = [];
-    if (location.hash.startsWith('#servers=')) {
-        const raw = location.hash.replace('#servers=', '');
-        idsToRestore = raw.split(',').map(x => parseInt(x)).filter(x => !isNaN(x));
+    if (urlParams.get('server_id')) {
+        idsToRestore = [parseInt(urlParams.get('server_id'))].filter(x => !isNaN(x));
+    } else if (location.hash.includes('servers=')) {
+        const match = location.hash.match(/servers=([^&]+)/);
+        if (match) {
+            idsToRestore = match[1].split(',').map(x => parseInt(x)).filter(x => !isNaN(x));
+        }
     } else {
         try {
             const stored = sessionStorage.getItem('vuln_selected_servers');
@@ -694,10 +919,15 @@ function restorePersistence() {
     if (idsToRestore.length && allServers.length) {
         idsToRestore.forEach(id => {
             const s = allServers.find(srv => srv.id === id);
-            if (s) selectedServers.set(s.id, s);
+            if (s) {
+                if (!selectedProjectId || String(s.project_id) === String(selectedProjectId)) {
+                    selectedServers.set(s.id, s);
+                }
+            }
         });
-        renderServerChips();
     }
+
+    renderServerChips();
 }
 
 function renderFindingsTable(findings) {
