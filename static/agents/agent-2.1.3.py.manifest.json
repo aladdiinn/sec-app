@@ -1,0 +1,9 @@
+{
+  "version": "2.1.3",
+  "target_version": "2.1.3",
+  "min_supported_version": "1.6.0",
+  "sha256": "b278390d4aad7565ed8518e9f3016ce45943a4d25efa7a9cf0ff797679994fda",
+  "signature": "ht/GjII6aFRjq8kFl+nv371JAn5M23EB0dEJDh44dk4PguamgHMjyB04jtgg8bJteC4YUZ6nRT90MoiElBcdBg==",
+  "size": 95557,
+  "public_key": "e35f2ca46d8d1d6d0af3152e5a324dd56196dbdd69ca30af06461f24cbd9c970"
+}

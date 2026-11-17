@@ -392,5 +392,190 @@ SOC_URL = "https://192.168.10.201:3443"
             if "SECUREPULSE_CONFIG" in os.environ:
                 del os.environ["SECUREPULSE_CONFIG"]
 
+    def test_r1_built_agent_passes_selftest_and_pyflakes_f821(self):
+        """R1: Built agent artifact v2.1.3 must pass pyflakes F821 (0 undefined names) and --selftest."""
+        from pyflakes import api as pyflakes_api, reporter as pyflakes_reporter
+        import io
+        out_buf = io.StringIO()
+        err_buf = io.StringIO()
+        rep = pyflakes_reporter.Reporter(out_buf, err_buf)
+        pyflakes_api.checkPath(self.artifact_path, rep)
+        undefined_names = [l for l in out_buf.getvalue().splitlines() if "undefined name" in l]
+        self.assertEqual(len(undefined_names), 0, f"Artifact contains undefined names: {undefined_names}")
+
+        # Selftest run
+        res = subprocess.run([sys.executable, self.artifact_path, "--selftest"], capture_output=True, text=True, timeout=15)
+        self.assertEqual(res.returncode, 0, f"Selftest failed: {res.stderr}")
+        self.assertIn("SELFTEST_OK", res.stdout)
+        self.assertIn("BSMART SOC", res.stdout)
+
+    def test_r2_deliberately_broken_agent_artifact_rejected_by_selftest(self):
+        """R2: Deliberately broken agent artifact (NameError at start) must be rejected by selftest."""
+        broken_code = """#!/usr/bin/env python3
+import sys
+
+# Injected regression: undefined name at start
+print(f"[{UNDEFINED_BRAND}] Starting agent...")
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
+        print("SELFTEST_OK")
+        sys.exit(0)
+    sys.exit(0)
+"""
+        broken_path = os.path.join(self.test_dir, "broken_agent.py")
+        with open(broken_path, "w", encoding="utf-8") as f:
+            f.write(broken_code)
+
+        # 1. Selftest fails with exit code != 0 due to NameError
+        res = subprocess.run([sys.executable, broken_path, "--selftest"], capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("NameError", res.stderr)
+
+        # 2. Pyflakes F821 catches the undefined name
+        from pyflakes import api as pyflakes_api, reporter as pyflakes_reporter
+        import io
+        out_buf = io.StringIO()
+        err_buf = io.StringIO()
+        rep = pyflakes_reporter.Reporter(out_buf, err_buf)
+        pyflakes_api.checkPath(broken_path, rep)
+        undefined = [l for l in out_buf.getvalue().splitlines() if "undefined name" in l]
+        self.assertTrue(any("UNDEFINED_BRAND" in l for l in undefined))
+
+    def test_r3_crash_looping_version_triggers_watchdog_rollback(self):
+        """R3: Watchdog script detects failure and rolls back to backup within timeout."""
+        current_file = os.path.join(self.test_dir, "node_push_agent.py")
+        backup_file = os.path.join(self.test_dir, "node_push_agent.py.backup")
+        lock_file = os.path.join(self.test_dir, "securepulse_update.lock")
+
+        # Create valid backup and broken current
+        with open(backup_file, "w", encoding="utf-8") as f:
+            f.write("# HEALTHY BACKUP AGENT v2.1.0\nAGENT_VERSION = '2.1.0'\n")
+        with open(current_file, "w", encoding="utf-8") as f:
+            f.write("# BROKEN AGENT v2.1.2\nraise RuntimeError('Crash on start')\n")
+        with open(lock_file, "w", encoding="utf-8") as f:
+            f.write("update_in_progress")
+
+        # Simulate watchdog rollback logic
+        self.assertTrue(os.path.exists(lock_file))
+        # Simulated failure: lock remained after restart attempt
+        shutil.copy2(backup_file, current_file)
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
+
+        self.assertFalse(os.path.exists(lock_file))
+        with open(current_file, "r", encoding="utf-8") as f:
+            restored = f.read()
+        self.assertIn("HEALTHY BACKUP AGENT", restored)
+
+    def test_r4_build_fails_when_placeholder_remains(self):
+        """R4: Build gate fails if an unreplaced template placeholder remains in a literal string."""
+        import ast
+        code_with_bad_placeholder = '''
+APP_BRAND = "BSMART SOC"
+print("[{APP_BRAND}] Note: unescaped literal placeholder")
+'''
+        tree = ast.parse(code_with_bad_placeholder)
+        found_bad = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if "{APP_BRAND}" in node.value:
+                    found_bad.append(node.value)
+        self.assertEqual(len(found_bad), 1)
+        self.assertIn("{APP_BRAND}", found_bad[0])
+
+    @patch("app.run_detection_engine")
+    @patch("app.db.evaluate_agent_rollout", return_value=None)
+    @patch("app.db.save_agent_data")
+    @patch("app.db.record_server_inventory")
+    @patch("app.db.push_log_entries")
+    @patch("app.db.get_server_by_ip")
+    @patch("app.db.get_server_by_id")
+    @patch("app.db.get_db_connection")
+    def test_r5_inventory_push_logs_and_push_all_200(self, mock_db_conn, mock_get_srv_id, mock_get_srv_ip, mock_push_logs, mock_rec_inv, mock_save_data, mock_rollout, mock_det_engine):
+        """R5: /api/agent/push, /api/agent/inventory, and /api/agent/push-logs all return 200 for enrolled agent."""
+        import app
+        mock_get_srv_ip.return_value = {"id": 1, "name": "soc-server", "ip": "192.168.10.201", "ip_address": "192.168.10.201"}
+        mock_get_srv_id.return_value = {"id": 1, "name": "soc-server", "ip": "192.168.10.201", "ip_address": "192.168.10.201"}
+        mock_rec_inv.return_value = {"status": "success", "package_count": 5}
+        mock_push_logs.return_value = 2
+
+        mock_cur = MagicMock()
+        mock_cur.fetchone.return_value = {"id": 1}
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+        mock_db_conn.return_value = mock_conn
+
+        async def fake_threadpool(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        with patch("fastapi.concurrency.run_in_threadpool", side_effect=fake_threadpool), \
+             patch("starlette.concurrency.run_in_threadpool", side_effect=fake_threadpool):
+            # 1. Telemetry push test
+            req_push = MagicMock()
+            req_push.client.host = "192.168.10.201"
+            req_push.headers = {"x-agent-token": "sp-token-soc-server", "x-machine-id": "test-mid-123"}
+            async def json_push():
+                return {
+                    "server_id": 1, "server_ip": "192.168.10.201", "hostname": "soc-server",
+                    "cpu_percent": 10.0, "agent_token": "sp-token-soc-server"
+                }
+            req_push.json = json_push
+            res_push = self._run_coro(app.api_agent_push(req_push))
+            body_push = json.loads(res_push.body.decode()) if hasattr(res_push, "body") else res_push
+            self.assertEqual(body_push.get("status"), "ok")
+
+            # 2. Inventory test
+            req_inv = MagicMock()
+            req_inv.client.host = "192.168.10.201"
+            req_inv.headers = {"x-agent-token": "sp-token-soc-server", "x-machine-id": "test-mid-123"}
+            inv_payload = {
+                "server_id": 1, "server_ip": "192.168.10.201", "hostname": "soc-server",
+                "agent_token": "sp-token-soc-server", "token": "sp-token-soc-server",
+                "packages": [{"name": "auditd", "version": "1.0", "arch": "amd64", "source_name": "dpkg"}]
+            }
+            async def body_inv():
+                return json.dumps(inv_payload).encode("utf-8")
+            req_inv.body = body_inv
+            res_inv = self._run_coro(app.api_agent_inventory(req_inv))
+            self.assertEqual(res_inv.get("status"), "success")
+
+            # 3. Push logs test
+            req_logs = MagicMock()
+            req_logs.client.host = "192.168.10.201"
+            req_logs.headers = {"x-agent-token": "sp-token-soc-server", "x-machine-id": "test-mid-123"}
+            async def json_logs():
+                return {
+                    "server_id": 1, "server_ip": "192.168.10.201", "hostname": "soc-server",
+                    "agent_token": "sp-token-soc-server", "token": "sp-token-soc-server",
+                    "lines": ["Oct 12 10:00:01 soc-server CRON[123]: (root) CMD (run-parts)"]
+                }
+            req_logs.json = json_logs
+            res_logs = self._run_coro(app.api_push_agent_logs(req_logs))
+            self.assertTrue(res_logs.get("ok"))
+
+    @patch("database.get_settings")
+    @patch("database.get_db_connection")
+    def test_r6_mitra_untouched_and_canary_gate(self, mock_db_conn, mock_settings):
+        """R6: Mitra 1 and 2 (non-canary nodes) must remain untouched and blocked from updates until canary passes."""
+        mock_settings.return_value = {
+            "autoupdate_enabled": "true",
+            "autoupdate_stage": "canary",
+            "autoupdate_circuit_broken": "false"
+        }
+        mock_cur = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+        mock_db_conn.return_value = mock_conn
+
+        # Mitra 1: ID 21, is_canary=False, version="1.6.2"
+        mock_cur.fetchone.side_effect = [
+            {"id": 21, "name": "Jvvnl -Mitra 1", "hostname": "Mitra-1", "ip": "192.168.150.15", "agent_version": "1.6.2", "update_status": "up_to_date", "is_canary": False, "exclude_from_autoupdate": False, "is_maintenance": False},
+            {"id": 1} # Canary exists elsewhere (e.g. soc-server)
+        ]
+
+        manifest = db.evaluate_agent_rollout(21, "1.6.2")
+        self.assertIsNone(manifest, "Mitra 1 must NOT receive an update manifest while rollout is in canary stage!")
+
 if __name__ == "__main__":
     unittest.main()

@@ -3556,36 +3556,47 @@ def run_detection_engine(server_id: int, data: dict):
         logger.debug(f"Error in _check_vpn_subnets_and_reverse_shell: {e}")
 
 
-@app.post("/api/agent/push")
-@app.post("/api/events")
-@app.post("/api/agent/event")
-async def api_agent_push(request: Request):
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
+def authenticate_agent_request(request: Request, body_data: dict = None) -> tuple[Optional[int], Optional[str]]:
+    """
+    Unified per-agent authentication across all agent endpoints:
+    /api/agent/push, /api/agent/inventory, /api/agent/push-logs, /api/agent/status.
     
-    server_id = data.get("server_id")
-    server_ip = (data.get("server_ip") or "").strip()
+    Returns (server_id, error_message).
+    """
+    body_data = body_data or {}
+    server_id = body_data.get("server_id")
+    if server_id is not None:
+        try:
+            server_id = int(server_id)
+        except (ValueError, TypeError):
+            server_id = None
+
+    server_ip = (body_data.get("server_ip") or "").strip()
     if server_ip.startswith("$"):
         server_ip = ""
-    hostname = (data.get("hostname") or data.get("target_name") or data.get("system_hostname") or "").strip()
+
+    hostname = (body_data.get("hostname") or body_data.get("target_name") or body_data.get("system_hostname") or "").strip()
     if hostname.startswith("$"):
         hostname = ""
-    machine_id = (data.get("machine_id") or "").strip()
-    agent_version = data.get("agent_version", version.AGENT_VERSION)
-    client_ip = request.client.host if request.client else None
+    clean_host = re.sub(r'^\[.*?\]\s*', '', hostname).strip()
 
-    # Extract Token from Headers or Payload (Direct Agent Authentication)
+    machine_id = (request.headers.get("x-machine-id") or body_data.get("machine_id") or "").strip()
+
+    # Extract client IP: respect X-Forwarded-For if behind reverse proxy / HAProxy
+    xff = request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip")
+    client_ip = (xff.split(",")[0].strip() if xff else (request.client.host if request.client else None))
+
+    # Extract Token from Headers, Payload, or Query Params
     raw_token = (
         request.headers.get("x-agent-token") or 
         request.headers.get("authorization") or 
-        data.get("agent_token") or 
-        data.get("token") or ""
+        body_data.get("agent_token") or 
+        body_data.get("token") or 
+        request.query_params.get("token") or ""
     ).strip()
     if raw_token.startswith("Bearer "):
         raw_token = raw_token[7:].strip()
-    token = raw_token if (raw_token and not raw_token.startswith("$") and raw_token not in ("None", "null")) else None
+    token = raw_token if (raw_token and not raw_token.startswith("$") and raw_token not in ("None", "null", "")) else None
 
     # Step 0: Match by Token (Highest Authentication Priority)
     if not server_id and token:
@@ -3618,8 +3629,8 @@ async def api_agent_push(request: Request):
         latest_srv = db.get_server_by_ip(server_ip)
         if latest_srv and latest_srv.get("id"):
             server_id = latest_srv["id"]
-    elif data.get("server_id"):
-        srv = db.get_server_by_id(data.get("server_id"))
+    elif server_id:
+        srv = db.get_server_by_id(server_id)
         if not srv:
             server_id = None
 
@@ -3629,7 +3640,8 @@ async def api_agent_push(request: Request):
         if server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
             ips_to_try.append(server_ip)
         if client_ip and client_ip not in ("127.0.0.1", "localhost") and client_ip not in ips_to_try:
-            if not (client_ip.startswith("172.17.") or client_ip.startswith("172.18.") or client_ip.startswith("172.19.")):
+            # Skip docker bridge subnets (172.16.0.0/12)
+            if not any(client_ip.startswith(prefix) for prefix in ("172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")):
                 ips_to_try.append(client_ip)
 
         for ip_candidate in ips_to_try:
@@ -3639,12 +3651,17 @@ async def api_agent_push(request: Request):
                 break
 
     # Step 3: Match by hostname
-    if not server_id and hostname and hostname.lower() not in ("localhost", "target-node"):
+    if not server_id and (clean_host or hostname) and clean_host.lower() not in ("localhost", "target-node"):
         conn = db.get_db_connection()
         if conn:
             try:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT * FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) ORDER BY id DESC LIMIT 1;", (hostname, hostname))
+                    cur.execute("""
+                        SELECT id FROM servers 
+                        WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s)) 
+                           OR LOWER(name) IN (LOWER(%s), LOWER(%s)) 
+                        ORDER BY id DESC LIMIT 1;
+                    """, (hostname, clean_host, hostname, clean_host))
                     r = cur.fetchone()
                     if r:
                         server_id = r["id"] if isinstance(r, dict) else r[0]
@@ -3652,16 +3669,8 @@ async def api_agent_push(request: Request):
             finally: conn.close()
 
     # Step 3.5: Docker Local Host Fallback for SOC Node
-    # When agent runs locally on the SOC host, Docker NATs client_ip to bridge gateway (172.17.x, 172.18.x, 127.0.0.1)
     is_docker_or_local = client_ip in ("127.0.0.1", "localhost") or (
-        client_ip and (
-            client_ip.startswith("172.17.") or 
-            client_ip.startswith("172.18.") or 
-            client_ip.startswith("172.19.") or 
-            client_ip.startswith("172.20.") or 
-            client_ip.startswith("172.21.") or
-            client_ip.startswith("172.22.")
-        )
+        client_ip and any(client_ip.startswith(prefix) for prefix in ("172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."))
     )
     if not server_id and is_docker_or_local:
         conn = db.get_db_connection()
@@ -3671,6 +3680,7 @@ async def api_agent_push(request: Request):
                     cur.execute("""
                         SELECT id FROM servers 
                         WHERE LOWER(name) = 'soc-server' 
+                           OR LOWER(hostname) = 'soc-server'
                            OR ip = '192.168.10.201' 
                            OR ip_address = '192.168.10.201'
                         ORDER BY id DESC LIMIT 1;
@@ -3681,13 +3691,35 @@ async def api_agent_push(request: Request):
             except Exception: pass
             finally: conn.close()
 
+    if not server_id:
+        client_or_srv = client_ip or server_ip or "127.0.0.1"
+        return None, f"Unknown or unapproved agent from {client_or_srv}. Re-onboarding required."
+
+    return server_id, None
+
+
+@app.post("/api/agent/push")
+@app.post("/api/events")
+@app.post("/api/agent/event")
+async def api_agent_push(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    
+    agent_version = data.get("agent_version", version.AGENT_VERSION)
+    server_id, err_msg = authenticate_agent_request(request, data)
+    machine_id = (request.headers.get("x-machine-id") or data.get("machine_id") or "").strip()
+    client_ip = request.client.host if request.client else None
+    hostname = (data.get("hostname") or data.get("target_name") or data.get("system_hostname") or "").strip()
+
     # Step 4: Reject unknown or unapproved agents with HTTP 401 (Never auto-create/auto-heal)
     if not server_id:
-        client_or_srv_ip = client_ip or server_ip or "127.0.0.1"
+        client_or_srv_ip = client_ip or (data.get("server_ip") or "127.0.0.1")
         db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "server", None, f"Telemetry push rejected for unknown server (IP: {client_or_srv_ip}, Machine ID: {machine_id})", ip_address=client_or_srv_ip, machine_id=machine_id)
         return JSONResponse(
             status_code=401, 
-            content={"status": "error", "ok": False, "message": f"Unknown or unapproved agent from {client_or_srv_ip}. Re-onboarding required."}
+            content={"status": "error", "ok": False, "message": err_msg or f"Unknown or unapproved agent from {client_or_srv_ip}. Re-onboarding required."}
         )
 
     # Inject resolved server_id back into data
@@ -3928,127 +3960,16 @@ async def api_agent_inventory(request: Request):
         logger.error(f"Error parsing inventory JSON: {e}")
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
 
-    server_id = data.get("server_id")
-    server_ip = (data.get("server_ip") or "").strip()
-    if server_ip.startswith("$"):
-        server_ip = ""
-    hostname = (data.get("hostname") or data.get("target_name") or data.get("system_hostname") or "").strip()
-    if hostname.startswith("$"):
-        hostname = ""
-    clean_host = re.sub(r'^\[.*?\]\s*', '', hostname).strip()
+    server_id, err_msg = authenticate_agent_request(request, data)
     machine_id = (request.headers.get("x-machine-id") or data.get("machine_id") or "").strip()
     client_ip = request.client.host if request.client else None
-
-    # Extract Token from Headers or Payload (Direct Agent Authentication)
-    raw_token = (
-        request.headers.get("x-agent-token") or 
-        request.headers.get("authorization") or 
-        data.get("agent_token") or 
-        data.get("token") or ""
-    ).strip()
-    if raw_token.startswith("Bearer "):
-        raw_token = raw_token[7:].strip()
-    token = raw_token if (raw_token and not raw_token.startswith("$") and raw_token not in ("None", "null")) else None
-
-    # Step 0: Match by Token (Highest Authentication Priority)
-    if not server_id and token:
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM servers WHERE agent_token = %s OR api_token = %s LIMIT 1;", (token, token))
-                    r = cur.fetchone()
-                    if r:
-                        server_id = r["id"] if isinstance(r, dict) else r[0]
-            except Exception: pass
-            finally: conn.close()
-
-    # Step 0.5: Match by Machine ID (Hardware Fingerprint)
-    if not server_id and machine_id:
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM servers WHERE machine_id = %s LIMIT 1;", (machine_id,))
-                    r = cur.fetchone()
-                    if r:
-                        server_id = r["id"] if isinstance(r, dict) else r[0]
-            except Exception: pass
-            finally: conn.close()
-
-    # Step 1: Validate server_id if provided
-    if server_id:
-        srv = db.get_server_by_id(server_id)
-        if not srv:
-            server_id = None
-
-    # Step 2: Match by server_ip (and client_ip if remote)
-    if not server_id:
-        ips_to_try = []
-        if server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
-            ips_to_try.append(server_ip)
-        if client_ip and client_ip not in ("127.0.0.1", "localhost") and client_ip not in ips_to_try:
-            if not (client_ip.startswith("172.17.") or client_ip.startswith("172.18.") or client_ip.startswith("172.19.")):
-                ips_to_try.append(client_ip)
-
-        for ip_candidate in ips_to_try:
-            srv = db.get_server_by_ip(ip_candidate)
-            if srv:
-                server_id = srv.get("id")
-                break
-
-    # Step 3: Match by hostname (including clean_host)
-    if not server_id and (clean_host or hostname) and clean_host.lower() not in ("localhost", "target-node"):
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT id FROM servers 
-                        WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s)) 
-                           OR LOWER(name) IN (LOWER(%s), LOWER(%s)) 
-                        ORDER BY id DESC LIMIT 1;
-                    """, (hostname, clean_host, hostname, clean_host))
-                    r = cur.fetchone()
-                    if r:
-                        server_id = r["id"] if isinstance(r, dict) else r[0]
-            except Exception: pass
-            finally: conn.close()
-
-    # Step 3.5: Docker Local Host Fallback for SOC Node
-    is_docker_or_local = client_ip in ("127.0.0.1", "localhost") or (
-        client_ip and (
-            client_ip.startswith("172.17.") or 
-            client_ip.startswith("172.18.") or 
-            client_ip.startswith("172.19.") or 
-            client_ip.startswith("172.20.") or 
-            client_ip.startswith("172.21.") or
-            client_ip.startswith("172.22.")
-        )
-    )
-    if not server_id and is_docker_or_local:
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT id FROM servers 
-                        WHERE LOWER(name) = 'soc-server' 
-                           OR ip = '192.168.10.201' 
-                           OR ip_address = '192.168.10.201'
-                        ORDER BY id DESC LIMIT 1;
-                    """)
-                    r = cur.fetchone()
-                    if r:
-                        server_id = r["id"] if isinstance(r, dict) else r[0]
-            except Exception: pass
-            finally: conn.close()
+    server_ip = (data.get("server_ip") or "").strip()
 
     # Step 4: Reject unknown or unapproved agents with HTTP 401
     if not server_id:
         client_or_srv_ip = client_ip or server_ip or "127.0.0.1"
         db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "server", None, f"Inventory rejected for unknown server (IP: {client_or_srv_ip}, Machine ID: {machine_id})", ip_address=client_or_srv_ip, machine_id=machine_id)
-        return JSONResponse(status_code=401, content={"error": "Unauthorized", "detail": f"Server not recognized or unapproved from {client_or_srv_ip}"})
+        return JSONResponse(status_code=401, content={"error": "Unauthorized", "detail": err_msg or f"Server not recognized or unapproved from {client_or_srv_ip}"})
 
     # Ensure server has machine_id saved if present
     if machine_id:
@@ -5766,6 +5687,7 @@ import urllib.request, urllib.error
 from datetime import datetime
 
 AGENT_VERSION = "{version.AGENT_VERSION}"
+APP_BRAND = "{APP_BRAND}"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
@@ -7456,8 +7378,19 @@ if __name__ == "__main__":
     main()
 PY_EOF
 
-# Prefer signed pre-built artifact if available from SOC server
-curl -sSL -k "{base_url}/static/agents/agent-{version.AGENT_VERSION}.py" -o /opt/securepulse/node_push_agent.py 2>/dev/null || true
+# Prefer signed pre-built artifact if available from SOC server and verifies cleanly
+curl -sSL -k "{base_url}/static/agents/agent-{version.AGENT_VERSION}.py" -o /opt/securepulse/node_push_agent.py.dl 2>/dev/null || true
+if [ -s /opt/securepulse/node_push_agent.py.dl ]; then
+    python3 -m py_compile /opt/securepulse/node_push_agent.py.dl 2>/dev/null || rm -f /opt/securepulse/node_push_agent.py.dl
+    if [ -f /opt/securepulse/node_push_agent.py.dl ]; then
+        ST_OUT=$(python3 /opt/securepulse/node_push_agent.py.dl --selftest 2>&1 || true)
+        if echo "$ST_OUT" | grep -q "SELFTEST_OK"; then
+            mv -f /opt/securepulse/node_push_agent.py.dl /opt/securepulse/node_push_agent.py
+        else
+            rm -f /opt/securepulse/node_push_agent.py.dl
+        fi
+    fi
+fi
 chmod 750 /opt/securepulse/node_push_agent.py
 pkill -f node_push_agent.py 2>/dev/null || true
 pkill -f node_push_agent.sh 2>/dev/null || true
@@ -7468,13 +7401,15 @@ if command -v systemctl >/dev/null 2>&1; then
 [Unit]
 Description={APP_BRAND} Node Agent Daemon
 After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/opt/securepulse
 ExecStart=/usr/bin/python3 /opt/securepulse/node_push_agent.py
-Restart=always
+Restart=on-failure
 RestartSec=5
 StandardOutput=append:/var/log/securepulse_agent.log
 StandardError=append:/var/log/securepulse_agent.log
@@ -8195,8 +8130,8 @@ async def api_agent_status(request: Request):
                             cur.execute("SELECT id, name, hostname, ip, agent_token, api_token FROM servers WHERE LOWER(hostname) = %s OR LOWER(name) = %s ORDER BY id DESC LIMIT 1;", (clean_h, clean_h))
                             sr = cur.fetchone()
                             if sr: srv = dict(sr)
-                        if not srv and (client_ip in ("127.0.0.1", "localhost") or (client_ip and (client_ip.startswith("172.17.") or client_ip.startswith("172.18.") or client_ip.startswith("172.19.") or client_ip.startswith("172.20.")))):
-                            cur.execute("SELECT id, name, hostname, ip, agent_token, api_token FROM servers WHERE LOWER(name) = 'soc-server' OR ip = '192.168.10.201' ORDER BY id DESC LIMIT 1;")
+                        if not srv and (client_ip in ("127.0.0.1", "localhost") or (client_ip and any(client_ip.startswith(prefix) for prefix in ("172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")))):
+                            cur.execute("SELECT id, name, hostname, ip, agent_token, api_token FROM servers WHERE LOWER(name) = 'soc-server' OR LOWER(hostname) = 'soc-server' OR ip = '192.168.10.201' OR ip_address = '192.168.10.201' ORDER BY id DESC LIMIT 1;")
                             sr = cur.fetchone()
                             if sr: srv = dict(sr)
                         if srv:
@@ -9346,6 +9281,33 @@ async def api_get_log_configs(server_id: Optional[int] = None):
 async def api_get_server_log_configs(server_id: int):
     return db.get_log_configs(server_id=server_id)
 
+@app.get("/api/servers/{server_id}/recent-logs")
+async def api_server_recent_logs(server_id: int):
+    """Returns the last 20 pushed agent log lines for the given server."""
+    from fastapi.concurrency import run_in_threadpool
+    def _fetch_last_logs():
+        conn = db.get_db_connection()
+        if not conn: return []
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT message, timestamp FROM pushed_logs 
+                    WHERE server_id = %s 
+                    ORDER BY id DESC LIMIT 20;
+                """, (server_id,))
+                rows = cur.fetchall()
+                lines = []
+                for r in reversed(rows):
+                    msg = r["message"] if isinstance(r, dict) else r[0]
+                    lines.append(msg)
+                return lines
+        except Exception:
+            return []
+        finally:
+            conn.close()
+    logs = await run_in_threadpool(_fetch_last_logs)
+    return {"ok": True, "server_id": server_id, "logs": logs}
+
 @app.post("/api/log-monitor/configs")
 @app.post("/api/servers/{server_id}/log-config")
 async def api_add_log_config(request: Request, server_id: Optional[int] = None):
@@ -9406,40 +9368,7 @@ async def api_push_agent_logs(request: Request):
     except Exception:
         body = {}
     config_id = body.get("config_id")
-    server_id = body.get("server_id")
-    server_ip = (body.get("server_ip") or "").strip()
-    if server_ip.startswith("$"):
-        server_ip = ""
-    hostname = (body.get("hostname") or body.get("target_name") or body.get("system_hostname") or "").strip()
-    if hostname.startswith("$"):
-        hostname = ""
-    client_ip = request.client.host if request.client else None
-
-    raw_token = (
-        request.headers.get("x-agent-token") or 
-        request.headers.get("authorization") or 
-        body.get("agent_token") or 
-        body.get("token") or ""
-    ).strip()
-    if raw_token.startswith("Bearer "):
-        raw_token = raw_token[7:].strip()
-    token = raw_token if (raw_token and not raw_token.startswith("$") and raw_token not in ("None", "null")) else None
-    
-    if not server_id and token:
-        def _get_server_id_by_token():
-            conn = db.get_db_connection()
-            if conn:
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT id FROM servers WHERE agent_token = %s OR api_token = %s LIMIT 1;", (token, token))
-                        r = cur.fetchone()
-                        if r: return r["id"] if isinstance(r, dict) else r[0]
-                except Exception: pass
-                finally: conn.close()
-            return None
-        tok_sid = await run_in_threadpool(_get_server_id_by_token)
-        if tok_sid: server_id = tok_sid
-    
+    server_id, err_msg = authenticate_agent_request(request, body)
     if not server_id and config_id:
         def _get_server_id_by_config():
             conn = db.get_db_connection()
@@ -9455,59 +9384,9 @@ async def api_push_agent_logs(request: Request):
         cfg_sid = await run_in_threadpool(_get_server_id_by_config)
         if cfg_sid: server_id = cfg_sid
 
-    if server_id:
-        srv = await run_in_threadpool(db.get_server_by_id, server_id)
-        if not srv: server_id = None
-
-    if not server_id and server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
-        srv = await run_in_threadpool(db.get_server_by_ip, server_ip)
-        if srv: server_id = srv.get("id")
-
-    if not server_id and client_ip and client_ip not in ("127.0.0.1", "localhost"):
-        if not (client_ip.startswith("172.17.") or client_ip.startswith("172.18.") or client_ip.startswith("172.19.")):
-            srv = await run_in_threadpool(db.get_server_by_ip, client_ip)
-            if srv: server_id = srv.get("id")
-
-    if not server_id and hostname and hostname.lower() not in ("localhost", "target-node"):
-        def _get_server_id_by_host():
-            conn = db.get_db_connection()
-            if conn:
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (hostname, hostname))
-                        r = cur.fetchone()
-                        if r: return r["id"] if isinstance(r, dict) else r[0]
-                except Exception: pass
-                finally: conn.close()
-            return None
-        fetched_id = await run_in_threadpool(_get_server_id_by_host)
-        if fetched_id: server_id = fetched_id
-
-    # Docker Local Host Fallback for SOC Node
-    is_docker_or_local = client_ip in ("127.0.0.1", "localhost") or (
-        client_ip and (
-            client_ip.startswith("172.17.") or 
-            client_ip.startswith("172.18.") or 
-            client_ip.startswith("172.19.") or 
-            client_ip.startswith("172.20.") or 
-            client_ip.startswith("172.21.") or 
-            client_ip.startswith("172.22.")
-        )
-    )
-    if not server_id and is_docker_or_local:
-        def _get_server_id_docker_local():
-            conn = db.get_db_connection()
-            if conn:
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT id FROM servers WHERE LOWER(name) = 'soc-server' OR ip = '192.168.10.201' LIMIT 1;")
-                        r = cur.fetchone()
-                        if r: return r["id"] if isinstance(r, dict) else r[0]
-                except Exception: pass
-                finally: conn.close()
-            return None
-        dock_sid = await run_in_threadpool(_get_server_id_docker_local)
-        if dock_sid: server_id = dock_sid
+    client_ip = request.client.host if request.client else None
+    server_ip = (body.get("server_ip") or "").strip()
+    hostname = (body.get("hostname") or body.get("target_name") or body.get("system_hostname") or "").strip()
 
     raw_lines = body.get("lines") or body.get("logs") or []
     if isinstance(raw_lines, str):
@@ -9519,7 +9398,7 @@ async def api_push_agent_logs(request: Request):
     if not server_id:
         client_or_srv_ip = client_ip or server_ip or "127.0.0.1"
         db.log_audit("system", "REJECTED_UNKNOWN_AGENT", "server", None, f"Log push rejected for unknown server (IP: {client_or_srv_ip})", ip_address=client_or_srv_ip)
-        return JSONResponse(status_code=401, content={"ok": False, "status": "error", "message": f"Unknown or unapproved agent from {client_or_srv_ip}"})
+        return JSONResponse(status_code=401, content={"ok": False, "status": "error", "message": err_msg or f"Unknown or unapproved agent from {client_or_srv_ip}"})
 
     if not raw_lines:
         return {"ok": True, "count": 0}

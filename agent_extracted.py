@@ -2,7 +2,8 @@ import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threadi
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "1.7.0"
+AGENT_VERSION = "2.1.3"
+APP_BRAND = "BSMART SOC"
 SOC_URL = "https://192.168.10.201:3443".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
@@ -154,6 +155,12 @@ def send_agent_request(endpoint, data=None, headers=None, timeout=10):
     if AGENT_TOKEN and not str(AGENT_TOKEN).startswith("$") and str(AGENT_TOKEN) not in ("None", "null", ""):
         hdrs["X-Agent-Token"] = str(AGENT_TOKEN)
         hdrs["Authorization"] = f"Bearer {AGENT_TOKEN}"
+    try:
+        mid = get_machine_id()
+        if mid and "X-Machine-ID" not in hdrs:
+            hdrs["X-Machine-ID"] = mid
+    except Exception:
+        pass
     ordered = [SOC_URL] + [u for u in CANDIDATE_SOC_URLS if u != SOC_URL]
     last_err = None
     for base in ordered:
@@ -730,11 +737,18 @@ def get_hostname():
     except: return TARGET_NAME
 
 def get_machine_id():
+    for p in ["/etc/machine-id", "/var/lib/dbus/machine-id", "/etc/hostid"]:
+        try:
+            with open(p, "r") as f:
+                val = f.read().strip()
+                if val: return val
+        except Exception:
+            pass
     try:
-        with open("/etc/machine-id", "r") as f:
-            return f.read().strip()
-    except:
-        return ""
+        import uuid
+        return hashlib.sha256(str(uuid.getnode()).encode()).hexdigest()[:32]
+    except Exception:
+        return "00000000000000000000000000000000"
 
 def check_assigned_server_id():
     global ASSIGNED_SERVER_ID
@@ -1075,6 +1089,7 @@ def collect_and_send_inventory(force_full=False):
             data_to_send = comp_bytes
             headers = {
                 "Content-Type": "application/json",
+                "Content-Encoding": "gzip",
                 "X-Machine-ID": get_machine_id()
             }
         else:
@@ -1958,7 +1973,7 @@ def get_new_log_lines(max_lines_per_file=100):
 def main():
     global push_count, daily_inventory_done_date, discovered_paths, ASSIGNED_SERVER_ID
     print(f"[{APP_BRAND} Agent] Starting. SOC: {SOC_URL}, Node: {TARGET_NAME} ({TARGET_IP}), Server ID: {ASSIGNED_SERVER_ID}")
-    print("[{APP_BRAND} Agent] Discovering log paths...")
+    print(f"[{APP_BRAND} Agent] Discovering log paths...")
     discovered_paths = auto_discover_log_paths()
     print(f"[{APP_BRAND} Agent] Found log paths: {list(discovered_paths.keys())}")
 
@@ -2089,6 +2104,8 @@ def main():
                     "server_ip": cur_ip,
                     "hostname": cur_host,
                     "agent_token": tok,
+                    "token": tok,
+                    "machine_id": get_machine_id(),
                     "lines": log_lines[:200]
                 }
                 ldata = json.dumps(log_payload).encode("utf-8")

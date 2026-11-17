@@ -8332,6 +8332,16 @@ def record_agent_update_event(server_id, from_version, to_version, status, error
                         last_update_attempt = NOW()
                     WHERE id = %s;
                 """, (error_message or "Update failed", server_id))
+                # Auto-stop rollout: trip circuit breaker and log critical alert
+                try:
+                    cur.execute("""
+                        INSERT INTO settings (key, value)
+                        VALUES ('autoupdate_circuit_broken', 'true')
+                        ON CONFLICT (key) DO UPDATE SET value = 'true';
+                    """)
+                    log_audit("system", "AUTOUPDATE_CIRCUIT_BREAKER_TRIPPED", "server", server_id, f"Rollout auto-stopped: update failure on server {server_id}: {error_message or 'Update failed'}", ip_address=ip_address)
+                except Exception as e_cb:
+                    logger.error(f"Error auto-tripping circuit breaker: {e_cb}")
             elif status in ("updating", "downloading"):
                 cur.execute("""
                     UPDATE servers SET
@@ -8552,11 +8562,25 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
                             cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
                             if hasattr(conn, 'commit'): conn.commit()
                         return None
-                elif stage == "staged_25":
-                    if not is_canary and (server_id % 4 != 0):
+                elif stage in ("staged_25", "staged_50", "all", "all_immediate"):
+                    # Requirement: next batch starts ONLY when canary host reports a healthy heartbeat on the new version
+                    cur.execute("""
+                        SELECT COUNT(*) as canary_ok 
+                        FROM servers 
+                        WHERE is_canary = TRUE 
+                          AND status = 'online' 
+                          AND agent_version >= %s;
+                    """, (version.AGENT_VERSION,))
+                    canary_status = cur.fetchone()
+                    if not canary_status or (canary_status.get("canary_ok") or 0) == 0:
+                        cur.execute("SELECT id FROM servers WHERE is_canary = TRUE LIMIT 1;")
+                        has_canary = cur.fetchone()
+                        if has_canary and not is_canary:
+                            # Canary has not confirmed healthy heartbeat on new version yet
+                            return None
+                    if stage == "staged_25" and not is_canary and (server_id % 4 != 0):
                         return None
-                elif stage == "staged_50":
-                    if not is_canary and (server_id % 2 != 0):
+                    if stage == "staged_50" and not is_canary and (server_id % 2 != 0):
                         return None
 
             # Check circuit breaker: check fleet failure rate

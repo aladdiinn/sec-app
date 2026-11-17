@@ -6,8 +6,8 @@ verify autonomous agent self-updates.
 """
 import re
 
-PLATFORM_VERSION = "2.1.2"
-AGENT_VERSION = "2.1.2"
+PLATFORM_VERSION = "2.1.3"
+AGENT_VERSION = "2.1.3"
 MIN_SUPPORTED_AGENT_VERSION = "1.6.0"
 
 # Ed25519 Public Key embedded in all agents to verify update manifests

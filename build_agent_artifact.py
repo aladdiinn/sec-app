@@ -91,28 +91,48 @@ def _spawn_restart_watchdog(sid, target_ver):
         with open(watchdog_script, "w") as f:
             f.write(f"""#!/bin/bash
 sleep 2
-echo "[WATCHDOG] Restarting SecurePulse agent service..." >> /var/log/securepulse_agent.log
+echo "[WATCHDOG] Restarting SecurePulse agent service after update to v{target_ver}..." >> /var/log/securepulse_agent.log
 systemctl restart securepulse 2>/dev/null || systemctl restart securepulse-agent 2>/dev/null || nohup python3 /opt/securepulse/node_push_agent.py >> /var/log/securepulse_agent.log 2>&1 &
 
 HEALTHY=0
+CONSECUTIVE_CRASHES=0
+
 for i in $(seq 1 24); do
     sleep 5
+    # 1. Check if healthy: agent startup removes the lock file
     if [ ! -f /tmp/securepulse_update.lock ]; then
         HEALTHY=1
-        echo "[WATCHDOG] Agent v{target_ver} healthy and removed lock." >> /var/log/securepulse_agent.log
+        echo "[WATCHDOG] Agent v{target_ver} healthy and update lock released." >> /var/log/securepulse_agent.log
         break
+    fi
+
+    # 2. Rapid crash-loop detection: check systemd state
+    if command -v systemctl >/dev/null 2>&1; then
+        SUBSTATE=$(systemctl show -p SubState securepulse 2>/dev/null | cut -d'=' -f2 || echo "")
+        ACTIVE=$(systemctl is-active securepulse 2>/dev/null || echo "")
+        if [ "$SUBSTATE" = "auto-restart" ] || [ "$SUBSTATE" = "failed" ] || [ "$ACTIVE" = "failed" ]; then
+            CONSECUTIVE_CRASHES=$((CONSECUTIVE_CRASHES+1))
+            echo "[WATCHDOG] Warning: service in $SUBSTATE state (count: $CONSECUTIVE_CRASHES)..." >> /var/log/securepulse_agent.log
+            if [ $CONSECUTIVE_CRASHES -ge 3 ]; then
+                echo "[WATCHDOG] Rapid crash-loop detected ($CONSECUTIVE_CRASHES failures). Triggering immediate rollback!" >> /var/log/securepulse_agent.log
+                HEALTHY=0
+                break
+            fi
+        fi
     fi
 done
 
 if [ $HEALTHY -eq 0 ]; then
-    echo "[WATCHDOG] 120s health check failed! Rolling back to backup..." >> /var/log/securepulse_agent.log
+    echo "[WATCHDOG] Agent health check failed! Rolling back to backup..." >> /var/log/securepulse_agent.log
     if [ -f /opt/securepulse/node_push_agent.py.backup ]; then
         cp -f /opt/securepulse/node_push_agent.py.backup /opt/securepulse/node_push_agent.py
         chmod 750 /opt/securepulse/node_push_agent.py
         systemctl restart securepulse 2>/dev/null || systemctl restart securepulse-agent 2>/dev/null || true
+        echo "[WATCHDOG] Rollback to backup complete." >> /var/log/securepulse_agent.log
+    else
+        echo "[WATCHDOG] ERROR: No backup file found to rollback to!" >> /var/log/securepulse_agent.log
     fi
     rm -f /tmp/securepulse_update.lock
-    echo "[WATCHDOG] Rollback complete." >> /var/log/securepulse_agent.log
 fi
 rm -f {watchdog_script}
 """)
@@ -322,14 +342,97 @@ def check_and_apply_update(manifest, sid):
     )
     src = tasks_pattern.sub('# Remote command execution disabled by security policy', src)
 
-    # 4. Support --selftest flag at entrypoint
+    # 4. Support comprehensive --selftest flag at entrypoint
     entry_pattern = re.compile(r'if __name__ == "__main__":\s*main\(\)')
-    new_entry = '''if __name__ == "__main__":
+    selftest_code = '''
+def run_selftest():
+    import traceback
+    print(f"[SELFTEST] Initiating verification for {AGENT_VERSION} ({APP_BRAND})...", flush=True)
+    try:
+        # 1. Global constants check
+        assert globals().get("APP_BRAND") == "BSMART SOC", f"Invalid APP_BRAND: {globals().get('APP_BRAND')}"
+        assert globals().get("AGENT_VERSION") == AGENT_VERSION, f"Invalid AGENT_VERSION: {globals().get('AGENT_VERSION')}"
+        assert globals().get("SOC_URL"), "SOC_URL must be defined"
+        
+        # 2. Config & credential recovery dry-run
+        _recover_legacy_credentials()
+        
+        # 3. Core system collectors dry-run
+        hn = get_hostname()
+        assert hn, "get_hostname() returned empty"
+        mid = get_machine_id()
+        assert mid, "get_machine_id() returned empty"
+        os_inf = get_os_info()
+        assert isinstance(os_inf, dict), "get_os_info() must return dict"
+        cpu_val = get_cpu_percent()
+        assert isinstance(cpu_val, (int, float)), "get_cpu_percent() invalid"
+        mem_val = get_memory_percent()
+        assert isinstance(mem_val, (int, float)), "get_memory_percent() invalid"
+        disk_val = get_disk_percent()
+        assert isinstance(disk_val, (int, float)), "get_disk_percent() invalid"
+        fim_changes = check_fim()
+        assert isinstance(fim_changes, list), "check_fim() must return list"
+        
+        # 4. Telemetry payload generation & JSON serialization
+        cur_ip = get_node_ip()
+        cur_host = get_node_name()
+        tok = str(AGENT_TOKEN) if (AGENT_TOKEN and not str(AGENT_TOKEN).startswith("$")) else ""
+        test_payload = {
+            "server_id": ASSIGNED_SERVER_ID,
+            "agent_token": tok,
+            "token": tok,
+            "agent_version": AGENT_VERSION,
+            "server_ip": cur_ip,
+            "hostname": cur_host,
+            "system_hostname": hn,
+            "machine_id": mid,
+            "cpu_percent": cpu_val,
+            "memory_percent": mem_val,
+            "disk_percent": disk_val,
+            "auth_failures": 0,
+            "sudo_events": 0,
+            "file_changes": fim_changes,
+            "audit_events": [],
+            "discovered_log_paths": [],
+            "detected_services": []
+        }
+        serialized = json.dumps(test_payload)
+        assert len(serialized) > 10, "Payload serialization failed"
+        
+        # 5. Request builder check
+        test_hdrs = {}
+        if tok:
+            test_hdrs["X-Agent-Token"] = tok
+            test_hdrs["Authorization"] = f"Bearer {tok}"
+        test_hdrs["X-Machine-ID"] = mid
+        test_req = urllib.request.Request(f"{SOC_URL}/api/agent/push", data=serialized.encode('utf-8'), headers=test_hdrs)
+        assert test_req.get_header("X-machine-id") == mid, "Header generation failed"
+
+        # 6. Live server probe if specified
+        test_server = os.environ.get("TEST_SOC_URL")
+        if test_server:
+            try:
+                live_req = urllib.request.Request(f"{test_server.rstrip('/')}/api/version", headers={"User-Agent": f"Selftest/{AGENT_VERSION}"})
+                with urllib.request.urlopen(live_req, timeout=3, context=_ssl_ctx) as resp:
+                    pass
+                print(f"[SELFTEST] Server probe passed against {test_server}", flush=True)
+            except Exception as e_srv:
+                print(f"[SELFTEST] Server probe note: {e_srv}", flush=True)
+
+        print(f"[SELFTEST] Verification successful: APP_BRAND='{APP_BRAND}', version={AGENT_VERSION}", flush=True)
+        print("SELFTEST_OK", flush=True)
+        return True
+    except Exception as e:
+        print(f"[SELFTEST_FAILED] Error: {e}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        return False
+
+if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
-        print("SELFTEST_OK")
-        sys.exit(0)
+        ok = run_selftest()
+        sys.exit(0 if ok else 1)
     main()'''
-    src = entry_pattern.sub(new_entry, src)
+    src = entry_pattern.sub(selftest_code, src)
 
     out_agent_path = os.path.join(agents_dir, f"agent-{version.AGENT_VERSION}.py")
     with open(out_agent_path, "w", encoding="utf-8", newline="\n") as f:
@@ -341,12 +444,41 @@ def check_and_apply_update(manifest, sid):
     py_compile.compile(out_agent_path, doraise=True)
     print(f"[TEST] py_compile passed cleanly.")
 
-    # 6. Run --selftest
-    res = subprocess.run([sys.executable, out_agent_path, "--selftest"], capture_output=True, text=True)
-    if res.returncode != 0 or "SELFTEST_OK" not in res.stdout:
-        print(f"[ERROR] --selftest failed: code={res.returncode}, out={res.stdout}, err={res.stderr}")
+    # 5b. Static undefined-name gate (pyflakes / ruff F821) on BUILT artifact
+    from pyflakes import api as pyflakes_api, reporter as pyflakes_reporter
+    import io
+    out_buf = io.StringIO()
+    err_buf = io.StringIO()
+    rep = pyflakes_reporter.Reporter(out_buf, err_buf)
+    pyflakes_api.checkPath(out_agent_path, rep)
+    undefined_lines = [l for l in out_buf.getvalue().splitlines() if "undefined name" in l]
+    if undefined_lines:
+        print(f"[ERROR] pyflakes F821 detected undefined names in built artifact:")
+        for ul in undefined_lines:
+            print(f"  {ul}")
         sys.exit(1)
-    print(f"[TEST] --selftest passed: {res.stdout.strip()}")
+    print(f"[TEST] pyflakes F821 passed: 0 undefined names in {out_agent_path}.")
+
+    # 5c. Leftover template placeholder check via AST (detects literal strings with unreplaced tags)
+    import ast
+    tree = ast.parse(src)
+    literal_placeholders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            for bad in ("{APP_BRAND}", "{base_url}", "{target_ip}", "{target_node_name}", "{TOKEN}", "{ASSIGNED_ID}", "{dl_url}", "{server_id}"):
+                if bad in node.value:
+                    literal_placeholders.append((node.lineno, bad, node.value[:50]))
+    if literal_placeholders:
+        print(f"[ERROR] Leftover unsubstituted template placeholders found in literal strings: {literal_placeholders}")
+        sys.exit(1)
+    print(f"[TEST] Placeholder gate passed: 0 unsubstituted placeholders found.")
+
+    # 6. Run comprehensive --selftest on built artifact
+    res = subprocess.run([sys.executable, out_agent_path, "--selftest"], capture_output=True, text=True, timeout=15)
+    if res.returncode != 0 or "SELFTEST_OK" not in res.stdout:
+        print(f"[ERROR] --selftest failed (exit code {res.returncode}):\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
+        sys.exit(1)
+    print(f"[TEST] --selftest passed cleanly:\n{res.stdout.strip()}")
 
     # 7. Sign with release_signer
     manifest_out = os.path.join(agents_dir, f"agent-{version.AGENT_VERSION}.py.manifest.json")
