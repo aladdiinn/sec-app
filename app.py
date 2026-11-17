@@ -3708,6 +3708,8 @@ async def api_agent_push(request: Request):
         data = {}
     
     agent_version = data.get("agent_version", version.AGENT_VERSION)
+    if not agent_version or "{" in str(agent_version) or "version" in str(agent_version):
+        agent_version = version.AGENT_VERSION
     server_id, err_msg = authenticate_agent_request(request, data)
     machine_id = (request.headers.get("x-machine-id") or data.get("machine_id") or "").strip()
     client_ip = request.client.host if request.client else None
@@ -5686,7 +5688,7 @@ import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threadi
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "{version.AGENT_VERSION}"
+AGENT_VERSION = "2.1.6"
 APP_BRAND = "{APP_BRAND}"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"

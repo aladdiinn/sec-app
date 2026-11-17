@@ -695,9 +695,16 @@ function formatLocal(dateStr) {
                 }
                 const isSrvRead = s.is_read === true || s.is_read === 'true';
                 const readTag = isSrvRead ? '<div class="badge-read-tag" style="margin-top:4px">✓ Marked as Read</div>' : '';
-                const agentV = s.agent_version || '1.6.2';
+                let rawAgentV = String(s.agent_version || '1.6.2');
+                if (rawAgentV.includes('{') || rawAgentV.includes('version')) {
+                    rawAgentV = '2.1.6';
+                }
+                const agentV = rawAgentV;
                 const targetV = '{{ latest_agent_version or "2.1.6" }}';
-                const upStat = s.update_status || (agentV < targetV ? 'update_available' : 'up_to_date');
+                let upStat = s.update_status || (agentV < targetV ? 'update_available' : 'up_to_date');
+                if (upStat === 'unsupported' && (String(s.agent_version).includes('{') || String(s.agent_version).includes('version') || s.is_canary)) {
+                    upStat = 'update_available';
+                }
                 let statusPill = '';
                 if (upStat === 'up_to_date') {
                     statusPill = ' <span style="font-size:8px; border:1px solid rgba(16,185,129,0.4); border-radius:3px; padding:1px 4px; color:var(--green)">Up to date</span>';

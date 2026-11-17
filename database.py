@@ -8513,8 +8513,9 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
                     if hasattr(conn, 'commit'): conn.commit()
                 return None
             elif s.get("update_status") == "unsupported":
-                cur.execute("UPDATE servers SET update_status = 'update_available' WHERE id = %s;", (server_id,))
+                cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
                 if hasattr(conn, 'commit'): conn.commit()
+                s["target_agent_version"] = version.AGENT_VERSION
 
             # Check if up to date
             if not version.is_newer_version(version.AGENT_VERSION, current_version):
