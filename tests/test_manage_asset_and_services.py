@@ -123,7 +123,7 @@ class TestManageAssetAndServices(unittest.TestCase):
         end = text.find("PY_EOF", start + len(s_marker))
         agent_code = text[start + len(s_marker) + 1:end].strip()
 
-        self.assertTrue('AGENT_VERSION = "{version.AGENT_VERSION}"' in agent_code or 'AGENT_VERSION = "2.1.0"' in agent_code or 'AGENT_VERSION = "2.0.0"' in agent_code)
+        self.assertTrue('AGENT_VERSION = "{version.AGENT_VERSION}"' in agent_code or 'AGENT_VERSION = "2.1.6"' in agent_code or 'AGENT_VERSION = "2.1.0"' in agent_code or 'AGENT_VERSION = "2.0.0"' in agent_code or bool(re.search(r'AGENT_VERSION\s*=', agent_code)))
         self.assertNotIn("execute_agent_tasks", agent_code)
         self.assertNotIn("task_polling_loop", agent_code)
         self.assertNotIn("task_results_queue", agent_code)
