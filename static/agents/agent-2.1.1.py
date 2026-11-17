@@ -3,6 +3,7 @@ import urllib.request, urllib.error
 from datetime import datetime
 
 AGENT_VERSION = "2.1.1"
+APP_BRAND = "BSMART SOC"
 SOC_URL = "https://192.168.10.201:3443".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"

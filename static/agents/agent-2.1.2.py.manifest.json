@@ -2,8 +2,8 @@
   "version": "2.1.2",
   "target_version": "2.1.2",
   "min_supported_version": "1.6.0",
-  "sha256": "de3aeb523ceae752fe56d01c96c4d67fb1db737bda222b8b4cf3e39deea2eb6e",
-  "signature": "/Kd8QhFmG7PzKbyAFVNDIdKWYk/Z1nCjMcEfOkYl6BcplNTx7B5QRCd80pzvCetxwXmbbEJW+c8i/zyjtTXiAw==",
-  "size": 90065,
+  "sha256": "81621d4af8a41cd53dd8cb45e109c6ec3851dbf3d24604c66e0410d4fd454a8d",
+  "signature": "fRHbFn8rYDkBOuYLHONiXn+yocnhEWeZGWTn0Tx45AZWCw/P3/nQAUaiLx9MdjamNfgaPfceUc1zPrqhbLW3AA==",
+  "size": 90091,
   "public_key": "e35f2ca46d8d1d6d0af3152e5a324dd56196dbdd69ca30af06461f24cbd9c970"
 }

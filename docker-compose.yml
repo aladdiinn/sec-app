@@ -62,6 +62,10 @@ services:
       - /application/Soc/data:/app/data
       - /application/Soc/app.py:/app/app.py
       - /application/Soc/database.py:/app/database.py
+      - /application/Soc/version.py:/app/version.py
+      - /application/Soc/agent_extracted.py:/app/agent_extracted.py
+      - /application/Soc/agent_verifier.py:/app/agent_verifier.py
+      - /application/Soc/release_signer.py:/app/release_signer.py
       - /application/Soc/templates:/app/templates
       - /application/Soc/static:/app/static
     healthcheck:

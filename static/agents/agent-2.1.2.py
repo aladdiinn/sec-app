@@ -3,6 +3,7 @@ import urllib.request, urllib.error
 from datetime import datetime
 
 AGENT_VERSION = "2.1.2"
+APP_BRAND = "BSMART SOC"
 SOC_URL = "https://192.168.10.201:3443".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
@@ -2025,7 +2026,7 @@ def check_and_apply_update(manifest, sid):
 def main():
     global push_count, daily_inventory_done_date, discovered_paths, ASSIGNED_SERVER_ID
     print(f"[{APP_BRAND} Agent] Starting. SOC: {SOC_URL}, Node: {TARGET_NAME} ({TARGET_IP}), Server ID: {ASSIGNED_SERVER_ID}")
-    print("[{APP_BRAND} Agent] Discovering log paths...")
+    print(f"[{APP_BRAND} Agent] Discovering log paths...")
     discovered_paths = auto_discover_log_paths()
     print(f"[{APP_BRAND} Agent] Found log paths: {list(discovered_paths.keys())}")
 
