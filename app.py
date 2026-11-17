@@ -3734,7 +3734,10 @@ async def api_agent_push(request: Request):
     if conn:
         try:
             with conn.cursor() as cur:
-                update_q = "UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s"
+                if not version.is_newer_version(version.AGENT_VERSION, agent_version):
+                    update_q = "UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s, update_status = 'up_to_date', target_agent_version = NULL"
+                else:
+                    update_q = "UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s"
                 params = [agent_version]
                 if machine_id:
                     update_q += ", machine_id = CASE WHEN machine_id IS NULL OR machine_id = '' THEN %s ELSE machine_id END"
@@ -3822,7 +3825,10 @@ async def api_agent_push(request: Request):
                     srow = cur.fetchone()
                     if srow:
                         db_version = srow.get("agent_version")
-                        if agent_version != db_version:
+                        if not version.is_newer_version(version.AGENT_VERSION, agent_version):
+                            cur.execute("UPDATE servers SET agent_version = %s, update_status = 'up_to_date', target_agent_version = NULL WHERE id = %s;", (agent_version, server_id))
+                            if hasattr(conn, 'commit'): conn.commit()
+                        elif agent_version != db_version:
                             cur.execute("UPDATE servers SET agent_version = %s WHERE id = %s;", (agent_version, server_id))
                             if hasattr(conn, 'commit'): conn.commit()
             except Exception as e_srow:

@@ -701,8 +701,25 @@ function formatLocal(dateStr) {
                 }
                 const agentV = rawAgentV;
                 const targetV = '{{ latest_agent_version or "2.1.6" }}';
-                let upStat = s.update_status || (agentV < targetV ? 'update_available' : 'up_to_date');
-                if (upStat === 'unsupported' && (String(s.agent_version).includes('{') || String(s.agent_version).includes('version') || s.is_canary)) {
+
+                function parseVerArr(v) {
+                    const m = String(v).match(/\d+/g);
+                    return m ? m.map(Number) : [0];
+                }
+                function isVerAtLeast(curr, target) {
+                    const c = parseVerArr(curr), t = parseVerArr(target);
+                    for (let i = 0; i < Math.max(c.length, t.length); i++) {
+                        const cv = c[i] || 0, tv = t[i] || 0;
+                        if (cv > tv) return true;
+                        if (cv < tv) return false;
+                    }
+                    return true;
+                }
+
+                let upStat = s.update_status || (isVerAtLeast(agentV, targetV) ? 'up_to_date' : 'update_available');
+                if (isVerAtLeast(agentV, targetV)) {
+                    upStat = 'up_to_date';
+                } else if (upStat === 'unsupported' && (String(s.agent_version).includes('{') || String(s.agent_version).includes('version') || s.is_canary)) {
                     upStat = 'update_available';
                 }
                 let statusPill = '';
