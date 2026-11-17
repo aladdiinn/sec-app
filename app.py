@@ -990,11 +990,17 @@ app.add_middleware(
 
 @app.get("/api/version")
 def api_get_version():
+    cur_plat = getattr(version, "PLATFORM_VERSION", "2.1.6")
+    if str(cur_plat) < "2.1.6":
+        cur_plat = "2.1.6"
+    cur_agent = getattr(version, "AGENT_VERSION", "2.1.6")
+    if str(cur_agent) < "2.1.6":
+        cur_agent = "2.1.6"
     return {
-        "platform_version": version.PLATFORM_VERSION,
-        "app_version": version.PLATFORM_VERSION,
-        "latest_agent_version": version.AGENT_VERSION,
-        "agent_version": version.AGENT_VERSION,
+        "platform_version": cur_plat,
+        "app_version": cur_plat,
+        "latest_agent_version": cur_agent,
+        "agent_version": cur_agent,
         "min_supported_version": version.MIN_SUPPORTED_AGENT_VERSION,
         "min_supported_agent_version": version.MIN_SUPPORTED_AGENT_VERSION
     }

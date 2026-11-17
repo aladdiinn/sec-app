@@ -7308,7 +7308,6 @@ def save_detected_services(server_id: int, services_list: list):
         is_maintenance = bool(srv.get("is_maintenance")) if srv else False
 
         stopped_pinned_count = 0
-
         monitored_services = list(pinned_services)
         for prev_s in prev_detected:
             if not prev_s.get("is_system") and prev_s.get("status") == "running":
@@ -7340,11 +7339,12 @@ def save_detected_services(server_id: int, services_list: list):
             is_currently_running = curr_match and curr_match.get("status") == "running"
             was_previously_running = prev_match and prev_match.get("status") == "running"
 
-            if not is_currently_running:
+            is_pinned = any((p.get("name") or "").strip().lower() == m_name for p in pinned_services)
+            if is_pinned and not is_currently_running:
                 stopped_pinned_count += 1
 
             # Transition from running to stopped
-            if was_previously_running and not is_currently_running and not is_maintenance:
+            if was_previously_running and curr_match and curr_match.get("status") == "stopped" and not is_maintenance:
                 # Check if this stop was triggered intentionally from dashboard
                 intentional_stop = False
                 try:
