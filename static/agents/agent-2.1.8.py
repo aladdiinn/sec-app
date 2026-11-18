@@ -2585,4 +2585,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
         ok = run_selftest()
         sys.exit(0 if ok else 1)
+    if len(sys.argv) > 1 and sys.argv[1] in ("--scan", "-s", "scan", "--scan-malware"):
+        print(f"[{APP_BRAND} Agent] Running on-demand zero-impact malware scan via CLI...")
+        _load_persistent_config()
+        run_malware_scan(trigger_type="manual")
+        sys.exit(0)
     main()

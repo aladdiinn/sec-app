@@ -3928,13 +3928,36 @@ async def api_agent_push(request: Request):
     if needs_inventory:
         res["inventory_scan_requested"] = True
 
-    # Check if on-demand zero-impact malware scan is requested
-    if server_id and server_id in _malware_scan_queue:
-        res["malware_scan_requested"] = True
-        # Keep in queue if older agent so it triggers as soon as updated to 2.1.8
-        if version.parse_semver(agent_version) >= version.parse_semver("2.1.8"):
-            _malware_scan_queue.discard(server_id)
+    # Check if on-demand zero-impact malware scan is requested (Multi-worker PostgreSQL backing)
+    has_malware_scan = False
+    if server_id:
+        if server_id in _malware_scan_queue or str(server_id) in _malware_scan_queue:
+            has_malware_scan = True
         else:
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            SELECT id FROM file_scans
+                            WHERE server_id = %s AND status = 'in_progress'
+                            ORDER BY started_at DESC LIMIT 1;
+                        """, (server_id,))
+                        if cur.fetchone():
+                            has_malware_scan = True
+                except Exception:
+                    pass
+                finally:
+                    conn.close()
+
+    if has_malware_scan:
+        res["malware_scan_requested"] = True
+        _malware_scan_queue.discard(server_id)
+        _malware_scan_queue.discard(str(server_id))
+        try: _malware_scan_queue.discard(int(server_id))
+        except: pass
+
+        if version.parse_semver(agent_version) < version.parse_semver("2.1.8"):
             update_req = True
             update_manifest = {
                 "version": version.AGENT_VERSION,

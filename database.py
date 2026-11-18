@@ -3613,12 +3613,12 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
         params.append(limit)
         
         with conn.cursor() as cur:
-            # Auto-expire stale in_progress scans older than 45 seconds to prevent UI lock
+            # Auto-expire stale in_progress scans older than 90 seconds to prevent UI lock
             try:
                 cur.execute("""
                     UPDATE file_scans
                     SET status = 'clean', completed_at = CURRENT_TIMESTAMP
-                    WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '45 seconds';
+                    WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '90 seconds';
                 """)
                 if hasattr(conn, 'commit'): conn.commit()
             except Exception: pass
@@ -3747,12 +3747,12 @@ def get_malware_defense_summary(project_id=None):
         }
 
         with conn.cursor() as cur:
-            # Auto-expire stale in_progress scans older than 45 seconds
+            # Auto-expire stale in_progress scans older than 90 seconds
             try:
                 cur.execute("""
                     UPDATE file_scans
                     SET status = 'clean', completed_at = CURRENT_TIMESTAMP
-                    WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '45 seconds';
+                    WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '90 seconds';
                 """)
                 if hasattr(conn, 'commit'): conn.commit()
             except Exception: pass
