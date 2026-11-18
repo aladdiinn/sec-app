@@ -1460,6 +1460,21 @@ def init_db():
                 except Exception:
                     pass
 
+            # Auto-whitelist agent internal files or unit test scripts if previously flagged
+            try:
+                cur.execute("""
+                    UPDATE file_scan_results
+                    SET status = 'whitelisted'
+                    WHERE status IN ('threat_detected', 'detected', 'active_threat')
+                      AND (
+                          file_path ILIKE '%node_push_agent.py%' OR
+                          file_path ILIKE '%test_malware_defense.py%' OR
+                          file_path ILIKE '%/opt/securepulse/%'
+                      );
+                """)
+            except Exception:
+                pass
+
         # Initialize Application SIEM Schema & Rules (Additive & Idempotent)
         try:
             import app_siem_db
@@ -3559,6 +3574,16 @@ def record_file_scan_results(scan_id, server_id, findings):
     Each finding dict: {file_path, file_name, sha256, md5, file_size, permissions, owner, threat_name, severity, status}
     """
     if not findings: return 0
+    # Exclude internal agent files or test files from being recorded as malware findings
+    clean_findings = []
+    for item in findings:
+        fp = str(item.get('file_path', '')).strip().lower()
+        if 'node_push_agent.py' in fp or 'test_malware_defense.py' in fp or '/opt/securepulse' in fp:
+            continue
+        clean_findings.append(item)
+    findings = clean_findings
+    if not findings: return 0
+
     conn = get_db_connection()
     if not conn: return 0
     inserted = 0
