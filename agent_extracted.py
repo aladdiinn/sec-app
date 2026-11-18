@@ -1616,18 +1616,37 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
         print(f"[{APP_BRAND} Agent] Starting {trigger_type} malware & file integrity scan on paths: {target_paths}", flush=True)
 
         scanned_files = []
-        max_files_cap = 5000
+        EXCLUDE_EXTENSIONS = {
+            ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".bmp", ".webp",
+            ".woff", ".woff2", ".ttf", ".eot", ".css", ".map", ".mp4", ".mp3",
+            ".pdf", ".zip", ".tar", ".gz", ".bz2", ".xz", ".iso", ".sql", ".csv",
+            ".log"
+        }
+        EXCLUDE_DIR_NAMES = {
+            ".git", "node_modules", "proc", "sys", "cache", "venv", ".venv",
+            "locale", "fonts", "images", "img", "assets", "static"
+        }
+        max_files_cap = 2500
         total_scanned = 0
 
         for dir_path in target_paths:
             if total_scanned >= max_files_cap:
                 break
             try:
+                base_depth = dir_path.rstrip(os.sep).count(os.sep)
+                dir_files_count = 0
                 for root, dirs, files in os.walk(dir_path, topdown=True, followlinks=False):
-                    dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "proc", "sys", "cache")]
+                    cur_depth = root.rstrip(os.sep).count(os.sep) - base_depth
+                    if cur_depth >= 3:
+                        dirs[:] = []
+                    dirs[:] = [d for d in dirs if d.lower() not in EXCLUDE_DIR_NAMES]
                     for fname in files:
-                        if total_scanned >= max_files_cap:
+                        if total_scanned >= max_files_cap or dir_files_count >= 500:
+                            dirs[:] = []
                             break
+                        ext = os.path.splitext(fname)[1].lower()
+                        if ext in EXCLUDE_EXTENSIONS:
+                            continue
                         fpath = os.path.join(root, fname)
                         try:
                             if os.path.islink(fpath) or not os.path.isfile(fpath):
@@ -1660,6 +1679,7 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
                                 "owner": owner_str
                             })
                             total_scanned += 1
+                            dir_files_count += 1
                         except Exception:
                             continue
             except Exception as e_dir:

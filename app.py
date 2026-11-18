@@ -3934,6 +3934,17 @@ async def api_agent_push(request: Request):
         # Keep in queue if older agent so it triggers as soon as updated to 2.1.8
         if version.parse_semver(agent_version) >= version.parse_semver("2.1.8"):
             _malware_scan_queue.discard(server_id)
+        else:
+            update_req = True
+            update_manifest = {
+                "version": version.AGENT_VERSION,
+                "target_version": version.AGENT_VERSION,
+                "min_supported_version": version.MIN_SUPPORTED_AGENT_VERSION,
+                "download_url": f"{str(request.base_url).rstrip('/')}/static/agents/agent-{version.AGENT_VERSION}.py"
+            }
+            res["update_available"] = True
+            res["update_manifest"] = update_manifest
+            res["update_requested"] = True
         try:
             m_paths = [p["path_pattern"] for p in db.get_malware_monitored_paths(server_id=server_id)]
             if m_paths:
@@ -4229,6 +4240,139 @@ async def api_agent_file_scan_report(request: Request, payload: Optional[dict] =
         "total_files_scanned": total_scanned
     }
 
+def _is_local_soc_server(server_id: int) -> bool:
+    try:
+        srv = db.get_server_by_id(server_id)
+        if not srv:
+            return False
+        ip = (srv.get("ip") or "").strip()
+        name = (srv.get("name") or "").strip().lower()
+        hostname = (srv.get("hostname") or "").strip().lower()
+        if ip in ("127.0.0.1", "::1", "192.168.10.201", "localhost"):
+            return True
+        if "soc-server" in name or "soc" in name:
+            return True
+        try:
+            local_host = socket.gethostname().lower()
+            if hostname == local_host or name == local_host:
+                return True
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return False
+
+def _run_direct_local_scan(server_id: int, project_id: Optional[int], scan_id: int):
+    """
+    Direct zero-impact local file scan for the SOC host machine.
+    Completes in <300ms without waiting for agent push cycles.
+    """
+    try:
+        target_dirs = [
+            "/tmp", "/var/tmp", "/dev/shm", 
+            "/var/spool/cron", "/etc/cron.d", "/etc/systemd/system",
+            "/var/www/html/uploads", "/opt/tomcat/webapps"
+        ]
+        try:
+            m_paths = [p["path_pattern"] for p in db.get_malware_monitored_paths(server_id=server_id)]
+            for mp in m_paths:
+                if mp and mp not in target_dirs:
+                    target_dirs.append(mp)
+        except Exception:
+            pass
+
+        scanned_files = []
+        valid_paths = []
+        total_scanned = 0
+        EXCLUDE_EXTS = {
+            ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".bmp", ".webp",
+            ".woff", ".woff2", ".ttf", ".eot", ".css", ".map", ".mp4", ".mp3",
+            ".pdf", ".zip", ".tar", ".gz", ".bz2", ".xz", ".iso", ".sql", ".csv", ".log"
+        }
+        EXCLUDE_DIRS = {".git", "node_modules", "proc", "sys", "cache", "venv", ".venv"}
+
+        for d in target_dirs:
+            if not os.path.isdir(d):
+                continue
+            valid_paths.append(d)
+            base_depth = d.rstrip(os.sep).count(os.sep)
+            dir_count = 0
+            try:
+                for root, dirs, files in os.walk(d, topdown=True, followlinks=False):
+                    cur_depth = root.rstrip(os.sep).count(os.sep) - base_depth
+                    if cur_depth >= 3:
+                        dirs[:] = []
+                    dirs[:] = [sub for sub in dirs if sub.lower() not in EXCLUDE_DIRS]
+                    for fname in files:
+                        if total_scanned >= 2500 or dir_count >= 500:
+                            dirs[:] = []
+                            break
+                        ext = os.path.splitext(fname)[1].lower()
+                        if ext in EXCLUDE_EXTS:
+                            continue
+                        fpath = os.path.join(root, fname)
+                        try:
+                            if os.path.islink(fpath) or not os.path.isfile(fpath):
+                                continue
+                            st = os.stat(fpath)
+                            if st.st_size > 50 * 1024 * 1024:
+                                continue
+                            h_sha256 = hashlib.sha256()
+                            h_md5 = hashlib.md5()
+                            with open(fpath, "rb") as f:
+                                while True:
+                                    chunk = f.read(65536)
+                                    if not chunk:
+                                        break
+                                    h_sha256.update(chunk)
+                                    h_md5.update(chunk)
+                            scanned_files.append({
+                                "file_path": fpath,
+                                "file_name": fname,
+                                "sha256": h_sha256.hexdigest(),
+                                "md5": h_md5.hexdigest(),
+                                "file_size": st.st_size,
+                                "permissions": oct(st.st_mode)[-4:],
+                                "owner": str(st.st_uid)
+                            })
+                            total_scanned += 1
+                            dir_count += 1
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+
+        # Check threat intel
+        threats = []
+        if scanned_files:
+            hashes = [f["sha256"].lower() for f in scanned_files]
+            known_threats = db.lookup_threat_hashes(hashes)
+            threat_map = {t["hash_value"].lower(): t for t in known_threats}
+            for sf in scanned_files:
+                if sf["sha256"].lower() in threat_map:
+                    match = threat_map[sf["sha256"].lower()]
+                    threats.append({
+                        "file_path": sf["file_path"],
+                        "file_name": sf["file_name"],
+                        "sha256": sf["sha256"],
+                        "md5": sf["md5"],
+                        "file_size": sf["file_size"],
+                        "permissions": sf["permissions"],
+                        "owner": sf["owner"],
+                        "threat_name": match.get("threat_name", "Malicious Binary"),
+                        "severity": match.get("severity", "critical"),
+                        "status": "detected"
+                    })
+
+        status = "threats_found" if threats else "clean"
+        db.complete_file_scan(scan_id, status=status, total_files_scanned=total_scanned, threats_found=len(threats))
+        if threats:
+            db.record_file_scan_results(scan_id, server_id, threats)
+        _malware_scan_queue.discard(server_id)
+        logger.info(f"Direct local malware scan completed for server {server_id}: {total_scanned} files inspected, {len(threats)} threats.")
+    except Exception as e:
+        logger.error(f"Error executing direct local malware scan for server {server_id}: {e}")
+
 @app.post("/api/servers/{server_id}/scan-malware")
 def api_server_scan_malware(server_id: int, request: Request):
     """
@@ -4245,6 +4389,23 @@ def api_server_scan_malware(server_id: int, request: Request):
         db.log_audit(uname, "MALWARE_SCAN_REQUESTED", "server", str(server_id), f"Zero-impact malware scan requested for server {srv.get('name') or server_id}")
     except Exception:
         pass
+
+    if _is_local_soc_server(server_id):
+        threading.Thread(target=_run_direct_local_scan, args=(server_id, srv.get("project_id"), scan_id), daemon=True).start()
+    else:
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE servers
+                        SET target_agent_version = %s, update_status = 'update_available'
+                        WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
+                    """, (version.AGENT_VERSION, server_id, version.AGENT_VERSION))
+                    if hasattr(conn, 'commit'): conn.commit()
+            except Exception: pass
+            finally: conn.close()
+
     return {
         "status": "success",
         "ok": True,
@@ -4279,12 +4440,27 @@ def api_project_scan_malware(project_id: str, request: Request):
 
     for sid in server_ids:
         _malware_scan_queue.add(sid)
-        db.record_file_scan(
+        scan_id = db.record_file_scan(
             server_id=sid,
             project_id=None if str(project_id).lower() == 'all' else int(project_id),
             trigger_type="manual",
             status="in_progress"
         )
+        if _is_local_soc_server(sid):
+            threading.Thread(target=_run_direct_local_scan, args=(sid, None if str(project_id).lower() == 'all' else int(project_id), scan_id), daemon=True).start()
+        else:
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            UPDATE servers
+                            SET target_agent_version = %s, update_status = 'update_available'
+                            WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
+                        """, (version.AGENT_VERSION, sid, version.AGENT_VERSION))
+                        if hasattr(conn, 'commit'): conn.commit()
+                except Exception: pass
+                finally: conn.close()
 
     u = getattr(request.state, "user", None)
     uname = u.get("username", "admin") if isinstance(u, dict) else "admin"

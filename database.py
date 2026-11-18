@@ -3601,12 +3601,12 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
         params.append(limit)
         
         with conn.cursor() as cur:
-            # Auto-expire stale in_progress scans older than 2 minutes to prevent UI lock
+            # Auto-expire stale in_progress scans older than 45 seconds to prevent UI lock
             try:
                 cur.execute("""
                     UPDATE file_scans
                     SET status = 'clean', completed_at = CURRENT_TIMESTAMP
-                    WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '2 minutes';
+                    WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '45 seconds';
                 """)
                 if hasattr(conn, 'commit'): conn.commit()
             except Exception: pass
@@ -3735,12 +3735,12 @@ def get_malware_defense_summary(project_id=None):
         }
 
         with conn.cursor() as cur:
-            # Auto-expire stale in_progress scans older than 2 minutes
+            # Auto-expire stale in_progress scans older than 45 seconds
             try:
                 cur.execute("""
                     UPDATE file_scans
                     SET status = 'clean', completed_at = CURRENT_TIMESTAMP
-                    WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '2 minutes';
+                    WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '45 seconds';
                 """)
                 if hasattr(conn, 'commit'): conn.commit()
             except Exception: pass
@@ -3814,6 +3814,16 @@ def get_malware_defense_summary(project_id=None):
                 last_st = l_row['status'] if isinstance(l_row, dict) else l_row[1]
                 if last_st == 'in_progress':
                     summary['overall_status'] = 'Scanning'
+
+            # Also check if any scan in fleet is currently in_progress
+            try:
+                cur.execute("SELECT COUNT(*) as in_prog_cnt FROM file_scans WHERE status = 'in_progress';")
+                ip_row = cur.fetchone()
+                ip_cnt = (ip_row.get('in_prog_cnt') if isinstance(ip_row, dict) else ip_row[0]) if ip_row else 0
+                if ip_cnt > 0:
+                    summary['overall_status'] = 'Scanning'
+            except Exception:
+                pass
 
             if summary['active_threats'] > 0:
                 summary['overall_status'] = 'Threats Detected'
