@@ -1072,6 +1072,22 @@ def is_admin_user(request: Request) -> bool:
     return bool(user.get("is_admin") or role in ("superuser", "admin", "operator"))
 
 
+def get_public_base_url(request: Request) -> str:
+    env_url = (os.getenv("PUBLIC_SOC_URL") or os.getenv("SOC_URL") or "").strip().rstrip("/")
+    if env_url:
+        return env_url
+    xf_proto = (request.headers.get("x-forwarded-proto") or "").strip()
+    xf_host = (request.headers.get("x-forwarded-host") or "").strip()
+    xf_port = (request.headers.get("x-forwarded-port") or "").strip()
+    host_hdr = (request.headers.get("host") or "").strip()
+    scheme = xf_proto or request.url.scheme or "https"
+    host = xf_host or host_hdr or "192.168.10.201:3443"
+    if ":3443" not in host and (xf_port == "3443" or "3443" in str(request.headers.get("referer", "")) or "3443" in str(request.headers.get("origin", "")) or "192.168.10.201" in host or "soc.bsmartone.com" in host):
+        host_no_port = host.split(":")[0]
+        host = f"{host_no_port}:3443"
+        scheme = "https"
+    return f"{scheme}://{host}"
+
 def get_effective_project_id(request: Request):
     pid = request.query_params.get("project_id") or request.session.get("project_id")
     if pid:
@@ -3865,9 +3881,9 @@ async def api_agent_push(request: Request):
         if manifest:
             update_req = True
             update_manifest = dict(manifest)
-            update_manifest["download_url"] = f"{str(request.base_url).rstrip('/')}/static/agents/agent-{manifest.get('version', version.AGENT_VERSION)}.py"
+            update_manifest["download_url"] = f"{get_public_base_url(request)}/static/agents/agent-{manifest.get('version', version.AGENT_VERSION)}.py"
             # Legacy fallback updater for v1.6.2 and older nodes:
-            update_cmd_url = f"{str(request.base_url).rstrip('/')}/setup_agent_updater.sh"
+            update_cmd_url = f"{get_public_base_url(request)}/setup_agent_updater.sh"
     except Exception as e:
         logger.error(f"Agent rollout evaluation error: {e}")
 
@@ -3976,11 +3992,11 @@ async def api_agent_push(request: Request):
             update_manifest.setdefault("version", version.AGENT_VERSION)
             update_manifest.setdefault("target_version", version.AGENT_VERSION)
             update_manifest.setdefault("min_supported_version", version.MIN_SUPPORTED_AGENT_VERSION)
-            update_manifest["download_url"] = f"{str(request.base_url).rstrip('/')}/static/agents/agent-{version.AGENT_VERSION}.py"
+            update_manifest["download_url"] = f"{get_public_base_url(request)}/static/agents/agent-{version.AGENT_VERSION}.py"
             res["update_available"] = True
             res["update_manifest"] = update_manifest
             res["update_requested"] = True
-            res["update_cmd_url"] = f"{str(request.base_url).rstrip('/')}/setup_agent_updater.sh"
+            res["update_cmd_url"] = f"{get_public_base_url(request)}/setup_agent_updater.sh"
         try:
             m_paths = [p["path_pattern"] for p in db.get_malware_monitored_paths(server_id=server_id)]
             if m_paths:
@@ -5980,7 +5996,7 @@ def setup_agent_updater_endpoint(request: Request):
     Preserves existing node credentials, token, server ID, and configuration
     without re-requesting server approval or generating duplicate records.
     """
-    base_url = str(request.base_url).rstrip("/")
+    base_url = get_public_base_url(request)
     script_content = f"""#!/bin/bash
 # setup_agent_updater.sh — Safe One-Time Bootstrap Updater for Legacy Agents (v1.6.2+)
 # Preserves existing token, server_id, and node identity without re-enrolling or wiping config.
@@ -6099,7 +6115,7 @@ async def setup_script(request: Request, node_name: Optional[str] = None, ip: Op
                 try: server_id = int(form.get("server_id"))
                 except: pass
         except Exception: pass
-    base_url = str(request.base_url).rstrip("/")
+    base_url = get_public_base_url(request)
     target_node_name = node_name or request.query_params.get("node_name") or request.query_params.get("name") or "Target-Node"
     target_ip = ip or request.query_params.get("ip") or request.query_params.get("server_ip") or "127.0.0.1"
     target_log_path = log_path or request.query_params.get("log_path") or "/var/log/syslog"
@@ -8082,7 +8098,7 @@ echo "[INFO] Manage service: systemctl restart securepulse | systemctl status se
 @app.get("/setup_log_agent.sh", response_class=Response)
 async def setup_app_log_script(request: Request, config_id: Optional[int] = None, log_path: Optional[str] = None):
     """Returns a script for target application servers to stream log files directly without creating an asset node (Zero SSH Credentials)."""
-    base_url = str(request.base_url).rstrip("/")
+    base_url = get_public_base_url(request)
     cfg_id = config_id or 1
     target_log_path = log_path or "/var/log/app.log"
     
