@@ -2110,7 +2110,12 @@ async def api_server_update_agent(server_id: int, request: Request):
     if not conn: return JSONResponse(status_code=500, content={"ok": False})
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE servers SET target_agent_version = %s, update_status = 'update_available' WHERE id = %s;", (target_v, server_id))
+            cur.execute("""
+                UPDATE servers
+                SET target_agent_version = %s, update_status = 'update_available', last_update_attempt = NULL, update_error = NULL
+                WHERE id = %s;
+            """, (target_v, server_id))
+            cur.execute("UPDATE settings SET value = 'false' WHERE key = 'autoupdate_circuit_broken';")
             if hasattr(conn, 'commit'): conn.commit()
         uname = request.session.get('username', 'system')
         db.log_audit(uname, "SCHEDULE_AGENT_UPDATE", "server", server_id, f"Scheduled agent update to v{target_v}")
@@ -4446,6 +4451,7 @@ def api_server_scan_malware(server_id: int, request: Request):
                     SET target_agent_version = %s, update_status = 'update_available', last_update_attempt = NULL, update_error = NULL
                     WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
                 """, (version.AGENT_VERSION, server_id, version.AGENT_VERSION))
+                cur.execute("UPDATE settings SET value = 'false' WHERE key = 'autoupdate_circuit_broken';")
                 if hasattr(conn, 'commit'): conn.commit()
         except Exception: pass
         finally: conn.close()
@@ -4499,6 +4505,7 @@ def api_project_scan_malware(project_id: str, request: Request):
                         SET target_agent_version = %s, update_status = 'update_available', last_update_attempt = NULL, update_error = NULL
                         WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
                     """, (version.AGENT_VERSION, sid, version.AGENT_VERSION))
+                    cur.execute("UPDATE settings SET value = 'false' WHERE key = 'autoupdate_circuit_broken';")
                     if hasattr(conn, 'commit'): conn.commit()
             except Exception: pass
             finally: conn.close()

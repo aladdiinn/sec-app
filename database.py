@@ -9151,21 +9151,22 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
                     if stage == "staged_50" and not is_canary and (server_id % 2 != 0):
                         return None
 
-            # Check circuit breaker: check fleet failure rate
-            cur.execute("""
-                SELECT COUNT(*) as total, 
-                       COUNT(CASE WHEN update_status = 'failed' THEN 1 END) as failed_cnt
-                FROM servers;
-            """)
-            counts = cur.fetchone()
-            tot = counts.get("total", 0) if counts else 0
-            f_cnt = counts.get("failed_cnt", 0) if counts else 0
-            thresh = float(settings.get("autoupdate_failure_threshold_pct", "15"))
-            if tot > 0 and (f_cnt / tot * 100) >= thresh:
-                cur.execute("INSERT INTO settings (key, value) VALUES ('autoupdate_circuit_broken', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true';")
-                if hasattr(conn, 'commit'): conn.commit()
-                log_audit("system", "AUTOUPDATE_CIRCUIT_BREAKER", "fleet", 0, f"Autonomous update paused: failure rate ({round(f_cnt/tot*100, 1)}%) exceeded threshold ({thresh}%)")
-                return None
+            if not explicit_update:
+                # Check circuit breaker: check fleet failure rate
+                cur.execute("""
+                    SELECT COUNT(*) as total, 
+                           COUNT(CASE WHEN update_status = 'failed' THEN 1 END) as failed_cnt
+                    FROM servers;
+                """)
+                counts = cur.fetchone()
+                tot = counts.get("total", 0) if counts else 0
+                f_cnt = counts.get("failed_cnt", 0) if counts else 0
+                thresh = float(settings.get("autoupdate_failure_threshold_pct", "15"))
+                if tot > 0 and (f_cnt / tot * 100) >= thresh:
+                    cur.execute("INSERT INTO settings (key, value) VALUES ('autoupdate_circuit_broken', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true';")
+                    if hasattr(conn, 'commit'): conn.commit()
+                    log_audit("system", "AUTOUPDATE_CIRCUIT_BREAKER", "fleet", 0, f"Autonomous update paused: failure rate ({round(f_cnt/tot*100, 1)}%) exceeded threshold ({thresh}%)")
+                    return None
 
             # Eligible! Load signed manifest
             manifest_path = os.path.join(os.path.dirname(__file__), "static", "agents", f"agent-{version.AGENT_VERSION}.py.manifest.json")
