@@ -3931,7 +3931,9 @@ async def api_agent_push(request: Request):
     # Check if on-demand zero-impact malware scan is requested
     if server_id and server_id in _malware_scan_queue:
         res["malware_scan_requested"] = True
-        _malware_scan_queue.discard(server_id)
+        # Keep in queue if older agent so it triggers as soon as updated to 2.1.8
+        if version.parse_semver(agent_version) >= version.parse_semver("2.1.8"):
+            _malware_scan_queue.discard(server_id)
         try:
             m_paths = [p["path_pattern"] for p in db.get_malware_monitored_paths(server_id=server_id)]
             if m_paths:
@@ -4143,17 +4145,56 @@ async def api_agent_file_scan_report(request: Request, payload: Optional[dict] =
             })
 
     scan_status = "threats_found" if detected_threats else "clean"
-    scan_id = db.record_file_scan(
-        server_id=server_id,
-        project_id=project_id,
-        trigger_type=trigger_type,
-        scanned_paths=scanned_paths,
-        status=scan_status,
-        total_files_scanned=total_scanned,
-        threats_found=len(detected_threats)
-    )
-    if scan_id:
-        db.complete_file_scan(scan_id, status=scan_status, total_files_scanned=total_scanned, threats_found=len(detected_threats))
+
+    # Check if there is an existing in-progress scan for this server (e.g. from on-demand "SCAN NOW")
+    existing_scan = None
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id FROM file_scans
+                    WHERE server_id = %s AND status = 'in_progress'
+                    ORDER BY started_at DESC LIMIT 1;
+                """, (server_id,))
+                existing_scan = cur.fetchone()
+        except Exception as e_chk:
+            logger.error(f"Error checking existing in_progress scan: {e_chk}")
+        finally:
+            conn.close()
+
+    if existing_scan:
+        scan_id = existing_scan["id"] if isinstance(existing_scan, dict) else existing_scan[0]
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE file_scans
+                        SET status = %s,
+                            total_files_scanned = %s,
+                            threats_found = %s,
+                            scanned_paths = %s,
+                            completed_at = CURRENT_TIMESTAMP
+                        WHERE id = %s;
+                    """, (scan_status, total_scanned, len(detected_threats), json.dumps(scanned_paths or []), scan_id))
+                    if hasattr(conn, 'commit'): conn.commit()
+            except Exception as e_upd:
+                logger.error(f"Error completing existing scan {scan_id}: {e_upd}")
+            finally:
+                conn.close()
+    else:
+        scan_id = db.record_file_scan(
+            server_id=server_id,
+            project_id=project_id,
+            trigger_type=trigger_type,
+            scanned_paths=scanned_paths,
+            status=scan_status,
+            total_files_scanned=total_scanned,
+            threats_found=len(detected_threats)
+        )
+        if scan_id:
+            db.complete_file_scan(scan_id, status=scan_status, total_files_scanned=total_scanned, threats_found=len(detected_threats))
 
     if detected_threats and scan_id:
         db.record_file_scan_results(scan_id, server_id, detected_threats)

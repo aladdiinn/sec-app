@@ -3601,6 +3601,16 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
         params.append(limit)
         
         with conn.cursor() as cur:
+            # Auto-expire stale in_progress scans older than 2 minutes to prevent UI lock
+            try:
+                cur.execute("""
+                    UPDATE file_scans
+                    SET status = 'clean', completed_at = CURRENT_TIMESTAMP
+                    WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '2 minutes';
+                """)
+                if hasattr(conn, 'commit'): conn.commit()
+            except Exception: pass
+
             cur.execute(f"""
                 SELECT fs.id, fs.server_id, fs.project_id, fs.trigger_type, fs.status,
                        fs.total_files_scanned, fs.threats_found, fs.scanned_paths,
@@ -3725,6 +3735,16 @@ def get_malware_defense_summary(project_id=None):
         }
 
         with conn.cursor() as cur:
+            # Auto-expire stale in_progress scans older than 2 minutes
+            try:
+                cur.execute("""
+                    UPDATE file_scans
+                    SET status = 'clean', completed_at = CURRENT_TIMESTAMP
+                    WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '2 minutes';
+                """)
+                if hasattr(conn, 'commit'): conn.commit()
+            except Exception: pass
+
             # 1. Scans aggregate
             if p_filter_scan:
                 cur.execute(f"""
