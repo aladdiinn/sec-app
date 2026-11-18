@@ -53,6 +53,12 @@ def get_node_name():
         pass
     return TARGET_NAME if (TARGET_NAME and not str(TARGET_NAME).startswith("$")) else "soc-server"
 
+def _load_persistent_config():
+    try:
+        _recover_legacy_credentials()
+    except Exception:
+        pass
+
 def _save_persistent_config():
     try:
         cfg_file = os.environ.get("SECUREPULSE_CONFIG", "/opt/securepulse/config.json")

@@ -3959,12 +3959,19 @@ async def api_agent_push(request: Request):
 
         if version.parse_semver(agent_version) < version.parse_semver("2.1.8"):
             update_req = True
-            update_manifest = {
-                "version": version.AGENT_VERSION,
-                "target_version": version.AGENT_VERSION,
-                "min_supported_version": version.MIN_SUPPORTED_AGENT_VERSION,
-                "download_url": f"{str(request.base_url).rstrip('/')}/static/agents/agent-{version.AGENT_VERSION}.py"
-            }
+            manifest_path = os.path.join(os.path.dirname(__file__), "static", "agents", f"agent-{version.AGENT_VERSION}.py.manifest.json")
+            if os.path.exists(manifest_path):
+                try:
+                    with open(manifest_path, "r", encoding="utf-8") as mf:
+                        update_manifest = json.load(mf)
+                except Exception:
+                    update_manifest = {}
+            else:
+                update_manifest = {}
+            update_manifest.setdefault("version", version.AGENT_VERSION)
+            update_manifest.setdefault("target_version", version.AGENT_VERSION)
+            update_manifest.setdefault("min_supported_version", version.MIN_SUPPORTED_AGENT_VERSION)
+            update_manifest["download_url"] = f"{str(request.base_url).rstrip('/')}/static/agents/agent-{version.AGENT_VERSION}.py"
             res["update_available"] = True
             res["update_manifest"] = update_manifest
             res["update_requested"] = True
@@ -6055,6 +6062,11 @@ fi
 mv -f "$TMP_AGENT" "$AGENT_FILE"
 chmod 750 "$AGENT_FILE"
 
+# Provide universal symlinks for CLI usability
+ln -sf "$AGENT_FILE" /opt/securepulse/agent.py
+mkdir -p /opt/securepulse-agent
+ln -sf "$AGENT_FILE" /opt/securepulse-agent/agent.py
+
 # 7. Restart agent service cleanly
 systemctl restart securepulse 2>/dev/null || systemctl restart securepulse-agent 2>/dev/null || nohup python3 "$AGENT_FILE" > /var/log/securepulse_agent.log 2>&1 &
 
@@ -8016,6 +8028,9 @@ if [ -s /opt/securepulse/node_push_agent.py.dl ]; then
     fi
 fi
 chmod 750 /opt/securepulse/node_push_agent.py
+ln -sf /opt/securepulse/node_push_agent.py /opt/securepulse/agent.py
+mkdir -p /opt/securepulse-agent
+ln -sf /opt/securepulse/node_push_agent.py /opt/securepulse-agent/agent.py
 pkill -f node_push_agent.py 2>/dev/null || true
 pkill -f node_push_agent.sh 2>/dev/null || true
 

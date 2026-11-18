@@ -3617,7 +3617,7 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
             try:
                 cur.execute("""
                     UPDATE file_scans
-                    SET status = 'clean', completed_at = CURRENT_TIMESTAMP
+                    SET status = 'timeout', completed_at = CURRENT_TIMESTAMP
                     WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '90 seconds';
                 """)
                 if hasattr(conn, 'commit'): conn.commit()
@@ -3751,7 +3751,7 @@ def get_malware_defense_summary(project_id=None):
             try:
                 cur.execute("""
                     UPDATE file_scans
-                    SET status = 'clean', completed_at = CURRENT_TIMESTAMP
+                    SET status = 'timeout', completed_at = CURRENT_TIMESTAMP
                     WHERE status = 'in_progress' AND started_at < NOW() - INTERVAL '90 seconds';
                 """)
                 if hasattr(conn, 'commit'): conn.commit()
