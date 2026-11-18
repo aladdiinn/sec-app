@@ -1076,13 +1076,30 @@ def get_public_base_url(request: Request) -> str:
     env_url = (os.getenv("PUBLIC_SOC_URL") or os.getenv("SOC_URL") or "").strip().rstrip("/")
     if env_url:
         return env_url
-    xf_proto = (request.headers.get("x-forwarded-proto") or "").strip()
-    xf_host = (request.headers.get("x-forwarded-host") or "").strip()
-    xf_port = (request.headers.get("x-forwarded-port") or "").strip()
-    host_hdr = (request.headers.get("host") or "").strip()
-    scheme = xf_proto or request.url.scheme or "https"
+    if not request:
+        return "https://192.168.10.201:3443"
+
+    req_base_url = getattr(request, "base_url", None)
+    if isinstance(req_base_url, str) and req_base_url.startswith("http"):
+        return req_base_url.rstrip("/")
+
+    req_headers = getattr(request, "headers", None)
+    if req_headers is None or not hasattr(req_headers, "get"):
+        req_headers = {}
+
+    xf_proto = (req_headers.get("x-forwarded-proto") or "").strip()
+    xf_host = (req_headers.get("x-forwarded-host") or "").strip()
+    xf_port = (req_headers.get("x-forwarded-port") or "").strip()
+    host_hdr = (req_headers.get("host") or "").strip()
+
+    url_obj = getattr(request, "url", None)
+    url_scheme = getattr(url_obj, "scheme", None) if url_obj else None
+    scheme = xf_proto or url_scheme or "https"
     host = xf_host or host_hdr or "192.168.10.201:3443"
-    if ":3443" not in host and (xf_port == "3443" or "3443" in str(request.headers.get("referer", "")) or "3443" in str(request.headers.get("origin", "")) or "192.168.10.201" in host or "soc.bsmartone.com" in host):
+
+    referer = str(req_headers.get("referer", ""))
+    origin = str(req_headers.get("origin", ""))
+    if ":3443" not in host and (xf_port == "3443" or "3443" in referer or "3443" in origin or "192.168.10.201" in host or "soc.bsmartone.com" in host):
         host_no_port = host.split(":")[0]
         host = f"{host_no_port}:3443"
         scheme = "https"
