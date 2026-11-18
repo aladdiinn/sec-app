@@ -3994,26 +3994,6 @@ async def api_agent_push(request: Request):
         _malware_scan_queue.discard(str(server_id))
         try: _malware_scan_queue.discard(int(server_id))
         except: pass
-
-        if version.parse_semver(agent_version) < version.parse_semver("2.1.8"):
-            update_req = True
-            manifest_path = os.path.join(os.path.dirname(__file__), "static", "agents", f"agent-{version.AGENT_VERSION}.py.manifest.json")
-            if os.path.exists(manifest_path):
-                try:
-                    with open(manifest_path, "r", encoding="utf-8") as mf:
-                        update_manifest = json.load(mf)
-                except Exception:
-                    update_manifest = {}
-            else:
-                update_manifest = {}
-            update_manifest.setdefault("version", version.AGENT_VERSION)
-            update_manifest.setdefault("target_version", version.AGENT_VERSION)
-            update_manifest.setdefault("min_supported_version", version.MIN_SUPPORTED_AGENT_VERSION)
-            update_manifest["download_url"] = f"{get_public_base_url(request)}/static/agents/agent-{version.AGENT_VERSION}.py"
-            res["update_available"] = True
-            res["update_manifest"] = update_manifest
-            res["update_requested"] = True
-            res["update_cmd_url"] = f"{get_public_base_url(request)}/setup_agent_updater.sh"
         try:
             m_paths = [p["path_pattern"] for p in db.get_malware_monitored_paths(server_id=server_id)]
             if m_paths:
@@ -4496,20 +4476,6 @@ def api_server_scan_malware(server_id: int, request: Request):
         db.log_audit(uname, "MALWARE_SCAN_REQUESTED", "server", str(server_id), f"Zero-impact malware scan requested for server {srv.get('name') or server_id}")
     except Exception:
         pass
-
-    conn = db.get_db_connection()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE servers
-                    SET target_agent_version = %s, update_status = 'update_available', last_update_attempt = NULL, update_error = NULL
-                    WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
-                """, (version.AGENT_VERSION, server_id, version.AGENT_VERSION))
-                cur.execute("UPDATE settings SET value = 'false' WHERE key = 'autoupdate_circuit_broken';")
-                if hasattr(conn, 'commit'): conn.commit()
-        except Exception: pass
-        finally: conn.close()
 
     return {
         "status": "success",
@@ -6384,7 +6350,7 @@ import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threadi
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "2.1.7"
+AGENT_VERSION = "{version.AGENT_VERSION}"
 APP_BRAND = "{APP_BRAND}"
 SOC_URL = "{base_url}".rstrip("/")
 TARGET_IP = "$NODE_IP"
