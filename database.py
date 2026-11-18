@@ -1424,7 +1424,17 @@ def init_db():
             default_malware_hashes = [
                 # EICAR Standard Antivirus Test File (harmless test signature for safe verification)
                 ('275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f', 'sha256', 'critical', 'EICAR-Standard-Antivirus-Test-File', 'EICAR'),
+                ('44d88612fea8a8f36de82e1278abb02f', 'md5', 'critical', 'EICAR-Standard-Antivirus-Test-File', 'EICAR'),
                 ('44d88612fea8a8f36c7a94fdd4508a81', 'md5', 'critical', 'EICAR-Standard-Antivirus-Test-File', 'EICAR'),
+                # EICAR Zip archive (eicar_com.zip)
+                ('2546dcffc5ad854d4ddc64fbf056871cd5a00f2471cb7a5bfd4ac23b6e9eedad', 'sha256', 'critical', 'EICAR-Standard-Antivirus-Test-Zip', 'EICAR'),
+                ('6ce6f415d8475545be5ba114f208b0ff', 'md5', 'critical', 'EICAR-Standard-Antivirus-Test-Zip', 'EICAR'),
+                # EICAR with trailing newline (\n)
+                ('18e8b13c79d2d1060278d018e7a55bcf9783debe7030b4b81fb9ffdbf02b1723', 'sha256', 'critical', 'EICAR-Standard-Antivirus-Test-File', 'EICAR'),
+                ('772dad64fb1c3e4e766d9a514230ed56', 'md5', 'critical', 'EICAR-Standard-Antivirus-Test-File', 'EICAR'),
+                # EICAR with trailing CRLF (\r\n)
+                ('9a05418d782eac3fd2560c131df247719c80d8c2e61e81232b021050d5db0890', 'sha256', 'critical', 'EICAR-Standard-Antivirus-Test-File', 'EICAR'),
+                ('fc47b0ce7b4c785870e02d05772de835', 'md5', 'critical', 'EICAR-Standard-Antivirus-Test-File', 'EICAR'),
                 # WSO Web Shell
                 ('a571daff756ff619be46bbfa78ec5dc3c9d78e718b53cf106b64f9f727c95a63', 'sha256', 'critical', 'PHP/WSO.Webshell.Backdoor', 'BSmart Threat Intel'),
                 # ChinaChopper Web Shell
@@ -3491,6 +3501,8 @@ def lookup_threat_intel_hashes(hashes):
         return {}
     finally:
         conn.close()
+
+lookup_threat_hashes = lookup_threat_intel_hashes
 
 def record_file_scan(server_id, project_id=None, trigger_type='scheduled', scanned_paths=None, status='in_progress', total_files_scanned=0, threats_found=0):
     """

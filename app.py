@@ -4141,7 +4141,9 @@ async def api_agent_file_scan_report(request: Request, payload: Optional[dict] =
         h_sha = str(f.get("sha256", "")).lower()
         h_md5 = str(f.get("md5", "")).lower()
         threat_info = matched_threats.get(h_sha) or matched_threats.get(h_md5)
-        if threat_info:
+        if threat_info or f.get("has_eicar_sig"):
+            threat_name = "EICAR-Standard-Antivirus-Test-File" if f.get("has_eicar_sig") else threat_info.get("description", "Malicious Binary/Script")
+            threat_sev = "critical" if f.get("has_eicar_sig") else threat_info.get("severity", "critical")
             detected_threats.append({
                 "file_path": f.get("file_path"),
                 "file_name": f.get("file_name"),
@@ -4150,8 +4152,8 @@ async def api_agent_file_scan_report(request: Request, payload: Optional[dict] =
                 "file_size": f.get("file_size", 0),
                 "permissions": f.get("permissions", ""),
                 "owner": f.get("owner", ""),
-                "threat_name": threat_info.get("description", "Malicious Binary/Script"),
-                "severity": threat_info.get("severity", "critical"),
+                "threat_name": threat_name,
+                "severity": threat_sev,
                 "status": "threat_detected"
             })
 
@@ -4295,6 +4297,7 @@ def _run_direct_local_scan(server_id: int, project_id: Optional[int], scan_id: i
             if not os.path.isdir(d):
                 continue
             valid_paths.append(d)
+            is_temp_or_system = any(d.startswith(prefix) for prefix in ("/tmp", "/var/tmp", "/dev/shm", "/var/spool/cron", "/etc/cron", "/etc/systemd"))
             base_depth = d.rstrip(os.sep).count(os.sep)
             dir_count = 0
             try:
@@ -4308,7 +4311,7 @@ def _run_direct_local_scan(server_id: int, project_id: Optional[int], scan_id: i
                             dirs[:] = []
                             break
                         ext = os.path.splitext(fname)[1].lower()
-                        if ext in EXCLUDE_EXTS:
+                        if not is_temp_or_system and ext in EXCLUDE_EXTS:
                             continue
                         fpath = os.path.join(root, fname)
                         try:
@@ -4319,11 +4322,17 @@ def _run_direct_local_scan(server_id: int, project_id: Optional[int], scan_id: i
                                 continue
                             h_sha256 = hashlib.sha256()
                             h_md5 = hashlib.md5()
+                            has_eicar_sig = False
                             with open(fpath, "rb") as f:
+                                first_chunk = True
                                 while True:
                                     chunk = f.read(65536)
                                     if not chunk:
                                         break
+                                    if first_chunk:
+                                        if b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE!" in chunk:
+                                            has_eicar_sig = True
+                                        first_chunk = False
                                     h_sha256.update(chunk)
                                     h_md5.update(chunk)
                             scanned_files.append({
@@ -4333,7 +4342,8 @@ def _run_direct_local_scan(server_id: int, project_id: Optional[int], scan_id: i
                                 "md5": h_md5.hexdigest(),
                                 "file_size": st.st_size,
                                 "permissions": oct(st.st_mode)[-4:],
-                                "owner": str(st.st_uid)
+                                "owner": str(st.st_uid),
+                                "has_eicar_sig": has_eicar_sig
                             })
                             total_scanned += 1
                             dir_count += 1
@@ -4345,12 +4355,18 @@ def _run_direct_local_scan(server_id: int, project_id: Optional[int], scan_id: i
         # Check threat intel
         threats = []
         if scanned_files:
-            hashes = [f["sha256"].lower() for f in scanned_files]
-            known_threats = db.lookup_threat_hashes(hashes)
-            threat_map = {t["hash_value"].lower(): t for t in known_threats}
+            hashes_to_check = set()
             for sf in scanned_files:
-                if sf["sha256"].lower() in threat_map:
-                    match = threat_map[sf["sha256"].lower()]
+                if sf.get("sha256"): hashes_to_check.add(sf["sha256"].lower())
+                if sf.get("md5"): hashes_to_check.add(sf["md5"].lower())
+            matched_threats = db.lookup_threat_intel_hashes(list(hashes_to_check))
+            for sf in scanned_files:
+                sha_match = matched_threats.get(sf.get("sha256", "").lower())
+                md5_match = matched_threats.get(sf.get("md5", "").lower())
+                matched_ioc = sha_match or md5_match
+                if matched_ioc or sf.get("has_eicar_sig"):
+                    threat_name = "EICAR-Standard-Antivirus-Test-File" if sf.get("has_eicar_sig") else (matched_ioc.get("description") or matched_ioc.get("threat_name", "Malicious Binary"))
+                    threat_sev = "critical" if sf.get("has_eicar_sig") else matched_ioc.get("severity", "critical")
                     threats.append({
                         "file_path": sf["file_path"],
                         "file_name": sf["file_name"],
@@ -4359,8 +4375,8 @@ def _run_direct_local_scan(server_id: int, project_id: Optional[int], scan_id: i
                         "file_size": sf["file_size"],
                         "permissions": sf["permissions"],
                         "owner": sf["owner"],
-                        "threat_name": match.get("threat_name", "Malicious Binary"),
-                        "severity": match.get("severity", "critical"),
+                        "threat_name": threat_name,
+                        "severity": threat_sev,
                         "status": "detected"
                     })
 

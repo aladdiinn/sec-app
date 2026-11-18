@@ -1357,6 +1357,7 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
         for dir_path in target_paths:
             if total_scanned >= max_files_cap:
                 break
+            is_temp_or_system = any(dir_path.startswith(prefix) for prefix in ("/tmp", "/var/tmp", "/dev/shm", "/var/spool/cron", "/etc/cron", "/etc/systemd"))
             try:
                 base_depth = dir_path.rstrip(os.sep).count(os.sep)
                 dir_files_count = 0
@@ -1370,7 +1371,7 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
                             dirs[:] = []
                             break
                         ext = os.path.splitext(fname)[1].lower()
-                        if ext in EXCLUDE_EXTENSIONS:
+                        if not is_temp_or_system and ext in EXCLUDE_EXTENSIONS:
                             continue
                         fpath = os.path.join(root, fname)
                         try:
@@ -1383,11 +1384,17 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
 
                             h_sha256 = hashlib.sha256()
                             h_md5 = hashlib.md5()
+                            has_eicar_sig = False
                             with open(fpath, "rb") as f:
+                                first_chunk = True
                                 while True:
                                     chunk = f.read(65536)
                                     if not chunk:
                                         break
+                                    if first_chunk:
+                                        if b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE!" in chunk:
+                                            has_eicar_sig = True
+                                        first_chunk = False
                                     h_sha256.update(chunk)
                                     h_md5.update(chunk)
 
@@ -1401,7 +1408,8 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
                                 "md5": h_md5.hexdigest(),
                                 "file_size": st.st_size,
                                 "permissions": mode_str,
-                                "owner": owner_str
+                                "owner": owner_str,
+                                "has_eicar_sig": has_eicar_sig
                             })
                             total_scanned += 1
                             dir_files_count += 1
