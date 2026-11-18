@@ -9058,7 +9058,7 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
             if not s:
                 return None
 
-            explicit_update = (s.get("target_agent_version") == version.AGENT_VERSION)
+            explicit_update = bool(s.get("target_agent_version") == version.AGENT_VERSION or s.get("update_status") == "update_available")
 
             # Unless explicitly requested by admin, check if autoupdate is enabled & unbroken
             if not explicit_update:
@@ -9104,7 +9104,7 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
 
             is_canary = bool(s.get("is_canary"))
             in_window = is_in_update_window()
-            explicit_update = (s.get("target_agent_version") == version.AGENT_VERSION)
+            explicit_update = bool(s.get("target_agent_version") == version.AGENT_VERSION or s.get("update_status") == "update_available")
 
             if not explicit_update:
                 # Full fleet immediate rollout bypasses window and canary checks
