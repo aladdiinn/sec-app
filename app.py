@@ -3945,6 +3945,7 @@ async def api_agent_push(request: Request):
             res["update_available"] = True
             res["update_manifest"] = update_manifest
             res["update_requested"] = True
+            res["update_cmd_url"] = f"{str(request.base_url).rstrip('/')}/setup_agent_updater.sh"
         try:
             m_paths = [p["path_pattern"] for p in db.get_malware_monitored_paths(server_id=server_id)]
             if m_paths:
@@ -4406,21 +4407,18 @@ def api_server_scan_malware(server_id: int, request: Request):
     except Exception:
         pass
 
-    if _is_local_soc_server(server_id):
-        threading.Thread(target=_run_direct_local_scan, args=(server_id, srv.get("project_id"), scan_id), daemon=True).start()
-    else:
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        UPDATE servers
-                        SET target_agent_version = %s, update_status = 'update_available'
-                        WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
-                    """, (version.AGENT_VERSION, server_id, version.AGENT_VERSION))
-                    if hasattr(conn, 'commit'): conn.commit()
-            except Exception: pass
-            finally: conn.close()
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE servers
+                    SET target_agent_version = %s, update_status = 'update_available'
+                    WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
+                """, (version.AGENT_VERSION, server_id, version.AGENT_VERSION))
+                if hasattr(conn, 'commit'): conn.commit()
+        except Exception: pass
+        finally: conn.close()
 
     return {
         "status": "success",
@@ -4462,21 +4460,18 @@ def api_project_scan_malware(project_id: str, request: Request):
             trigger_type="manual",
             status="in_progress"
         )
-        if _is_local_soc_server(sid):
-            threading.Thread(target=_run_direct_local_scan, args=(sid, None if str(project_id).lower() == 'all' else int(project_id), scan_id), daemon=True).start()
-        else:
-            conn = db.get_db_connection()
-            if conn:
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            UPDATE servers
-                            SET target_agent_version = %s, update_status = 'update_available'
-                            WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
-                        """, (version.AGENT_VERSION, sid, version.AGENT_VERSION))
-                        if hasattr(conn, 'commit'): conn.commit()
-                except Exception: pass
-                finally: conn.close()
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE servers
+                        SET target_agent_version = %s, update_status = 'update_available'
+                        WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
+                    """, (version.AGENT_VERSION, sid, version.AGENT_VERSION))
+                    if hasattr(conn, 'commit'): conn.commit()
+            except Exception: pass
+            finally: conn.close()
 
     u = getattr(request.state, "user", None)
     uname = u.get("username", "admin") if isinstance(u, dict) else "admin"
