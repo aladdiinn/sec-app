@@ -9066,9 +9066,8 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
                     return None
                 if settings.get("autoupdate_circuit_broken", "false").lower() == "true":
                     return None
-
-            if s.get("exclude_from_autoupdate") or s.get("is_maintenance"):
-                return None
+                if s.get("exclude_from_autoupdate") or s.get("is_maintenance"):
+                    return None
 
             # Check supported version
             if not version.is_supported_version(current_version):
