@@ -4517,19 +4517,6 @@ def api_project_scan_malware(project_id: str, request: Request):
             trigger_type="manual",
             status="in_progress"
         )
-        conn = db.get_db_connection()
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        UPDATE servers
-                        SET target_agent_version = %s, update_status = 'update_available', last_update_attempt = NULL, update_error = NULL
-                        WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
-                    """, (version.AGENT_VERSION, sid, version.AGENT_VERSION))
-                    cur.execute("UPDATE settings SET value = 'false' WHERE key = 'autoupdate_circuit_broken';")
-                    if hasattr(conn, 'commit'): conn.commit()
-            except Exception: pass
-            finally: conn.close()
 
     u = getattr(request.state, "user", None)
     uname = u.get("username", "admin") if isinstance(u, dict) else "admin"
@@ -4547,18 +4534,24 @@ def api_project_scan_malware(project_id: str, request: Request):
 
 @app.get("/api/malware/summary")
 def api_malware_summary(request: Request, project_id: Optional[str] = None):
-    eff_pid = project_id if (project_id and project_id != "all") else get_effective_project_id(request)
+    eff_pid = None if (not project_id or project_id == "all") else project_id
     return db.get_malware_defense_summary(project_id=eff_pid)
 
 @app.get("/api/malware/scans")
 def api_malware_scans(request: Request, project_id: Optional[str] = None, server_id: Optional[str] = None, limit: int = 50):
-    eff_pid = project_id if (project_id and project_id != "all") else get_effective_project_id(request)
+    if server_id and server_id != "all":
+        eff_pid = None
+    else:
+        eff_pid = None if (not project_id or project_id == "all") else project_id
     scans = db.get_latest_file_scans(project_id=eff_pid, server_id=server_id, limit=limit)
     return {"scans": scans}
 
 @app.get("/api/malware/findings")
 def api_malware_findings(request: Request, project_id: Optional[str] = None, server_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100):
-    eff_pid = project_id if (project_id and project_id != "all") else get_effective_project_id(request)
+    if server_id and server_id != "all":
+        eff_pid = None
+    else:
+        eff_pid = None if (not project_id or project_id == "all") else project_id
     findings = db.get_malware_findings(project_id=eff_pid, server_id=server_id, status=status, limit=limit)
     return {"findings": findings}
 

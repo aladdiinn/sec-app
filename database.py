@@ -1460,6 +1460,28 @@ def init_db():
                 except Exception:
                     pass
 
+            # Consolidate orphan file_scans and results to active server ID for the same IP
+            try:
+                cur.execute("""
+                    UPDATE file_scans fs
+                    SET server_id = s_latest.id
+                    FROM (
+                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip
+                    ) s_latest
+                    JOIN servers s_old ON s_old.ip = s_latest.ip
+                    WHERE fs.server_id = s_old.id AND fs.server_id != s_latest.id;
+
+                    UPDATE file_scan_results fsr
+                    SET server_id = s_latest.id
+                    FROM (
+                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip
+                    ) s_latest
+                    JOIN servers s_old ON s_old.ip = s_latest.ip
+                    WHERE fsr.server_id = s_old.id AND fsr.server_id != s_latest.id;
+                """)
+            except Exception:
+                pass
+
             # Auto-whitelist agent internal files or unit test scripts if previously flagged
             try:
                 cur.execute("""
@@ -3631,8 +3653,18 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
             where_clauses.append("(fs.project_id = %s OR s.project_id = %s)")
             params.extend([project_id, project_id])
         if server_id and str(server_id).lower() != 'all':
-            where_clauses.append("fs.server_id = %s")
-            params.append(server_id)
+            where_clauses.append("""
+                (
+                    fs.server_id = %s 
+                    OR fs.server_id IN (
+                        SELECT s2.id FROM servers s2 
+                        WHERE (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
+                           OR (s2.ip_address IS NOT NULL AND s2.ip_address != '' AND s2.ip_address != '127.0.0.1' AND s2.ip_address = (SELECT s1.ip_address FROM servers s1 WHERE s1.id = %s))
+                           OR (s2.name IS NOT NULL AND s2.name != 'Target-Node' AND s2.name = (SELECT s1.name FROM servers s1 WHERE s1.id = %s))
+                    )
+                )
+            """)
+            params.extend([server_id, server_id, server_id, server_id])
         
         where_sql = " AND ".join(where_clauses)
         params.append(limit)
@@ -3681,8 +3713,18 @@ def get_malware_findings(project_id=None, server_id=None, status=None, limit=100
             where_clauses.append("s.project_id = %s")
             params.append(project_id)
         if server_id and str(server_id).lower() != 'all':
-            where_clauses.append("r.server_id = %s")
-            params.append(server_id)
+            where_clauses.append("""
+                (
+                    r.server_id = %s 
+                    OR r.server_id IN (
+                        SELECT s2.id FROM servers s2 
+                        WHERE (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
+                           OR (s2.ip_address IS NOT NULL AND s2.ip_address != '' AND s2.ip_address != '127.0.0.1' AND s2.ip_address = (SELECT s1.ip_address FROM servers s1 WHERE s1.id = %s))
+                           OR (s2.name IS NOT NULL AND s2.name != 'Target-Node' AND s2.name = (SELECT s1.name FROM servers s1 WHERE s1.id = %s))
+                    )
+                )
+            """)
+            params.extend([server_id, server_id, server_id, server_id])
         if status and str(status).lower() != 'all':
             where_clauses.append("r.status = %s")
             params.append(status)
