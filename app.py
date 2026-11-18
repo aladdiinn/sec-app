@@ -4443,7 +4443,7 @@ def api_server_scan_malware(server_id: int, request: Request):
             with conn.cursor() as cur:
                 cur.execute("""
                     UPDATE servers
-                    SET target_agent_version = %s, update_status = 'update_available'
+                    SET target_agent_version = %s, update_status = 'update_available', last_update_attempt = NULL, update_error = NULL
                     WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
                 """, (version.AGENT_VERSION, server_id, version.AGENT_VERSION))
                 if hasattr(conn, 'commit'): conn.commit()
@@ -4496,7 +4496,7 @@ def api_project_scan_malware(project_id: str, request: Request):
                 with conn.cursor() as cur:
                     cur.execute("""
                         UPDATE servers
-                        SET target_agent_version = %s, update_status = 'update_available'
+                        SET target_agent_version = %s, update_status = 'update_available', last_update_attempt = NULL, update_error = NULL
                         WHERE id = %s AND (agent_version < %s OR agent_version IS NULL);
                     """, (version.AGENT_VERSION, sid, version.AGENT_VERSION))
                     if hasattr(conn, 'commit'): conn.commit()

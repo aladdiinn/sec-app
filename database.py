@@ -9042,11 +9042,6 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
         return None
 
     settings = get_settings()
-    if settings.get("autoupdate_enabled", "true").lower() != "true":
-        return None
-
-    if settings.get("autoupdate_circuit_broken", "false").lower() == "true":
-        return None
 
     conn = get_db_connection()
     if not conn:
@@ -9054,7 +9049,7 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, name, hostname, ip, agent_version, update_status, 
+                SELECT id, name, hostname, ip, agent_version, update_status, target_agent_version,
                        is_canary, exclude_from_autoupdate, is_maintenance, 
                        last_update_attempt
                 FROM servers WHERE id = %s;
@@ -9062,6 +9057,15 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
             s = cur.fetchone()
             if not s:
                 return None
+
+            explicit_update = (s.get("target_agent_version") == version.AGENT_VERSION)
+
+            # Unless explicitly requested by admin, check if autoupdate is enabled & unbroken
+            if not explicit_update:
+                if settings.get("autoupdate_enabled", "true").lower() != "true":
+                    return None
+                if settings.get("autoupdate_circuit_broken", "false").lower() == "true":
+                    return None
 
             if s.get("exclude_from_autoupdate") or s.get("is_maintenance"):
                 return None
@@ -9084,8 +9088,8 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
                     if hasattr(conn, 'commit'): conn.commit()
                 return None
 
-            # Check failure backoff: if failed less than 60 minutes ago, skip
-            if s.get("update_status") == "failed" and s.get("last_update_attempt"):
+            # Check failure backoff: if failed less than 60 minutes ago, skip (bypassed if explicit_update)
+            if not explicit_update and s.get("update_status") == "failed" and s.get("last_update_attempt"):
                 attempt_time = s.get("last_update_attempt")
                 if isinstance(attempt_time, datetime):
                     now_ts = datetime.now(timezone.utc)
