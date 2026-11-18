@@ -6,8 +6,8 @@ verify autonomous agent self-updates.
 """
 import re
 
-PLATFORM_VERSION = "2.1.7"
-AGENT_VERSION = "2.1.7"
+PLATFORM_VERSION = "2.1.8"
+AGENT_VERSION = "2.1.8"
 COLLECTOR_VERSION = "1.8.0"
 MIN_SUPPORTED_AGENT_VERSION = "1.6.0"
 

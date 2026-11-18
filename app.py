@@ -801,6 +801,8 @@ async def lifespan(app: FastAPI):
 APP_VERSION = version.PLATFORM_VERSION
 AGENT_VERSION = version.AGENT_VERSION
 _inventory_scan_queue = set()  # server_ids queued for on-demand inventory scan
+_malware_scan_queue = set()    # server_ids queued for on-demand zero-impact malware scan
+_malware_actions_queue = {}    # server_id -> {'action': 'quarantine'|'delete', 'file_path': str}
 app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifespan)
 
 # Pure Raw ASGI Middlewares (Zero AnyIO streams, no BaseHTTPMiddleware CancelledError bugs)
@@ -1741,6 +1743,17 @@ async def threat_intel_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     return render_template(request, "threat_intel.html")
+
+@app.get("/malware", response_class=HTMLResponse)
+@app.get("/malware-defense", response_class=HTMLResponse)
+async def malware_defense_page(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return render_template(request, "malware.html", {
+        "page_title": "Malware & File Integrity Defense",
+        "active_page": "malware"
+    })
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
@@ -3915,6 +3928,21 @@ async def api_agent_push(request: Request):
     if needs_inventory:
         res["inventory_scan_requested"] = True
 
+    # Check if on-demand zero-impact malware scan is requested
+    if server_id and server_id in _malware_scan_queue:
+        res["malware_scan_requested"] = True
+        _malware_scan_queue.discard(server_id)
+        try:
+            m_paths = [p["path_pattern"] for p in db.get_malware_monitored_paths(server_id=server_id)]
+            if m_paths:
+                res["scan_paths"] = m_paths
+        except Exception:
+            pass
+
+    # Check if remediation action is queued for this server
+    if server_id and server_id in _malware_actions_queue:
+        res["malware_action"] = _malware_actions_queue.pop(server_id)
+
     return res
 
 @app.post("/api/agent/status-update")
@@ -4038,6 +4066,304 @@ def api_server_scan_vulns(server_id: int, request: Request):
     except: pass
     import vuln_matcher
     return vuln_matcher.scan_server_vulnerabilities(server_id)
+
+
+# =====================================================================
+# ZERO-IMPACT MALWARE & FILE INTEGRITY DEFENSE API ENDPOINTS
+# =====================================================================
+
+@app.post("/api/agent/file-scan-report")
+async def api_agent_file_scan_report(request: Request, payload: Optional[dict] = None):
+    """
+    Ingests file scan reports from autonomous agents.
+    Performs micro-hash threat intelligence lookups (<1ms) against known threat database.
+    Automatically generates CRITICAL incidents and alerts on threat detection.
+    """
+    if payload is not None:
+        data = payload
+    else:
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+
+    server_id, err_msg = authenticate_agent_request(request, data)
+    if not server_id:
+        return JSONResponse(status_code=401, content={"status": "error", "message": err_msg or "Unauthorized agent"})
+
+    trigger_type = data.get("trigger_type", "scheduled")
+    scanned_paths = data.get("scanned_paths", [])
+    files = data.get("files", [])
+    total_scanned = data.get("total_files_scanned", len(files))
+
+    # Resolve server & project details
+    project_id = None
+    server_name = data.get("hostname") or data.get("server_ip") or f"Server #{server_id}"
+    conn = db.get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name, ip, project_id FROM servers WHERE id = %s;", (server_id,))
+                srow = cur.fetchone()
+                if srow:
+                    project_id = srow.get("project_id") if isinstance(srow, dict) else srow[3]
+                    s_n = (srow.get("name") if isinstance(srow, dict) else srow[1])
+                    s_ip = (srow.get("ip") if isinstance(srow, dict) else srow[2])
+                    server_name = s_n or s_ip or server_name
+        except Exception as e_srv:
+            logger.error(f"Error fetching server info in file-scan-report: {e_srv}")
+        finally:
+            conn.close()
+
+    # Collect hashes for batch lookup
+    hashes_to_check = set()
+    for f in files:
+        if f.get("sha256"): hashes_to_check.add(str(f["sha256"]).lower())
+        if f.get("md5"): hashes_to_check.add(str(f["md5"]).lower())
+
+    matched_threats = db.lookup_threat_intel_hashes(hashes_to_check)
+
+    detected_threats = []
+    for f in files:
+        h_sha = str(f.get("sha256", "")).lower()
+        h_md5 = str(f.get("md5", "")).lower()
+        threat_info = matched_threats.get(h_sha) or matched_threats.get(h_md5)
+        if threat_info:
+            detected_threats.append({
+                "file_path": f.get("file_path"),
+                "file_name": f.get("file_name"),
+                "sha256": h_sha,
+                "md5": h_md5,
+                "file_size": f.get("file_size", 0),
+                "permissions": f.get("permissions", ""),
+                "owner": f.get("owner", ""),
+                "threat_name": threat_info.get("description", "Malicious Binary/Script"),
+                "severity": threat_info.get("severity", "critical"),
+                "status": "threat_detected"
+            })
+
+    scan_status = "threats_found" if detected_threats else "clean"
+    scan_id = db.record_file_scan(
+        server_id=server_id,
+        project_id=project_id,
+        trigger_type=trigger_type,
+        scanned_paths=scanned_paths,
+        status=scan_status,
+        total_files_scanned=total_scanned,
+        threats_found=len(detected_threats)
+    )
+    if scan_id:
+        db.complete_file_scan(scan_id, status=scan_status, total_files_scanned=total_scanned, threats_found=len(detected_threats))
+
+    if detected_threats and scan_id:
+        db.record_file_scan_results(scan_id, server_id, detected_threats)
+        for th in detected_threats:
+            inc_title = f"CRITICAL Malware Detected: {th['threat_name']} on {server_name}"
+            inc_desc = (
+                f"Malicious file detected during {trigger_type} file integrity scan:\n"
+                f"• Target Host: {server_name}\n"
+                f"• File Path: {th['file_path']}\n"
+                f"• Threat Classification: {th['threat_name']}\n"
+                f"• SHA-256 Hash: {th['sha256']}\n"
+                f"• File Size: {th['file_size']} bytes\n"
+                f"• Permissions: {th['permissions']} (Owner: {th['owner']})\n"
+                f"Immediate Action Required: Quarantine or delete malicious file."
+            )
+            db.create_incident(
+                title=inc_title,
+                severity="critical",
+                description=inc_desc,
+                assigned_to="SOC L2 Analyst",
+                server_id=server_id
+            )
+            try:
+                db.log_audit("system", "MALWARE_DETECTED", "server", str(server_id), f"Malware detected on {server_name}: {th['file_path']} ({th['threat_name']})")
+            except Exception:
+                pass
+
+    return {
+        "status": "ok",
+        "scan_id": scan_id,
+        "threats_found": len(detected_threats),
+        "total_files_scanned": total_scanned
+    }
+
+@app.post("/api/servers/{server_id}/scan-malware")
+def api_server_scan_malware(server_id: int, request: Request):
+    """
+    On-Demand trigger for zero-impact malware scan on a specific server.
+    """
+    srv = db.get_server_by_id(server_id)
+    if not srv:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Server not found"})
+    _malware_scan_queue.add(server_id)
+    scan_id = db.record_file_scan(server_id=server_id, project_id=srv.get("project_id"), trigger_type="manual", status="in_progress")
+    u = getattr(request.state, "user", None)
+    uname = u.get("username", "admin") if isinstance(u, dict) else "admin"
+    try:
+        db.log_audit(uname, "MALWARE_SCAN_REQUESTED", "server", str(server_id), f"Zero-impact malware scan requested for server {srv.get('name') or server_id}")
+    except Exception:
+        pass
+    return {
+        "status": "success",
+        "ok": True,
+        "scan_id": scan_id,
+        "message": f"Malware scan queued for {srv.get('name') or server_id}. Agent will scan immediately."
+    }
+
+@app.post("/api/projects/{project_id}/scan-malware")
+def api_project_scan_malware(project_id: str, request: Request):
+    """
+    On-Demand trigger for zero-impact malware scan across all servers in a project.
+    """
+    conn = db.get_db_connection()
+    if not conn:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Database unavailable"})
+    server_ids = []
+    try:
+        with conn.cursor() as cur:
+            if str(project_id).lower() == "all":
+                cur.execute("SELECT id FROM servers WHERE status != 'offline' OR last_seen >= NOW() - INTERVAL '24 hours';")
+            else:
+                cur.execute("SELECT id FROM servers WHERE project_id = %s;", (int(project_id),))
+            rows = cur.fetchall() or []
+            for r in rows:
+                s_id = r.get("id") if isinstance(r, dict) else r[0]
+                if s_id:
+                    server_ids.append(int(s_id))
+    except Exception as e:
+        logger.error(f"Error resolving project servers for malware scan: {e}")
+    finally:
+        conn.close()
+
+    for sid in server_ids:
+        _malware_scan_queue.add(sid)
+        db.record_file_scan(
+            server_id=sid,
+            project_id=None if str(project_id).lower() == 'all' else int(project_id),
+            trigger_type="manual",
+            status="in_progress"
+        )
+
+    u = getattr(request.state, "user", None)
+    uname = u.get("username", "admin") if isinstance(u, dict) else "admin"
+    try:
+        db.log_audit(uname, "PROJECT_MALWARE_SCAN_REQUESTED", "project", str(project_id), f"Malware scan queued across {len(server_ids)} server(s) for project {project_id}")
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "ok": True,
+        "servers_queued": len(server_ids),
+        "message": f"Malware scan initiated across {len(server_ids)} server(s)."
+    }
+
+@app.get("/api/malware/summary")
+def api_malware_summary(request: Request, project_id: Optional[str] = None):
+    eff_pid = project_id if (project_id and project_id != "all") else get_effective_project_id(request)
+    return db.get_malware_defense_summary(project_id=eff_pid)
+
+@app.get("/api/malware/scans")
+def api_malware_scans(request: Request, project_id: Optional[str] = None, server_id: Optional[str] = None, limit: int = 50):
+    eff_pid = project_id if (project_id and project_id != "all") else get_effective_project_id(request)
+    scans = db.get_latest_file_scans(project_id=eff_pid, server_id=server_id, limit=limit)
+    return {"scans": scans}
+
+@app.get("/api/malware/findings")
+def api_malware_findings(request: Request, project_id: Optional[str] = None, server_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100):
+    eff_pid = project_id if (project_id and project_id != "all") else get_effective_project_id(request)
+    findings = db.get_malware_findings(project_id=eff_pid, server_id=server_id, status=status, limit=limit)
+    return {"findings": findings}
+
+@app.post("/api/malware/action")
+async def api_malware_action(request: Request, payload: Optional[dict] = None):
+    """
+    Handles threat remediation: quarantine, delete, or whitelist.
+    """
+    if payload is not None:
+        data = payload
+    else:
+        try:
+            data = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid JSON body"})
+
+    finding_id = data.get("finding_id")
+    action = data.get("action", "").lower().strip()
+    if not finding_id or action not in ("quarantine", "delete", "whitelist"):
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid finding_id or action (must be quarantine, delete, or whitelist)"})
+
+    conn = db.get_db_connection()
+    if not conn:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Database unavailable"})
+
+    finding = None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, scan_id, server_id, file_path, file_name, sha256 FROM file_scan_results WHERE id = %s;", (finding_id,))
+            finding = cur.fetchone()
+    except Exception as e:
+        logger.error(f"Error fetching finding {finding_id}: {e}")
+    finally:
+        conn.close()
+
+    if not finding:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Finding not found"})
+
+    srv_id = finding.get("server_id") if isinstance(finding, dict) else finding[2]
+    f_path = finding.get("file_path") if isinstance(finding, dict) else finding[3]
+
+    u = getattr(request.state, "user", None)
+    uname = u.get("username", "admin") if isinstance(u, dict) else "admin"
+
+    if action == "whitelist":
+        db.update_file_scan_result_status(finding_id, "whitelisted", username=uname)
+        try:
+            db.log_audit(uname, "MALWARE_FINDING_WHITELISTED", "file", str(finding_id), f"Finding {finding_id} ({f_path}) whitelisted by {uname}")
+        except Exception: pass
+        return {"status": "success", "message": f"File {f_path} marked as whitelisted."}
+
+    # For quarantine or delete, queue action to the agent
+    if srv_id:
+        _malware_actions_queue[srv_id] = {
+            "action": action,
+            "file_path": f_path
+        }
+    new_st = "quarantined" if action == "quarantine" else "deleted"
+    db.update_file_scan_result_status(finding_id, new_st, username=uname)
+    try:
+        db.log_audit(uname, f"MALWARE_ACTION_{action.upper()}", "server", str(srv_id), f"Remediation action '{action}' queued for {f_path} on server {srv_id}")
+    except Exception: pass
+
+    return {
+        "status": "success",
+        "message": f"Remediation action '{action}' queued for execution on target agent."
+    }
+
+@app.get("/api/malware/paths")
+def api_get_malware_paths(request: Request, server_id: Optional[int] = None, project_id: Optional[int] = None):
+    paths = db.get_malware_monitored_paths(server_id=server_id, project_id=project_id)
+    return {"paths": paths}
+
+@app.post("/api/malware/paths")
+async def api_add_malware_path(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid JSON body"})
+    path_pattern = data.get("path_pattern", "").strip()
+    if not path_pattern:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "path_pattern is required"})
+    server_id = data.get("server_id")
+    project_id = data.get("project_id")
+    pid = db.add_malware_monitored_path(server_id, project_id, path_pattern)
+    return {"status": "success", "id": pid, "message": f"Monitored path '{path_pattern}' added successfully."}
+
+@app.delete("/api/malware/paths/{path_id}")
+def api_delete_malware_path(path_id: int):
+    ok = db.delete_malware_monitored_path(path_id)
+    return {"status": "success" if ok else "error", "ok": ok}
 
 
 @app.post("/api/vulnerabilities/scan-all")

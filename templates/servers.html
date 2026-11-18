@@ -350,7 +350,14 @@
                         Agent: <span id="i3-vuln-agent-ver">--</span> · Kernel: <span id="i3-vuln-kernel">--</span> · Scanned: <span id="i3-vuln-scanned">--</span>
                     </div>
                 </div>
-                <div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button class="btn btn-glass" onclick="scanMalwareCurrentServer()" id="btn-modal-scan-malware"
+                        style="padding:6px 14px; font-size:11px; display:flex; align-items:center; gap:6px; color:var(--cyan); border-color:rgba(6,182,212,0.4);" title="Trigger zero-impact file integrity & malware scan on this host">
+                        <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" stroke-width="2">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        </svg>
+                        Scan Malware
+                    </button>
                     <button class="btn btn-primary" onclick="scanNowCurrentServer()" id="btn-modal-scan-now"
                         style="padding:6px 14px; font-size:11px; display:flex; align-items:center; gap:6px;">
                         <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" stroke-width="2">
@@ -2583,6 +2590,31 @@ function formatLocal(dateStr) {
             if (btn) {
                 btn.disabled = false;
                 btn.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Scan now`;
+            }
+        }
+    }
+
+    async function scanMalwareCurrentServer() {
+        if (!activeModalServerId) return;
+        const btn = document.getElementById('btn-modal-scan-malware');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = `<span class="loader-spinner" style="width:12px; height:12px; display:inline-block; margin-right:4px"></span> Scanning...`;
+        }
+
+        try {
+            const res = await apiFetch(`/api/servers/${activeModalServerId}/scan-malware`, { method: 'POST' });
+            if (res && res.status === 'success') {
+                showToast(`🛡️ Malware scan requested for server #${activeModalServerId}. Agent scanning with zero CPU impact!`, 'success');
+            } else {
+                showToast('Malware scan error: ' + (res.message || 'Failed'), 'error');
+            }
+        } catch (e) {
+            showToast('Malware scan request error: ' + e, 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" fill="none" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Scan Malware`;
             }
         }
     }

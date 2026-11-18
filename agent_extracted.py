@@ -2,7 +2,7 @@ import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threadi
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "2.1.7"
+AGENT_VERSION = "2.1.8"
 APP_BRAND = "BSMART SOC"
 SOC_URL = "https://192.168.10.201:3443".rstrip("/")
 TARGET_IP = "$NODE_IP"
@@ -1517,6 +1517,237 @@ def check_fim():
                 
     return changes
 
+# ── MALWARE & FILE INTEGRITY DEFENSE SCANNING ENGINE ──
+daily_malware_scan_done_date = ""
+is_malware_scan_running = False
+malware_scan_lock = threading.Lock()
+
+def discover_malware_scan_paths(custom_paths=None):
+    """
+    Multi-OS auto-discovery of high-risk directories for zero-impact file integrity & malware scanning.
+    Supports Ubuntu, Debian, CentOS, RHEL, Rocky, AlmaLinux.
+    Targets 6-10 high-risk locations without traversing the whole filesystem.
+    """
+    candidates = [
+        "/tmp",
+        "/var/tmp",
+        "/dev/shm",
+        "/var/spool/cron",
+        "/var/spool/cron/crontabs",
+        "/etc/cron.d",
+        "/etc/systemd/system",
+        "/var/www/html/uploads",
+        "/opt/tomcat/webapps"
+    ]
+    
+    # Check web root if specific upload dir is absent
+    if not os.path.exists("/var/www/html/uploads") and os.path.exists("/var/www/html"):
+        candidates.append("/var/www/html")
+
+    # Dynamic inspection of running processes for custom app working directories (/proc/<PID>/cwd)
+    try:
+        proc_dirs = set()
+        for pid_dir in glob.glob("/proc/[0-9]*"):
+            try:
+                cmd_path = os.path.join(pid_dir, "cmdline")
+                if os.path.exists(cmd_path):
+                    with open(cmd_path, "rb") as cf:
+                        cmd = cf.read().replace(b"\x00", b" ").decode("utf-8", errors="ignore").lower()
+                        if any(app in cmd for app in ["tomcat", "java", "python", "node", "php", "httpd", "nginx", "gunicorn", "uvicorn"]):
+                            cwd_link = os.path.join(pid_dir, "cwd")
+                            if os.path.islink(cwd_link):
+                                real_cwd = os.path.realpath(cwd_link)
+                                if real_cwd and real_cwd != "/" and real_cwd not in ("/root", "/home"):
+                                    proc_dirs.add(real_cwd)
+            except Exception:
+                continue
+        candidates.extend(list(proc_dirs)[:4])
+    except Exception:
+        pass
+
+    # Common enterprise app paths if present on host
+    for ent_path in ["/data/MDM", "/application", "/opt/apps", "/opt/app"]:
+        if os.path.exists(ent_path):
+            candidates.append(ent_path)
+
+    # Custom paths passed from SOC server
+    if custom_paths and isinstance(custom_paths, list):
+        for cp in custom_paths:
+            if cp and isinstance(cp, str) and cp.strip():
+                candidates.append(cp.strip())
+
+    # Filter strictly to existing directories, resolve canonical paths, remove duplicates
+    valid_paths = []
+    seen = set()
+    for p in candidates:
+        try:
+            if os.path.isdir(p):
+                real_p = os.path.realpath(p)
+                if real_p not in seen and real_p not in ("/proc", "/sys", "/dev", "/"):
+                    seen.add(real_p)
+                    valid_paths.append(real_p)
+        except Exception:
+            pass
+
+    return valid_paths
+
+def run_malware_scan(trigger_type="scheduled", custom_paths=None):
+    """
+    Zero-impact file integrity and malware scan:
+    - Runs at os.nice(19) idle CPU priority
+    - Scans 6-10 high-risk auto-detected paths
+    - Skips files > 50MB and non-regular files
+    - Computes SHA-256 and MD5 simultaneously in memory
+    - Reports hash list to SOC threat intel engine (<1ms lookup)
+    """
+    global is_malware_scan_running
+    if not malware_scan_lock.acquire(blocking=False):
+        print(f"[{APP_BRAND} Agent] Malware scan already in progress. Skipping duplicate run.", flush=True)
+        return
+
+    is_malware_scan_running = True
+    try:
+        try:
+            os.nice(19)
+        except Exception:
+            pass
+
+        target_paths = discover_malware_scan_paths(custom_paths=custom_paths)
+        print(f"[{APP_BRAND} Agent] Starting {trigger_type} malware & file integrity scan on paths: {target_paths}", flush=True)
+
+        scanned_files = []
+        max_files_cap = 5000
+        total_scanned = 0
+
+        for dir_path in target_paths:
+            if total_scanned >= max_files_cap:
+                break
+            try:
+                for root, dirs, files in os.walk(dir_path, topdown=True, followlinks=False):
+                    dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "proc", "sys", "cache")]
+                    for fname in files:
+                        if total_scanned >= max_files_cap:
+                            break
+                        fpath = os.path.join(root, fname)
+                        try:
+                            if os.path.islink(fpath) or not os.path.isfile(fpath):
+                                continue
+
+                            st = os.stat(fpath)
+                            if st.st_size > 50 * 1024 * 1024:
+                                continue
+
+                            h_sha256 = hashlib.sha256()
+                            h_md5 = hashlib.md5()
+                            with open(fpath, "rb") as f:
+                                while True:
+                                    chunk = f.read(65536)
+                                    if not chunk:
+                                        break
+                                    h_sha256.update(chunk)
+                                    h_md5.update(chunk)
+
+                            mode_str = oct(st.st_mode)[-4:]
+                            owner_str = resolve_uid_to_user(st.st_uid)
+
+                            scanned_files.append({
+                                "file_path": fpath,
+                                "file_name": fname,
+                                "sha256": h_sha256.hexdigest(),
+                                "md5": h_md5.hexdigest(),
+                                "file_size": st.st_size,
+                                "permissions": mode_str,
+                                "owner": owner_str
+                            })
+                            total_scanned += 1
+                        except Exception:
+                            continue
+            except Exception as e_dir:
+                print(f"[{APP_BRAND} Agent] Error scanning dir {dir_path}: {e_dir}", flush=True)
+
+        print(f"[{APP_BRAND} Agent] Completed scan: {total_scanned} files inspected across {len(target_paths)} paths.", flush=True)
+
+        tok = str(AGENT_TOKEN) if (AGENT_TOKEN and not str(AGENT_TOKEN).startswith("$")) else ""
+        report_payload = {
+            "server_id": ASSIGNED_SERVER_ID,
+            "hostname": get_node_name(),
+            "system_hostname": get_hostname(),
+            "server_ip": get_node_ip(),
+            "agent_token": tok,
+            "agent_version": AGENT_VERSION,
+            "trigger_type": trigger_type,
+            "scanned_paths": target_paths,
+            "total_files_scanned": total_scanned,
+            "files": scanned_files
+        }
+
+        try:
+            res_bytes = send_agent_request(
+                "/api/agent/file-scan-report",
+                data=json.dumps(report_payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                timeout=25
+            )
+            if res_bytes:
+                res_obj = json.loads(res_bytes.decode())
+                threats_count = res_obj.get("threats_found", 0)
+                if threats_count > 0:
+                    print(f"[{APP_BRAND} Agent] ALERT: SOC Threat Intel matched {threats_count} malicious file(s)!", flush=True)
+                else:
+                    print(f"[{APP_BRAND} Agent] SOC Threat Intel report confirmed clean: 0 threats found.", flush=True)
+        except Exception as e_rep:
+            print(f"[{APP_BRAND} Agent] Failed to push malware scan report: {e_rep}", flush=True)
+
+    finally:
+        is_malware_scan_running = False
+        malware_scan_lock.release()
+
+def handle_malware_action(action_data):
+    """
+    Executes quarantine or deletion remediation requested by SOC administrator.
+    """
+    if not isinstance(action_data, dict):
+        return
+    act = action_data.get("action")
+    target_file = action_data.get("file_path")
+    if not target_file or not os.path.exists(target_file):
+        return
+
+    res_status = "failed"
+    detail = ""
+    try:
+        if act == "quarantine":
+            q_dir = "/var/log/.bsmart_quarantine"
+            os.makedirs(q_dir, exist_ok=True)
+            q_dest = os.path.join(q_dir, f"{os.path.basename(target_file)}_{int(time.time())}.quarantined")
+            os.replace(target_file, q_dest)
+            try:
+                os.chmod(q_dest, 0)
+            except Exception:
+                pass
+            res_status = "success"
+            detail = f"Quarantined to {q_dest}"
+            print(f"[{APP_BRAND} Agent] Quarantined threat file: {target_file} -> {q_dest}", flush=True)
+
+        elif act == "delete":
+            os.remove(target_file)
+            res_status = "success"
+            detail = "Permanently deleted"
+            print(f"[{APP_BRAND} Agent] Deleted threat file: {target_file}", flush=True)
+
+    except Exception as e_act:
+        detail = str(e_act)
+        print(f"[{APP_BRAND} Agent] Remediation action '{act}' failed on {target_file}: {e_act}", flush=True)
+
+    task_results_queue.append({
+        "action": act,
+        "file_path": target_file,
+        "status": res_status,
+        "detail": detail,
+        "timestamp": datetime.now().isoformat()
+    })
+
+
 _USER_CACHE = {}
 _USER_CACHE_TS = {}
 
@@ -2010,6 +2241,12 @@ def main():
                     daily_inventory_done_date = today_str
                     threading.Thread(target=collect_and_send_inventory, kwargs={"force_full": False}, daemon=True).start()
 
+            # Daily scheduled zero-impact malware scan at 03:00 AM (lowest traffic window on BijliMitra)
+            if today_str != daily_malware_scan_done_date:
+                if now_dt.hour == 3 and now_dt.minute >= 0:
+                    daily_malware_scan_done_date = today_str
+                    threading.Thread(target=run_malware_scan, kwargs={"trigger_type": "scheduled"}, daemon=True).start()
+
             sid = check_assigned_server_id()
             cur_ip = get_node_ip()
             cur_host = get_node_name()
@@ -2072,6 +2309,17 @@ def main():
                 commit_audit_checkpoint()
             except:
                 pass
+            # On-demand malware scan trigger from SOC console ("SCAN NOW" button)
+            if res_data and res_data.get("malware_scan_requested") and not is_malware_scan_running:
+                threading.Thread(target=run_malware_scan, kwargs={
+                    "trigger_type": "manual",
+                    "custom_paths": res_data.get("scan_paths")
+                }, daemon=True).start()
+
+            # Threat remediation trigger (Quarantine / Delete)
+            if res_data and res_data.get("malware_action"):
+                threading.Thread(target=handle_malware_action, args=(res_data.get("malware_action"),), daemon=True).start()
+
             # Cache and persist server_id returned from SOC so future pushes and updates use it immediately
             ret_sid = res_data.get("server_id")
             if ret_sid:
