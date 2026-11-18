@@ -84,18 +84,20 @@ def _recover_legacy_credentials():
     if os.path.isfile(cfg_file):
         try:
             with open(cfg_file, "r", encoding="utf-8") as f:
-                cdata = json.load(f)
-                if cdata.get("SOC_URL") and not str(cdata["SOC_URL"]).startswith("$"):
-                    SOC_URL = str(cdata["SOC_URL"]).rstrip("/")
-                if cdata.get("TARGET_IP") and not str(cdata["TARGET_IP"]).startswith("$") and str(cdata["TARGET_IP"]) != "127.0.0.1":
-                    TARGET_IP = str(cdata["TARGET_IP"])
-                if cdata.get("TARGET_NAME") and not str(cdata["TARGET_NAME"]).startswith("$"):
-                    TARGET_NAME = str(cdata["TARGET_NAME"])
-                if cdata.get("AGENT_TOKEN") and not str(cdata["AGENT_TOKEN"]).startswith("$"):
-                    AGENT_TOKEN = str(cdata["AGENT_TOKEN"])
-                if cdata.get("ASSIGNED_SERVER_ID") is not None:
-                    try: ASSIGNED_SERVER_ID = int(cdata["ASSIGNED_SERVER_ID"])
-                    except: pass
+                raw_c = f.read()
+            raw_c = re.sub(r'("[^"]+")\.rstrip\([^\)]*\)', r'\1', raw_c)
+            cdata = json.loads(raw_c)
+            if cdata.get("SOC_URL") and not str(cdata["SOC_URL"]).startswith("$"):
+                SOC_URL = str(cdata["SOC_URL"]).rstrip("/")
+            if cdata.get("TARGET_IP") and not str(cdata["TARGET_IP"]).startswith("$") and str(cdata["TARGET_IP"]) != "127.0.0.1":
+                TARGET_IP = str(cdata["TARGET_IP"])
+            if cdata.get("TARGET_NAME") and not str(cdata["TARGET_NAME"]).startswith("$"):
+                TARGET_NAME = str(cdata["TARGET_NAME"])
+            if cdata.get("AGENT_TOKEN") and not str(cdata["AGENT_TOKEN"]).startswith("$"):
+                AGENT_TOKEN = str(cdata["AGENT_TOKEN"])
+            if cdata.get("ASSIGNED_SERVER_ID") is not None:
+                try: ASSIGNED_SERVER_ID = int(cdata["ASSIGNED_SERVER_ID"])
+                except: pass
         except Exception:
             pass
 
@@ -1660,12 +1662,12 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
                                 continue
 
                             # Never scan agent code or test suite
-                            norm_fp = os.path.normpath(fpath)
+                            norm_fp = os.path.normpath(fpath).replace("\\", "/").lower()
                             if (
                                 "/opt/securepulse" in norm_fp or
                                 "/tests/" in norm_fp or
                                 "test_malware_defense" in norm_fp or
-                                fname == "node_push_agent.py"
+                                fname.lower() in ("node_push_agent.py", "agent.py")
                             ):
                                 continue
 
@@ -2248,7 +2250,7 @@ def get_new_log_lines(max_lines_per_file=100):
 
 # Main loop
 def main():
-    global push_count, daily_inventory_done_date, discovered_paths, ASSIGNED_SERVER_ID
+    global push_count, daily_inventory_done_date, daily_malware_scan_done_date, discovered_paths, ASSIGNED_SERVER_ID
     # Release update lock file on startup to inform watchdog of healthy state
     if os.path.exists("/tmp/securepulse_update.lock"):
         try:

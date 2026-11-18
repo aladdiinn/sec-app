@@ -3688,7 +3688,13 @@ def authenticate_agent_request(request: Request, body_data: dict = None) -> tupl
             server_id = latest_srv["id"]
     elif server_id:
         srv = db.get_server_by_id(server_id)
-        if not srv:
+        if srv:
+            srv_ip = (srv.get("ip") or srv.get("ip_address") or "").strip()
+            if srv_ip and srv_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
+                latest_srv = db.get_server_by_ip(srv_ip)
+                if latest_srv and latest_srv.get("id"):
+                    server_id = latest_srv["id"]
+        else:
             server_id = None
 
     # Step 2: Match by server_ip (and client_ip if remote)
@@ -3715,8 +3721,8 @@ def authenticate_agent_request(request: Request, body_data: dict = None) -> tupl
                 with conn.cursor() as cur:
                     cur.execute("""
                         SELECT id FROM servers 
-                        WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s)) 
-                           OR LOWER(name) IN (LOWER(%s), LOWER(%s)) 
+                        WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s), 'soc-server', 'ubuntu-dev') 
+                           OR LOWER(name) IN (LOWER(%s), LOWER(%s), 'soc-server', 'ubuntu-dev') 
                         ORDER BY id DESC LIMIT 1;
                     """, (hostname, clean_host, hostname, clean_host))
                     r = cur.fetchone()
@@ -3725,23 +3731,51 @@ def authenticate_agent_request(request: Request, body_data: dict = None) -> tupl
             except Exception: pass
             finally: conn.close()
 
-    # Step 3.5: Docker Local Host Fallback for SOC Node
-    is_docker_or_local = client_ip in ("127.0.0.1", "localhost") or (
-        client_ip and any(client_ip.startswith(prefix) for prefix in ("172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."))
+    # Step 3.5: Local Host / LAN IP Fallback for SOC Node
+    is_soc_or_local = (
+        client_ip in ("127.0.0.1", "localhost", "192.168.10.201") or
+        server_ip in ("127.0.0.1", "localhost", "192.168.10.201") or
+        clean_host.lower() in ("soc-server", "ubuntu-dev") or
+        hostname.lower() in ("soc-server", "ubuntu-dev") or
+        (client_ip and any(client_ip.startswith(prefix) for prefix in ("172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")))
     )
-    if not server_id and is_docker_or_local:
+    if not server_id and is_soc_or_local:
         conn = db.get_db_connection()
         if conn:
             try:
                 with conn.cursor() as cur:
                     cur.execute("""
                         SELECT id FROM servers 
-                        WHERE LOWER(name) = 'soc-server' 
-                           OR LOWER(hostname) = 'soc-server'
+                        WHERE LOWER(name) IN ('soc-server', 'ubuntu-dev') 
+                           OR LOWER(hostname) IN ('soc-server', 'ubuntu-dev')
                            OR ip = '192.168.10.201' 
                            OR ip_address = '192.168.10.201'
                         ORDER BY id DESC LIMIT 1;
                     """)
+                    r = cur.fetchone()
+                    if r:
+                        server_id = r["id"] if isinstance(r, dict) else r[0]
+            except Exception: pass
+            finally: conn.close()
+
+    # Step 3.6: Approvals Table Fallback
+    if not server_id:
+        conn = db.get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT s.id FROM servers s
+                        JOIN approvals a ON (
+                            LOWER(a.hostname) = LOWER(s.name) OR 
+                            LOWER(a.hostname) = LOWER(s.hostname) OR
+                            a.ip_address = s.ip OR
+                            a.ip_address = s.ip_address
+                        )
+                        WHERE (a.ip_address IN (%s, %s) OR LOWER(a.hostname) IN (LOWER(%s), LOWER(%s)))
+                          AND a.status = 'approved'
+                        ORDER BY s.id DESC LIMIT 1;
+                    """, (client_ip or "", server_ip or "", hostname or "", clean_host or ""))
                     r = cur.fetchone()
                     if r:
                         server_id = r["id"] if isinstance(r, dict) else r[0]
@@ -3791,17 +3825,25 @@ async def api_agent_push(request: Request):
     if conn:
         try:
             with conn.cursor() as cur:
+                cpu_raw = data.get("cpu_percent")
+                cpu_val = float(cpu_raw) if cpu_raw is not None else float((data.get("metrics") or {}).get("cpu") or 0)
+                mem_raw = data.get("memory_percent")
+                mem_val = float(mem_raw) if mem_raw is not None else float((data.get("metrics") or {}).get("memory") or 0)
+                disk_raw = data.get("disk_percent")
+                disk_val = float(disk_raw) if disk_raw is not None else float((data.get("metrics") or {}).get("disk") or 0)
+
                 if not version.is_newer_version(version.AGENT_VERSION, agent_version):
-                    update_q = "UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s, update_status = 'up_to_date', target_agent_version = NULL"
+                    update_q = "UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s, update_status = 'up_to_date', target_agent_version = NULL, cpu_percent = %s, memory_percent = %s, disk_percent = %s"
                 else:
-                    update_q = "UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s"
-                params = [agent_version]
+                    update_q = "UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s, cpu_percent = %s, memory_percent = %s, disk_percent = %s"
+                params = [agent_version, cpu_val, mem_val, disk_val]
                 if machine_id:
                     update_q += ", machine_id = CASE WHEN machine_id IS NULL OR machine_id = '' THEN %s ELSE machine_id END"
                     params.append(machine_id)
                 update_q += " WHERE id = %s;"
                 params.append(server_id)
                 cur.execute(update_q, tuple(params))
+                if hasattr(conn, 'commit'): conn.commit()
         except Exception: pass
         finally: conn.close()
 
@@ -6055,7 +6097,7 @@ cp "$AGENT_FILE" "$BACKUP_FILE"
 # 3. Create persistent config.json so future updates never lose credentials
 cat << EOF > "$CONFIG_FILE"
 {{
-  "SOC_URL": "${{EXISTING_SOC_URL:-{base_url}}}",
+  "SOC_URL": "${{EXISTING_SOC_URL:-{base_url.rstrip('/')}}}",
   "TARGET_IP": "$EXISTING_TARGET_IP",
   "TARGET_NAME": "$EXISTING_TARGET_NAME",
   "AGENT_TOKEN": "$EXISTING_TOKEN",
@@ -6329,7 +6371,7 @@ mkdir -p /opt/securepulse
 
 cat << CFG_EOF > /opt/securepulse/config.json
 {{
-  "SOC_URL": "{base_url}".rstrip("/"),
+  "SOC_URL": "{base_url.rstrip('/')}",
   "TARGET_IP": "$NODE_IP",
   "TARGET_NAME": "$NODE_NAME",
   "AGENT_TOKEN": "$TOKEN",
@@ -6345,7 +6387,7 @@ from datetime import datetime
 
 AGENT_VERSION = "{version.AGENT_VERSION}"
 APP_BRAND = "{APP_BRAND}"
-SOC_URL = "{base_url}".rstrip("/")
+SOC_URL = "{base_url.rstrip('/')}"
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
 AGENT_TOKEN = "$TOKEN"
@@ -6356,7 +6398,9 @@ CONFIG_FILE = os.environ.get("SECUREPULSE_CONFIG", "/opt/securepulse/config.json
 if os.path.exists(CONFIG_FILE):
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as _f_cfg:
-            _cdata = json.load(_f_cfg)
+            _raw_c = _f_cfg.read()
+            _raw_c = re.sub(r'("[^"]+")\.rstrip\([^\)]*\)', r'\1', _raw_c)
+            _cdata = json.loads(_raw_c)
             if _cdata.get("SOC_URL"): SOC_URL = _cdata["SOC_URL"].rstrip("/")
             if _cdata.get("TARGET_IP"): TARGET_IP = _cdata["TARGET_IP"]
             if _cdata.get("TARGET_NAME"): TARGET_NAME = _cdata["TARGET_NAME"]
@@ -6390,7 +6434,18 @@ for _candidate in ["http://127.0.0.1:8001", "https://192.168.10.201:3443", "http
 
 def send_agent_request(endpoint, data=None, headers=None, timeout=10):
     global SOC_URL
-    hdrs = headers or {{"Content-Type": "application/json"}}
+    hdrs = dict(headers or {{}})
+    if "Content-Type" not in hdrs and data is not None:
+        hdrs["Content-Type"] = "application/json"
+    if AGENT_TOKEN and not str(AGENT_TOKEN).startswith("$") and str(AGENT_TOKEN) not in ("None", "null", ""):
+        hdrs["X-Agent-Token"] = str(AGENT_TOKEN)
+        hdrs["Authorization"] = f"Bearer {{AGENT_TOKEN}}"
+    try:
+        mid = get_machine_id()
+        if mid and "X-Machine-ID" not in hdrs:
+            hdrs["X-Machine-ID"] = mid
+    except Exception:
+        pass
     ordered = [SOC_URL] + [u for u in CANDIDATE_SOC_URLS if u != SOC_URL]
     last_err = None
     for base in ordered:
@@ -8790,8 +8845,21 @@ async def api_agent_status(request: Request):
                             cur.execute("SELECT id, name, hostname, ip, agent_token, api_token FROM servers WHERE LOWER(hostname) = %s OR LOWER(name) = %s ORDER BY id DESC LIMIT 1;", (clean_h, clean_h))
                             sr = cur.fetchone()
                             if sr: srv = dict(sr)
-                        if not srv and (client_ip in ("127.0.0.1", "localhost") or (client_ip and any(client_ip.startswith(prefix) for prefix in ("172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")))):
-                            cur.execute("SELECT id, name, hostname, ip, agent_token, api_token FROM servers WHERE LOWER(name) = 'soc-server' OR LOWER(hostname) = 'soc-server' OR ip = '192.168.10.201' OR ip_address = '192.168.10.201' ORDER BY id DESC LIMIT 1;")
+                        if not srv and (
+                            client_ip in ("127.0.0.1", "localhost", "192.168.10.201") or
+                            req_ip in ("127.0.0.1", "localhost", "192.168.10.201") or
+                            req_host.lower() in ("soc-server", "ubuntu-dev") or
+                            (client_ip and any(client_ip.startswith(prefix) for prefix in ("172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.")))
+                        ):
+                            cur.execute("""
+                                SELECT id, name, hostname, ip, agent_token, api_token 
+                                FROM servers 
+                                WHERE LOWER(name) IN ('soc-server', 'ubuntu-dev') 
+                                   OR LOWER(hostname) IN ('soc-server', 'ubuntu-dev') 
+                                   OR ip = '192.168.10.201' 
+                                   OR ip_address = '192.168.10.201' 
+                                ORDER BY id DESC LIMIT 1;
+                            """)
                             sr = cur.fetchone()
                             if sr: srv = dict(sr)
                         if srv:

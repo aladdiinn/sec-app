@@ -1478,6 +1478,51 @@ def init_db():
                     ) s_latest
                     JOIN servers s_old ON s_old.ip = s_latest.ip
                     WHERE fsr.server_id = s_old.id AND fsr.server_id != s_latest.id;
+
+                    -- Consolidate alerts, commands, packages for multiple server records of same IP
+                    UPDATE alerts a
+                    SET server_id = s_latest.id
+                    FROM (
+                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip HAVING COUNT(*) > 1
+                    ) s_latest
+                    JOIN servers s_old ON (s_old.ip = s_latest.ip OR s_old.ip_address = s_latest.ip)
+                    WHERE a.server_id = s_old.id AND a.server_id != s_latest.id;
+
+                    UPDATE commands c
+                    SET server_id = s_latest.id
+                    FROM (
+                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip HAVING COUNT(*) > 1
+                    ) s_latest
+                    JOIN servers s_old ON (s_old.ip = s_latest.ip OR s_old.ip_address = s_latest.ip)
+                    WHERE c.server_id = s_old.id AND c.server_id != s_latest.id;
+
+                    UPDATE server_packages sp
+                    SET server_id = s_latest.id
+                    FROM (
+                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip HAVING COUNT(*) > 1
+                    ) s_latest
+                    JOIN servers s_old ON (s_old.ip = s_latest.ip OR s_old.ip_address = s_latest.ip)
+                    WHERE sp.server_id = s_old.id AND sp.server_id != s_latest.id;
+
+                    -- Consolidate open ports
+                    UPDATE open_ports op
+                    SET server_id = s_latest.id
+                    FROM (
+                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip HAVING COUNT(*) > 1
+                    ) s_latest
+                    JOIN servers s_old ON (s_old.ip = s_latest.ip OR s_old.ip_address = s_latest.ip)
+                    WHERE op.server_id = s_old.id AND op.server_id != s_latest.id;
+
+                    -- Safely remove duplicate older servers for the same IP so only the active latest remains
+                    DELETE FROM servers
+                    WHERE id IN (
+                        SELECT s_old.id
+                        FROM servers s_old
+                        JOIN (
+                            SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip HAVING COUNT(*) > 1
+                        ) s_latest ON (s_old.ip = s_latest.ip OR s_old.ip_address = s_latest.ip)
+                        WHERE s_old.id != s_latest.id
+                    );
                 """)
             except Exception:
                 pass
@@ -1493,6 +1538,28 @@ def init_db():
                           file_path ILIKE '%test_malware_defense.py%' OR
                           file_path ILIKE '%/opt/securepulse/%'
                       );
+
+                    UPDATE file_scans fs
+                    SET threats_found = (
+                        SELECT COUNT(*) FROM file_scan_results fsr
+                        WHERE fsr.scan_id = fs.id AND fsr.status NOT IN ('whitelisted', 'deleted', 'quarantined')
+                    )
+                    WHERE fs.threats_found > 0;
+
+                    UPDATE file_scans
+                    SET status = 'clean'
+                    WHERE threats_found = 0 AND status = 'threats_found';
+
+                    UPDATE alerts
+                    SET status = 'resolved'
+                    WHERE (
+                        title ILIKE '%node_push_agent.py%' OR
+                        title ILIKE '%test_malware_defense.py%' OR
+                        description ILIKE '%node_push_agent.py%' OR
+                        description ILIKE '%test_malware_defense.py%' OR
+                        message ILIKE '%node_push_agent.py%' OR
+                        message ILIKE '%test_malware_defense.py%'
+                    ) AND status != 'resolved';
                 """)
             except Exception:
                 pass
@@ -2340,6 +2407,7 @@ def add_server(name: str, ip: str, region: str = "", region_code: str = "", ssh_
                 if row:
                     sid = row["id"] if isinstance(row, dict) else row[0]
                     cur.execute("UPDATE servers SET status = 'online', severity = 'info', ssh_user = COALESCE(%s, ssh_user, 'bescom'), last_seen = NOW() WHERE id = %s;", (ssh_user, sid))
+                    if hasattr(conn, 'commit'): conn.commit()
                     return sid
             except Exception as e:
                 logger.warning(f"Error checking existing server: {e}")
@@ -3653,6 +3721,10 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
             where_clauses.append("(fs.project_id = %s OR s.project_id = %s)")
             params.extend([project_id, project_id])
         if server_id and str(server_id).lower() != 'all':
+            try:
+                sid_val = int(server_id)
+            except (ValueError, TypeError):
+                sid_val = server_id
             where_clauses.append("""
                 (
                     fs.server_id = %s 
@@ -3664,7 +3736,7 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
                     )
                 )
             """)
-            params.extend([server_id, server_id, server_id, server_id])
+            params.extend([sid_val, sid_val, sid_val, sid_val])
         
         where_sql = " AND ".join(where_clauses)
         params.append(limit)
@@ -3713,6 +3785,10 @@ def get_malware_findings(project_id=None, server_id=None, status=None, limit=100
             where_clauses.append("s.project_id = %s")
             params.append(project_id)
         if server_id and str(server_id).lower() != 'all':
+            try:
+                sid_val = int(server_id)
+            except (ValueError, TypeError):
+                sid_val = server_id
             where_clauses.append("""
                 (
                     r.server_id = %s 
@@ -3724,7 +3800,7 @@ def get_malware_findings(project_id=None, server_id=None, status=None, limit=100
                     )
                 )
             """)
-            params.extend([server_id, server_id, server_id, server_id])
+            params.extend([sid_val, sid_val, sid_val, sid_val])
         if status and str(status).lower() != 'all':
             where_clauses.append("r.status = %s")
             params.append(status)
