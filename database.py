@@ -673,6 +673,27 @@ def init_db():
                     UNIQUE(current_server_id, linked_server_id)
                 );
 
+            """)
+
+            # File Scans Table Migrations
+            for col, col_type in [
+                ("server_name", "VARCHAR(255)"),
+                ("server_hostname", "VARCHAR(255)"),
+                ("server_ip", "VARCHAR(64)"),
+                ("machine_id", "VARCHAR(128)"),
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                    if hasattr(conn, 'commit'): conn.commit()
+                except Exception:
+                    try:
+                        cur.execute(f"ALTER TABLE file_scans ADD COLUMN {col} {col_type};")
+                        if hasattr(conn, 'commit'): conn.commit()
+                    except Exception:
+                        pass
+
+            cur.execute("""
+
                 CREATE TABLE IF NOT EXISTS malware_monitored_paths (
                     id SERIAL PRIMARY KEY,
                     server_id INT,
@@ -2488,9 +2509,15 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
                     cur.execute("""
                         SELECT id, name, hostname, ip, agent_token, api_token, status, approved_by 
                         FROM servers 
-                        WHERE (ip = %s OR ip_address = %s) AND (LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s))
-                        LIMIT 1;
-                    """, (ip_address, ip_address, clean_hostname, clean_hostname))
+                        WHERE (ip = %s OR ip_address = %s) 
+                          AND (
+                              LOWER(hostname) = LOWER(%s) 
+                              OR LOWER(name) = LOWER(%s)
+                              OR LOWER(name) LIKE LOWER(%s)
+                              OR LOWER(hostname) LIKE LOWER(%s)
+                          )
+                        ORDER BY id DESC LIMIT 1;
+                    """, (ip_address, ip_address, clean_hostname, clean_hostname, f"%{clean_hostname}%", f"%{clean_hostname}%"))
                     existing_srv = cur.fetchone()
 
                 # Check 4: Match by unique machine_id alone if machine_id is not shared across multiple servers
@@ -2500,7 +2527,17 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
                     if len(mid_rows) == 1:
                         existing_srv = mid_rows[0]
 
-                if existing_srv and existing_srv.get("approved_by"):
+                # Check 5: Match by IP alone for non-local IP (picks most recent active asset)
+                if not existing_srv and ip_address and ip_address not in ("127.0.0.1", "0.0.0.0"):
+                    cur.execute("""
+                        SELECT id, name, hostname, ip, agent_token, api_token, status, approved_by
+                        FROM servers
+                        WHERE (ip = %s OR ip_address = %s) AND status != 'merged'
+                        ORDER BY id DESC LIMIT 1;
+                    """, (ip_address, ip_address))
+                    existing_srv = cur.fetchone()
+
+                if existing_srv and existing_srv.get("status") != 'rejected':
                     srv_id = existing_srv["id"]
                     srv_tok = existing_srv.get("agent_token") or existing_srv.get("api_token") or token
                     if not srv_tok or srv_tok.startswith("sp-token-"):
@@ -2753,24 +2790,34 @@ def approve_request(app_id: int, approved_by: str = "admin"):
 
             # Check 3: Match by (ip AND hostname)
             if not existing_srv and ip and ip not in ("127.0.0.1", "0.0.0.0") and clean_hostname and clean_hostname.lower() not in ("localhost", "target-node"):
-                cur.execute("SELECT id FROM servers WHERE (ip = %s OR ip_address = %s) AND (LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s)) LIMIT 1;", (ip, ip, clean_hostname, clean_hostname))
+                cur.execute("""
+                    SELECT id FROM servers 
+                    WHERE (ip = %s OR ip_address = %s) 
+                      AND (
+                          LOWER(hostname) = LOWER(%s) 
+                          OR LOWER(name) = LOWER(%s)
+                          OR LOWER(name) LIKE LOWER(%s)
+                          OR LOWER(hostname) LIKE LOWER(%s)
+                      )
+                    ORDER BY id DESC LIMIT 1;
+                """, (ip, ip, clean_hostname, clean_hostname, f"%{clean_hostname}%", f"%{clean_hostname}%"))
                 existing_srv = cur.fetchone()
 
             # Check 4: Match by unique machine_id alone if machine_id is not shared across multiple servers
             if not existing_srv and machine_id:
-                cur.execute("SELECT id FROM servers WHERE machine_id = %s;", (machine_id,))
+                cur.execute("SELECT id FROM servers WHERE machine_id = %s ORDER BY id DESC;", (machine_id,))
                 mid_rows = cur.fetchall()
                 if len(mid_rows) == 1:
                     existing_srv = mid_rows[0]
 
-            # Check 5: Match by IP alone if non-local
+            # Check 5: Match by IP alone if non-local (picks most recent active asset)
             if not existing_srv and ip and ip not in ("127.0.0.1", "0.0.0.0"):
-                cur.execute("SELECT id FROM servers WHERE ip = %s OR ip_address = %s LIMIT 1;", (ip, ip))
+                cur.execute("SELECT id FROM servers WHERE (ip = %s OR ip_address = %s) AND status != 'merged' ORDER BY id DESC LIMIT 1;", (ip, ip))
                 existing_srv = cur.fetchone()
 
             # Check 6: Match by Hostname alone
             if not existing_srv and clean_hostname and clean_hostname.lower() not in ("localhost", "target-node"):
-                cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (clean_hostname, clean_hostname))
+                cur.execute("SELECT id FROM servers WHERE (LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s)) AND status != 'merged' ORDER BY id DESC LIMIT 1;", (clean_hostname, clean_hostname))
                 existing_srv = cur.fetchone()
 
             pid = get_unassigned_project_id() or 1
@@ -3863,10 +3910,10 @@ def get_linked_server_ids(server_id) -> list:
 
             # 6. Historical fallback for production soc-server (IP 192.168.10.201 or hostname soc-server)
             is_soc_server = False
-            if sid == 39 or (target_ip == '192.168.10.201') or (target_host and 'soc-server' in str(target_host).lower()):
+            if sid in (36, 38, 39, 40) or (target_ip == '192.168.10.201') or (target_host and 'soc-server' in str(target_host).lower()):
                 is_soc_server = True
             if is_soc_server:
-                for old_id in (25, 26, 30, 33, 34, 36, 38):
+                for old_id in (25, 26, 30, 33, 34, 36, 38, 39, 40):
                     linked_ids.add(old_id)
 
     except Exception as e:
@@ -3977,14 +4024,24 @@ def record_file_scan(server_id, project_id=None, trigger_type='scheduled', scann
                     srv_ip = sr.get("ip")
                     mid = sr.get("machine_id")
 
-            cur.execute("""
-                INSERT INTO file_scans (
-                    server_id, project_id, trigger_type, status, total_files_scanned, threats_found, scanned_paths, started_at,
-                    server_name, server_hostname, server_ip, machine_id
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s)
-                RETURNING id;
-            """, (server_id, project_id, trigger_type, status, total_files_scanned, threats_found, paths_json, srv_name, srv_host, srv_ip, mid))
+            try:
+                cur.execute("""
+                    INSERT INTO file_scans (
+                        server_id, project_id, trigger_type, status, total_files_scanned, threats_found, scanned_paths, started_at,
+                        server_name, server_hostname, server_ip, machine_id
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s)
+                    RETURNING id;
+                """, (server_id, project_id, trigger_type, status, total_files_scanned, threats_found, paths_json, srv_name, srv_host, srv_ip, mid))
+            except Exception:
+                if hasattr(conn, 'rollback'): conn.rollback()
+                cur.execute("""
+                    INSERT INTO file_scans (
+                        server_id, project_id, trigger_type, status, total_files_scanned, threats_found, scanned_paths, started_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    RETURNING id;
+                """, (server_id, project_id, trigger_type, status, total_files_scanned, threats_found, paths_json))
             row = cur.fetchone()
             scan_id = row['id'] if isinstance(row, dict) else (row[0] if row else None)
             if hasattr(conn, 'commit'): conn.commit()
@@ -4428,12 +4485,18 @@ def relink_scans_and_assets(target_server_id: int, orphan_server_ids: list, admi
 
             cur.execute("""
                 UPDATE file_scans 
-                SET server_id = %s,
-                    server_name = COALESCE(server_name, %s),
-                    server_ip = COALESCE(server_ip, %s)
+                SET server_id = %s
                 WHERE server_id = ANY(%s);
-            """, (target_server_id, target_name, target_ip, orphan_server_ids))
+            """, (target_server_id, orphan_server_ids))
             scans_updated = cur.rowcount
+            try:
+                cur.execute("""
+                    UPDATE file_scans
+                    SET server_name = %s, server_ip = %s
+                    WHERE server_id = %s;
+                """, (target_name, target_ip, target_server_id))
+            except Exception:
+                pass
 
             cur.execute("""
                 UPDATE file_scan_results 

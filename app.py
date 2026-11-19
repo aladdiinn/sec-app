@@ -4541,23 +4541,26 @@ def _run_direct_local_scan(server_id: int, project_id: Optional[int], scan_id: i
 def api_server_scan_malware(server_id: int, request: Request):
     """
     On-Demand trigger for zero-impact malware scan on a specific server.
-    Fails fast with HTTP 400 if agent is offline or missed heartbeats (>120s).
+    Fails fast with HTTP 400 if agent is offline or missed heartbeats (>300s).
     """
     srv = db.get_server_by_id(server_id)
     if not srv:
         return JSONResponse(status_code=404, content={"status": "error", "message": "Server not found"})
 
-    # Fail fast if agent is offline or telemetry loop is inactive
+    # Fail fast only if agent is explicitly offline or has not been seen in > 300s
     last_seen = srv.get("last_seen")
-    last_push = srv.get("last_push_at")
     status = (srv.get("status") or "offline").lower()
 
     is_offline = (status == "offline")
     now_ts = datetime.now(timezone.utc)
     if last_seen and isinstance(last_seen, datetime):
-        ts = now_ts if last_seen.tzinfo else datetime.now()
-        if (ts - last_seen).total_seconds() > 120:
-            is_offline = True
+        try:
+            now_epoch = now_ts.timestamp()
+            seen_epoch = last_seen.timestamp() if last_seen.tzinfo else last_seen.replace(tzinfo=timezone.utc).timestamp()
+            if abs(now_epoch - seen_epoch) > 300:
+                is_offline = True
+        except Exception:
+            pass
     elif not last_seen:
         is_offline = True
 
@@ -4567,27 +4570,6 @@ def api_server_scan_malware(server_id: int, request: Request):
             "status": "error",
             "ok": False,
             "message": f"Agent offline since {last_str}. Cannot dispatch malware scan to an offline node."
-        })
-
-    # Telemetry push loop check: scan triggers ride on /api/agent/push
-    is_push_stale = False
-    if last_push and isinstance(last_push, datetime):
-        ts_push = now_ts if last_push.tzinfo else datetime.now()
-        if (ts_push - last_push).total_seconds() > 45:
-            is_push_stale = True
-    elif not last_push:
-        # If last_push_at is not recorded yet, check last_seen
-        if last_seen and isinstance(last_seen, datetime):
-            ts = now_ts if last_seen.tzinfo else datetime.now()
-            if (ts - last_seen).total_seconds() > 45:
-                is_push_stale = True
-
-    if is_push_stale:
-        push_str = last_push.strftime('%Y-%m-%d %H:%M:%S') if (last_push and isinstance(last_push, datetime)) else "unknown"
-        return JSONResponse(status_code=400, content={
-            "status": "error",
-            "ok": False,
-            "message": f"Agent telemetry loop inactive (last telemetry push: {push_str}). Scan dispatch requires active telemetry loop."
         })
 
     _malware_scan_queue.add(server_id)

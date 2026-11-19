@@ -226,6 +226,22 @@ def execute_relink(conn, dialect, target, orphan_ids, admin_user="admin"):
             );
         """)
 
+    # Ensure file_scans columns exist if postgres supports it
+    for col, col_type in [
+        ("server_name", "VARCHAR(255)"),
+        ("server_hostname", "VARCHAR(255)"),
+        ("server_ip", "VARCHAR(64)"),
+        ("machine_id", "VARCHAR(128)")
+    ]:
+        try:
+            if dialect == "postgres":
+                cur.execute(f"ALTER TABLE file_scans ADD COLUMN IF NOT EXISTS {col} {col_type};")
+            else:
+                cur.execute(f"ALTER TABLE file_scans ADD COLUMN {col} {col_type};")
+            conn.commit()
+        except Exception:
+            pass
+
     snapshot_counts = {}
     rollback_sql_lines = [
         f"-- Rollback Script for Relink Batch {batch_id}",
@@ -262,20 +278,23 @@ def execute_relink(conn, dialect, target, orphan_ids, admin_user="admin"):
             if dialect == "postgres":
                 cur.execute("""
                     UPDATE file_scans 
-                    SET server_id = %s,
-                        server_name = COALESCE(server_name, %s),
-                        server_ip = COALESCE(server_ip, %s)
+                    SET server_id = %s
                     WHERE server_id = ANY(%s);
-                """, (target_id, target_name, target_ip, orphan_ids))
+                """, (target_id, orphan_ids))
             else:
                 placeholders = ",".join("?" * len(orphan_ids))
                 cur.execute(f"""
                     UPDATE file_scans 
-                    SET server_id = ?,
-                        server_name = COALESCE(server_name, ?),
-                        server_ip = COALESCE(server_ip, ?)
+                    SET server_id = ?
                     WHERE server_id IN ({placeholders});
-                """, [target_id, target_name, target_ip] + orphan_ids)
+                """, [target_id] + orphan_ids)
+            try:
+                if dialect == "postgres":
+                    cur.execute("UPDATE file_scans SET server_name = %s, server_ip = %s WHERE server_id = %s;", (target_name, target_ip, target_id))
+                else:
+                    cur.execute("UPDATE file_scans SET server_name = ?, server_ip = ? WHERE server_id = ?;", [target_name, target_ip, target_id])
+            except Exception:
+                pass
         elif tbl == "file_scan_results":
             if dialect == "postgres":
                 cur.execute("""
