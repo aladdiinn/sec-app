@@ -3823,19 +3823,6 @@ async def api_agent_heartbeat(request: Request):
         "status": "online"
     })
 
-@app.post("/api/agent/tasks/poll")
-async def api_agent_tasks_poll(request: Request):
-    """Task polling endpoint for agent daemons. Returns empty tasks when remote actions are disabled."""
-    return JSONResponse(status_code=200, content={"ok": True, "tasks": []})
-
-@app.post("/api/agent/tasks/status")
-async def api_agent_tasks_status(request: Request):
-    return JSONResponse(status_code=200, content={"ok": True})
-
-@app.post("/api/agent/tasks/result")
-async def api_agent_tasks_result(request: Request):
-    return JSONResponse(status_code=200, content={"ok": True})
-
 
 @app.post("/api/agent/push")
 @app.post("/api/events")
