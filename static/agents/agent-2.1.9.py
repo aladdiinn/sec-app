@@ -160,7 +160,7 @@ except Exception:
     _ssl_ctx = None
 
 CANDIDATE_SOC_URLS = [SOC_URL]
-for _candidate in ["http://127.0.0.1:8001", "https://192.168.10.201:3443", "https://127.0.0.1:3443", "http://127.0.0.1:8000"]:
+for _candidate in ["http://127.0.0.1:8001", "https://192.168.10.201:3443", "https://127.0.0.1:3443"]:
     if _candidate not in CANDIDATE_SOC_URLS:
         CANDIDATE_SOC_URLS.append(_candidate)
 
@@ -312,9 +312,12 @@ class HeartbeatThread(threading.Thread):
                 headers={"Content-Type": "application/json"},
                 timeout=5
             )
-            if res and not self.ready_notified:
-                notify_systemd("READY=1")
-                self.ready_notified = True
+            if res:
+                error_collapser.clear_error("heartbeat_thread")
+                if not self.ready_notified:
+                    notify_systemd("READY=1")
+                    self.ready_notified = True
+                return True
             return True
         except Exception as e:
             error_collapser.record_error("heartbeat_thread", e)
@@ -2491,16 +2494,16 @@ def main():
             print(f"[{APP_BRAND} Agent] Update lock released on startup.", flush=True)
         except Exception:
             pass
-    print(f"[{APP_BRAND} Agent] Starting. SOC: {SOC_URL}, Node: {TARGET_NAME} ({TARGET_IP}), Server ID: {ASSIGNED_SERVER_ID}")
+    print(f"[{APP_BRAND} Agent] Starting. SOC: {SOC_URL}, Node: {TARGET_NAME} ({TARGET_IP}), Server ID: {ASSIGNED_SERVER_ID}", flush=True)
 
     # Start dedicated independent heartbeat thread and send immediate initial heartbeat before heavy collectors run
     hb_thread = HeartbeatThread(interval=PUSH_INTERVAL)
     hb_thread.start()
     hb_thread.send_heartbeat_once()
 
-    print(f"[{APP_BRAND} Agent] Discovering log paths...")
+    print(f"[{APP_BRAND} Agent] Discovering log paths...", flush=True)
     discovered_paths = auto_discover_log_paths()
-    print(f"[{APP_BRAND} Agent] Found log paths: {list(discovered_paths.keys())}")
+    print(f"[{APP_BRAND} Agent] Found log paths: {list(discovered_paths.keys())}", flush=True)
 
     # Initialize FIM baseline
     check_fim()
@@ -2606,6 +2609,9 @@ def main():
                 timeout=10
             )
             res_data = json.loads(res_bytes.decode())
+            error_collapser.clear_error("main_telemetry_loop")
+            if push_count % 4 == 0:
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [{APP_BRAND} Agent] Telemetry push active (Server ID: {ASSIGNED_SERVER_ID}, CPU: {cpu}%, RAM: {mem}%)", flush=True)
             # Commit audit checkpoint ONLY on successful HTTP 200 response
             try:
                 commit_audit_checkpoint()

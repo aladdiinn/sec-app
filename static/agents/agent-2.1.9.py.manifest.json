@@ -1,9 +1,10 @@
 {
   "version": "2.1.9",
-  "target_version": "2.1.9",
+  "sha256": "f90bf4a221736958ff617564d203c5200a7072c05a945609344f000db3c7a0dc",
+  "size": 116381,
+  "key_id": "key-2026-v2",
+  "public_key": "e35f2ca46d8d1d6d0af3152e5a324dd56196dbdd69ca30af06461f24cbd9c970",
   "min_supported_version": "1.6.0",
-  "sha256": "3a5d40aea7f478aa147c55308b2e0728eae07baacefd2d914f7ca498687131b7",
   "signature": "2leydpTUo4Wud33dfX24ISP44gcaiOnB+/dk0Cn4vn9JSgW5tM3pjAOqZB62+2iAxFmkAgHaBBCatnMkW+siBg==",
-  "size": 116292,
-  "public_key": "e35f2ca46d8d1d6d0af3152e5a324dd56196dbdd69ca30af06461f24cbd9c970"
+  "target_version": "2.1.9"
 }

@@ -8210,7 +8210,8 @@ TimeoutStartSec=45
 NotifyAccess=all
 User=root
 WorkingDirectory=/opt/securepulse
-ExecStart=/usr/bin/python3 /opt/securepulse/node_push_agent.py
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -u /opt/securepulse/node_push_agent.py
 Restart=always
 RestartSec=5
 StandardOutput=append:/var/log/securepulse_agent.log
@@ -11057,11 +11058,16 @@ async def api_server_log_files(server_id: int):
             cur.execute("""
                 SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
                 FROM pushed_logs
-                WHERE server_id = %s AND source IS NOT NULL AND source != ''
+                WHERE (server_id = %s OR server_id IN (
+                    SELECT s2.id FROM servers s2
+                    WHERE (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
+                       OR (s2.machine_id IS NOT NULL AND s2.machine_id != '' AND s2.machine_id = (SELECT s1.machine_id FROM servers s1 WHERE s1.id = %s))
+                ))
+                  AND source IS NOT NULL AND source != ''
                 GROUP BY source, log_type
                 ORDER BY count DESC
                 LIMIT 100;
-            """, (server_id,))
+            """, (server_id, server_id, server_id))
             rows = [dict(r) for r in cur.fetchall()]
 
             deduped = {}
@@ -11091,9 +11097,14 @@ async def api_server_log_files(server_id: int):
                     cur.execute("""
                         SELECT log_file_path as source, COALESCE(service_type, 'os') as log_type, 0 as count
                         FROM server_log_configs
-                        WHERE server_id = %s AND log_file_path IS NOT NULL AND log_file_path != ''
+                        WHERE (server_id = %s OR server_id IN (
+                            SELECT s2.id FROM servers s2
+                            WHERE (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
+                               OR (s2.machine_id IS NOT NULL AND s2.machine_id != '' AND s2.machine_id = (SELECT s1.machine_id FROM servers s1 WHERE s1.id = %s))
+                        ))
+                          AND log_file_path IS NOT NULL AND log_file_path != ''
                         GROUP BY log_file_path, service_type;
-                    """, (server_id,))
+                    """, (server_id, server_id, server_id))
                     cfg_files = [dict(r) for r in cur.fetchall()]
                     files.extend(cfg_files)
                 except Exception: pass

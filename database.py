@@ -668,11 +668,14 @@ def init_db():
             ]:
                 try:
                     cur.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                    if hasattr(conn, 'commit'): conn.commit()
                 except Exception:
+                    if hasattr(conn, 'rollback'): conn.rollback()
                     try:
                         cur.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type};")
+                        if hasattr(conn, 'commit'): conn.commit()
                     except Exception:
-                        pass
+                        if hasattr(conn, 'rollback'): conn.rollback()
 
             # Optimal composite indices to prevent "backward sequence scan" during ORDER BY id DESC LIMIT 100
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_srv_id_desc ON pushed_logs (server_id, id DESC);")
@@ -3874,11 +3877,9 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
                            OR (s2.ip_address IS NOT NULL AND s2.ip_address != '' AND s2.ip_address != '127.0.0.1' AND s2.ip_address = (SELECT s1.ip_address FROM servers s1 WHERE s1.id = %s))
                            OR (s2.name IS NOT NULL AND s2.name != 'Target-Node' AND s2.name = (SELECT s1.name FROM servers s1 WHERE s1.id = %s))
                     )
-                    OR (fs.machine_id IS NOT NULL AND fs.machine_id != '' AND fs.machine_id = (SELECT s3.machine_id FROM servers s3 WHERE s3.id = %s))
-                    OR (fs.server_ip IS NOT NULL AND fs.server_ip != '' AND fs.server_ip != '127.0.0.1' AND fs.server_ip = (SELECT s4.ip FROM servers s4 WHERE s4.id = %s))
                 )
             """)
-            params.extend([sid_val, sid_val, sid_val, sid_val, sid_val, sid_val, sid_val])
+            params.extend([sid_val, sid_val, sid_val, sid_val, sid_val])
         
         where_sql = " AND ".join(where_clauses)
         params.append(limit)
@@ -3898,8 +3899,8 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
                 SELECT fs.id, fs.server_id, fs.project_id, fs.trigger_type, fs.status,
                        fs.total_files_scanned, fs.threats_found, fs.scanned_paths,
                        fs.started_at, fs.completed_at,
-                       COALESCE(s.name, fs.server_name, 'Server #' || fs.server_id) AS server_name,
-                       COALESCE(s.ip, fs.server_ip, '') AS server_ip,
+                       COALESCE(s.name, 'Server #' || fs.server_id) AS server_name,
+                       COALESCE(s.ip, '') AS server_ip,
                        COALESCE(s.os_info, 'Linux') AS server_os,
                        p.name AS project_name
                 FROM file_scans fs
@@ -6202,8 +6203,14 @@ def get_pushed_logs(config_id=None, server_id=None, limit=100, source=None, log_
             where_clauses = []
             params = []
             if server_id:
-                where_clauses.append("server_id = %s")
-                params.append(server_id)
+                where_clauses.append("""
+                    (server_id = %s OR server_id IN (
+                        SELECT s2.id FROM servers s2
+                        WHERE (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
+                           OR (s2.machine_id IS NOT NULL AND s2.machine_id != '' AND s2.machine_id = (SELECT s1.machine_id FROM servers s1 WHERE s1.id = %s))
+                    ))
+                """)
+                params.extend([server_id, server_id, server_id])
             if config_id:
                 where_clauses.append("config_id = %s")
                 params.append(config_id)
