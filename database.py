@@ -88,6 +88,16 @@ class SQLiteConnectionWrapper:
         self.conn = conn
     def cursor(self):
         return DictRowWrapper(self.conn)
+    def commit(self):
+        try:
+            self.conn.commit()
+        except Exception:
+            pass
+    def rollback(self):
+        try:
+            self.conn.rollback()
+        except Exception:
+            pass
     def close(self):
         try:
             self.conn.commit()
@@ -250,13 +260,15 @@ def init_db():
                 ("target_agent_version", "VARCHAR(32)"),
                 ("update_status", "VARCHAR(32) DEFAULT 'up_to_date'"),
                 ("last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
+                ("last_push_at", "TIMESTAMP WITH TIME ZONE"),
                 ("is_maintenance", "BOOLEAN DEFAULT FALSE"),
                 ("is_read", "BOOLEAN DEFAULT FALSE"),
                 ("read_at", "TIMESTAMP WITH TIME ZONE"),
                 ("registered_at", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
                 ("last_update_attempt", "TIMESTAMP WITH TIME ZONE"),
                 ("update_error", "TEXT"),
-                ("exclude_from_autoupdate", "BOOLEAN DEFAULT FALSE"),
+                ("exclude_from_autoupdate", "BOOLEAN DEFAULT TRUE"),
+                ("degraded_collectors", "JSONB DEFAULT '{}'"),
                 ("is_canary", "BOOLEAN DEFAULT FALSE")
             ]:
                 try:
@@ -278,32 +290,6 @@ def init_db():
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
                     CREATE INDEX IF NOT EXISTS idx_agent_update_events_server ON agent_update_events(server_id, created_at DESC);
-                """)
-            except Exception:
-                pass
-
-            # Demote session and /temp/ alerts/incidents to warning, and attribute AUID 1005 to mannan
-            try:
-                cur.execute("""
-                    UPDATE incidents SET severity = 'warning'
-                    WHERE (title ILIKE '%session%' OR description ILIKE '%session%' OR description ILIKE '%/tmp%' OR description ILIKE '%/temp%' OR description ILIKE '%utmp%')
-                      AND severity = 'critical';
-
-                    UPDATE alerts SET severity = 'warning'
-                    WHERE (alert_type ILIKE '%session%' OR title ILIKE '%session%' OR message ILIKE '%/tmp%' OR message ILIKE '%/temp%' OR message ILIKE '%utmp%')
-                      AND severity = 'critical';
-
-                    UPDATE incidents 
-                    SET title = REPLACE(title, 'by attribution unverified', 'by mannan'),
-                        description = REPLACE(description, '''attribution unverified'' (AUID: 1005)', '''mannan'' (AUID: 1005)')
-                    WHERE (description ILIKE '%AUID: 1005%' OR description ILIKE '%AUID 1005%')
-                      AND (title ILIKE '%attribution unverified%' OR description ILIKE '%attribution unverified%');
-
-                    UPDATE alerts 
-                    SET title = REPLACE(title, 'by attribution unverified', 'by mannan'),
-                        message = REPLACE(message, '''attribution unverified'' (AUID: 1005)', '''mannan'' (AUID: 1005)')
-                    WHERE (message ILIKE '%AUID: 1005%' OR message ILIKE '%AUID 1005%')
-                      AND (title ILIKE '%attribution unverified%' OR message ILIKE '%attribution unverified%');
                 """)
             except Exception:
                 pass
@@ -599,6 +585,10 @@ def init_db():
                     id SERIAL PRIMARY KEY,
                     server_id INT,
                     project_id INT,
+                    server_name VARCHAR(255),
+                    server_hostname VARCHAR(255),
+                    server_ip VARCHAR(64),
+                    machine_id VARCHAR(128),
                     trigger_type VARCHAR(32) DEFAULT 'scheduled',
                     status VARCHAR(32) DEFAULT 'in_progress',
                     total_files_scanned INT DEFAULT 0,
@@ -625,6 +615,32 @@ def init_db():
                     detected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS file_hash_whitelist (
+                    id SERIAL PRIMARY KEY,
+                    sha256 VARCHAR(64) UNIQUE NOT NULL,
+                    owner VARCHAR(128) NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP WITH TIME ZONE,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    reversed_at TIMESTAMP WITH TIME ZONE,
+                    reversed_by VARCHAR(128)
+                );
+
+                CREATE TABLE IF NOT EXISTS alert_status_history_log (
+                    id SERIAL PRIMARY KEY,
+                    alert_id INT,
+                    old_severity VARCHAR(32),
+                    new_severity VARCHAR(32),
+                    old_status VARCHAR(32),
+                    new_status VARCHAR(32),
+                    old_is_resolved BOOLEAN,
+                    new_is_resolved BOOLEAN,
+                    changed_by VARCHAR(64),
+                    reason TEXT,
+                    changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS malware_monitored_paths (
                     id SERIAL PRIMARY KEY,
                     server_id INT,
@@ -635,17 +651,28 @@ def init_db():
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_file_scans_srv ON file_scans(server_id, started_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_file_scans_mid ON file_scans(machine_id);
                 CREATE INDEX IF NOT EXISTS idx_file_scan_res_sha ON file_scan_results(sha256);
                 CREATE INDEX IF NOT EXISTS idx_file_scan_res_srv_st ON file_scan_results(server_id, status);
                 CREATE INDEX IF NOT EXISTS idx_threat_intel_ioc_val ON threat_intel(ioc_value);
             """)
             # Migrate existing tables that may be missing the new columns
-            cur.execute("""
-                ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS log_type VARCHAR(32);
-            """)
-            cur.execute("""
-                ALTER TABLE pushed_logs ADD COLUMN IF NOT EXISTS source VARCHAR(512);
-            """)
+            for table_name, col_name, col_type in [
+                ("pushed_logs", "log_type", "VARCHAR(32)"),
+                ("file_scans", "server_name", "VARCHAR(255)"),
+                ("file_scans", "server_hostname", "VARCHAR(255)"),
+                ("file_scans", "server_ip", "VARCHAR(64)"),
+                ("file_scans", "machine_id", "VARCHAR(128)"),
+                ("servers", "degraded_collectors", "JSONB DEFAULT '{}'"),
+                ("pushed_logs", "source", "VARCHAR(512)")
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {col_name} {col_type};")
+                except Exception:
+                    try:
+                        cur.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type};")
+                    except Exception:
+                        pass
 
             # Optimal composite indices to prevent "backward sequence scan" during ORDER BY id DESC LIMIT 100
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_srv_id_desc ON pushed_logs (server_id, id DESC);")
@@ -1320,8 +1347,6 @@ def init_db():
                 cur.execute("UPDATE detection_rules SET pattern = 'Failed password|authentication failure|AUTH_FAIL|Invalid user' WHERE name = 'SSH Brute Force Attempt' AND pattern NOT LIKE '%Invalid user%';")
                 cur.execute(r"UPDATE detection_rules SET pattern = ':\\(\\)\\s*\\{\\s*:\|:&\\s*\\};:|:(){:|:&};:|:(){ :|:& };:' WHERE name = 'Fork Bomb Denial of Service';")
                 cur.execute(r"UPDATE detection_rules SET pattern = 'rm\s+-rf\s+/(?:\s*$|\*|boot|etc|usr|var|home|root)' WHERE name = 'Recursive Root Deletion';")
-                cur.execute("DELETE FROM incidents WHERE description LIKE '%/tmp/%' OR description LIKE '%/var/tmp/%' OR description LIKE '%crontab.%' OR (title LIKE '%Destructive%' AND description LIKE '%crontab%');")
-                cur.execute("DELETE FROM alerts WHERE message LIKE '%/tmp/%' OR message LIKE '%/var/tmp/%' OR message LIKE '%crontab.%';")
                 cur.execute("""
                     INSERT INTO detection_rules (name, pattern, severity, enabled, event_type, mitre_tactic, mitre_technique)
                     SELECT 'File Integrity Monitoring (FIM)', 'FIM Alert|file_modified|file_created', 'warning', TRUE, 'FILE_INTEGRITY', 'Defense Evasion', 'T1070'
@@ -1460,109 +1485,8 @@ def init_db():
                 except Exception:
                     pass
 
-            # Consolidate orphan file_scans and results to active server ID for the same IP
-            try:
-                cur.execute("""
-                    UPDATE file_scans fs
-                    SET server_id = s_latest.id
-                    FROM (
-                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip
-                    ) s_latest
-                    JOIN servers s_old ON s_old.ip = s_latest.ip
-                    WHERE fs.server_id = s_old.id AND fs.server_id != s_latest.id;
-
-                    UPDATE file_scan_results fsr
-                    SET server_id = s_latest.id
-                    FROM (
-                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip
-                    ) s_latest
-                    JOIN servers s_old ON s_old.ip = s_latest.ip
-                    WHERE fsr.server_id = s_old.id AND fsr.server_id != s_latest.id;
-
-                    -- Consolidate alerts, commands, packages for multiple server records of same IP
-                    UPDATE alerts a
-                    SET server_id = s_latest.id
-                    FROM (
-                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip HAVING COUNT(*) > 1
-                    ) s_latest
-                    JOIN servers s_old ON (s_old.ip = s_latest.ip OR s_old.ip_address = s_latest.ip)
-                    WHERE a.server_id = s_old.id AND a.server_id != s_latest.id;
-
-                    UPDATE commands c
-                    SET server_id = s_latest.id
-                    FROM (
-                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip HAVING COUNT(*) > 1
-                    ) s_latest
-                    JOIN servers s_old ON (s_old.ip = s_latest.ip OR s_old.ip_address = s_latest.ip)
-                    WHERE c.server_id = s_old.id AND c.server_id != s_latest.id;
-
-                    UPDATE server_packages sp
-                    SET server_id = s_latest.id
-                    FROM (
-                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip HAVING COUNT(*) > 1
-                    ) s_latest
-                    JOIN servers s_old ON (s_old.ip = s_latest.ip OR s_old.ip_address = s_latest.ip)
-                    WHERE sp.server_id = s_old.id AND sp.server_id != s_latest.id;
-
-                    -- Consolidate open ports
-                    UPDATE open_ports op
-                    SET server_id = s_latest.id
-                    FROM (
-                        SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip HAVING COUNT(*) > 1
-                    ) s_latest
-                    JOIN servers s_old ON (s_old.ip = s_latest.ip OR s_old.ip_address = s_latest.ip)
-                    WHERE op.server_id = s_old.id AND op.server_id != s_latest.id;
-
-                    -- Safely remove duplicate older servers for the same IP so only the active latest remains
-                    DELETE FROM servers
-                    WHERE id IN (
-                        SELECT s_old.id
-                        FROM servers s_old
-                        JOIN (
-                            SELECT ip, MAX(id) as id FROM servers WHERE ip IS NOT NULL AND ip != '' AND ip != '127.0.0.1' GROUP BY ip HAVING COUNT(*) > 1
-                        ) s_latest ON (s_old.ip = s_latest.ip OR s_old.ip_address = s_latest.ip)
-                        WHERE s_old.id != s_latest.id
-                    );
-                """)
-            except Exception:
-                pass
-
-            # Auto-whitelist agent internal files or unit test scripts if previously flagged
-            try:
-                cur.execute("""
-                    UPDATE file_scan_results
-                    SET status = 'whitelisted'
-                    WHERE status IN ('threat_detected', 'detected', 'active_threat')
-                      AND (
-                          file_path ILIKE '%node_push_agent.py%' OR
-                          file_path ILIKE '%test_malware_defense.py%' OR
-                          file_path ILIKE '%/opt/securepulse/%'
-                      );
-
-                    UPDATE file_scans fs
-                    SET threats_found = (
-                        SELECT COUNT(*) FROM file_scan_results fsr
-                        WHERE fsr.scan_id = fs.id AND fsr.status NOT IN ('whitelisted', 'deleted', 'quarantined')
-                    )
-                    WHERE fs.threats_found > 0;
-
-                    UPDATE file_scans
-                    SET status = 'clean'
-                    WHERE threats_found = 0 AND status = 'threats_found';
-
-                    UPDATE alerts
-                    SET status = 'resolved'
-                    WHERE (
-                        title ILIKE '%node_push_agent.py%' OR
-                        title ILIKE '%test_malware_defense.py%' OR
-                        description ILIKE '%node_push_agent.py%' OR
-                        description ILIKE '%test_malware_defense.py%' OR
-                        message ILIKE '%node_push_agent.py%' OR
-                        message ILIKE '%test_malware_defense.py%'
-                    ) AND status != 'resolved';
-                """)
-            except Exception:
-                pass
+            # Threat intel and default rules initialization complete
+            pass
 
         # Initialize Application SIEM Schema & Rules (Additive & Idempotent)
         try:
@@ -1570,11 +1494,6 @@ def init_db():
             app_siem_db.init_app_siem_schema(conn)
         except Exception as e_app:
             logger.error(f"Error initializing Application SIEM schema: {e_app}")
-
-        try:
-            merge_duplicate_incidents_with_audit()
-        except Exception as ex_dedup:
-            logger.debug(f"Incident deduplication on init_db: {ex_dedup}")
 
         try:
             backfill_historical_audit_attributions()
@@ -2532,14 +2451,24 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
             elif app_id:
                 node_type = "app"
 
-            # Check if an approval record exists FOR THIS EXACT TOKEN
-            cur.execute("""
-                SELECT id, agent_token, status, node_type, approved_by, approved_at 
-                FROM approvals 
-                WHERE agent_token = %s 
-                ORDER BY id DESC LIMIT 1;
-            """, (token,))
-            row = cur.fetchone()
+            # Check if an approval record exists for this machine_id or exact token
+            row = None
+            if machine_id:
+                cur.execute("""
+                    SELECT id, agent_token, status, node_type, approved_by, approved_at 
+                    FROM approvals 
+                    WHERE machine_id = %s 
+                    ORDER BY id DESC LIMIT 1;
+                """, (machine_id,))
+                row = cur.fetchone()
+            if not row and token:
+                cur.execute("""
+                    SELECT id, agent_token, status, node_type, approved_by, approved_at 
+                    FROM approvals 
+                    WHERE agent_token = %s 
+                    ORDER BY id DESC LIMIT 1;
+                """, (token,))
+                row = cur.fetchone()
             if row:
                 row_dict = dict(row)
                 appr_id = row_dict["id"]
@@ -2707,7 +2636,10 @@ def approve_request(app_id: int, approved_by: str = "admin"):
 
             # If node_type is server:
             existing_srv = None
-            if token:
+            if machine_id:
+                cur.execute("SELECT id FROM servers WHERE machine_id = %s LIMIT 1;", (machine_id,))
+                existing_srv = cur.fetchone()
+            if not existing_srv and token:
                 cur.execute("SELECT id FROM servers WHERE agent_token = %s OR api_token = %s LIMIT 1;", (token, token))
                 existing_srv = cur.fetchone()
             if not existing_srv and ip and ip not in ("127.0.0.1", "0.0.0.0"):
@@ -2724,8 +2656,8 @@ def approve_request(app_id: int, approved_by: str = "admin"):
 
             if not existing_srv:
                 cur.execute("""
-                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, approved_at, approved_by, last_seen, project_id, agent_version, machine_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s, NOW(), %s, %s, %s)
+                    INSERT INTO servers (name, hostname, ip, ip_address, os_info, agent_token, api_token, status, severity, active_users, failed_logins, last_sudo, last_sudo_ago, is_maintenance, registered_at, approved_at, approved_by, last_seen, project_id, agent_version, machine_id, exclude_from_autoupdate)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'online', 'info', 1, 0, 'None', 'never', FALSE, NOW(), NOW(), %s, NOW(), %s, %s, %s, TRUE)
                     RETURNING id;
                 """, (srv_host, srv_host, srv_ip, srv_ip, "Linux (Ubuntu)", token, token, approved_by, pid, version.AGENT_VERSION, machine_id))
                 new_srv = cur.fetchone()
@@ -2734,9 +2666,10 @@ def approve_request(app_id: int, approved_by: str = "admin"):
                 sid = existing_srv["id"] if isinstance(existing_srv, dict) else existing_srv[0]
                 cur.execute("""
                     UPDATE servers 
-                    SET status = 'online', agent_token = %s, api_token = %s, approved_at = NOW(), approved_by = %s, last_seen = NOW(), agent_version = %s
+                    SET status = 'online', agent_token = %s, api_token = %s, approved_at = NOW(), approved_by = %s, last_seen = NOW(), agent_version = %s,
+                        machine_id = COALESCE(NULLIF(%s, ''), machine_id)
                     WHERE id = %s;
-                """, (token, token, approved_by, version.AGENT_VERSION, sid))
+                """, (token, token, approved_by, version.AGENT_VERSION, machine_id, sid))
 
             conn.commit()
             log_audit(approved_by, "AGENT_APPROVAL", "server", sid or app_id, f"Approved server asset '{srv_host}' ({srv_ip})", ip_address=srv_ip, machine_id=machine_id)
@@ -3609,20 +3542,196 @@ def lookup_threat_intel_hashes(hashes):
 
 lookup_threat_hashes = lookup_threat_intel_hashes
 
+def record_tampered_agent_file(server_id, file_path, expected_hash, actual_hash):
+    """
+    Records an integrity violation when agent code has been tampered with or modified unexpectedly.
+    """
+    msg = f"Tampered agent binary/script detected at {file_path}. Expected SHA-256: {expected_hash[:16]}..., Actual: {actual_hash[:16]}..."
+    log_alert(server_id, "AGENT_TAMPER", msg, severity="critical", title="Agent Integrity Violation — Code Tampering Detected")
+    log_audit("system", "AGENT_INTEGRITY_TAMPER", "agent", server_id, msg)
+
+def add_hash_whitelist(sha256: str, owner: str, reason: str, expires_days: int = 30):
+    """Adds or activates a file hash in the whitelist."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO file_hash_whitelist (sha256, owner, reason, expires_at, is_active)
+                VALUES (%s, %s, %s, NOW() + INTERVAL '%s days', TRUE)
+                ON CONFLICT (sha256) DO UPDATE
+                SET owner = EXCLUDED.owner, reason = EXCLUDED.reason,
+                    expires_at = NOW() + INTERVAL '%s days', is_active = TRUE,
+                    reversed_at = NULL, reversed_by = NULL;
+            """, (sha256.lower().strip(), owner, reason, expires_days, expires_days))
+            if hasattr(conn, 'commit'): conn.commit()
+            return True
+    finally: conn.close()
+
+def remove_hash_whitelist(sha256: str, admin_user: str = "admin"):
+    """Reversibly deactivates a whitelisted hash."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE file_hash_whitelist
+                SET is_active = FALSE, reversed_at = NOW(), reversed_by = %s
+                WHERE LOWER(sha256) = LOWER(%s);
+            """, (admin_user, sha256.strip()))
+            if hasattr(conn, 'commit'): conn.commit()
+            return True
+    finally: conn.close()
+
+def is_hash_whitelisted(sha256: str) -> bool:
+    """Checks if a hash is actively whitelisted and not expired."""
+    if not sha256: return False
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM file_hash_whitelist
+                WHERE LOWER(sha256) = LOWER(%s) AND is_active = TRUE
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                LIMIT 1;
+            """, (sha256.strip(),))
+            return bool(cur.fetchone())
+    finally: conn.close()
+
+def get_server_by_token(token: str):
+    """Looks up server by agent_token or api_token."""
+    if not token or token in ("None", "null", ""): return None
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM servers WHERE agent_token = %s OR api_token = %s LIMIT 1;", (token, token))
+            r = cur.fetchone()
+            return dict(r) if r else None
+    finally: conn.close()
+
+def get_server_by_machine_id(machine_id: str):
+    """Looks up server by hardware/system machine-id."""
+    if not machine_id: return None
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM servers WHERE machine_id = %s LIMIT 1;", (machine_id,))
+            r = cur.fetchone()
+            return dict(r) if r else None
+    finally: conn.close()
+
+def update_server_heartbeat(server_id: int, cpu=0.0, memory=0.0, disk=0.0, degraded_collectors=None):
+    """Updates server heartbeat timestamp, metrics, and degraded collector errors."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            deg_json = json.dumps(degraded_collectors or {})
+            cur.execute("""
+                UPDATE servers
+                SET last_seen = NOW(),
+                    status = 'online',
+                    cpu_percent = COALESCE(%s, cpu_percent),
+                    memory_percent = COALESCE(%s, memory_percent),
+                    disk_percent = COALESCE(%s, disk_percent),
+                    degraded_collectors = %s
+                WHERE id = %s;
+            """, (cpu, memory, disk, deg_json, server_id))
+            if hasattr(conn, 'commit'): conn.commit()
+            return True
+    finally: conn.close()
+
+def preview_merge_servers(keep_id: int, merge_ids: list):
+    """Previews record counts that would be moved from merge_ids into keep_id."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, hostname, ip, machine_id FROM servers WHERE id = %s;", (keep_id,))
+            target = cur.fetchone()
+            if not target: return {"error": f"Target server #{keep_id} not found"}
+
+            cur.execute("SELECT id, name, hostname, ip, machine_id FROM servers WHERE id = ANY(%s);", (merge_ids,))
+            sources = cur.fetchall()
+
+            counts = {}
+            for tbl in ["alerts", "incidents", "file_scans", "commands", "open_ports", "server_packages"]:
+                cur.execute(f"SELECT COUNT(*) as cnt FROM {tbl} WHERE server_id = ANY(%s);", (merge_ids,))
+                r = cur.fetchone()
+                counts[tbl] = r["cnt"] if r else 0
+
+            return {
+                "target": dict(target),
+                "sources": [dict(s) for s in sources],
+                "affected_counts": counts
+            }
+    finally: conn.close()
+
+def execute_merge_servers(keep_id: int, merge_ids: list, admin_user: str = "admin"):
+    """
+    Safely merges server records:
+    1. Creates real backup table: CREATE TABLE servers_merge_backup AS SELECT * FROM servers;
+    2. Re-links all child records (alerts, incidents, file_scans, commands, open_ports, server_packages) to keep_id.
+    3. Soft-marks merged server records as merged.
+    4. Records an audit entry.
+    """
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS servers_merge_backup (
+                    backup_id SERIAL PRIMARY KEY,
+                    backup_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    target_id INT,
+                    merged_id INT,
+                    server_data JSONB NOT NULL
+                );
+            """)
+            cur.execute("SELECT * FROM servers WHERE id = ANY(%s);", (merge_ids,))
+            rows = cur.fetchall()
+            for r in rows:
+                cur.execute("INSERT INTO servers_merge_backup (target_id, merged_id, server_data) VALUES (%s, %s, %s);", (keep_id, r["id"], json.dumps(dict(r), default=str)))
+
+            for tbl in ["alerts", "incidents", "file_scans", "commands", "open_ports", "server_packages"]:
+                cur.execute(f"UPDATE {tbl} SET server_id = %s WHERE server_id = ANY(%s);", (keep_id, merge_ids))
+
+            cur.execute("UPDATE servers SET status = 'merged', name = name || ' [merged into #' || %s || ']' WHERE id = ANY(%s);", (keep_id, merge_ids))
+            conn.commit()
+            log_audit(admin_user, "ADMIN_SERVER_MERGE", "server", keep_id, f"Merged server IDs {merge_ids} into server #{keep_id}")
+            return True
+    finally: conn.close()
+
 def record_file_scan(server_id, project_id=None, trigger_type='scheduled', scanned_paths=None, status='in_progress', total_files_scanned=0, threats_found=0):
     """
-    Records the start of a file integrity / malware scan. Returns new scan_id.
+    Records the start of a file integrity / malware scan with permanent host/IP snapshot. Returns new scan_id.
     """
     conn = get_db_connection()
     if not conn: return None
     paths_json = json.dumps(scanned_paths or [])
     try:
         with conn.cursor() as cur:
+            srv_name, srv_host, srv_ip, mid = None, None, None, None
+            if server_id:
+                cur.execute("SELECT name, hostname, ip, machine_id FROM servers WHERE id = %s;", (server_id,))
+                sr = cur.fetchone()
+                if sr:
+                    srv_name = sr.get("name")
+                    srv_host = sr.get("hostname")
+                    srv_ip = sr.get("ip")
+                    mid = sr.get("machine_id")
+
             cur.execute("""
-                INSERT INTO file_scans (server_id, project_id, trigger_type, status, total_files_scanned, threats_found, scanned_paths, started_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                INSERT INTO file_scans (
+                    server_id, project_id, trigger_type, status, total_files_scanned, threats_found, scanned_paths, started_at,
+                    server_name, server_hostname, server_ip, machine_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s)
                 RETURNING id;
-            """, (server_id, project_id, trigger_type, status, total_files_scanned, threats_found, paths_json))
+            """, (server_id, project_id, trigger_type, status, total_files_scanned, threats_found, paths_json, srv_name, srv_host, srv_ip, mid))
             row = cur.fetchone()
             scan_id = row['id'] if isinstance(row, dict) else (row[0] if row else None)
             if hasattr(conn, 'commit'): conn.commit()
@@ -3636,8 +3745,11 @@ def record_file_scan(server_id, project_id=None, trigger_type='scheduled', scann
 def complete_file_scan(scan_id, status='clean', total_files_scanned=0, threats_found=0):
     """
     Updates scan completion status, file count, and threats found.
+    A timeout or failure is NEVER marked clean.
     """
     if not scan_id: return False
+    if threats_found > 0 and status == 'clean':
+        status = 'threats_found'
     conn = get_db_connection()
     if not conn: return False
     try:
@@ -3652,27 +3764,54 @@ def complete_file_scan(scan_id, status='clean', total_files_scanned=0, threats_f
             """, (status, total_files_scanned, threats_found, scan_id))
             if hasattr(conn, 'commit'): conn.commit()
             return True
-    except Exception as e:
-        logger.error(f"Error in complete_file_scan: {e}")
-        return False
-    finally:
-        conn.close()
+    finally: conn.close()
 
 def record_file_scan_results(scan_id, server_id, findings):
     """
     Inserts a list of scan findings into file_scan_results.
     Each finding dict: {file_path, file_name, sha256, md5, file_size, permissions, owner, threat_name, severity, status}
+    Checked against reversible hash whitelist.
     """
     if not findings: return 0
-    # Exclude internal agent files or test files from being recorded as malware findings
-    clean_findings = []
-    for item in findings:
-        fp = str(item.get('file_path', '')).strip().lower()
-        if 'node_push_agent.py' in fp or 'test_malware_defense.py' in fp or '/opt/securepulse' in fp:
-            continue
-        clean_findings.append(item)
-    findings = clean_findings
-    if not findings: return 0
+
+    conn = get_db_connection()
+    if not conn: return 0
+    inserted = 0
+    try:
+        with conn.cursor() as cur:
+            for item in findings:
+                sha256_val = str(item.get('sha256', '')).strip()
+                status_val = item.get('status', 'detected')
+                if is_hash_whitelisted(sha256_val):
+                    status_val = 'whitelisted'
+
+                cur.execute("""
+                    INSERT INTO file_scan_results (
+                        scan_id, server_id, file_path, file_name, sha256, md5,
+                        file_size, permissions, owner, threat_name, severity, status, detected_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP);
+                """, (
+                    scan_id,
+                    server_id,
+                    item.get('file_path', ''),
+                    item.get('file_name', '') or os.path.basename(item.get('file_path', '')),
+                    sha256_val,
+                    item.get('md5', ''),
+                    item.get('file_size', 0),
+                    item.get('permissions', ''),
+                    item.get('owner', ''),
+                    item.get('threat_name', 'Malware Finding'),
+                    item.get('severity', 'critical'),
+                    status_val
+                ))
+                inserted += 1
+            if hasattr(conn, 'commit'): conn.commit()
+            return inserted
+    except Exception as e:
+        logger.error(f"Error in record_file_scan_results: {e}")
+        return inserted
+    finally:
+        conn.close()
 
     conn = get_db_connection()
     if not conn: return 0
@@ -3730,13 +3869,16 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
                     fs.server_id = %s 
                     OR fs.server_id IN (
                         SELECT s2.id FROM servers s2 
-                        WHERE (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
+                        WHERE (s2.machine_id IS NOT NULL AND s2.machine_id != '' AND s2.machine_id = (SELECT s1.machine_id FROM servers s1 WHERE s1.id = %s))
+                           OR (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
                            OR (s2.ip_address IS NOT NULL AND s2.ip_address != '' AND s2.ip_address != '127.0.0.1' AND s2.ip_address = (SELECT s1.ip_address FROM servers s1 WHERE s1.id = %s))
                            OR (s2.name IS NOT NULL AND s2.name != 'Target-Node' AND s2.name = (SELECT s1.name FROM servers s1 WHERE s1.id = %s))
                     )
+                    OR (fs.machine_id IS NOT NULL AND fs.machine_id != '' AND fs.machine_id = (SELECT s3.machine_id FROM servers s3 WHERE s3.id = %s))
+                    OR (fs.server_ip IS NOT NULL AND fs.server_ip != '' AND fs.server_ip != '127.0.0.1' AND fs.server_ip = (SELECT s4.ip FROM servers s4 WHERE s4.id = %s))
                 )
             """)
-            params.extend([sid_val, sid_val, sid_val, sid_val])
+            params.extend([sid_val, sid_val, sid_val, sid_val, sid_val, sid_val, sid_val])
         
         where_sql = " AND ".join(where_clauses)
         params.append(limit)
@@ -3756,7 +3898,9 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
                 SELECT fs.id, fs.server_id, fs.project_id, fs.trigger_type, fs.status,
                        fs.total_files_scanned, fs.threats_found, fs.scanned_paths,
                        fs.started_at, fs.completed_at,
-                       s.name AS server_name, s.ip AS server_ip, s.os_info AS server_os,
+                       COALESCE(s.name, fs.server_name, 'Server #' || fs.server_id) AS server_name,
+                       COALESCE(s.ip, fs.server_ip, '') AS server_ip,
+                       COALESCE(s.os_info, 'Linux') AS server_os,
                        p.name AS project_name
                 FROM file_scans fs
                 LEFT JOIN servers s ON fs.server_id = s.id
@@ -3794,13 +3938,16 @@ def get_malware_findings(project_id=None, server_id=None, status=None, limit=100
                     r.server_id = %s 
                     OR r.server_id IN (
                         SELECT s2.id FROM servers s2 
-                        WHERE (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
+                        WHERE (s2.machine_id IS NOT NULL AND s2.machine_id != '' AND s2.machine_id = (SELECT s1.machine_id FROM servers s1 WHERE s1.id = %s))
+                           OR (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
                            OR (s2.ip_address IS NOT NULL AND s2.ip_address != '' AND s2.ip_address != '127.0.0.1' AND s2.ip_address = (SELECT s1.ip_address FROM servers s1 WHERE s1.id = %s))
                            OR (s2.name IS NOT NULL AND s2.name != 'Target-Node' AND s2.name = (SELECT s1.name FROM servers s1 WHERE s1.id = %s))
                     )
+                    OR (fs.machine_id IS NOT NULL AND fs.machine_id != '' AND fs.machine_id = (SELECT s3.machine_id FROM servers s3 WHERE s3.id = %s))
+                    OR (fs.server_ip IS NOT NULL AND fs.server_ip != '' AND fs.server_ip != '127.0.0.1' AND fs.server_ip = (SELECT s4.ip FROM servers s4 WHERE s4.id = %s))
                 )
             """)
-            params.extend([sid_val, sid_val, sid_val, sid_val])
+            params.extend([sid_val, sid_val, sid_val, sid_val, sid_val, sid_val, sid_val])
         if status and str(status).lower() != 'all':
             where_clauses.append("r.status = %s")
             params.append(status)
@@ -3813,9 +3960,11 @@ def get_malware_findings(project_id=None, server_id=None, status=None, limit=100
                 SELECT r.id, r.scan_id, r.server_id, r.file_path, r.file_name,
                        r.sha256, r.md5, r.file_size, r.permissions, r.owner,
                        r.threat_name, r.severity, r.status, r.detected_at,
-                       s.name AS server_name, s.ip AS server_ip,
+                       COALESCE(s.name, fs.server_name, 'Server #' || r.server_id) AS server_name,
+                       COALESCE(s.ip, fs.server_ip, '') AS server_ip,
                        p.name AS project_name, p.id AS project_id
                 FROM file_scan_results r
+                LEFT JOIN file_scans fs ON r.scan_id = fs.id
                 LEFT JOIN servers s ON r.server_id = s.id
                 LEFT JOIN projects p ON s.project_id = p.id
                 WHERE {where_sql}
@@ -4396,6 +4545,17 @@ def create_report(title, date_from, date_to, severities=None):
         return None
     finally:
         conn.close()
+
+def record_alert_status_change(cur, alert_id: int, old_severity, new_severity, old_status, new_status, old_is_resolved, new_is_resolved, changed_by, reason=""):
+    """Records audit trail in alert_status_history_log for any status or severity change."""
+    try:
+        cur.execute("""
+            INSERT INTO alert_status_history_log 
+            (alert_id, old_severity, new_severity, old_status, new_status, old_is_resolved, new_is_resolved, changed_by, reason, changed_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
+        """, (alert_id, old_severity, new_severity, old_status, new_status, old_is_resolved, new_is_resolved, changed_by, reason))
+    except Exception as e:
+        logger.warning(f"Could not record alert status history: {e}")
 
 def log_audit(username, action, target_type, target_id, detail, ip_address=None, machine_id=None):
     conn = get_db_connection()
@@ -9201,16 +9361,19 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
             if not s:
                 return None
 
-            explicit_update = bool(s.get("target_agent_version") == version.AGENT_VERSION or s.get("update_status") == "update_available")
+            # Check per-asset autoupdate pin (Must be explicitly opted in; default is excluded)
+            if s.get("exclude_from_autoupdate") is not False:
+                return None
 
-            # Unless explicitly requested by admin, check if autoupdate is enabled & unbroken
-            if not explicit_update:
-                if settings.get("autoupdate_enabled", "true").lower() != "true":
-                    return None
-                if settings.get("autoupdate_circuit_broken", "false").lower() == "true":
-                    return None
-                if s.get("exclude_from_autoupdate") or s.get("is_maintenance"):
-                    return None
+            # Maintenance mode check
+            if s.get("is_maintenance"):
+                return None
+
+            # Global rollout enablement & circuit breaker
+            if settings.get("autoupdate_enabled", "true").lower() != "true":
+                return None
+            if settings.get("autoupdate_circuit_broken", "false").lower() == "true":
+                return None
 
             # Check supported version
             if not version.is_supported_version(current_version):
@@ -9218,10 +9381,6 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
                     cur.execute("UPDATE servers SET update_status = 'unsupported' WHERE id = %s;", (server_id,))
                     if hasattr(conn, 'commit'): conn.commit()
                 return None
-            elif s.get("update_status") == "unsupported":
-                cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
-                if hasattr(conn, 'commit'): conn.commit()
-                s["target_agent_version"] = version.AGENT_VERSION
 
             # Check if up to date
             if not version.is_newer_version(version.AGENT_VERSION, current_version):
@@ -9230,8 +9389,8 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
                     if hasattr(conn, 'commit'): conn.commit()
                 return None
 
-            # Check failure backoff: if failed less than 60 minutes ago, skip (bypassed if explicit_update)
-            if not explicit_update and s.get("update_status") == "failed" and s.get("last_update_attempt"):
+            # Check failure backoff: if failed less than 60 minutes ago, skip
+            if s.get("update_status") == "failed" and s.get("last_update_attempt"):
                 attempt_time = s.get("last_update_attempt")
                 if isinstance(attempt_time, datetime):
                     now_ts = datetime.now(timezone.utc)
@@ -9246,69 +9405,65 @@ def evaluate_agent_rollout(server_id, current_version, client_ip=None, hostname=
 
             is_canary = bool(s.get("is_canary"))
             in_window = is_in_update_window()
-            explicit_update = bool(s.get("target_agent_version") == version.AGENT_VERSION or s.get("update_status") == "update_available")
 
-            if not explicit_update:
-                # Full fleet immediate rollout bypasses window and canary checks
-                if stage in ("all", "all_immediate"):
-                    pass
-                elif not in_window and not is_canary:
+            # Maintenance windows and canary progression
+            if stage in ("all", "all_immediate"):
+                pass
+            elif not in_window and not is_canary:
+                if s.get("update_status") != "update_available":
+                    cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
+                    if hasattr(conn, 'commit'): conn.commit()
+                return None
+            elif stage == "canary":
+                if not is_canary:
+                    # If no server in fleet is marked as canary yet, allow the lowest-ID active server to act as canary
+                    cur.execute("SELECT id FROM servers WHERE is_canary = TRUE LIMIT 1;")
+                    has_canary = cur.fetchone()
+                    if not has_canary:
+                        cur.execute("SELECT MIN(id) as min_id FROM servers WHERE exclude_from_autoupdate = FALSE;")
+                        min_s = cur.fetchone()
+                        if min_s and min_s.get("min_id") == server_id:
+                            is_canary = True
+                if not is_canary:
                     if s.get("update_status") != "update_available":
                         cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
                         if hasattr(conn, 'commit'): conn.commit()
                     return None
-                elif stage == "canary":
-                    if not is_canary:
-                        # If no server in fleet is marked as canary yet, allow the lowest-ID active server to act as canary
-                        cur.execute("SELECT id FROM servers WHERE is_canary = TRUE LIMIT 1;")
-                        has_canary = cur.fetchone()
-                        if not has_canary:
-                            cur.execute("SELECT MIN(id) as min_id FROM servers WHERE exclude_from_autoupdate = FALSE;")
-                            min_s = cur.fetchone()
-                            if min_s and min_s.get("min_id") == server_id:
-                                is_canary = True
-                    if not is_canary:
-                        if s.get("update_status") != "update_available":
-                            cur.execute("UPDATE servers SET update_status = 'update_available', target_agent_version = %s WHERE id = %s;", (version.AGENT_VERSION, server_id))
-                            if hasattr(conn, 'commit'): conn.commit()
-                        return None
-                elif stage in ("staged_25", "staged_50", "all", "all_immediate"):
-                    # Requirement: next batch starts ONLY when canary host reports a healthy heartbeat on the new version
-                    cur.execute("""
-                        SELECT COUNT(*) as canary_ok 
-                        FROM servers 
-                        WHERE is_canary = TRUE 
-                          AND status = 'online' 
-                          AND agent_version >= %s;
-                    """, (version.AGENT_VERSION,))
-                    canary_status = cur.fetchone()
-                    if not canary_status or (canary_status.get("canary_ok") or 0) == 0:
-                        cur.execute("SELECT id FROM servers WHERE is_canary = TRUE LIMIT 1;")
-                        has_canary = cur.fetchone()
-                        if has_canary and not is_canary:
-                            # Canary has not confirmed healthy heartbeat on new version yet
-                            return None
-                    if stage == "staged_25" and not is_canary and (server_id % 4 != 0):
-                        return None
-                    if stage == "staged_50" and not is_canary and (server_id % 2 != 0):
-                        return None
-
-            if not explicit_update:
-                # Check circuit breaker: check fleet failure rate
+            elif stage in ("staged_25", "staged_50"):
+                # Requirement: next batch starts ONLY when canary host reports a healthy heartbeat on the new version
                 cur.execute("""
-                    SELECT COUNT(*) as total, 
-                           COUNT(CASE WHEN update_status = 'failed' THEN 1 END) as failed_cnt
-                    FROM servers;
-                """)
-                counts = cur.fetchone()
-                tot = counts.get("total", 0) if counts else 0
-                f_cnt = counts.get("failed_cnt", 0) if counts else 0
-                thresh = float(settings.get("autoupdate_failure_threshold_pct", "15"))
-                if tot > 0 and (f_cnt / tot * 100) >= thresh:
-                    cur.execute("INSERT INTO settings (key, value) VALUES ('autoupdate_circuit_broken', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true';")
-                    if hasattr(conn, 'commit'): conn.commit()
-                    log_audit("system", "AUTOUPDATE_CIRCUIT_BREAKER", "fleet", 0, f"Autonomous update paused: failure rate ({round(f_cnt/tot*100, 1)}%) exceeded threshold ({thresh}%)")
+                    SELECT COUNT(*) as canary_ok 
+                    FROM servers 
+                    WHERE is_canary = TRUE 
+                      AND status = 'online' 
+                      AND agent_version >= %s;
+                """, (version.AGENT_VERSION,))
+                canary_status = cur.fetchone()
+                if not canary_status or (canary_status.get("canary_ok") or 0) == 0:
+                    cur.execute("SELECT id FROM servers WHERE is_canary = TRUE LIMIT 1;")
+                    has_canary = cur.fetchone()
+                    if has_canary and not is_canary:
+                        return None
+                if stage == "staged_25" and not is_canary and (server_id % 4 != 0):
                     return None
+                if stage == "staged_50" and not is_canary and (server_id % 2 != 0):
+                    return None
+
+            # Check circuit breaker: check fleet failure rate
+            cur.execute("""
+                SELECT COUNT(*) as total, 
+                       COUNT(CASE WHEN update_status = 'failed' THEN 1 END) as failed_cnt
+                FROM servers;
+            """)
+            counts = cur.fetchone()
+            tot = counts.get("total", 0) if counts else 0
+            f_cnt = counts.get("failed_cnt", 0) if counts else 0
+            thresh = float(settings.get("autoupdate_failure_threshold_pct", "15"))
+            if tot > 0 and (f_cnt / tot * 100) >= thresh:
+                cur.execute("INSERT INTO settings (key, value) VALUES ('autoupdate_circuit_broken', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true';")
+                if hasattr(conn, 'commit'): conn.commit()
+                log_audit("system", "AUTOUPDATE_CIRCUIT_BREAKER", "fleet", 0, f"Autonomous update paused: failure rate ({round(f_cnt/tot*100, 1)}%) exceeded threshold ({thresh}%)")
+                return None
 
             # Eligible! Load signed manifest
             manifest_path = os.path.join(os.path.dirname(__file__), "static", "agents", f"agent-{version.AGENT_VERSION}.py.manifest.json")

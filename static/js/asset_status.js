@@ -88,7 +88,8 @@ function getUnifiedAssetStatus(item) {
     const troubleAlerts = Number(s.trouble_alert_count || 0);
     const alertCount = Number(s.alert_count || 0);
 
-    if (troubleAlerts > 0 || alertCount > 0 || sev === 'warning' || sev === 'high' || cpu > 85 || ram > 85 || disk > 85) {
+    const degCount = (s.degraded_collectors && typeof s.degraded_collectors === 'object') ? Object.keys(s.degraded_collectors).length : 0;
+    if (troubleAlerts > 0 || alertCount > 0 || sev === 'warning' || sev === 'high' || cpu > 85 || ram > 85 || disk > 85 || degCount > 0) {
         return 'TROUBLE';
     }
 

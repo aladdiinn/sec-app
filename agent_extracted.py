@@ -1,8 +1,8 @@
-import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threading, random, platform, zipfile, hmac, ssl
+import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threading, random, platform, zipfile, hmac, ssl, traceback
 import urllib.request, urllib.error
 from datetime import datetime
 
-AGENT_VERSION = "2.1.8"
+AGENT_VERSION = "2.1.9"
 APP_BRAND = "BSMART SOC"
 SOC_URL = "https://192.168.10.201:3443".rstrip("/")
 TARGET_IP = "$NODE_IP"
@@ -183,6 +183,138 @@ def send_agent_request(endpoint, data=None, headers=None, timeout=10):
             last_err = e
             continue
     raise last_err
+
+class ErrorCollapser:
+    """
+    Isolates collector failures, logs full tracebacks on first occurrence with timestamps,
+    and collapses repeated errors into summary counts ('xN since HH:MM:SS').
+    Maintains a dictionary of failing collectors to surface in heartbeat telemetry.
+    """
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.errors = {}
+
+    def record_error(self, collector_name, exc):
+        now = datetime.now()
+        err_msg = str(exc)
+        tb = traceback.format_exc()
+        with self.lock:
+            if collector_name not in self.errors:
+                self.errors[collector_name] = {
+                    "count": 1,
+                    "first_seen": now,
+                    "last_seen": now,
+                    "last_msg": err_msg,
+                    "logged": False
+                }
+                print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] [{APP_BRAND} Agent] [{collector_name}] ERROR: {err_msg}\n{tb}", flush=True)
+                self.errors[collector_name]["logged"] = True
+            else:
+                entry = self.errors[collector_name]
+                entry["count"] += 1
+                entry["last_seen"] = now
+                entry["last_msg"] = err_msg
+                if entry["count"] % 20 == 0:
+                    print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] [{APP_BRAND} Agent] [{collector_name}] Error repeated x{entry['count']} since {entry['first_seen'].strftime('%H:%M:%S')}: {err_msg}", flush=True)
+
+    def clear_error(self, collector_name):
+        with self.lock:
+            if collector_name in self.errors:
+                del self.errors[collector_name]
+
+    def get_failing_collectors(self):
+        now = datetime.now()
+        with self.lock:
+            return {
+                name: {
+                    "message": data["last_msg"],
+                    "count": data["count"],
+                    "since": data["first_seen"].strftime('%H:%M:%S')
+                }
+                for name, data in self.errors.items()
+                if (now - data["last_seen"]).total_seconds() < 120
+            }
+
+error_collapser = ErrorCollapser()
+
+_last_main_loop_tick = time.time()
+
+def notify_systemd(state_msg: str):
+    """Sends notification state string (READY=1, WATCHDOG=1, etc.) to systemd NOTIFY_SOCKET."""
+    sock_path = os.environ.get("NOTIFY_SOCKET")
+    if not sock_path:
+        return
+    try:
+        if sock_path.startswith("@"):
+            sock_path = "\0" + sock_path[1:]
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        s.connect(sock_path)
+        s.sendall(state_msg.encode("ascii"))
+        s.close()
+    except Exception:
+        pass
+
+def notify_systemd_watchdog():
+    """
+    Pings systemd watchdog if NOTIFY_SOCKET is set.
+    Driven by heartbeat thread, tolerating up to 45s between main loop ticks.
+    """
+    notify_systemd("WATCHDOG=1")
+
+class HeartbeatThread(threading.Thread):
+    """
+    Dedicated background thread that sends heartbeat metrics (CPU, RAM, Disk, Machine ID)
+    and degraded collector states to /api/agent/heartbeat independently of heavy scans.
+    """
+    def __init__(self, interval=15):
+        super().__init__(name="AgentHeartbeatThread", daemon=True)
+        self.interval = interval
+        self.running = True
+        self.ready_notified = False
+
+    def send_heartbeat_once(self):
+        try:
+            notify_systemd_watchdog()
+            cpu = get_cpu_percent()
+            mem = get_memory_percent()
+            disk = get_disk_percent()
+            mid = get_machine_id()
+            tok = str(AGENT_TOKEN) if (AGENT_TOKEN and not str(AGENT_TOKEN).startswith("$")) else ""
+            sid = ASSIGNED_SERVER_ID
+
+            hb_payload = {
+                "server_id": sid,
+                "agent_token": tok,
+                "token": tok,
+                "agent_version": AGENT_VERSION,
+                "machine_id": mid,
+                "hostname": get_node_name(),
+                "server_ip": get_node_ip(),
+                "cpu_percent": cpu,
+                "memory_percent": mem,
+                "disk_percent": disk,
+                "degraded_collectors": error_collapser.get_failing_collectors(),
+                "timestamp": time.time()
+            }
+            data = json.dumps(hb_payload).encode("utf-8")
+            res = send_agent_request(
+                "/api/agent/heartbeat",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                timeout=5
+            )
+            if res and not self.ready_notified:
+                notify_systemd("READY=1")
+                self.ready_notified = True
+            return True
+        except Exception as e:
+            error_collapser.record_error("heartbeat_thread", e)
+            return False
+
+    def run(self):
+        while self.running:
+            self.send_heartbeat_once()
+            time.sleep(self.interval)
 
 # ── AUTO-DETECTED SERVICES STATE & LOGIC ──
 known_services = {}
@@ -459,6 +591,8 @@ def report_task_result(result_item):
 def task_polling_loop():
     while True:
         try:
+            global _last_main_loop_tick
+            _last_main_loop_tick = time.time()
             sid = check_assigned_server_id()
             if sid:
                 poll_payload = {
@@ -917,7 +1051,7 @@ def get_standalone_software():
             try:
                 with open(p, "rb") as f:
                     cmd_str = f.read().decode("utf-8", errors="ignore")
-                    m = re.search(r'-Dcatalina\\.(?:home|base)=([^\\0\\s]+)', cmd_str)
+                    m = re.search(r'-Dcatalina\.(?:home|base)=([^\0\s]+)', cmd_str)
                     if m:
                         tpath = m.group(1).strip()
                         if tpath and os.path.isdir(tpath):
@@ -959,7 +1093,7 @@ def get_standalone_software():
                 try:
                     with open(rel_notes, "r", encoding="utf-8", errors="ignore") as f:
                         for line in f:
-                            m = re.search(r'Apache Tomcat Version\\s+([0-9\\.]+)', line, re.I)
+                            m = re.search(r'Apache Tomcat Version\s+([0-9\.]+)', line, re.I)
                             if m:
                                 tc_version = m.group(1).strip()
                                 evidence = f"{rel_notes}: {line.strip()}"
@@ -1006,7 +1140,7 @@ def get_standalone_software():
                 if os.path.isfile(j_bin) and os.access(j_bin, os.X_OK):
                     try:
                         out = subprocess.check_output([j_bin, "-version"], stderr=subprocess.STDOUT, timeout=2).decode("utf-8", errors="ignore")
-                        m = re.search(r'version\\s+"([^"]+)"', out)
+                        m = re.search(r'version\s+"([^"]+)"', out)
                         if m:
                             j_ver = m.group(1).strip()
                             evidence = f"{j_bin} -version: {j_ver}"
@@ -1118,19 +1252,33 @@ def collect_and_send_inventory(force_full=False):
     finally:
         inventory_in_progress = False
 
+_cpu_lock = threading.Lock()
+_last_cpu_time = 0.0
+_last_cpu_percent = 0.0
+_last_cpu_stat = None
+
 def get_cpu_percent():
-    try:
-        with open("/proc/stat") as f: t1 = f.readline().split()
-        time.sleep(0.5)
-        with open("/proc/stat") as f: t2 = f.readline().split()
-        idle1 = int(t1[4]) + int(t1[5])
-        total1 = sum(int(x) for x in t1[1:])
-        idle2 = int(t2[4]) + int(t2[5])
-        total2 = sum(int(x) for x in t2[1:])
-        dt = float(total2 - total1)
-        di = float(idle2 - idle1)
-        return round((1.0 - di/dt) * 100.0, 1) if dt > 0 else 0.0
-    except: return 0.0
+    global _last_cpu_time, _last_cpu_percent, _last_cpu_stat
+    now = time.time()
+    with _cpu_lock:
+        if now - _last_cpu_time < 2.0 and _last_cpu_stat is not None:
+            return _last_cpu_percent
+        try:
+            with open("/proc/stat") as f:
+                parts = f.readline().split()
+            idle = int(parts[4]) + int(parts[5])
+            total = sum(int(x) for x in parts[1:])
+            if _last_cpu_stat is not None:
+                prev_idle, prev_total = _last_cpu_stat
+                dt = float(total - prev_total)
+                di = float(idle - prev_idle)
+                if dt > 0:
+                    _last_cpu_percent = round((1.0 - di/dt) * 100.0, 1)
+            _last_cpu_stat = (idle, total)
+            _last_cpu_time = now
+            return _last_cpu_percent
+        except Exception:
+            return _last_cpu_percent
 
 def get_memory_percent():
     try:
@@ -1154,7 +1302,7 @@ def get_processes():
     procs = []
     try:
         out = subprocess.check_output(["ps", "aux", "--no-headers"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.strip().split("\\n"):
+        for line in out.strip().splitlines():
             parts = line.split(None, 10)
             if len(parts) < 11: continue
             try:
@@ -1176,7 +1324,7 @@ def get_open_ports():
         import pwd
         # Extract TCP and UDP ports
         out = subprocess.check_output(["ss", "-tulnpH"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.strip().split("\\n"):
+        for line in out.strip().splitlines():
             if not line.strip(): continue
             parts = line.split()
             proto = parts[0] if len(parts) > 0 else "tcp"
@@ -1191,9 +1339,9 @@ def get_open_ports():
                     
             if not local_addr_str: continue
             
-            m = re.search(r':(\\d+)$', local_addr_str)
+            m = re.search(r':(\d+)$', local_addr_str)
             if not m:
-                m = re.search(r':(\\d+)\\s*', local_addr_str)
+                m = re.search(r':(\d+)\s*', local_addr_str)
             
             if m:
                 port = int(m.group(1))
@@ -1203,7 +1351,7 @@ def get_open_ports():
                 cmdline = ""
                 
                 # users:(("nginx",pid=123,fd=5))
-                proc_m = re.search(r'users:\\s*\\(\\s*\\(\\s*"([^"]+)"\\s*,\\s*pid=(\\d+)', line)
+                proc_m = re.search(r'users:\s*\(\s*\(\s*"([^"]+)"\s*,\s*pid=(\d+)', line)
                 if proc_m:
                     proc_name = proc_m.group(1)
                     pid = int(proc_m.group(2))
@@ -1220,9 +1368,9 @@ def get_open_ports():
                                     
                         # Get cmdline
                         with open(f"/proc/{pid}/cmdline", "r") as cf:
-                            raw_cmd = cf.read().replace("\\x00", " ").strip()
+                            raw_cmd = cf.read().replace("\x00", " ").strip()
                             # Mask secrets
-                            raw_cmd = re.sub(r'(--password|-p|token|secret|key)[=\\s]+[^\\s]+', r'\\1 *****', raw_cmd, flags=re.IGNORECASE)
+                            raw_cmd = re.sub(r'(--password|-p|token|secret|key)[=\s]+[^\s]+', r'\1 *****', raw_cmd, flags=re.IGNORECASE)
                             cmdline = raw_cmd[:120] + ("..." if len(raw_cmd) > 120 else "")
                     except Exception:
                         pass
@@ -1231,11 +1379,11 @@ def get_open_ports():
     except Exception as e:
         try:
             out = subprocess.check_output(["netstat", "-tulnp"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-            for line in out.strip().split("\\n"):
-                m = re.search(r':(\\d+)\\s+', line)
+            for line in out.strip().split("\n"):
+                m = re.search(r':(\d+)\s+', line)
                 if m:
                     port = int(m.group(1))
-                    proc = re.search(r'\\s+\\d+/([^ \\n]+)', line)
+                    proc = re.search(r'\s+\d+/([^ \n]+)', line)
                     pname = proc.group(1).strip() if proc else "unknown"
                     if pname.endswith(":"): pname = pname[:-1]
                     ports.append({"port": port, "proto": "tcp", "process": pname, "pid": None, "user": "unknown", "cmdline": ""})
@@ -1280,9 +1428,9 @@ def get_process_connections():
     conns = {}
     try:
         out = subprocess.check_output(["ss", "-tunpa"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.strip().split("\\n")[1:]:
+        for line in out.strip().splitlines()[1:]:
             if "ESTAB" in line or "SYN-RECV" in line:
-                m = re.search(r'users:\\(\\("([^"]+)",pid=(\\d+)', line)
+                m = re.search(r'users:\(\("([^"]+)",pid=(\d+)', line)
                 if m:
                     name = m.group(1)
                     pid = m.group(2)
@@ -1296,10 +1444,10 @@ def auto_discover_log_paths():
 
     def is_rotated_archive(filepath):
         filename = os.path.basename(filepath)
-        if re.search(r'\\.(gz|bz2|zip|tar|1|2|3|4|5|bak|old|swp)$', filename, re.IGNORECASE):
+        if re.search(r'\.(gz|bz2|zip|tar|1|2|3|4|5|bak|old|swp)$', filename, re.IGNORECASE):
             return True
         # Keep active current-day log or recently updated log files
-        m = re.search(r'(\\d{4}-\\d{2}-\\d{2})', filename)
+        m = re.search(r'(\d{4}-\d{2}-\d{2})', filename)
         if m:
             date_str = m.group(1)
             today_str = datetime.now().strftime("%Y-%m-%d")
@@ -1310,7 +1458,7 @@ def auto_discover_log_paths():
                     return False
             except: pass
             return True
-        if re.search(r'\\.\\d{8}\\.log$', filename, re.IGNORECASE):
+        if re.search(r'\.\d{8}\.log$', filename, re.IGNORECASE):
             try:
                 if (time.time() - os.path.getmtime(filepath)) < 14400:
                     return False
@@ -1389,13 +1537,13 @@ def auto_discover_log_paths():
     # Find all tomcat / Java / Spring / MDM instances from running processes
     try:
         out = subprocess.check_output(["ps", "aux"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.split("\\n"):
+        for line in out.split("\n"):
             line_l = line.lower()
             if "catalina" in line_l or "tomcat" in line_l:
                 dirs_to_check = []
-                m = re.search(r'-Dcatalina\\.home=([^\\s]+)', line)
+                m = re.search(r'-Dcatalina\.home=([^\s]+)', line)
                 if m: dirs_to_check.append(m.group(1).strip())
-                m_base = re.search(r'-Dcatalina\\.base=([^\\s]+)', line)
+                m_base = re.search(r'-Dcatalina\.base=([^\s]+)', line)
                 if m_base: dirs_to_check.append(m_base.group(1).strip())
                 for bdir in dirs_to_check:
                     log_dir = os.path.join(bdir, "logs")
@@ -1409,7 +1557,7 @@ def auto_discover_log_paths():
                         for f in glob.glob(os.path.join(log_dir, "*.out")):
                             if not is_rotated_archive(f):
                                 paths[f] = "tomcat"
-                m2 = re.search(r'-classpath\\s+([^\\s]+)', line)
+                m2 = re.search(r'-classpath\s+([^\s]+)', line)
                 if m2:
                     nohup_dir = os.path.dirname(m2.group(1))
                     nohup_path = os.path.join(nohup_dir, "nohup.out")
@@ -1455,9 +1603,9 @@ def auto_discover_log_paths():
     # Find postgres log from running processes (any process with -D data directory)
     try:
         out = subprocess.check_output(["ps", "aux"], stderr=subprocess.DEVNULL, timeout=5).decode("utf-8", errors="ignore")
-        for line in out.split("\\n"):
+        for line in out.split("\n"):
             if 'postgres' in line.lower() and ('-D' in line or 'cluster' in line):
-                m = re.search(r'-D\\s+([^\\s]+)', line)
+                m = re.search(r'-D\s+([^\s]+)', line)
                 if m:
                     data_dir = m.group(1).strip()
                     for sub in ['pg_log', 'log', '']:
@@ -1661,15 +1809,12 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
                             if os.path.islink(fpath) or not os.path.isfile(fpath):
                                 continue
 
-                            # Never scan agent code or test suite
                             norm_fp = os.path.normpath(fpath).replace("\\", "/").lower()
-                            if (
-                                "/opt/securepulse" in norm_fp or
-                                "/tests/" in norm_fp or
-                                "test_malware_defense" in norm_fp or
-                                fname.lower() in ("node_push_agent.py", "agent.py")
-                            ):
-                                continue
+                            # Exempt agent internal data/state/log files by type/extension
+                            if "/opt/securepulse" in norm_fp:
+                                if fname.lower() in ("config.json", "audit_checkpoint.json") or \
+                                   fname.endswith((".log", ".lock", ".bak", ".tmp")):
+                                    continue
 
                             st = os.stat(fpath)
                             if st.st_size > 50 * 1024 * 1024:
@@ -1941,7 +2086,7 @@ def get_auditd_events():
             with open(fpath, 'r', errors='ignore') as f:
                 f.seek(seek_pos)
                 for line in f:
-                    msg_m = re.search(r'msg=audit\\(([\\d\\.]+):(\\d+)\\)', line)
+                    msg_m = re.search(r'msg=audit\(([\d\.]+):(\d+)\)', line)
                     if not msg_m:
                         continue
                     epoch_str = msg_m.group(1)
@@ -1960,15 +2105,15 @@ def get_auditd_events():
                     records_by_id[msg_id]["lines"].append(line.strip())
 
                     if "type=SYSCALL" in line:
-                        auid_m = re.search(r'\\bauid=(\\d+)', line)
-                        uid_m  = re.search(r'\\buid=(\\d+)', line)
-                        euid_m = re.search(r'\\beuid=(\\d+)', line)
-                        key_m  = re.search(r'key="?([^"\\s]+)"?', line)
-                        comm_m = re.search(r'comm="?([^"\\s]+)"?', line)
-                        exe_m  = re.search(r'exe="?([^"\\s]+)"?', line)
-                        ses_m  = re.search(r'\\bses=(\\d+)', line)
-                        pid_m  = re.search(r'\\bpid=(\\d+)', line)
-                        ppid_m = re.search(r'\\bppid=(\\d+)', line)
+                        auid_m = re.search(r'\bauid=(\d+)', line)
+                        uid_m  = re.search(r'\buid=(\d+)', line)
+                        euid_m = re.search(r'\beuid=(\d+)', line)
+                        key_m  = re.search(r'key="?([^"\s]+)"?', line)
+                        comm_m = re.search(r'comm="?([^"\s]+)"?', line)
+                        exe_m  = re.search(r'exe="?([^"\s]+)"?', line)
+                        ses_m  = re.search(r'\bses=(\d+)', line)
+                        pid_m  = re.search(r'\bpid=(\d+)', line)
+                        ppid_m = re.search(r'\bppid=(\d+)', line)
 
                         key_val = key_m.group(1) if key_m else None
                         if key_val in ("(null)", "null", ""):
@@ -1987,13 +2132,13 @@ def get_auditd_events():
                             "line": line.strip()[:1000]
                         }
                     elif "type=PATH" in line:
-                        name_m = re.search(r'name="?([^"\\s]+)"?', line)
+                        name_m = re.search(r'name="?([^"\s]+)"?', line)
                         if name_m:
                             p_name = name_m.group(1)
                             if p_name not in ("(null)", "null"):
                                 records_by_id[msg_id]["paths"].append(p_name)
                     elif "type=CWD" in line:
-                        cwd_m = re.search(r'cwd="?([^"\\s]+)"?', line)
+                        cwd_m = re.search(r'cwd="?([^"\s]+)"?', line)
                         if cwd_m:
                             records_by_id[msg_id]["cwd"] = cwd_m.group(1)
 
@@ -2080,8 +2225,8 @@ auth_log_positions = {}
 def get_auth_failures():
     failures = []
     auth_pattern = re.compile(r'(Failed password|Invalid user|authentication failure|AUTH_FAIL|Failed publickey)', re.IGNORECASE)
-    ip_pattern = re.compile(r'from (\\d+\\.\\d+\\.\\d+\\.\\d+)')
-    user_pattern = re.compile(r'(?:for invalid user|for user|invalid user)\\s+(\\S+)', re.IGNORECASE)
+    ip_pattern = re.compile(r'from (\d+\.\d+\.\d+\.\d+)')
+    user_pattern = re.compile(r'(?:for invalid user|for user|invalid user)\s+(\S+)', re.IGNORECASE)
 
     for path, ltype in discovered_paths.items():
         if ltype != 'os': continue
@@ -2111,21 +2256,24 @@ sudo_log_positions = {}
 
 def get_sudo_events():
     events = []
-    sudo_pattern = re.compile(r'(sudo:|su:|COMMAND=|su\\[)', re.IGNORECASE)
-    for path, ltype in discovered_paths.items():
-        if ltype != 'os': continue
-        try:
-            size = os.path.getsize(path)
-            pos = sudo_log_positions.get(path)
-            if pos is None: pos = size
-            if size < pos: pos = 0
-            with open(path, 'r', errors='ignore') as f:
-                f.seek(pos)
-                for line in f:
-                    if sudo_pattern.search(line):
-                        events.append({"line": line.strip()[:2000], "path": path})
-                sudo_log_positions[path] = f.tell()
-        except: pass
+    try:
+        sudo_pattern = re.compile(r'(sudo:|su:|COMMAND=|su\[)', re.IGNORECASE)
+        for path, ltype in discovered_paths.items():
+            if ltype != 'os': continue
+            try:
+                size = os.path.getsize(path)
+                pos = sudo_log_positions.get(path)
+                if pos is None: pos = size
+                if size < pos: pos = 0
+                with open(path, 'r', errors='ignore') as f:
+                    f.seek(pos)
+                    for line in f:
+                        if sudo_pattern.search(line):
+                            events.append({"line": line.strip()[:2000], "path": path})
+                    sudo_log_positions[path] = f.tell()
+            except Exception: pass
+    except Exception as e:
+        error_collapser.record_error("sudo_events", e)
     return events[-30:]
 
 # Track bash history commands
@@ -2183,10 +2331,10 @@ def get_new_log_lines(max_lines_per_file=100):
                     continue
 
                 clean_src = path
-                if re.search(r'(catalina|localhost|manager|host-manager)\\.\\d{4}-\\d{2}-\\d{2}\\.log$', clean_src, re.I):
-                    clean_src = re.sub(r'(catalina|localhost|manager|host-manager)\\.\\d{4}-\\d{2}-\\d{2}\\.log$', 'catalina.out', clean_src, flags=re.I)
-                elif re.search(r'postgresql-[A-Za-z0-9_-]+\\.log$', clean_src, re.I):
-                    clean_src = re.sub(r'postgresql-[A-Za-z0-9_-]+\\.log$', 'postgresql.log', clean_src, flags=re.I)
+                if re.search(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', clean_src, re.I):
+                    clean_src = re.sub(r'(catalina|localhost|manager|host-manager)\.\d{4}-\d{2}-\d{2}\.log$', 'catalina.out', clean_src, flags=re.I)
+                elif re.search(r'postgresql-[A-Za-z0-9_-]+\.log$', clean_src, re.I):
+                    clean_src = re.sub(r'postgresql-[A-Za-z0-9_-]+\.log$', 'postgresql.log', clean_src, flags=re.I)
 
                 seen_batch = set()
                 for line in raw_lines[-max_lines_per_file:]:
@@ -2214,7 +2362,7 @@ def get_new_log_lines(max_lines_per_file=100):
     if "systemd/journal" in discovered_paths or not cat_lines["os"]:
         try:
             out = subprocess.check_output(["journalctl", "-n", "35", "--no-pager", "-o", "short-iso"], stderr=subprocess.DEVNULL, timeout=4).decode("utf-8", errors="ignore")
-            for line in out.strip().split("\\n"):
+            for line in out.strip().split("\n"):
                 line = line.strip()
                 if line:
                     cat_lines["os"].append({"line": line, "source": "systemd/journal", "log_type": "os"})
@@ -2224,7 +2372,7 @@ def get_new_log_lines(max_lines_per_file=100):
     if "systemd/tomcat" in discovered_paths:
         try:
             out = subprocess.check_output(["journalctl", "-u", "tomcat", "-u", "tomcat9", "-u", "tomcat10", "-n", "35", "--no-pager", "-o", "short-iso"], stderr=subprocess.DEVNULL, timeout=4).decode("utf-8", errors="ignore")
-            for line in out.strip().split("\\n"):
+            for line in out.strip().split("\n"):
                 line = line.strip()
                 if line:
                     cat_lines["tomcat"].append({"line": line, "source": "systemd/tomcat", "log_type": "tomcat"})
@@ -2234,7 +2382,7 @@ def get_new_log_lines(max_lines_per_file=100):
     if "systemd/postgresql" in discovered_paths:
         try:
             out = subprocess.check_output(["journalctl", "-u", "postgresql", "-n", "35", "--no-pager", "-o", "short-iso"], stderr=subprocess.DEVNULL, timeout=4).decode("utf-8", errors="ignore")
-            for line in out.strip().split("\\n"):
+            for line in out.strip().split("\n"):
                 line = line.strip()
                 if line:
                     cat_lines["postgres"].append({"line": line, "source": "systemd/postgresql", "log_type": "postgres"})
@@ -2259,6 +2407,12 @@ def main():
         except Exception:
             pass
     print(f"[{APP_BRAND} Agent] Starting. SOC: {SOC_URL}, Node: {TARGET_NAME} ({TARGET_IP}), Server ID: {ASSIGNED_SERVER_ID}")
+
+    # Start dedicated independent heartbeat thread and send immediate initial heartbeat before heavy collectors run
+    hb_thread = HeartbeatThread(interval=PUSH_INTERVAL)
+    hb_thread.start()
+    hb_thread.send_heartbeat_once()
+
     print(f"[{APP_BRAND} Agent] Discovering log paths...")
     discovered_paths = auto_discover_log_paths()
     print(f"[{APP_BRAND} Agent] Found log paths: {list(discovered_paths.keys())}")
@@ -2279,8 +2433,11 @@ def main():
         pass
 
     push_count = 0
+
     while True:
         try:
+            global _last_main_loop_tick
+            _last_main_loop_tick = time.time()
             # Daily scheduled inventory collection (default 02:30 with random jitter)
             now_dt = datetime.now()
             today_str = now_dt.strftime("%Y-%m-%d")
@@ -2300,19 +2457,30 @@ def main():
             cur_host = get_node_name()
             tok = str(AGENT_TOKEN) if (AGENT_TOKEN and not str(AGENT_TOKEN).startswith("$")) else ""
 
-            cpu = get_cpu_percent()
-            mem = get_memory_percent()
-            disk = get_disk_percent()
-            procs = get_processes()
-            ports = get_open_ports()
-            bash_cmds = get_bash_commands()
-            log_lines = get_new_log_lines()
-            auth_failures = get_auth_failures()
-            sudo_events = get_sudo_events()
-            file_changes = check_fim()
-            audit_events = get_auditd_events()
-            rx, tx = get_network_bytes()
-            proc_conns = get_process_connections()
+            def _safe_run(collector_name, fn, default_val):
+                try:
+                    res = fn()
+                    error_collapser.clear_error(collector_name)
+                    return res
+                except Exception as exc:
+                    error_collapser.record_error(collector_name, exc)
+                    return default_val
+
+            cpu = _safe_run("cpu", get_cpu_percent, 0.0)
+            mem = _safe_run("memory", get_memory_percent, 0.0)
+            disk = _safe_run("disk", get_disk_percent, 0.0)
+            procs = _safe_run("processes", get_processes, [])
+            ports = _safe_run("ports", get_open_ports, [])
+            bash_cmds = _safe_run("bash_commands", get_bash_commands, [])
+            log_lines = _safe_run("log_lines", get_new_log_lines, [])
+            auth_failures = _safe_run("auth_failures", get_auth_failures, [])
+            sudo_events = _safe_run("sudo_events", get_sudo_events, [])
+            file_changes = _safe_run("fim", check_fim, [])
+            audit_events = _safe_run("auditd", get_auditd_events, [])
+            net_bytes = _safe_run("network_bytes", get_network_bytes, (0, 0))
+            rx, tx = net_bytes if (isinstance(net_bytes, (tuple, list)) and len(net_bytes) == 2) else (0, 0)
+            proc_conns = _safe_run("process_connections", get_process_connections, {})
+            det_services = _safe_run("services", discover_services, [])
 
             payload = {
                 "server_id": sid,
@@ -2340,7 +2508,8 @@ def main():
                 "file_changes": file_changes,
                 "audit_events": audit_events,
                 "discovered_log_paths": list(discovered_paths.keys()),
-                "detected_services": discover_services(),
+                "detected_services": det_services,
+                "degraded_collectors": error_collapser.get_failing_collectors(),
                 "task_results": task_results_queue[:]
             }
 
@@ -2429,9 +2598,10 @@ def main():
                 discovered_paths = auto_discover_log_paths()
 
         except urllib.error.URLError as e:
-            print(f"[{APP_BRAND} Agent] Connection error: {e}")
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{now_str}] [{APP_BRAND} Agent] Connection error: {e}", flush=True)
         except Exception as e:
-            print(f"[{APP_BRAND} Agent] Error: {e}")
+            error_collapser.record_error("main_telemetry_loop", e)
 
         time.sleep(PUSH_INTERVAL)
 

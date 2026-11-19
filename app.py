@@ -3788,6 +3788,34 @@ def authenticate_agent_request(request: Request, body_data: dict = None) -> tupl
 
     return server_id, None
 
+@app.post("/api/agent/heartbeat")
+async def api_agent_heartbeat(request: Request):
+    """
+    Dedicated endpoint for lightweight agent heartbeats (CPU, RAM, Disk, Degraded Collector errors).
+    Completely isolated from heavy log ingestion and malware scans.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    server_id, err_msg = authenticate_agent_request(request, data)
+    if not server_id:
+        return JSONResponse(status_code=401, content={"ok": False, "error": err_msg or "Unauthorized agent heartbeat"})
+
+    cpu = float(data.get("cpu_percent", 0.0) or 0.0)
+    mem = float(data.get("memory_percent", 0.0) or 0.0)
+    disk = float(data.get("disk_percent", 0.0) or 0.0)
+    degraded = data.get("degraded_collectors") or {}
+
+    db.update_server_heartbeat(server_id, cpu=cpu, memory=mem, disk=disk, degraded_collectors=degraded)
+
+    return JSONResponse(status_code=200, content={
+        "ok": True,
+        "server_id": server_id,
+        "status": "online"
+    })
+
 
 @app.post("/api/agent/push")
 @app.post("/api/events")
@@ -3833,9 +3861,9 @@ async def api_agent_push(request: Request):
                 disk_val = float(disk_raw) if disk_raw is not None else float((data.get("metrics") or {}).get("disk") or 0)
 
                 if not version.is_newer_version(version.AGENT_VERSION, agent_version):
-                    update_q = "UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s, update_status = 'up_to_date', target_agent_version = NULL, cpu_percent = %s, memory_percent = %s, disk_percent = %s"
+                    update_q = "UPDATE servers SET last_seen = NOW(), last_push_at = NOW(), status = 'online', agent_version = %s, update_status = 'up_to_date', target_agent_version = NULL, cpu_percent = %s, memory_percent = %s, disk_percent = %s"
                 else:
-                    update_q = "UPDATE servers SET last_seen = NOW(), status = 'online', agent_version = %s, cpu_percent = %s, memory_percent = %s, disk_percent = %s"
+                    update_q = "UPDATE servers SET last_seen = NOW(), last_push_at = NOW(), status = 'online', agent_version = %s, cpu_percent = %s, memory_percent = %s, disk_percent = %s"
                 params = [agent_version, cpu_val, mem_val, disk_val]
                 if machine_id:
                     update_q += ", machine_id = CASE WHEN machine_id IS NULL OR machine_id = '' THEN %s ELSE machine_id END"
@@ -4506,10 +4534,55 @@ def _run_direct_local_scan(server_id: int, project_id: Optional[int], scan_id: i
 def api_server_scan_malware(server_id: int, request: Request):
     """
     On-Demand trigger for zero-impact malware scan on a specific server.
+    Fails fast with HTTP 400 if agent is offline or missed heartbeats (>120s).
     """
     srv = db.get_server_by_id(server_id)
     if not srv:
         return JSONResponse(status_code=404, content={"status": "error", "message": "Server not found"})
+
+    # Fail fast if agent is offline or telemetry loop is inactive
+    last_seen = srv.get("last_seen")
+    last_push = srv.get("last_push_at")
+    status = (srv.get("status") or "offline").lower()
+
+    is_offline = (status == "offline")
+    now_ts = datetime.now(timezone.utc)
+    if last_seen and isinstance(last_seen, datetime):
+        ts = now_ts if last_seen.tzinfo else datetime.now()
+        if (ts - last_seen).total_seconds() > 120:
+            is_offline = True
+    elif not last_seen:
+        is_offline = True
+
+    if is_offline:
+        last_str = last_seen.strftime('%Y-%m-%d %H:%M:%S') if (last_seen and isinstance(last_seen, datetime)) else "unknown"
+        return JSONResponse(status_code=400, content={
+            "status": "error",
+            "ok": False,
+            "message": f"Agent offline since {last_str}. Cannot dispatch malware scan to an offline node."
+        })
+
+    # Telemetry push loop check: scan triggers ride on /api/agent/push
+    is_push_stale = False
+    if last_push and isinstance(last_push, datetime):
+        ts_push = now_ts if last_push.tzinfo else datetime.now()
+        if (ts_push - last_push).total_seconds() > 45:
+            is_push_stale = True
+    elif not last_push:
+        # If last_push_at is not recorded yet, check last_seen
+        if last_seen and isinstance(last_seen, datetime):
+            ts = now_ts if last_seen.tzinfo else datetime.now()
+            if (ts - last_seen).total_seconds() > 45:
+                is_push_stale = True
+
+    if is_push_stale:
+        push_str = last_push.strftime('%Y-%m-%d %H:%M:%S') if (last_push and isinstance(last_push, datetime)) else "unknown"
+        return JSONResponse(status_code=400, content={
+            "status": "error",
+            "ok": False,
+            "message": f"Agent telemetry loop inactive (last telemetry push: {push_str}). Scan dispatch requires active telemetry loop."
+        })
+
     _malware_scan_queue.add(server_id)
     scan_id = db.record_file_scan(server_id=server_id, project_id=srv.get("project_id"), trigger_type="manual", status="in_progress")
     u = getattr(request.state, "user", None)
@@ -5123,6 +5196,8 @@ async def api_patch_alert(id: int, request: Request):
     if not conn: raise HTTPException(status_code=500)
     try:
         with conn.cursor() as cur:
+            cur.execute("SELECT id, severity, status, is_resolved FROM alerts WHERE id = %s;", (id,))
+            old_alert = cur.fetchone()
             updates = []
             params = []
             for k in ['is_resolved', 'severity', 'case_id']:
@@ -5135,6 +5210,8 @@ async def api_patch_alert(id: int, request: Request):
                 cur.execute(query, params)
                 res = cur.fetchone()
                 uname = request.session.get('username', 'system')
+                if old_alert and res:
+                    db.record_alert_status_change(cur, id, old_alert.get('severity'), res.get('severity'), old_alert.get('status'), res.get('status'), old_alert.get('is_resolved'), res.get('is_resolved'), uname, "Manual analyst patch")
                 db.log_audit(uname, 'UPDATE_ALERT', 'alert', id, f"Updated alert {id}")
                 return {"ok": True, "alert": res}
             return {"ok": False, "message": "No updates provided"}
@@ -8120,7 +8197,10 @@ StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
+WatchdogSec=60
+TimeoutStartSec=45
+NotifyAccess=all
 User=root
 WorkingDirectory=/opt/securepulse
 ExecStart=/usr/bin/python3 /opt/securepulse/node_push_agent.py
@@ -8656,12 +8736,23 @@ async def api_reload_rules():
 
 
 @app.patch("/api/alerts/{alert_id}/resolve")
-async def api_resolve_alert(alert_id: int):
+async def api_resolve_alert(alert_id: int, request: Request):
     conn = db.get_db_connection()
     if conn:
         try:
             with conn.cursor() as cur:
-                cur.execute("UPDATE alerts SET is_resolved = TRUE, resolved_at = NOW() WHERE id = %s;", (alert_id,))
+                cur.execute("SELECT id, severity, status, is_resolved FROM alerts WHERE id = %s;", (alert_id,))
+                old_alert = cur.fetchone()
+                cur.execute("UPDATE alerts SET is_resolved = TRUE, status = 'resolved', resolved_at = NOW() WHERE id = %s RETURNING *;", (alert_id,))
+                res = cur.fetchone()
+                uname = "system"
+                try:
+                    user = get_session_user(request)
+                    if user: uname = user.get("username", "admin")
+                except Exception: pass
+                if old_alert and res:
+                    db.record_alert_status_change(cur, alert_id, old_alert.get('severity'), res.get('severity'), old_alert.get('status'), 'resolved', old_alert.get('is_resolved'), True, uname, "Manual resolve")
+                db.log_audit(uname, 'RESOLVE_ALERT', 'alert', alert_id, f"Resolved alert {alert_id}")
             return {"ok": True, "message": f"Alert #{alert_id} resolved"}
         except Exception as e:
             return {"ok": False, "message": str(e)}
@@ -8794,14 +8885,135 @@ async def api_agents_register(request: Request):
     client_ip = request.client.host if request.client else "127.0.0.1"
     hostname = body.get("hostname") or f"node-{client_ip}"
     ip = body.get("ip_address") or client_ip
+    machine_id = body.get("machine_id") or request.headers.get("x-machine-id") or ""
+    incoming_secret = body.get("token") or body.get("agent_token") or request.headers.get("x-agent-token") or ""
+
+    # Identity Protection: If machine_id belongs to an existing server, require valid pre-shared secret
+    if machine_id:
+        existing = db.get_server_by_machine_id(machine_id)
+        if existing:
+            stored_token = existing.get("agent_token") or existing.get("api_token") or ""
+            if incoming_secret and stored_token and hmac.compare_digest(str(incoming_secret), str(stored_token)):
+                # Valid secret: reuse existing approved record and keep history intact
+                db.update_server_network(existing["id"], ip=ip, hostname=hostname)
+                return JSONResponse(status_code=200, content={
+                    "agent_token": stored_token,
+                    "server_id": existing["id"],
+                    "status": "approved",
+                    "message": "Re-registration authenticated with existing agent token"
+                })
+            else:
+                # Unknown or missing secret: never update approved record in place! Put into pending approval
+                token = f"sp-token-{uuid.uuid4().hex[:16]}"
+                res = db.add_approval_request(hostname, ip, token=token, node_type="server", machine_id=machine_id)
+                return JSONResponse(status_code=202, content={
+                    "agent_token": token,
+                    "server_id": res.get("id") if res else None,
+                    "status": "pending",
+                    "message": "Known machine ID with unauthenticated secret. Placed in pending administrator approval queue."
+                })
+
     token = f"sp-token-{uuid.uuid4().hex[:16]}"
-    res = db.add_approval_request(hostname, ip, token=token, node_type="server")
+    res = db.add_approval_request(hostname, ip, token=token, node_type="server", machine_id=machine_id)
     return JSONResponse(status_code=201, content={
         "agent_token": token,
         "server_id": res.get("id"),
         "status": "pending",
         "message": "Server registered and pending administrator approval"
     })
+
+@app.post("/api/admin/servers/merge/preview")
+async def api_admin_servers_merge_preview(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Authentication required"})
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Access denied: Administrator privileges required"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    keep_id = body.get("keep_id")
+    merge_ids = body.get("merge_ids") or []
+    if not keep_id or not merge_ids:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "keep_id and merge_ids required"})
+
+    # Project scoping check
+    user_pid = user.get("project_id")
+    is_super = bool(user.get("is_admin") or (user.get("role") or "").lower() == "superuser")
+    if not is_super and user_pid is not None:
+        target_srv = db.get_server_by_id(int(keep_id))
+        if target_srv and target_srv.get("project_id") and target_srv.get("project_id") != user_pid:
+            return JSONResponse(status_code=403, content={"ok": False, "error": "Access denied: server outside assigned project"})
+
+    preview = db.preview_merge_servers(int(keep_id), [int(x) for x in merge_ids])
+    return JSONResponse(status_code=200, content=preview or {})
+
+@app.post("/api/admin/servers/merge/execute")
+async def api_admin_servers_merge_execute(request: Request):
+    user = get_session_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Authentication required"})
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Access denied: Administrator privileges required"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    keep_id = body.get("keep_id")
+    merge_ids = body.get("merge_ids") or []
+    if not keep_id or not merge_ids:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "keep_id and merge_ids required"})
+
+    # Project scoping check
+    user_pid = user.get("project_id")
+    is_super = bool(user.get("is_admin") or (user.get("role") or "").lower() == "superuser")
+    if not is_super and user_pid is not None:
+        target_srv = db.get_server_by_id(int(keep_id))
+        if target_srv and target_srv.get("project_id") and target_srv.get("project_id") != user_pid:
+            return JSONResponse(status_code=403, content={"ok": False, "error": "Access denied: server outside assigned project"})
+
+    uname = user.get("username")
+    client_ip = get_client_ip(request)
+    ok = db.execute_merge_servers(int(keep_id), [int(x) for x in merge_ids], admin_user=uname)
+    if ok:
+        db.log_audit(uname, "SERVER_MERGE", "server", int(keep_id), f"Merged duplicate servers {merge_ids} into #{keep_id}", ip_address=client_ip)
+    return JSONResponse(status_code=200 if ok else 500, content={"ok": ok})
+
+@app.post("/api/servers/{server_id}/autoupdate-toggle")
+async def api_server_autoupdate_toggle(server_id: int, request: Request):
+    user = get_session_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"ok": False, "error": "Authentication required"})
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "error": "Access denied: Administrator privileges required"})
+
+    target_srv = db.get_server_by_id(server_id)
+    if not target_srv:
+        return JSONResponse(status_code=404, content={"ok": False, "error": "Server not found"})
+
+    # Project scoping check
+    user_pid = user.get("project_id")
+    is_super = bool(user.get("is_admin") or (user.get("role") or "").lower() == "superuser")
+    if not is_super and user_pid is not None:
+        if target_srv.get("project_id") and target_srv.get("project_id") != user_pid:
+            return JSONResponse(status_code=403, content={"ok": False, "error": "Access denied: server outside assigned project"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    enabled = bool(body.get("enabled", False))
+    exclude = not enabled
+    uname = user.get("username")
+    client_ip = get_client_ip(request)
+
+    ok = db.set_server_autoupdate_flags(server_id, exclude_from_autoupdate=exclude)
+    if ok:
+        db.log_audit(uname, "AUTOUPDATE_TOGGLE", "server", server_id, f"Auto-update set to {'enabled' if enabled else 'disabled'}", ip_address=client_ip)
+    return JSONResponse(status_code=200 if ok else 500, content={"ok": ok, "server_id": server_id, "exclude_from_autoupdate": exclude})
 
 @app.get("/api/agent/status")
 async def api_agent_status(request: Request):
@@ -11774,7 +11986,7 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
             return "XSS_ATTACK", sev, "Cross-Site Scripting (XSS) Injection", "T1059.007 - Cross-Site Scripting", make_evidence("W04", "Cross-Site Scripting", conf, why, sig, "Parameter safely JSON-encoded in API response.", "Verify output encoding in rendered response.")
 
     # 4. Path Traversal / LFI
-    has_traversal_syntax = bool(re.search(r'(?:\.\.[\/\]|\.\.%2[fe]|\.\./|\.\.\\)', full_target_lower))
+    has_traversal_syntax = bool(re.search(r'(?:\.\.[/\\]|\.\.%2[fe])', full_target_lower))
     if has_traversal_syntax:
         matched_sensitive = [st for st in SENSITIVE_TRAVERSAL_TARGETS if st in full_target_lower]
         if matched_sensitive and status in (200, 206):

@@ -21,11 +21,11 @@ class TestSesMailerComprehensive(unittest.TestCase):
         raw = "User admin failed login from 192.168.150.16 with token sp-token-4801a6894e410ea6a74df1378ddbcfd0 and password=SecretPass123"
         sanitized = ses_mailer.sanitize_alert_for_external_ai(raw)
         self.assertNotIn("192.168.150.16", sanitized)
-        self.assertIn("[REDACTED_IP]", sanitized)
+        self.assertTrue("IP_1" in sanitized or "[REDACTED_IP]" in sanitized)
         self.assertNotIn("sp-token-4801a6894e410ea6a74df1378ddbcfd0", sanitized)
-        self.assertIn("[REDACTED_TOKEN]", sanitized)
+        self.assertTrue("[REDACTED_SECRET]" in sanitized or "[REDACTED_TOKEN]" in sanitized)
         self.assertNotIn("SecretPass123", sanitized)
-        self.assertIn("password=[REDACTED]", sanitized)
+        self.assertTrue("password=[REDACTED_SECRET]" in sanitized or "password=[REDACTED]" in sanitized)
 
     def test_missing_credentials_report(self):
         with patch.dict(os.environ, {}, clear=True):

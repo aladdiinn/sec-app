@@ -478,6 +478,37 @@ if __name__ == "__main__":
         sys.exit(1)
     print(f"[TEST] Placeholder gate passed: 0 unsubstituted placeholders found.")
 
+    # 5d. AST-based Regex Compiler Release Gate: compile every regex call and fail build on re.error
+    regex_errors = []
+    doubled_backslash_errors = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            is_re_call = False
+            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == 're':
+                if func.attr in ('compile', 'search', 'match', 'findall', 'sub', 'split', 'finditer'):
+                    is_re_call = True
+            if is_re_call and node.args:
+                arg0 = node.args[0]
+                if isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
+                    pat_str = arg0.value
+                    try:
+                        re.compile(pat_str)
+                    except re.error as re_err:
+                        regex_errors.append((node.lineno, pat_str, str(re_err)))
+                    # Gate: detect doubled backslashes (e.g. \\d, \\s, \\b, \\w) in raw strings used in regex calls
+                    if re.search(r'\\{2}[a-zA-Z0-9]', pat_str):
+                        doubled_backslash_errors.append((node.lineno, pat_str, "Doubled backslash in regex escape sequence"))
+
+    if regex_errors or doubled_backslash_errors:
+        print(f"[CRITICAL ERROR] Regex verification failed in built artifact:")
+        for r_line, r_pat, r_msg in regex_errors:
+            print(f"  Line {r_line}: pattern '{r_pat}' -> {r_msg}")
+        for r_line, r_pat, r_msg in doubled_backslash_errors:
+            print(f"  Line {r_line}: pattern '{r_pat}' -> {r_msg}")
+        sys.exit(1)
+    print(f"[TEST] Regex AST gate passed: all regular expression calls compiled cleanly and no doubled backslashes found.")
+
     # 6. Run comprehensive --selftest on built artifact
     res = subprocess.run([sys.executable, out_agent_path, "--selftest"], capture_output=True, text=True, timeout=15)
     if res.returncode != 0 or "SELFTEST_OK" not in res.stdout:
@@ -485,11 +516,14 @@ if __name__ == "__main__":
         sys.exit(1)
     print(f"[TEST] --selftest passed cleanly:\n{res.stdout.strip()}")
 
-    # 7. Sign with release_signer
+    # 7. Sign with release_signer if private key secret is provided
     manifest_out = os.path.join(agents_dir, f"agent-{version.AGENT_VERSION}.py.manifest.json")
-    manifest = release_signer.sign_file(out_agent_path, manifest_out)
-    print(f"[SIGN] Signed manifest written to {manifest_out}:")
-    print(json.dumps(manifest, indent=2))
+    if os.environ.get("AGENT_RELEASE_PRIVATE_KEY_HEX"):
+        manifest = release_signer.sign_file(out_agent_path, manifest_out)
+        print(f"[SIGN] Signed manifest written to {manifest_out}:")
+        print(json.dumps(manifest, indent=2))
+    else:
+        print(f"[WARN] AGENT_RELEASE_PRIVATE_KEY_HEX not set in environment. Skipping cryptographic signing step (build gates passed).")
 
 if __name__ == "__main__":
     build()

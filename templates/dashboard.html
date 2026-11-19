@@ -1588,8 +1588,13 @@ function renderServicesGrid() {
 
         // Alert box content
         let alertBox = '<div class="service-alert-box sab-normal"> <strong>NORMAL</strong> All checks operational</div>';
+        const degEntries = s.degraded_collectors && typeof s.degraded_collectors === 'object' ? Object.entries(s.degraded_collectors) : [];
         if (item.computedStatus === 'DOWN') {
             alertBox = '<div class="service-alert-box" style="background:rgba(239, 68, 68, 0.1); color:var(--red); border:1px solid rgba(239, 68, 68, 0.3);"> <strong>OFFLINE / DOWN</strong> Connection Lost</div>';
+        } else if (degEntries.length > 0) {
+            const [cName, cInfo] = degEntries[0];
+            const cMsg = (cInfo && cInfo.message) ? cInfo.message : 'Collector error';
+            alertBox = `<div class="service-alert-box sab-trouble" title="${escapeHtml(cMsg)}" style="background:rgba(245,158,11,0.1); color:#f59e0b; border:1px solid rgba(245,158,11,0.3);"> <strong>DEGRADED</strong> Collector ${escapeHtml(cName)} failing</div>`;
         } else if (item.computedStatus === 'MAINT') {
             alertBox = '<div class="service-alert-box sab-trouble"> <strong>MAINTENANCE</strong> Scheduled Maintenance Window</div>';
         } else if (item.computedStatus === 'CRITICAL') {

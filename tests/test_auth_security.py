@@ -4,13 +4,31 @@ os.environ['SECRET_KEY'] = 'test-secret-key-32-chars-long-abc'
 os.environ['DB_PASSWORD'] = 'testpassword'
 
 import unittest
+from unittest.mock import patch
 import asyncio
 import json
 import os
+import types
 import bcrypt
 from starlette.requests import Request
 import database as db
 import app as app_module
+
+def _run_coroutine_sync(coro):
+    """Executes an async FastAPI handler synchronously without event loop socketpair overhead."""
+    def step(c, val=None, exc=None):
+        while True:
+            try:
+                fut = c.throw(exc) if exc else c.send(val)
+                val, exc = None, None
+                if isinstance(fut, types.GeneratorType) or hasattr(fut, '__await__'):
+                    sub = fut.__await__() if hasattr(fut, '__await__') else fut
+                    val = step(sub)
+                else:
+                    val = None
+            except StopIteration as e:
+                return e.value
+    return step(coro)
 
 class MockCursor:
     def __enter__(self):
@@ -49,10 +67,13 @@ class TestAuthSecurity(unittest.TestCase):
     def setUpClass(cls):
         cls._orig_conn = db.get_db_connection
         db.get_db_connection = lambda: MockConn()
+        cls._sleep_patch = patch("asyncio.sleep", return_value=None)
+        cls._sleep_patch.start()
 
     @classmethod
     def tearDownClass(cls):
         db.get_db_connection = cls._orig_conn
+        cls._sleep_patch.stop()
 
     def _call_login(self, username, password, client_ip="203.0.113.10"):
         scope = {
@@ -70,7 +91,7 @@ class TestAuthSecurity(unittest.TestCase):
                 "more_body": False
             }
         req = Request(scope, receive)
-        return asyncio.run(app_module.auth_login(req))
+        return _run_coroutine_sync(app_module.auth_login(req))
 
     def test_admin_default_passwords_rejected(self):
         # admin/admin must return HTTP 401 Unauthorized

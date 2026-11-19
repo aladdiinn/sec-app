@@ -22,10 +22,7 @@ except ImportError:
 import version
 import agent_verifier
 
-DEFAULT_RELEASE_PRIV_KEY_HEX = os.environ.get(
-    "AGENT_RELEASE_PRIVATE_KEY_HEX",
-    "632faf26e144094a385780d5b968d7c0635a590927bb86e3d8e629606b74725a"
-)
+DEFAULT_RELEASE_PRIV_KEY_HEX = os.environ.get("AGENT_RELEASE_PRIVATE_KEY_HEX")
 
 def sign_agent_artifact(agent_bytes: bytes, private_key_hex: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -36,6 +33,8 @@ def sign_agent_artifact(agent_bytes: bytes, private_key_hex: Optional[str] = Non
         raise RuntimeError("cryptography library required for release artifact signing.")
     
     priv_hex = private_key_hex or DEFAULT_RELEASE_PRIV_KEY_HEX
+    if not priv_hex:
+        raise RuntimeError("AGENT_RELEASE_PRIVATE_KEY_HEX environment variable required. Private key must not be hardcoded in repository.")
     priv_bytes = bytes.fromhex(priv_hex)
     priv = ed25519.Ed25519PrivateKey.from_private_bytes(priv_bytes)
 
