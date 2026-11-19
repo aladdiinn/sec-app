@@ -1424,8 +1424,23 @@ function formatLocal(dateStr) {
         if (!sel) return;
 
         let available = currentModalFiles;
+        if ((!available || available.length === 0) && currentModalLogs && currentModalLogs.length > 0) {
+            const srcCounts = {};
+            const srcTypes = {};
+            for (const l of currentModalLogs) {
+                const s = l.source || l.log_path;
+                if (!s) continue;
+                srcCounts[s] = (srcCounts[s] || 0) + 1;
+                srcTypes[s] = l.log_type || 'os';
+            }
+            available = Object.keys(srcCounts).map(src => ({
+                source: src,
+                log_type: srcTypes[src],
+                count: srcCounts[src]
+            }));
+        }
         if (modalActiveCategory !== 'all' && modalActiveCategory !== 'soar' && modalActiveCategory !== 'errors' && modalActiveCategory !== 'userdel') {
-            available = currentModalFiles.filter(f => {
+            available = available.filter(f => {
                 const ft = (f.log_type || '').toLowerCase();
                 const src = (f.source || '').toLowerCase();
 
@@ -1462,7 +1477,9 @@ function formatLocal(dateStr) {
 
         sel.innerHTML = '<option value="">-- All Discovered Files (' + uniqueFiles.length + ') --</option>' +
             uniqueFiles.map(f => `<option value="${escapeHtml(f.source)}">${escapeHtml(f.source)} (${f.count || 0} lines)</option>`).join('');
-        modalActiveFile = '';
+        if (modalActiveFile) {
+            sel.value = modalActiveFile;
+        }
     }
 
     function anyMatch(str, words) {
@@ -1646,10 +1663,12 @@ function formatLocal(dateStr) {
             const textColor = isThreat ? '#f87171' : (isErr ? 'var(--red)' : (isWarn ? 'var(--amber)' : 'var(--text)'));
             // Convert UTC created_at to local timezone (e.g. IST = UTC+5:30) for display
             const ts = (() => {
-                if (l.created_at) {
-                    const dateStr = l.created_at.toString().endsWith('Z') || l.created_at.toString().includes('+') ? l.created_at : l.created_at + 'Z';
+                const rawTime = l.time || l.created_at;
+                if (rawTime) {
+                    const dateStr = rawTime.toString().endsWith('Z') || rawTime.toString().includes('+') ? rawTime : rawTime + 'Z';
                     const d = new Date(dateStr);
                     if (!isNaN(d)) return d.toLocaleString('en-GB', {timeZone: 'Asia/Kolkata', hour12:false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit'}).replace(',','');
+                    return String(rawTime);
                 }
                 return l.created_at_formatted || 'log';
             })();

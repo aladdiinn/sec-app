@@ -2118,13 +2118,6 @@ async def api_delete_server(server_id: int, request: Request):
         return {"ok": True, "message": "Server deleted"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Delete failed"})
 
-@app.get("/api/servers/{server_id}/details")
-async def api_get_server_details(server_id: int):
-    details = db.get_server_details(server_id)
-    if not details:
-        raise HTTPException(status_code=404, detail="Server details not found")
-    return details
-
 @app.post("/api/servers/{server_id}/action")
 async def api_server_action(server_id: int, request: Request):
     try:
@@ -10987,15 +10980,21 @@ async def api_log_streams(request: Request):
                 WHERE 1=1
             """
             params = []
-            pid = get_effective_project_id(request)
-            sql_clause, p_params = db._build_pid_filter("s.project_id", pid)
-            if sql_clause:
-                query += sql_clause
-                params.extend(p_params)
-            if server_id:
+            if not server_id:
+                pid = get_effective_project_id(request)
+                sql_clause, p_params = db._build_pid_filter("s.project_id", pid)
+                if sql_clause:
+                    query += sql_clause
+                    params.extend(p_params)
+            else:
                 linked_ids = db.get_linked_server_ids(server_id)
-                query += " AND pl.server_id = ANY(%s)"
-                params.append(linked_ids)
+                if db.is_postgres():
+                    query += " AND pl.server_id = ANY(%s)"
+                    params.append(linked_ids)
+                else:
+                    placeholders = ",".join(["?"] * len(linked_ids)) if linked_ids else "NULL"
+                    query += f" AND pl.server_id IN ({placeholders})"
+                    params.extend(linked_ids)
 
             if source and source.strip():
                 src_val = source.strip()
@@ -11096,15 +11095,27 @@ async def api_server_log_files(server_id: int):
     try:
         with conn.cursor() as cur:
             linked_ids = db.get_linked_server_ids(server_id)
-            cur.execute("""
-                SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
-                FROM pushed_logs
-                WHERE server_id = ANY(%s)
-                  AND source IS NOT NULL AND source != ''
-                GROUP BY source, log_type
-                ORDER BY count DESC
-                LIMIT 100;
-            """, (linked_ids,))
+            if db.is_postgres():
+                cur.execute("""
+                    SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
+                    FROM pushed_logs
+                    WHERE server_id = ANY(%s)
+                      AND source IS NOT NULL AND source != ''
+                    GROUP BY source, log_type
+                    ORDER BY count DESC
+                    LIMIT 100;
+                """, (linked_ids,))
+            else:
+                placeholders = ",".join(["?"] * len(linked_ids)) if linked_ids else "NULL"
+                cur.execute(f"""
+                    SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
+                    FROM pushed_logs
+                    WHERE server_id IN ({placeholders})
+                      AND source IS NOT NULL AND source != ''
+                    GROUP BY source, log_type
+                    ORDER BY count DESC
+                    LIMIT 100;
+                """, tuple(linked_ids))
             rows = [dict(r) for r in cur.fetchall()]
 
             deduped = {}
