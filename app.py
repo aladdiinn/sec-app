@@ -1016,6 +1016,13 @@ def api_agent_version_manifest(request: Request):
             manifest = json.load(f)
             manifest["download_url"] = f"{str(request.base_url).rstrip('/')}/static/agents/agent-{version.AGENT_VERSION}.py"
             return manifest
+    for fallback_v in ["2.1.8", "2.1.7"]:
+        fallback_path = os.path.join(os.path.dirname(__file__), "static", "agents", f"agent-{fallback_v}.py.manifest.json")
+        if os.path.exists(fallback_path):
+            with open(fallback_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+                manifest["download_url"] = f"{str(request.base_url).rstrip('/')}/static/agents/agent-{fallback_v}.py"
+                return manifest
     return JSONResponse(status_code=404, content={"error": "Manifest not found"})
 
 # Mount Static Files
