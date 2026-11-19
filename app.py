@@ -3823,6 +3823,19 @@ async def api_agent_heartbeat(request: Request):
         "status": "online"
     })
 
+@app.post("/api/agent/tasks/poll")
+async def api_agent_tasks_poll(request: Request):
+    """Task polling endpoint for agent daemons. Returns empty tasks when remote actions are disabled."""
+    return JSONResponse(status_code=200, content={"ok": True, "tasks": []})
+
+@app.post("/api/agent/tasks/status")
+async def api_agent_tasks_status(request: Request):
+    return JSONResponse(status_code=200, content={"ok": True})
+
+@app.post("/api/agent/tasks/result")
+async def api_agent_tasks_result(request: Request):
+    return JSONResponse(status_code=200, content={"ok": True})
+
 
 @app.post("/api/agent/push")
 @app.post("/api/events")
@@ -4655,9 +4668,10 @@ def api_project_scan_malware(project_id: str, request: Request):
     }
 
 @app.get("/api/malware/summary")
-def api_malware_summary(request: Request, project_id: Optional[str] = None):
+def api_malware_summary(request: Request, project_id: Optional[str] = None, server_id: Optional[str] = None):
     eff_pid = None if (not project_id or project_id == "all") else project_id
-    return db.get_malware_defense_summary(project_id=eff_pid)
+    eff_sid = None if (not server_id or server_id == "all") else server_id
+    return db.get_malware_defense_summary(project_id=eff_pid, server_id=eff_sid)
 
 @app.get("/api/malware/scans")
 def api_malware_scans(request: Request, project_id: Optional[str] = None, server_id: Optional[str] = None, limit: int = 50):
@@ -4667,6 +4681,29 @@ def api_malware_scans(request: Request, project_id: Optional[str] = None, server
         eff_pid = None if (not project_id or project_id == "all") else project_id
     scans = db.get_latest_file_scans(project_id=eff_pid, server_id=server_id, limit=limit)
     return {"scans": scans}
+
+@app.post("/api/admin/scans/relink")
+async def api_admin_scans_relink(request: Request):
+    """Admin action to safely relink orphan scans and child records to an active server asset."""
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "Admin privileges required."})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    target_server_id = body.get("target_server_id")
+    orphan_server_ids = body.get("orphan_server_ids") or []
+    if not target_server_id or not orphan_server_ids:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "target_server_id and orphan_server_ids required."})
+    try:
+        target_sid = int(target_server_id)
+        orphan_sids = [int(x) for x in orphan_server_ids]
+    except (ValueError, TypeError):
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Invalid integer server IDs."})
+
+    uname = request.session.get('username', 'admin') if hasattr(request, 'session') else 'admin'
+    res = db.relink_scans_and_assets(target_sid, orphan_sids, admin_user=uname)
+    return res
 
 @app.get("/api/malware/findings")
 def api_malware_findings(request: Request, project_id: Optional[str] = None, server_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100):
@@ -6290,10 +6327,22 @@ echo "[{APP_BRAND}] Target Hostname  : $NODE_NAME"
 # 1. Submit Onboarding Approval Request
 echo "[{APP_BRAND}] Submitting onboarding approval request for $NODE_NAME ($NODE_IP)..."
 
+DETECTED_MID=$(cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null || echo "")
+
+EXISTING_TOKEN=""
+EXISTING_SID=""
+if [ -f /opt/securepulse/config.json ]; then
+    EXISTING_TOKEN=$(grep -oE '"AGENT_TOKEN"[[:space:]]*:[[:space:]]*"[^"]+"' /opt/securepulse/config.json 2>/dev/null | sed -E 's/.*:[[:space:]]*"([^"]+)".*/\\1/' || echo "")
+    EXISTING_SID=$(grep -oE '"ASSIGNED_SERVER_ID"[[:space:]]*:[[:space:]]*[0-9]+' /opt/securepulse/config.json 2>/dev/null | grep -oE '[0-9]+' || echo "")
+fi
+
 PAYLOAD_JSON=$(cat << JSON_EOF
 {{
   "hostname": "$NODE_NAME",
-  "ip_address": "$NODE_IP"
+  "ip_address": "$NODE_IP",
+  "machine_id": "$DETECTED_MID",
+  "token": "$EXISTING_TOKEN",
+  "server_id": "$EXISTING_SID"
 }}
 JSON_EOF
 )
@@ -6306,21 +6355,32 @@ TOKEN=$(echo "$REQ_RES" | grep -oE '"token"[[:space:]]*:[[:space:]]*"[^"]+"' | s
 if [ -z "$TOKEN" ] && command -v python3 >/dev/null 2>&1; then
     TOKEN=$(echo "$REQ_RES" | python3 -c "import sys, json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
 fi
-if [ -z "$TOKEN" ] || [ "$TOKEN" = "None" ] || [ "$TOKEN" = "null" ]; then TOKEN="sp-token-$NODE_NAME"; fi
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "None" ] || [ "$TOKEN" = "null" ]; then
+    if [ -n "$EXISTING_TOKEN" ]; then
+        TOKEN="$EXISTING_TOKEN"
+    else
+        TOKEN=$(openssl rand -hex 16 2>/dev/null || python3 -c 'import secrets; print(secrets.token_urlsafe(20))' 2>/dev/null || echo "sp-token-$(date +%s%N | cut -b1-16)")
+    fi
+fi
 
-echo ""
-echo "[PENDING] Onboarding request submitted to SOC Command Center!"
-echo "[PENDING] Waiting for SOC Administrator approval in Dashboard... (Token: $TOKEN)"
+STATUS=$(echo "$REQ_RES" | grep -oE '"status"[[:space:]]*:[[:space:]]*"[^"]+"' | sed -E 's/.*:[[:space:]]*"([^"]+)".*/\\1/' || echo "pending")
+ASSIGNED_ID=$(echo "$REQ_RES" | grep -oE '"server_id"[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' || echo "")
+if [ "$STATUS" = "approved" ] && [ -n "$ASSIGNED_ID" ]; then
+    echo "[{APP_BRAND}] Recognized existing enrolled server (Server ID: $ASSIGNED_ID). Reusing identity without waiting."
+else
+    echo ""
+    echo "[PENDING] Onboarding request submitted to SOC Command Center!"
+    echo "[PENDING] Waiting for SOC Administrator approval in Dashboard... (Token: $TOKEN)"
+    STATUS="pending"
+fi
 
-STATUS="pending"
 MAX_WAIT=300
 WAITED=0
-ASSIGNED_ID=""
 
 while ([ "$STATUS" = "pending" ] || ([ "$STATUS" = "approved" ] && [ -z "$ASSIGNED_ID" ])) && [ $WAITED -lt $MAX_WAIT ]; do
     sleep 3
     WAITED=$((WAITED+3))
-    CHECK_RES=$(curl -s -k -G "{base_url}/api/agent/status" --data-urlencode "token=$TOKEN" --data-urlencode "hostname=$NODE_NAME" --data-urlencode "ip=$NODE_IP" || echo '{{"status":"pending"}}')
+    CHECK_RES=$(curl -s -k -G "{base_url}/api/agent/status" --data-urlencode "token=$TOKEN" --data-urlencode "hostname=$NODE_NAME" --data-urlencode "ip=$NODE_IP" --data-urlencode "machine_id=$DETECTED_MID" || echo '{{"status":"pending"}}')
     STATUS=$(echo "$CHECK_RES" | grep -oE '"status"[[:space:]]*:[[:space:]]*"[^"]+"' | sed -E 's/.*:[[:space:]]*"([^"]+)".*/\\1/' || echo "pending")
     if [ -z "$STATUS" ] && command -v python3 >/dev/null 2>&1; then
         STATUS=$(echo "$CHECK_RES" | python3 -c "import sys, json; print(json.load(sys.stdin).get('status','pending'))" 2>/dev/null || echo "pending")
@@ -8857,10 +8917,10 @@ async def api_approval_request(request: Request):
     ip = (body.get("ip_address") or body.get("ip") or "").strip()
     if not ip or ip in ("127.0.0.1", "0.0.0.0"):
         ip = client_ip
-    token = body.get("token") or body.get("agent_token")
+    token = body.get("token") or body.get("agent_token") or request.headers.get("x-agent-token")
     app_id = body.get("app_id")
     role = body.get("role")
-    machine_id = body.get("machine_id")
+    machine_id = body.get("machine_id") or request.headers.get("x-machine-id")
 
     node_type = "app" if (app_id or role) else "server"
     display_hostname = hostname
@@ -8881,7 +8941,7 @@ async def api_approval_request(request: Request):
         display_hostname = f"[{app_name} | {role.upper()}] {hostname}"
 
     res = db.add_approval_request(display_hostname, ip, token=token, node_type=node_type, app_id=app_id, role=role, machine_id=machine_id)
-    return {"ok": True, "id": res.get("id"), "token": res.get("token"), "status": res.get("status"), "node_type": res.get("node_type", node_type)}
+    return {"ok": True, "id": res.get("id"), "token": res.get("token"), "status": res.get("status"), "server_id": res.get("server_id"), "node_type": res.get("node_type", node_type)}
 
 @app.post("/agents/register")
 @app.post("/api/agents/register")
@@ -8912,7 +8972,7 @@ async def api_agents_register(request: Request):
                 })
             else:
                 # Unknown or missing secret: never update approved record in place! Put into pending approval
-                token = f"sp-token-{uuid.uuid4().hex[:16]}"
+                token = f"sp-token-{secrets.token_urlsafe(24)}"
                 res = db.add_approval_request(hostname, ip, token=token, node_type="server", machine_id=machine_id)
                 return JSONResponse(status_code=202, content={
                     "agent_token": token,
@@ -8921,7 +8981,7 @@ async def api_agents_register(request: Request):
                     "message": "Known machine ID with unauthenticated secret. Placed in pending administrator approval queue."
                 })
 
-    token = f"sp-token-{uuid.uuid4().hex[:16]}"
+    token = f"sp-token-{secrets.token_urlsafe(24)}"
     res = db.add_approval_request(hostname, ip, token=token, node_type="server", machine_id=machine_id)
     return JSONResponse(status_code=201, content={
         "agent_token": token,
@@ -9029,6 +9089,7 @@ async def api_agent_status(request: Request):
     client_ip = request.client.host if request.client else "127.0.0.1"
     req_ip = (request.query_params.get("ip") or "").strip()
     req_host = (request.query_params.get("hostname") or "").strip()
+    req_mid = (request.query_params.get("machine_id") or request.headers.get("x-machine-id") or "").strip()
 
     appr = None
     if token:
@@ -9039,7 +9100,11 @@ async def api_agent_status(request: Request):
         if conn:
             try:
                 with conn.cursor() as cur:
-                    if req_ip and req_ip not in ("127.0.0.1", "0.0.0.0"):
+                    if req_mid and req_ip and req_ip not in ("127.0.0.1", "0.0.0.0"):
+                        cur.execute("SELECT * FROM approvals WHERE machine_id = %s AND ip_address = %s ORDER BY id DESC LIMIT 1;", (req_mid, req_ip))
+                        r = cur.fetchone()
+                        if r: appr = dict(r)
+                    if not appr and req_ip and req_ip not in ("127.0.0.1", "0.0.0.0"):
                         cur.execute("SELECT * FROM approvals WHERE ip_address = %s ORDER BY id DESC LIMIT 1;", (req_ip,))
                         r = cur.fetchone()
                         if r: appr = dict(r)
@@ -9052,7 +9117,11 @@ async def api_agent_status(request: Request):
                     # Fallback: check servers table directly if node is already onboarded / existing
                     if not appr:
                         srv = None
-                        if token and token not in ("None", "null", "") and not token.startswith("$"):
+                        if req_mid and req_ip and req_ip not in ("127.0.0.1", "0.0.0.0") and not req_ip.startswith("$"):
+                            cur.execute("SELECT id, name, hostname, ip, agent_token, api_token FROM servers WHERE machine_id = %s AND (ip = %s OR ip_address = %s) ORDER BY id DESC LIMIT 1;", (req_mid, req_ip, req_ip))
+                            sr = cur.fetchone()
+                            if sr: srv = dict(sr)
+                        if not srv and token and token not in ("None", "null", "") and not token.startswith("$"):
                             cur.execute("SELECT id, name, hostname, ip, agent_token, api_token FROM servers WHERE agent_token = %s OR api_token = %s ORDER BY id DESC LIMIT 1;", (token, token))
                             sr = cur.fetchone()
                             if sr: srv = dict(sr)
@@ -10252,11 +10321,12 @@ async def api_server_recent_logs(server_id: int):
         if not conn: return []
         try:
             with conn.cursor() as cur:
+                linked_ids = db.get_linked_server_ids(server_id)
                 cur.execute("""
                     SELECT message, timestamp FROM pushed_logs 
-                    WHERE server_id = %s 
+                    WHERE server_id = ANY(%s) 
                     ORDER BY id DESC LIMIT 20;
-                """, (server_id,))
+                """, (linked_ids,))
                 rows = cur.fetchall()
                 lines = []
                 for r in reversed(rows):
@@ -10954,8 +11024,9 @@ async def api_log_streams(request: Request):
                 query += sql_clause
                 params.extend(p_params)
             if server_id:
-                query += " AND pl.server_id = %s"
-                params.append(server_id)
+                linked_ids = db.get_linked_server_ids(server_id)
+                query += " AND pl.server_id = ANY(%s)"
+                params.append(linked_ids)
 
             if source and source.strip():
                 src_val = source.strip()
@@ -11055,19 +11126,16 @@ async def api_server_log_files(server_id: int):
         return {"files": []}
     try:
         with conn.cursor() as cur:
+            linked_ids = db.get_linked_server_ids(server_id)
             cur.execute("""
                 SELECT source, COALESCE(log_type, 'os') as log_type, COUNT(*) as count
                 FROM pushed_logs
-                WHERE (server_id = %s OR server_id IN (
-                    SELECT s2.id FROM servers s2
-                    WHERE (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
-                       OR (s2.machine_id IS NOT NULL AND s2.machine_id != '' AND s2.machine_id = (SELECT s1.machine_id FROM servers s1 WHERE s1.id = %s))
-                ))
+                WHERE server_id = ANY(%s)
                   AND source IS NOT NULL AND source != ''
                 GROUP BY source, log_type
                 ORDER BY count DESC
                 LIMIT 100;
-            """, (server_id, server_id, server_id))
+            """, (linked_ids,))
             rows = [dict(r) for r in cur.fetchall()]
 
             deduped = {}
@@ -11097,14 +11165,10 @@ async def api_server_log_files(server_id: int):
                     cur.execute("""
                         SELECT log_file_path as source, COALESCE(service_type, 'os') as log_type, 0 as count
                         FROM server_log_configs
-                        WHERE (server_id = %s OR server_id IN (
-                            SELECT s2.id FROM servers s2
-                            WHERE (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
-                               OR (s2.machine_id IS NOT NULL AND s2.machine_id != '' AND s2.machine_id = (SELECT s1.machine_id FROM servers s1 WHERE s1.id = %s))
-                        ))
+                        WHERE server_id = ANY(%s)
                           AND log_file_path IS NOT NULL AND log_file_path != ''
                         GROUP BY log_file_path, service_type;
-                    """, (server_id, server_id, server_id))
+                    """, (linked_ids,))
                     cfg_files = [dict(r) for r in cur.fetchall()]
                     files.extend(cfg_files)
                 except Exception: pass

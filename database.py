@@ -19,6 +19,7 @@ import random
 import time
 import logging
 import uuid
+import secrets
 import sqlite3
 import json
 import subprocess
@@ -51,8 +52,30 @@ class DictRowWrapper:
             self.conn.commit()
         except Exception:
             pass
+    @property
+    def rowcount(self):
+        return getattr(self.cursor, 'rowcount', 0)
     def execute(self, query, params=None):
         query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("INTERVAL '45 seconds'", "'-45 seconds'").replace("INTERVAL '30 seconds'", "'-30 seconds'").replace("INTERVAL '15 seconds'", "'-15 seconds'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN").replace("ILIKE", "LIKE").replace("JSONB", "TEXT")
+        
+        # Expand = ANY(?) into IN (?, ...) for SQLite
+        if "= ANY(?)" in query_sql and params is not None:
+            new_params = []
+            new_query = query_sql
+            for p in params:
+                if isinstance(p, (list, tuple, set)) and "= ANY(?)" in new_query:
+                    plist = list(p)
+                    if not plist:
+                        new_query = new_query.replace("= ANY(?)", "IS NULL", 1)
+                    else:
+                        placeholders = ",".join(["?"] * len(plist))
+                        new_query = new_query.replace("= ANY(?)", f"IN ({placeholders})", 1)
+                        new_params.extend(plist)
+                else:
+                    new_params.append(p)
+            params = new_params
+            query_sql = new_query
+
         try:
             if params is None:
                 res = self.cursor.execute(query_sql)
@@ -639,6 +662,15 @@ def init_db():
                     changed_by VARCHAR(64),
                     reason TEXT,
                     changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS server_identity_links (
+                    id SERIAL PRIMARY KEY,
+                    current_server_id INT NOT NULL,
+                    linked_server_id INT NOT NULL,
+                    link_reason VARCHAR(64) DEFAULT 'reinstall',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(current_server_id, linked_server_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS malware_monitored_paths (
@@ -2173,6 +2205,7 @@ def get_server_details(server_id: int):
     if not srv:
         return None
 
+    linked_ids = get_linked_server_ids(server_id)
     conn = get_db_connection()
     alerts = []
     commands = []
@@ -2192,15 +2225,15 @@ def get_server_details(server_id: int):
                     inc_data = get_incidents(status="all", server_id=server_id, limit=150)
                     inc_items = inc_data.get("items") or []
 
-                    # Also fetch all alerts for this server from alerts table (e.g. warnings, system anomalies, resource spikes)
+                    # Also fetch all alerts for this server and its linked IDs from alerts table
                     cur.execute("""
                         SELECT id, server_id, alert_type, severity, title, message as description, 
                                is_resolved, created_at, created_at as first_seen, created_at as last_seen,
                                1 as occurrences, FALSE as is_read
                         FROM alerts 
-                        WHERE server_id = %s 
+                        WHERE server_id = ANY(%s) 
                         ORDER BY created_at DESC LIMIT 100;
-                    """, (server_id,))
+                    """, (linked_ids,))
                     raw_alerts = [dict(r) for r in cur.fetchall()]
 
                     seen_sigs = set()
@@ -2220,25 +2253,25 @@ def get_server_details(server_id: int):
                     alerts = combined_alerts
                 except Exception as ex_a:
                     logger.debug(f"Unified alerts error: {ex_a}")
-                    cur.execute("SELECT * FROM alerts WHERE server_id = %s ORDER BY created_at DESC LIMIT 50;", (server_id,))
+                    cur.execute("SELECT * FROM alerts WHERE server_id = ANY(%s) ORDER BY created_at DESC LIMIT 50;", (linked_ids,))
                     alerts = [dict(r) for r in cur.fetchall()]
 
-                cur.execute("SELECT * FROM commands WHERE server_id = %s ORDER BY executed_at DESC LIMIT 20;", (server_id,))
+                cur.execute("SELECT * FROM commands WHERE server_id = ANY(%s) ORDER BY executed_at DESC LIMIT 20;", (linked_ids,))
                 commands = [dict(r) for r in cur.fetchall()]
 
-                cur.execute("SELECT * FROM pushed_logs WHERE server_id = %s ORDER BY id DESC LIMIT 200;", (server_id,))
+                cur.execute("SELECT * FROM pushed_logs WHERE server_id = ANY(%s) ORDER BY id DESC LIMIT 200;", (linked_ids,))
                 logs = [dict(r) for r in cur.fetchall()]
 
                 try:
-                    cur.execute("SELECT * FROM log_configs WHERE server_id = %s ORDER BY id ASC;", (server_id,))
+                    cur.execute("SELECT * FROM log_configs WHERE server_id = ANY(%s) ORDER BY id ASC;", (linked_ids,))
                     configs = [dict(r) for r in cur.fetchall()]
                 except Exception: pass
 
                 try:
-                    cur.execute("SELECT * FROM open_ports WHERE server_id = %s ORDER BY port ASC;", (server_id,))
+                    cur.execute("SELECT * FROM open_ports WHERE server_id = ANY(%s) ORDER BY port ASC;", (linked_ids,))
                     ports = [dict(r) for r in cur.fetchall()]
                     
-                    cur.execute("SELECT * FROM server_ports WHERE server_id = %s ORDER BY port ASC;", (server_id,))
+                    cur.execute("SELECT * FROM server_ports WHERE server_id = ANY(%s) ORDER BY port ASC;", (linked_ids,))
                     server_ports = [dict(r) for r in cur.fetchall()]
                     if server_ports:
                         ports = server_ports
@@ -2421,25 +2454,91 @@ def delete_server(server_id: int, deleted_by: str = "admin"):
 def add_approval_request(hostname: str, ip_address: str, token: str = None, node_type: str = "server", app_id: int = None, role: str = None, machine_id: str = None):
     conn = get_db_connection()
     if not conn:
-        return {"id": 1, "token": token or f"sp-token-{int(time.time())}", "status": "pending", "node_type": node_type}
+        return {"id": 1, "token": token or f"sp-token-{secrets.token_urlsafe(24)}", "status": "pending", "node_type": node_type}
     try:
         clean_hostname = re.sub(r'^\[.*?\]\s*', '', hostname or '').strip()
 
         with conn.cursor() as cur:
-            if not token:
-                if ip_address and ip_address not in ("127.0.0.1", "0.0.0.0"):
-                    cur.execute("SELECT id, agent_token, status FROM approvals WHERE ip_address = %s ORDER BY id DESC LIMIT 1;", (ip_address,))
-                    existing_appr = cur.fetchone()
-                    if existing_appr and existing_appr.get("agent_token"):
-                        token = existing_appr["agent_token"]
-                if not token and clean_hostname and clean_hostname.lower() not in ("localhost", "target-node"):
-                    cur.execute("SELECT id, agent_token, status FROM approvals WHERE hostname = %s ORDER BY id DESC LIMIT 1;", (clean_hostname,))
-                    existing_appr = cur.fetchone()
-                    if existing_appr and existing_appr.get("agent_token"):
-                        token = existing_appr["agent_token"]
+            # 1. Identity Protection & Automatic Reinstall Recognition:
+            # If this is a server node that was already enrolled and approved, reuse the server row directly!
+            if node_type == "server":
+                existing_srv = None
+                # Check 1: Match by (machine_id AND ip) — distinguishes cloned VMs like Mitra 1 & 2
+                if machine_id and ip_address and ip_address not in ("127.0.0.1", "0.0.0.0"):
+                    cur.execute("""
+                        SELECT id, name, hostname, ip, agent_token, api_token, status, approved_by 
+                        FROM servers 
+                        WHERE machine_id = %s AND (ip = %s OR ip_address = %s)
+                        LIMIT 1;
+                    """, (machine_id, ip_address, ip_address))
+                    existing_srv = cur.fetchone()
 
+                # Check 2: Match by existing agent_token
+                if not existing_srv and token:
+                    cur.execute("""
+                        SELECT id, name, hostname, ip, agent_token, api_token, status, approved_by 
+                        FROM servers 
+                        WHERE agent_token = %s OR api_token = %s 
+                        LIMIT 1;
+                    """, (token, token))
+                    existing_srv = cur.fetchone()
+
+                # Check 3: Match by (ip AND hostname)
+                if not existing_srv and ip_address and ip_address not in ("127.0.0.1", "0.0.0.0") and clean_hostname and clean_hostname.lower() not in ("localhost", "target-node"):
+                    cur.execute("""
+                        SELECT id, name, hostname, ip, agent_token, api_token, status, approved_by 
+                        FROM servers 
+                        WHERE (ip = %s OR ip_address = %s) AND (LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s))
+                        LIMIT 1;
+                    """, (ip_address, ip_address, clean_hostname, clean_hostname))
+                    existing_srv = cur.fetchone()
+
+                # Check 4: Match by unique machine_id alone if machine_id is not shared across multiple servers
+                if not existing_srv and machine_id:
+                    cur.execute("SELECT id, name, hostname, ip, agent_token, api_token, status, approved_by FROM servers WHERE machine_id = %s;", (machine_id,))
+                    mid_rows = cur.fetchall()
+                    if len(mid_rows) == 1:
+                        existing_srv = mid_rows[0]
+
+                if existing_srv and existing_srv.get("approved_by"):
+                    srv_id = existing_srv["id"]
+                    srv_tok = existing_srv.get("agent_token") or existing_srv.get("api_token") or token
+                    if not srv_tok or srv_tok.startswith("sp-token-"):
+                        if not srv_tok:
+                            srv_tok = f"sp-token-{secrets.token_urlsafe(24)}"
+                    cur.execute("""
+                        UPDATE servers 
+                        SET status = 'online', last_seen = NOW(), 
+                            agent_token = COALESCE(NULLIF(%s, ''), agent_token),
+                            machine_id = COALESCE(NULLIF(%s, ''), machine_id)
+                        WHERE id = %s;
+                    """, (srv_tok, machine_id, srv_id))
+                    # Also record in approvals
+                    try:
+                        cur.execute("""
+                            INSERT INTO approvals (hostname, ip_address, agent_token, status, node_type, machine_id, requested_at, approved_at, approved_by, created_at, registered_at)
+                            VALUES (%s, %s, %s, 'approved', 'server', %s, NOW(), NOW(), %s, NOW(), NOW());
+                        """, (hostname, ip_address, srv_tok, machine_id, existing_srv.get("approved_by") or "admin"))
+                    except Exception:
+                        pass
+                    # Register identity link
+                    try:
+                        cur.execute("""
+                            INSERT INTO server_identity_links (current_server_id, linked_server_id, link_reason)
+                            VALUES (%s, %s, 'reinstall_auto_approved')
+                            ON CONFLICT DO NOTHING;
+                        """, (srv_id, srv_id))
+                    except Exception:
+                        pass
+
+                    if hasattr(conn, 'commit'): conn.commit()
+                    log_audit("agent", "REGISTRATION_REINSTALL", "server", srv_id, f"Node reinstall auto-approved for existing asset #{srv_id} ({hostname})", ip_address=ip_address, machine_id=machine_id)
+                    return {"id": srv_id, "token": srv_tok, "status": "approved", "server_id": srv_id, "node_type": "server"}
+
+            # If not already an approved server, generate a random non-guessable token
             if not token:
-                token = f"sp-token-{uuid.uuid4().hex[:12]}"
+                token = f"sp-token-{secrets.token_urlsafe(24)}"
+
             # Check if this token belongs to an application component
             if not app_id and token:
                 try:
@@ -2488,7 +2587,7 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
                                 SET status = 'pending', approved_by = NULL, approved_at = NULL, requested_at = NOW(), ip_address = %s, hostname = %s
                                 WHERE id = %s;
                             """, (ip_address, hostname, appr_id))
-                            conn.commit()
+                            if hasattr(conn, 'commit'): conn.commit()
                             log_audit("agent", "REGISTRATION_REQUEST", "server", appr_id, f"Server re-registration reset to pending for token {token}", ip_address=ip_address, machine_id=machine_id)
                             return {"id": appr_id, "token": token, "status": "pending", "node_type": "server"}
                         else:
@@ -2502,7 +2601,7 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
                                 SET status = 'pending', approved_by = NULL, approved_at = NULL, requested_at = NOW(), ip_address = %s, hostname = %s
                                 WHERE id = %s;
                             """, (ip_address, hostname, appr_id))
-                            conn.commit()
+                            if hasattr(conn, 'commit'): conn.commit()
                             log_audit("agent", "REGISTRATION_REQUEST", "app", appr_id, f"App collector re-registration reset to pending for token {token}", ip_address=ip_address, machine_id=machine_id)
                             return {"id": appr_id, "token": token, "status": "pending", "node_type": "app"}
                         else:
@@ -2514,7 +2613,7 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
                         SET requested_at = NOW(), ip_address = %s, hostname = %s, node_type = %s, application_id = %s, role = %s, machine_id = %s
                         WHERE id = %s;
                     """, (ip_address, hostname, node_type, app_id, role, machine_id, appr_id))
-                    conn.commit()
+                    if hasattr(conn, 'commit'): conn.commit()
                     log_audit("agent", "REGISTRATION_REQUEST", node_type, appr_id, f"Pending registration refreshed for host {hostname} ({ip_address})", ip_address=ip_address, machine_id=machine_id)
                     return {"id": appr_id, "token": token, "status": "pending", "node_type": node_type}
 
@@ -2525,15 +2624,17 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
                 RETURNING id, agent_token, status, node_type;
             """, (hostname, ip_address, token, node_type, app_id, role, machine_id))
             res = cur.fetchone()
-            conn.commit()
+            if hasattr(conn, 'commit'): conn.commit()
             new_id = res["id"] if res else 1
             log_audit("agent", "REGISTRATION_REQUEST", node_type, new_id, f"New onboarding registration request for host {hostname} ({ip_address})", ip_address=ip_address, machine_id=machine_id)
             if res:
-                return dict(res)
+                ret = dict(res)
+                ret["token"] = ret.get("agent_token") or token
+                return ret
             return {"id": 1, "token": token, "status": "pending", "node_type": node_type}
     except Exception as e:
         logger.error(f"Error in add_approval_request: {e}")
-        return {"id": 1, "token": token or f"sp-token-{int(time.time())}", "status": "pending", "node_type": node_type}
+        return {"id": 1, "token": token or f"sp-token-{secrets.token_urlsafe(24)}", "status": "pending", "node_type": node_type}
     finally:
         conn.close()
 
@@ -2633,27 +2734,46 @@ def approve_request(app_id: int, approved_by: str = "admin"):
                         if matched_srv:
                             mid = matched_srv["id"] if isinstance(matched_srv, dict) else matched_srv[0]
                             cur.execute("UPDATE application_components SET linked_server_id = %s WHERE id = %s;", (mid, comp_row["id"]))
-                conn.commit()
+                if hasattr(conn, 'commit'): conn.commit()
                 log_audit(approved_by, "AGENT_APPROVAL", "app_component", app_id, f"Approved application component '{hostname}' ({ip})", ip_address=ip, machine_id=machine_id)
                 return True
 
             # If node_type is server:
+            # Strictly prioritize resolving existing server to prevent creating duplicate records!
             existing_srv = None
-            if machine_id:
-                cur.execute("SELECT id FROM servers WHERE machine_id = %s LIMIT 1;", (machine_id,))
+            # Check 1: Match by (machine_id AND ip) — distinguishes cloned VMs like Mitra 1 & 2
+            if machine_id and ip and ip not in ("127.0.0.1", "0.0.0.0"):
+                cur.execute("SELECT id FROM servers WHERE machine_id = %s AND (ip = %s OR ip_address = %s) LIMIT 1;", (machine_id, ip, ip))
                 existing_srv = cur.fetchone()
+
+            # Check 2: Match by existing agent_token
             if not existing_srv and token:
                 cur.execute("SELECT id FROM servers WHERE agent_token = %s OR api_token = %s LIMIT 1;", (token, token))
                 existing_srv = cur.fetchone()
+
+            # Check 3: Match by (ip AND hostname)
+            if not existing_srv and ip and ip not in ("127.0.0.1", "0.0.0.0") and clean_hostname and clean_hostname.lower() not in ("localhost", "target-node"):
+                cur.execute("SELECT id FROM servers WHERE (ip = %s OR ip_address = %s) AND (LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s)) LIMIT 1;", (ip, ip, clean_hostname, clean_hostname))
+                existing_srv = cur.fetchone()
+
+            # Check 4: Match by unique machine_id alone if machine_id is not shared across multiple servers
+            if not existing_srv and machine_id:
+                cur.execute("SELECT id FROM servers WHERE machine_id = %s;", (machine_id,))
+                mid_rows = cur.fetchall()
+                if len(mid_rows) == 1:
+                    existing_srv = mid_rows[0]
+
+            # Check 5: Match by IP alone if non-local
             if not existing_srv and ip and ip not in ("127.0.0.1", "0.0.0.0"):
                 cur.execute("SELECT id FROM servers WHERE ip = %s OR ip_address = %s LIMIT 1;", (ip, ip))
                 existing_srv = cur.fetchone()
+
+            # Check 6: Match by Hostname alone
             if not existing_srv and clean_hostname and clean_hostname.lower() not in ("localhost", "target-node"):
                 cur.execute("SELECT id FROM servers WHERE LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s) LIMIT 1;", (clean_hostname, clean_hostname))
                 existing_srv = cur.fetchone()
 
             pid = get_unassigned_project_id() or 1
-
             srv_ip = ip or "127.0.0.1"
             srv_host = clean_hostname or f"node-{srv_ip}"
 
@@ -2674,7 +2794,17 @@ def approve_request(app_id: int, approved_by: str = "admin"):
                     WHERE id = %s;
                 """, (token, token, approved_by, version.AGENT_VERSION, machine_id, sid))
 
-            conn.commit()
+                # Link in server_identity_links
+                try:
+                    cur.execute("""
+                        INSERT INTO server_identity_links (current_server_id, linked_server_id, link_reason)
+                        VALUES (%s, %s, 'approval_reuse')
+                        ON CONFLICT DO NOTHING;
+                    """, (sid, sid))
+                except Exception:
+                    pass
+
+            if hasattr(conn, 'commit'): conn.commit()
             log_audit(approved_by, "AGENT_APPROVAL", "server", sid or app_id, f"Approved server asset '{srv_host}' ({srv_ip})", ip_address=srv_ip, machine_id=machine_id)
             return True
     except Exception as e:
@@ -3180,8 +3310,13 @@ def get_incidents(status=None, severity=None, limit=50, offset=0, project_id=Non
 
             # Server filter
             if server_id:
-                where_clauses.append("i.server_id = %s")
-                params.append(int(server_id))
+                try:
+                    sid_val = int(server_id)
+                except (ValueError, TypeError):
+                    sid_val = server_id
+                linked_ids = get_linked_server_ids(sid_val)
+                where_clauses.append("i.server_id = ANY(%s)")
+                params.append(linked_ids)
 
             # Query filter (title, description, hostname, or ID)
             if q and str(q).strip():
@@ -3626,6 +3761,121 @@ def get_server_by_machine_id(machine_id: str):
             return dict(r) if r else None
     finally: conn.close()
 
+def get_linked_server_ids(server_id) -> list:
+    """
+    Resolves a target server_id to its full set of linked historical/alias IDs.
+    Guarantees:
+    - Never merges cloned VMs with identical machine_id but different IPs (e.g. Mitra 1 and Mitra 2).
+    - Checks server_identity_links mapping table.
+    - Checks servers_merge_backup table.
+    - Checks active servers table for exact matching (ip AND (hostname OR machine_id)).
+    - For soc-server (ID 39 or IP 192.168.10.201), covers historical alias IDs (25, 26, 30, 33, 34, 36, 38).
+    - Returns a deduplicated sorted list of integer IDs containing at least [server_id].
+    """
+    if not server_id:
+        return []
+    try:
+        sid = int(server_id)
+    except (ValueError, TypeError):
+        return [server_id]
+
+    linked_ids = {sid}
+    conn = get_db_connection()
+    if not conn:
+        return sorted(list(linked_ids))
+
+    try:
+        with conn.cursor() as cur:
+            # 1. Fetch current server details
+            cur.execute("""
+                SELECT id, name, hostname, ip, ip_address, machine_id 
+                FROM servers 
+                WHERE id = %s;
+            """, (sid,))
+            srv = cur.fetchone()
+
+            target_ip = None
+            target_host = None
+            target_mid = None
+            if srv:
+                srv_dict = dict(srv)
+                target_ip = srv_dict.get("ip") or srv_dict.get("ip_address")
+                target_host = srv_dict.get("hostname") or srv_dict.get("name")
+                target_mid = srv_dict.get("machine_id")
+
+            # 2. Check server_identity_links table if exists
+            try:
+                cur.execute("""
+                    SELECT linked_server_id FROM server_identity_links WHERE current_server_id = %s
+                    UNION
+                    SELECT current_server_id FROM server_identity_links WHERE linked_server_id = %s;
+                """, (sid, sid))
+                for r in cur.fetchall():
+                    val = r["linked_server_id"] if isinstance(r, dict) else r[0]
+                    if val: linked_ids.add(int(val))
+            except Exception:
+                if hasattr(conn, 'rollback'): conn.rollback()
+
+            # 3. Check servers_merge_backup if exists
+            try:
+                cur.execute("""
+                    SELECT merged_id FROM servers_merge_backup WHERE target_id = %s;
+                """, (sid,))
+                for r in cur.fetchall():
+                    val = r["merged_id"] if isinstance(r, dict) else r[0]
+                    if val: linked_ids.add(int(val))
+            except Exception:
+                if hasattr(conn, 'rollback'): conn.rollback()
+
+            # 4. Resolve other matching server records in servers table
+            if target_ip and target_ip not in ("127.0.0.1", "0.0.0.0"):
+                # Crucial safety check: if multiple active servers share the same machine_id (cloned VMs like Mitra 1 & 2),
+                # NEVER resolve by machine_id alone! Require (machine_id AND ip) or (ip AND hostname).
+                cur.execute("""
+                    SELECT id FROM servers
+                    WHERE (ip = %s OR ip_address = %s)
+                      AND (
+                          (LOWER(hostname) = LOWER(%s) OR LOWER(name) = LOWER(%s))
+                          OR (machine_id IS NOT NULL AND machine_id != '' AND machine_id = %s)
+                      );
+                """, (target_ip, target_ip, target_host or '', target_host or '', target_mid or ''))
+                for r in cur.fetchall():
+                    val = r["id"] if isinstance(r, dict) else r[0]
+                    if val: linked_ids.add(int(val))
+
+            # 5. Dynamic discovery from file_scans: find orphan server_ids with matching IP or hostname
+            if target_ip and target_ip not in ("127.0.0.1", "0.0.0.0"):
+                try:
+                    cur.execute("""
+                        SELECT DISTINCT server_id FROM file_scans 
+                        WHERE server_id IS NOT NULL 
+                          AND (
+                              (server_ip IS NOT NULL AND server_ip = %s)
+                              OR (server_name IS NOT NULL AND LOWER(server_name) = LOWER(%s))
+                              OR (server_hostname IS NOT NULL AND LOWER(server_hostname) = LOWER(%s))
+                          );
+                    """, (target_ip, target_host or '', target_host or ''))
+                    for r in cur.fetchall():
+                        val = r["server_id"] if isinstance(r, dict) else r[0]
+                        if val: linked_ids.add(int(val))
+                except Exception:
+                    if hasattr(conn, 'rollback'): conn.rollback()
+
+            # 6. Historical fallback for production soc-server (IP 192.168.10.201 or hostname soc-server)
+            is_soc_server = False
+            if sid == 39 or (target_ip == '192.168.10.201') or (target_host and 'soc-server' in str(target_host).lower()):
+                is_soc_server = True
+            if is_soc_server:
+                for old_id in (25, 26, 30, 33, 34, 36, 38):
+                    linked_ids.add(old_id)
+
+    except Exception as e:
+        logger.error(f"Error in get_linked_server_ids for server {server_id}: {e}")
+    finally:
+        conn.close()
+
+    return sorted(list(linked_ids))
+
 def update_server_heartbeat(server_id: int, cpu=0.0, memory=0.0, disk=0.0, degraded_collectors=None):
     """Updates server heartbeat timestamp, metrics, and degraded collector errors."""
     conn = get_db_connection()
@@ -3853,6 +4103,7 @@ def record_file_scan_results(scan_id, server_id, findings):
 def get_latest_file_scans(project_id=None, server_id=None, limit=50):
     """
     Fetches latest file scans filtered by optional project_id and server_id.
+    Uses get_linked_server_ids to dynamically include all historical and aliased scan records.
     """
     conn = get_db_connection()
     if not conn: return []
@@ -3863,23 +4114,16 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
             where_clauses.append("(fs.project_id = %s OR s.project_id = %s)")
             params.extend([project_id, project_id])
         if server_id and str(server_id).lower() != 'all':
-            try:
-                sid_val = int(server_id)
-            except (ValueError, TypeError):
-                sid_val = server_id
-            where_clauses.append("""
-                (
-                    fs.server_id = %s 
-                    OR fs.server_id IN (
-                        SELECT s2.id FROM servers s2 
-                        WHERE (s2.machine_id IS NOT NULL AND s2.machine_id != '' AND s2.machine_id = (SELECT s1.machine_id FROM servers s1 WHERE s1.id = %s))
-                           OR (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
-                           OR (s2.ip_address IS NOT NULL AND s2.ip_address != '' AND s2.ip_address != '127.0.0.1' AND s2.ip_address = (SELECT s1.ip_address FROM servers s1 WHERE s1.id = %s))
-                           OR (s2.name IS NOT NULL AND s2.name != 'Target-Node' AND s2.name = (SELECT s1.name FROM servers s1 WHERE s1.id = %s))
-                    )
-                )
-            """)
-            params.extend([sid_val, sid_val, sid_val, sid_val, sid_val])
+            if str(server_id).lower() in ('unlinked', 'orphans', 'orphan'):
+                where_clauses.append("fs.server_id NOT IN (SELECT id FROM servers)")
+            else:
+                try:
+                    sid_val = int(server_id)
+                except (ValueError, TypeError):
+                    sid_val = server_id
+                linked_ids = get_linked_server_ids(sid_val)
+                where_clauses.append("fs.server_id = ANY(%s)")
+                params.append(linked_ids)
         
         where_sql = " AND ".join(where_clauses)
         params.append(limit)
@@ -3920,6 +4164,7 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
 def get_malware_findings(project_id=None, server_id=None, status=None, limit=100):
     """
     Fetches malware/file integrity findings with host and project metadata.
+    Uses get_linked_server_ids to include all linked historical asset IDs.
     """
     conn = get_db_connection()
     if not conn: return []
@@ -3930,25 +4175,16 @@ def get_malware_findings(project_id=None, server_id=None, status=None, limit=100
             where_clauses.append("s.project_id = %s")
             params.append(project_id)
         if server_id and str(server_id).lower() != 'all':
-            try:
-                sid_val = int(server_id)
-            except (ValueError, TypeError):
-                sid_val = server_id
-            where_clauses.append("""
-                (
-                    r.server_id = %s 
-                    OR r.server_id IN (
-                        SELECT s2.id FROM servers s2 
-                        WHERE (s2.machine_id IS NOT NULL AND s2.machine_id != '' AND s2.machine_id = (SELECT s1.machine_id FROM servers s1 WHERE s1.id = %s))
-                           OR (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
-                           OR (s2.ip_address IS NOT NULL AND s2.ip_address != '' AND s2.ip_address != '127.0.0.1' AND s2.ip_address = (SELECT s1.ip_address FROM servers s1 WHERE s1.id = %s))
-                           OR (s2.name IS NOT NULL AND s2.name != 'Target-Node' AND s2.name = (SELECT s1.name FROM servers s1 WHERE s1.id = %s))
-                    )
-                    OR (fs.machine_id IS NOT NULL AND fs.machine_id != '' AND fs.machine_id = (SELECT s3.machine_id FROM servers s3 WHERE s3.id = %s))
-                    OR (fs.server_ip IS NOT NULL AND fs.server_ip != '' AND fs.server_ip != '127.0.0.1' AND fs.server_ip = (SELECT s4.ip FROM servers s4 WHERE s4.id = %s))
-                )
-            """)
-            params.extend([sid_val, sid_val, sid_val, sid_val, sid_val, sid_val, sid_val])
+            if str(server_id).lower() in ('unlinked', 'orphans', 'orphan'):
+                where_clauses.append("r.server_id NOT IN (SELECT id FROM servers)")
+            else:
+                try:
+                    sid_val = int(server_id)
+                except (ValueError, TypeError):
+                    sid_val = server_id
+                linked_ids = get_linked_server_ids(sid_val)
+                where_clauses.append("r.server_id = ANY(%s)")
+                params.append(linked_ids)
         if status and str(status).lower() != 'all':
             where_clauses.append("r.status = %s")
             params.append(status)
@@ -4000,7 +4236,7 @@ def update_file_scan_result_status(result_id, new_status, username=None):
     finally:
         conn.close()
 
-def get_malware_defense_summary(project_id=None):
+def get_malware_defense_summary(project_id=None, server_id=None):
     """
     Aggregates high-level malware defense metrics:
     - total_scans
@@ -4011,6 +4247,7 @@ def get_malware_defense_summary(project_id=None):
     - whitelisted_count
     - last_scan_at
     - overall_status ('Protected' | 'Threats Detected' | 'Scanning')
+    Consistent across fleet header and per-asset selection.
     """
     conn = get_db_connection()
     if not conn:
@@ -4022,11 +4259,26 @@ def get_malware_defense_summary(project_id=None):
     try:
         p_filter_scan = ""
         p_filter_res = ""
-        params = []
-        if project_id and str(project_id).lower() != 'all':
+        params_scan = []
+        params_res = []
+
+        if server_id and str(server_id).lower() != 'all':
+            if str(server_id).lower() in ('unlinked', 'orphans', 'orphan'):
+                p_filter_scan = "WHERE fs.server_id NOT IN (SELECT id FROM servers)"
+                p_filter_res = "WHERE r.server_id NOT IN (SELECT id FROM servers)"
+            else:
+                try: sid_val = int(server_id)
+                except: sid_val = server_id
+                linked_ids = get_linked_server_ids(sid_val)
+                p_filter_scan = "WHERE fs.server_id = ANY(%s)"
+                p_filter_res = "WHERE r.server_id = ANY(%s)"
+                params_scan = [linked_ids]
+                params_res = [linked_ids]
+        elif project_id and str(project_id).lower() != 'all':
             p_filter_scan = "WHERE (fs.project_id = %s OR s.project_id = %s)"
             p_filter_res = "WHERE s.project_id = %s"
-            params = [project_id, project_id]
+            params_scan = [project_id, project_id]
+            params_res = [project_id]
 
         summary = {
             'total_scans': 0,
@@ -4058,7 +4310,7 @@ def get_malware_defense_summary(project_id=None):
                     FROM file_scans fs
                     LEFT JOIN servers s ON fs.server_id = s.id
                     {p_filter_scan};
-                """, params)
+                """, params_scan)
             else:
                 cur.execute("""
                     SELECT COUNT(*) as total_scans,
@@ -4078,7 +4330,7 @@ def get_malware_defense_summary(project_id=None):
                     LEFT JOIN servers s ON r.server_id = s.id
                     {p_filter_res}
                     GROUP BY r.status;
-                """, [project_id])
+                """, params_res)
             else:
                 cur.execute("""
                     SELECT status, COUNT(*) as cnt
@@ -4098,6 +4350,20 @@ def get_malware_defense_summary(project_id=None):
                 elif st in ('threat_detected', 'critical', 'active'):
                     summary['active_threats'] += cnt
 
+            if summary['active_threats'] == 0:
+                if p_filter_scan:
+                    cur.execute(f"""
+                        SELECT COALESCE(SUM(threats_found), 0) as tf
+                        FROM file_scans fs
+                        LEFT JOIN servers s ON fs.server_id = s.id
+                        {p_filter_scan};
+                    """, params_scan)
+                else:
+                    cur.execute("SELECT COALESCE(SUM(threats_found), 0) as tf FROM file_scans fs;")
+                tf_row = cur.fetchone()
+                if tf_row:
+                    summary['active_threats'] = int(tf_row['tf'] if isinstance(tf_row, dict) else tf_row[0])
+
             # 3. Last scan timestamp
             if p_filter_scan:
                 cur.execute(f"""
@@ -4106,7 +4372,7 @@ def get_malware_defense_summary(project_id=None):
                     LEFT JOIN servers s ON fs.server_id = s.id
                     {p_filter_scan}
                     ORDER BY fs.started_at DESC LIMIT 1;
-                """, params)
+                """, params_scan)
             else:
                 cur.execute("""
                     SELECT started_at, status
@@ -4115,7 +4381,7 @@ def get_malware_defense_summary(project_id=None):
                 """)
             l_row = cur.fetchone()
             if l_row:
-                summary['last_scan_at'] = l_row['started_at'] if isinstance(l_row, dict) else l_row[0]
+                summary['last_scan_at'] = str(l_row['started_at'] if isinstance(l_row, dict) else l_row[0])
                 last_st = l_row['status'] if isinstance(l_row, dict) else l_row[1]
                 if last_st == 'in_progress':
                     summary['overall_status'] = 'Scanning'
@@ -4130,13 +4396,85 @@ def get_malware_defense_summary(project_id=None):
             except Exception:
                 pass
 
-            if summary['active_threats'] > 0:
+            if summary['active_threats'] > 0 and summary['overall_status'] != 'Scanning':
                 summary['overall_status'] = 'Threats Detected'
 
         return summary
     except Exception as e:
         logger.error(f"Error in get_malware_defense_summary: {e}")
-        return summary
+        return {
+            'total_scans': 0, 'total_files_scanned': 0, 'active_threats': 0,
+            'quarantined_count': 0, 'deleted_count': 0, 'whitelisted_count': 0,
+            'last_scan_at': None, 'overall_status': 'Protected'
+        }
+    finally:
+        conn.close()
+
+def relink_scans_and_assets(target_server_id: int, orphan_server_ids: list, admin_user: str = "admin"):
+    """
+    Safely relinks scans, findings, logs, alerts and configs from orphan IDs into target_server_id.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return {"ok": False, "message": "Database unavailable"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, hostname, ip FROM servers WHERE id = %s;", (target_server_id,))
+            target = cur.fetchone()
+            if not target:
+                return {"ok": False, "message": f"Target server #{target_server_id} does not exist."}
+            target_name = target.get("name") or target.get("hostname")
+            target_ip = target.get("ip")
+
+            cur.execute("""
+                UPDATE file_scans 
+                SET server_id = %s,
+                    server_name = COALESCE(server_name, %s),
+                    server_ip = COALESCE(server_ip, %s)
+                WHERE server_id = ANY(%s);
+            """, (target_server_id, target_name, target_ip, orphan_server_ids))
+            scans_updated = cur.rowcount
+
+            cur.execute("""
+                UPDATE file_scan_results 
+                SET server_id = %s 
+                WHERE server_id = ANY(%s) 
+                   OR scan_id IN (SELECT id FROM file_scans WHERE server_id = %s);
+            """, (target_server_id, orphan_server_ids, target_server_id))
+            findings_updated = cur.rowcount
+
+            for tbl in ["pushed_logs", "alerts", "incidents", "commands"]:
+                try:
+                    cur.execute(f"UPDATE {tbl} SET server_id = %s WHERE server_id = ANY(%s);", (target_server_id, orphan_server_ids))
+                except Exception:
+                    pass
+
+            try:
+                cur.execute("""
+                    DELETE FROM server_log_configs 
+                    WHERE server_id = ANY(%s) 
+                      AND log_file_path IN (SELECT log_file_path FROM server_log_configs WHERE server_id = %s);
+                """, (orphan_server_ids, target_server_id))
+                cur.execute("UPDATE server_log_configs SET server_id = %s WHERE server_id = ANY(%s);", (target_server_id, orphan_server_ids))
+            except Exception:
+                pass
+
+            for oid in orphan_server_ids:
+                try:
+                    cur.execute("""
+                        INSERT INTO server_identity_links (current_server_id, linked_server_id, link_reason)
+                        VALUES (%s, %s, 'admin_relink')
+                        ON CONFLICT DO NOTHING;
+                    """, (target_server_id, oid))
+                except Exception:
+                    pass
+
+            if hasattr(conn, 'commit'): conn.commit()
+            log_audit(admin_user, "SCANS_RELINK", "server", target_server_id, f"Relinked {scans_updated} scans and {findings_updated} findings from orphan IDs {orphan_server_ids} to asset #{target_server_id}")
+            return {"ok": True, "scans_relinked": scans_updated, "findings_relinked": findings_updated}
+    except Exception as e:
+        logger.error(f"Error in relink_scans_and_assets: {e}")
+        return {"ok": False, "message": str(e)}
     finally:
         conn.close()
 
@@ -6203,14 +6541,13 @@ def get_pushed_logs(config_id=None, server_id=None, limit=100, source=None, log_
             where_clauses = []
             params = []
             if server_id:
-                where_clauses.append("""
-                    (server_id = %s OR server_id IN (
-                        SELECT s2.id FROM servers s2
-                        WHERE (s2.ip IS NOT NULL AND s2.ip != '' AND s2.ip != '127.0.0.1' AND s2.ip = (SELECT s1.ip FROM servers s1 WHERE s1.id = %s))
-                           OR (s2.machine_id IS NOT NULL AND s2.machine_id != '' AND s2.machine_id = (SELECT s1.machine_id FROM servers s1 WHERE s1.id = %s))
-                    ))
-                """)
-                params.extend([server_id, server_id, server_id])
+                try:
+                    sid_val = int(server_id)
+                except (ValueError, TypeError):
+                    sid_val = server_id
+                linked_ids = get_linked_server_ids(sid_val)
+                where_clauses.append("server_id = ANY(%s)")
+                params.append(linked_ids)
             if config_id:
                 where_clauses.append("config_id = %s")
                 params.append(config_id)

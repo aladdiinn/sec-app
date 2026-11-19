@@ -164,8 +164,18 @@ for _candidate in ["http://127.0.0.1:8001", "https://192.168.10.201:3443", "http
     if _candidate not in CANDIDATE_SOC_URLS:
         CANDIDATE_SOC_URLS.append(_candidate)
 
+# Cached unsupported/missing endpoints on backend (endpoint -> backoff_expiry_timestamp)
+_unsupported_endpoints = {}
+
 def send_agent_request(endpoint, data=None, headers=None, timeout=10):
-    global SOC_URL
+    global SOC_URL, _unsupported_endpoints
+    now = time.time()
+    if endpoint in _unsupported_endpoints:
+        if now < _unsupported_endpoints[endpoint]:
+            return None
+        else:
+            _unsupported_endpoints.pop(endpoint, None)
+
     hdrs = dict(headers or {})
     if "Content-Type" not in hdrs and data is not None:
         hdrs["Content-Type"] = "application/json"
@@ -188,10 +198,20 @@ def send_agent_request(endpoint, data=None, headers=None, timeout=10):
                 res_bytes = resp.read()
                 SOC_URL = base
                 return res_bytes
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                _unsupported_endpoints[endpoint] = time.time() + 300
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{now_str}] [{APP_BRAND} Agent] Endpoint '{endpoint}' not found on server (HTTP 404). Backing off for 300s.", flush=True)
+                return None
+            last_err = e
+            continue
         except Exception as e:
             last_err = e
             continue
-    raise last_err
+    if last_err:
+        raise last_err
+    return None
 
 class ErrorCollapser:
     """
@@ -318,8 +338,14 @@ class HeartbeatThread(threading.Thread):
                     notify_systemd("READY=1")
                     self.ready_notified = True
                 return True
-            return True
+            else:
+                # Heartbeat endpoint missing or in backoff; auxiliary ping skipped, main telemetry continues.
+                error_collapser.clear_error("heartbeat_thread")
+                return True
         except Exception as e:
+            if isinstance(e, urllib.error.HTTPError) and e.code == 404:
+                error_collapser.clear_error("heartbeat_thread")
+                return True
             error_collapser.record_error("heartbeat_thread", e)
             return False
 
