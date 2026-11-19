@@ -66,6 +66,7 @@ jobs:
         run: |
           echo "Verifying no undefined names exist in critical codebase and built agent artifact..."
           CUR_AGENT="static/agents/agent-$(python -c 'import version; print(version.AGENT_VERSION)').py"
+          [ -f "$CUR_AGENT" ] || python build_agent_artifact.py
           OUTPUT=$(python -m pyflakes app.py database.py ses_mailer.py generate_agent.py agent_extracted.py "$CUR_AGENT" 2>&1 || true)
           UNDEFINED=$(echo "$OUTPUT" | grep "undefined name" || true)
           if [ -n "$UNDEFINED" ]; then

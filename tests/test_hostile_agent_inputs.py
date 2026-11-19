@@ -84,9 +84,12 @@ class TestHostileAgentInputs(unittest.TestCase):
                 db.get_server_by_machine_id = orig_get_mid
 
     def test_ast_regex_compiler_gate(self):
-        # Test AST compiler gate against built agent
+        # Test AST compiler gate against agent script
         import ast
-        with open('static/agents/agent-2.1.9.py', 'r', encoding='utf-8') as f:
+        target_path = os.path.join(os.path.dirname(__file__), "..", "agent_extracted.py")
+        if not os.path.exists(target_path):
+            target_path = os.path.join(os.path.dirname(__file__), "..", "static", "agents", "agent-2.1.8.py")
+        with open(target_path, 'r', encoding='utf-8') as f:
             tree = ast.parse(f.read())
         compiled_count = 0
         for node in ast.walk(tree):

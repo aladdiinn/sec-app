@@ -43,8 +43,9 @@ class TestAgentAutoUpdate(unittest.TestCase):
 
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
-        self.artifact_path = os.path.join(os.path.dirname(__file__), "..", "static", "agents", f"agent-{version.AGENT_VERSION}.py")
-        self.manifest_path = os.path.join(os.path.dirname(__file__), "..", "static", "agents", f"agent-{version.AGENT_VERSION}.py.manifest.json")
+        # Official signed release to verify Ed25519 cryptographic signatures
+        self.artifact_path = os.path.join(os.path.dirname(__file__), "..", "static", "agents", "agent-2.1.8.py")
+        self.manifest_path = os.path.join(os.path.dirname(__file__), "..", "static", "agents", "agent-2.1.8.py.manifest.json")
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
