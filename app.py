@@ -3,7 +3,7 @@
 # EMBEDDED REAL-TIME HOST SECURITY WATCHER + FIM (FILE INTEGRITY MONITORING)
 # Continuously monitors SSH logs, shell commands, process execution, and FIM
 # ══════════════════════════════════════════════════════════════════════════════
-import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac, uuid, hashlib, base64, collections, asyncio
+import time, subprocess, glob, threading, os, re, socket, json, urllib.parse, hmac, uuid, hashlib, base64, collections, asyncio, secrets
 import geoip_service
 geoip_service.ensure_database_downloaded_async()
 import psycopg2, psycopg2.extras
