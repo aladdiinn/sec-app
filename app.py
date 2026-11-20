@@ -1115,39 +1115,44 @@ def sanitize_csv_cell(val):
 
 def get_public_base_url(request: Request) -> str:
     env_url = (os.getenv("PUBLIC_SOC_URL") or os.getenv("SOC_URL") or "").strip().rstrip("/")
-    if env_url and not re.search(r"://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", env_url):
+    if env_url:
         return env_url
     if not request:
         return "https://soc.bsmartone.com:3443"
 
     req_base_url = getattr(request, "base_url", None)
     if isinstance(req_base_url, str) and req_base_url.startswith("http"):
-        if not re.search(r"://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", req_base_url):
-            return req_base_url.rstrip("/")
+        return req_base_url.rstrip("/")
 
     req_headers = getattr(request, "headers", None)
     if req_headers is None or not hasattr(req_headers, "get"):
         req_headers = {}
 
-    xf_proto = (req_headers.get("x-forwarded-proto") or "").strip()
-    xf_host = (req_headers.get("x-forwarded-host") or "").strip()
-    xf_port = (req_headers.get("x-forwarded-port") or "").strip()
-    host_hdr = (req_headers.get("host") or "").strip()
+    def _safe_header_val(key):
+        try:
+            val = req_headers.get(key)
+            if isinstance(val, str):
+                return val.strip()
+        except Exception:
+            pass
+        return ""
+
+    xf_proto = _safe_header_val("x-forwarded-proto")
+    xf_host = _safe_header_val("x-forwarded-host")
+    xf_port = _safe_header_val("x-forwarded-port")
+    host_hdr = _safe_header_val("host")
 
     url_obj = getattr(request, "url", None)
-    url_scheme = getattr(url_obj, "scheme", None) if url_obj else None
+    url_scheme = getattr(url_obj, "scheme", None) if (url_obj and isinstance(getattr(url_obj, "scheme", None), str)) else None
     scheme = xf_proto or url_scheme or "https"
     host = xf_host or host_hdr or "soc.bsmartone.com:3443"
 
-    referer = str(req_headers.get("referer", ""))
-    origin = str(req_headers.get("origin", ""))
+    referer = _safe_header_val("referer")
+    origin = _safe_header_val("origin")
     if ":3443" not in host and (xf_port == "3443" or "3443" in referer or "3443" in origin or "192.168.10.201" in host or "soc.bsmartone.com" in host):
         host_no_port = host.split(":")[0]
         host = f"{host_no_port}:3443"
         scheme = "https"
-
-    if re.search(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", host):
-        return "https://soc.bsmartone.com:3443"
 
     return f"{scheme}://{host}"
 
