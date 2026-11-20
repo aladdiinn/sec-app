@@ -5169,10 +5169,44 @@ def api_get_alerts(request: Request = None, limit: int = 100, severity: str = No
                 except Exception:
                     info_excluded_count = 0
 
-            query += " ORDER BY CASE WHEN LOWER(a.severity) = 'critical' THEN 1 WHEN LOWER(a.severity) IN ('warning', 'high', 'trouble') THEN 2 ELSE 3 END, a.created_at DESC LIMIT %s"
-            params.append(limit)
-            cur.execute(query, params)
-            items = cur.fetchall()
+            # Balanced 50% Critical / 40% Warning-Medium / 10% Info distribution across latest 100 alerts
+            if not req_sevs and not severity and limit >= 10:
+                crit_cap = int(round(limit * 0.50))
+                med_cap = int(round(limit * 0.40))
+                info_cap = max(1, limit - crit_cap - med_cap)
+
+                cur.execute(query + " AND LOWER(a.severity) = 'critical' ORDER BY a.created_at DESC LIMIT %s", tuple(params + [crit_cap]))
+                crit_items = cur.fetchall() or []
+
+                cur.execute(query + " AND LOWER(a.severity) IN ('warning', 'high', 'medium', 'trouble') ORDER BY a.created_at DESC LIMIT %s", tuple(params + [med_cap]))
+                med_items = cur.fetchall() or []
+
+                cur.execute(query + " AND LOWER(a.severity) IN ('info', 'low', 'informational', 'notice') ORDER BY a.created_at DESC LIMIT %s", tuple(params + [info_cap]))
+                info_items = cur.fetchall() or []
+
+                selected = list(crit_items) + list(med_items) + list(info_items)
+                if len(selected) < limit:
+                    existing_ids = [it['id'] for it in selected if isinstance(it, dict) and 'id' in it]
+                    bf_query = query
+                    bf_params = list(params)
+                    if existing_ids:
+                        bf_query += " AND a.id != ALL(%s)"
+                        bf_params.append(existing_ids)
+                    bf_query += " ORDER BY a.created_at DESC LIMIT %s"
+                    bf_params.append(limit - len(selected))
+                    try:
+                        cur.execute(bf_query, tuple(bf_params))
+                        selected.extend(cur.fetchall() or [])
+                    except Exception:
+                        pass
+
+                selected.sort(key=lambda x: str((x.get('created_at') if isinstance(x, dict) else '') or ''), reverse=True)
+                items = selected[:limit]
+            else:
+                query += " ORDER BY CASE WHEN LOWER(a.severity) = 'critical' THEN 1 WHEN LOWER(a.severity) IN ('warning', 'high', 'trouble') THEN 2 ELSE 3 END, a.created_at DESC LIMIT %s"
+                params.append(limit)
+                cur.execute(query, params)
+                items = cur.fetchall()
             for a in items:
                 a['created_at_ago'] = db.format_time_ago(a.get('created_at'))
             return {"items": items, "total": len(items), "info_excluded_count": info_excluded_count}
@@ -5230,10 +5264,29 @@ async def api_resolve_all_server_alerts(server_id: int, request: Request):
     if not conn: raise HTTPException(status_code=500)
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE alerts SET is_resolved = TRUE, resolved_at = NOW() WHERE server_id = %s AND (is_resolved IS NULL OR is_resolved = FALSE)", (server_id,))
+            linked_ids = db.get_linked_server_ids(server_id)
+            uname = request.session.get('username', 'system') if hasattr(request, 'session') else 'system'
+            try:
+                user = get_session_user(request)
+                if user: uname = user.get("username", uname)
+            except Exception: pass
+
+            cur.execute("""
+                UPDATE alerts 
+                SET is_resolved = TRUE, resolved_at = NOW(), status = 'closed', closed_by = %s, closed_at = NOW(), is_read = TRUE 
+                WHERE server_id = ANY(%s) AND (is_resolved IS NULL OR is_resolved = FALSE);
+            """, (uname, linked_ids))
             rc = cur.rowcount
-            uname = request.session.get('username', 'system')
-            db.log_audit(uname, 'RESOLVE_ALL_ALERTS', 'server', server_id, f"Resolved {rc} active alerts for server {server_id}")
+
+            cur.execute("""
+                UPDATE incidents 
+                SET status = 'closed', closed_by = %s, closed_at = NOW(), closed_note = 'Resolved via asset modal Mark All Closed', is_read = TRUE, updated_at = NOW() 
+                WHERE server_id = ANY(%s) AND status NOT IN ('closed', 'resolved');
+            """, (uname, linked_ids))
+
+            conn.commit()
+            _servers_cache.clear()
+            db.log_audit(uname, 'RESOLVE_ALL_ALERTS', 'server', server_id, f"Resolved {rc} active alerts and closed incidents for server {server_id}")
             return {"ok": True, "resolved_count": rc}
     finally:
         conn.close()
@@ -5848,7 +5901,10 @@ async def api_create_user(request: Request):
         db.log_audit(uname, "CREATE_USER", "user", uid, f"Created user '{username}' with role '{role}'")
         return {"ok": True, "id": uid, "message": "User created successfully"}
     except Exception as e:
-        return JSONResponse(status_code=400, content={"ok": False, "message": f"User creation error: {str(e)}"})
+        err_str = str(e)
+        if "unique constraint" in err_str.lower() or "duplicate key" in err_str.lower():
+            err_str = f"User '{username}' or email already exists."
+        return JSONResponse(status_code=400, content={"ok": False, "message": f"User creation error: {err_str}"})
 
 @app.patch("/api/users/{user_id}/role")
 async def api_update_user_role(user_id: int, request: Request):
@@ -13745,9 +13801,9 @@ def api_close_app_users(request: Request, app_id: int, payload: dict = Body(...)
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    identifiers = payload.get("identifiers", [])
+    identifiers = payload.get("identifiers") or payload.get("ids", [])
     action = payload.get("action", "close").lower()
-    note = (payload.get("note") or "").strip()
+    note = (payload.get("note") or payload.get("close_note") or "").strip()
     if not identifiers:
         return {"status": "error", "message": "No user identifiers provided"}
     
@@ -13756,34 +13812,94 @@ def api_close_app_users(request: Request, app_id: int, payload: dict = Body(...)
         raise HTTPException(status_code=500, detail="Database unavailable")
     try:
         with conn.cursor() as cur:
+            uname = user.get("username", "admin")
             for ident in identifiers:
+                ident_str = str(ident).strip()
+                if not ident_str:
+                    continue
                 if action == "close":
                     cur.execute("""
                         INSERT INTO app_user_status (application_id, identifier, status, closed_by, closed_at, closed_note, updated_at)
                         VALUES (%s, %s, 'closed', %s, NOW(), %s, NOW())
                         ON CONFLICT (application_id, identifier)
                         DO UPDATE SET status = 'closed', closed_by = EXCLUDED.closed_by, closed_at = NOW(), closed_note = EXCLUDED.closed_note, updated_at = NOW();
-                    """, (app_id, ident, user.get("username", "admin"), note or "Identity review completed"))
+                    """, (app_id, ident_str, uname, note or "Identity review completed"))
+
+                    # Resolve / close related app events for this identifier
+                    try:
+                        cur.execute("""
+                            UPDATE app_events 
+                            SET status = 'closed', closed_by = %s, closed_at = NOW(), closed_note = %s
+                            WHERE application_id = %s AND (user_name = %s OR client_ip = %s);
+                        """, (uname, note or "Identity review completed", app_id, ident_str, ident_str))
+                    except Exception as e_ev:
+                        logger.debug(f"Event closure error for user {ident_str}: {e_ev}")
+
+                    # Resolve / close related app incidents for this identifier
+                    try:
+                        cur.execute("""
+                            UPDATE app_incidents 
+                            SET status = 'Closed', closed_by = %s, closed_at = NOW(), closed_note = %s, updated_at = NOW()
+                            WHERE application_id = %s AND (actor = %s OR client_ip = %s OR id IN (
+                                SELECT aie.incident_id FROM app_incident_events aie
+                                JOIN app_events ae ON aie.event_id = ae.id
+                                WHERE ae.application_id = %s AND (ae.user_name = %s OR ae.client_ip = %s)
+                            ));
+                        """, (uname, note or "Identity review completed", app_id, ident_str, ident_str, app_id, ident_str, ident_str))
+                    except Exception as e_inc:
+                        logger.debug(f"Incident closure error for user {ident_str}: {e_inc}")
                 else:
                     cur.execute("""
                         INSERT INTO app_user_status (application_id, identifier, status, closed_by, closed_at, closed_note, updated_at)
                         VALUES (%s, %s, 'open', NULL, NULL, NULL, NOW())
                         ON CONFLICT (application_id, identifier)
                         DO UPDATE SET status = 'open', closed_by = NULL, closed_at = NULL, closed_note = NULL, updated_at = NOW();
-                    """, (app_id, ident))
+                    """, (app_id, ident_str))
+
+                    try:
+                        cur.execute("""
+                            UPDATE app_events 
+                            SET status = 'open', closed_by = NULL, closed_at = NULL, closed_note = NULL
+                            WHERE application_id = %s AND (user_name = %s OR client_ip = %s);
+                        """, (app_id, ident_str, ident_str))
+                    except Exception:
+                        pass
+
+                    try:
+                        cur.execute("""
+                            UPDATE app_incidents 
+                            SET status = 'Open', closed_by = NULL, closed_at = NULL, closed_note = NULL, updated_at = NOW()
+                            WHERE application_id = %s AND (actor = %s OR client_ip = %s);
+                        """, (app_id, ident_str, ident_str))
+                    except Exception:
+                        pass
+
+            # Re-evaluate application status in applications table
+            remaining_open = 0
+            try:
+                cur.execute("""
+                    SELECT COUNT(*) FROM app_incidents 
+                    WHERE application_id = %s AND status IN ('Open', 'Investigating');
+                """, (app_id,))
+                remaining_open = get_scalar(cur.fetchone(), 0)
+                if remaining_open == 0:
+                    cur.execute("UPDATE applications SET status = 'NORMAL', updated_at = NOW() WHERE id = %s AND status NOT IN ('MAINT', 'WAITING');", (app_id,))
+            except Exception:
+                pass
+
             conn.commit()
 
             client_ip = request.client.host if request.client else None
             audit_action = "APP_USER_CLOSE" if action == "close" else "APP_USER_REOPEN"
             db.log_audit(
-                user.get("username", "admin"),
+                uname,
                 audit_action,
                 "app_users",
                 str(app_id),
                 f"{action.capitalize()}d {len(identifiers)} users. Note: {note or 'N/A'}",
                 ip_address=client_ip
             )
-            return {"status": "ok", "updated": len(identifiers), "action": action}
+            return {"status": "ok", "updated": len(identifiers), "action": action, "remaining_open": remaining_open}
     finally:
         conn.close()
 

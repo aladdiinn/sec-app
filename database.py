@@ -2150,13 +2150,56 @@ def get_servers(project_id=None):
             query = f"""
                 SELECT s.*, 
                        p.name as project_name,
-                       (SELECT COUNT(*) FROM alerts a WHERE a.server_id = s.id AND a.is_resolved IS NOT TRUE) as alert_count,
-                       (SELECT COUNT(*) FROM alerts a WHERE a.server_id = s.id AND a.severity = 'critical' AND a.is_resolved IS NOT TRUE) as critical_alert_count,
-                       (SELECT COUNT(*) FROM alerts a WHERE a.server_id = s.id AND (a.severity = 'warning' OR a.severity = 'high' OR a.severity = 'medium') AND a.is_resolved IS NOT TRUE) as trouble_alert_count,
                        (SELECT CASE 
-                           WHEN EXISTS (SELECT 1 FROM alerts a WHERE a.server_id = s.id AND a.severity = 'critical' AND a.is_resolved IS NOT TRUE) THEN 'critical'
-                           WHEN EXISTS (SELECT 1 FROM alerts a WHERE a.server_id = s.id AND (a.severity = 'warning' OR a.severity = 'high') AND a.is_resolved IS NOT TRUE) THEN 'warning'
-                           ELSE 'info'
+                           WHEN EXISTS (SELECT 1 FROM incidents i WHERE (i.server_id = s.id OR i.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id))) THEN 
+                               (SELECT COUNT(*) FROM incidents i 
+                                WHERE (i.server_id = s.id OR i.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id)) 
+                                  AND i.status NOT IN ('closed', 'resolved'))
+                           ELSE 
+                               (SELECT COUNT(*) FROM alerts a 
+                                WHERE (a.server_id = s.id OR a.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id)) 
+                                  AND a.is_resolved IS NOT TRUE 
+                                  AND a.status NOT IN ('closed', 'resolved'))
+                       END) as alert_count,
+                       (SELECT CASE 
+                           WHEN EXISTS (SELECT 1 FROM incidents i WHERE (i.server_id = s.id OR i.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id))) THEN 
+                               (SELECT COUNT(*) FROM incidents i 
+                                WHERE (i.server_id = s.id OR i.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id)) 
+                                  AND i.status NOT IN ('closed', 'resolved') 
+                                  AND LOWER(i.severity) = 'critical')
+                           ELSE 
+                               (SELECT COUNT(*) FROM alerts a 
+                                WHERE (a.server_id = s.id OR a.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id)) 
+                                  AND a.is_resolved IS NOT TRUE 
+                                  AND a.status NOT IN ('closed', 'resolved') 
+                                  AND LOWER(a.severity) = 'critical')
+                       END) as critical_alert_count,
+                       (SELECT CASE 
+                           WHEN EXISTS (SELECT 1 FROM incidents i WHERE (i.server_id = s.id OR i.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id))) THEN 
+                               (SELECT COUNT(*) FROM incidents i 
+                                WHERE (i.server_id = s.id OR i.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id)) 
+                                  AND i.status NOT IN ('closed', 'resolved') 
+                                  AND LOWER(i.severity) IN ('warning', 'high', 'medium'))
+                           ELSE 
+                               (SELECT COUNT(*) FROM alerts a 
+                                WHERE (a.server_id = s.id OR a.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id)) 
+                                  AND a.is_resolved IS NOT TRUE 
+                                  AND a.status NOT IN ('closed', 'resolved') 
+                                  AND (LOWER(a.severity) IN ('warning', 'high', 'medium')))
+                       END) as trouble_alert_count,
+                       (SELECT CASE 
+                           WHEN EXISTS (SELECT 1 FROM incidents i WHERE (i.server_id = s.id OR i.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id))) THEN 
+                               (CASE 
+                                   WHEN EXISTS (SELECT 1 FROM incidents i WHERE (i.server_id = s.id OR i.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id)) AND i.status NOT IN ('closed', 'resolved') AND LOWER(i.severity) = 'critical') THEN 'critical'
+                                   WHEN EXISTS (SELECT 1 FROM incidents i WHERE (i.server_id = s.id OR i.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id)) AND i.status NOT IN ('closed', 'resolved') AND LOWER(i.severity) IN ('warning', 'high', 'medium')) THEN 'warning'
+                                   ELSE 'info'
+                               END)
+                           ELSE 
+                               (CASE 
+                                   WHEN EXISTS (SELECT 1 FROM alerts a WHERE (a.server_id = s.id OR a.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id)) AND a.is_resolved IS NOT TRUE AND a.status NOT IN ('closed', 'resolved') AND LOWER(a.severity) = 'critical') THEN 'critical'
+                                   WHEN EXISTS (SELECT 1 FROM alerts a WHERE (a.server_id = s.id OR a.server_id IN (SELECT linked_server_id FROM server_identity_links WHERE current_server_id = s.id)) AND a.is_resolved IS NOT TRUE AND a.status NOT IN ('closed', 'resolved') AND (LOWER(a.severity) IN ('warning', 'high', 'medium'))) THEN 'warning'
+                                   ELSE 'info'
+                               END)
                        END) as computed_severity,
                        (SELECT json_agg(json_build_object('id', ac.id, 'role', ac.role, 'node_name', ac.node_name, 'app_name', app.name))
                         FROM application_components ac
@@ -2939,24 +2982,68 @@ def get_alerts(limit=100, project_id=None):
     try:
         with conn.cursor() as cur:
             sql_clause, params = _build_pid_filter("s.project_id", project_id)
-            if sql_clause:
-                where_sql = "WHERE " + sql_clause[5:]
-                params.append(limit)
+            where_sql = ("WHERE " + sql_clause[5:]) if sql_clause else "WHERE 1=1"
+
+            # 50% Critical / 40% Warning-Medium / 10% Info distribution
+            if limit >= 10:
+                crit_cap = int(round(limit * 0.50))
+                med_cap = int(round(limit * 0.40))
+                info_cap = max(1, limit - crit_cap - med_cap)
+
                 cur.execute(f"""
                     SELECT a.*, s.hostname, s.ip, s.project_id
                     FROM alerts a
-                    JOIN servers s ON a.server_id = s.id
-                    {where_sql}
+                    LEFT JOIN servers s ON a.server_id = s.id
+                    {where_sql} AND LOWER(a.severity) = 'critical'
                     ORDER BY a.created_at DESC LIMIT %s;
-                """, tuple(params))
-            else:
-                cur.execute("""
+                """, tuple(params + [crit_cap]))
+                crit_items = cur.fetchall() or []
+
+                cur.execute(f"""
                     SELECT a.*, s.hostname, s.ip, s.project_id
                     FROM alerts a
                     LEFT JOIN servers s ON a.server_id = s.id
+                    {where_sql} AND LOWER(a.severity) IN ('warning', 'high', 'medium', 'trouble')
                     ORDER BY a.created_at DESC LIMIT %s;
-                """, (limit,))
-            return cur.fetchall()
+                """, tuple(params + [med_cap]))
+                med_items = cur.fetchall() or []
+
+                cur.execute(f"""
+                    SELECT a.*, s.hostname, s.ip, s.project_id
+                    FROM alerts a
+                    LEFT JOIN servers s ON a.server_id = s.id
+                    {where_sql} AND LOWER(a.severity) IN ('info', 'low', 'informational', 'notice')
+                    ORDER BY a.created_at DESC LIMIT %s;
+                """, tuple(params + [info_cap]))
+                info_items = cur.fetchall() or []
+
+                combined = list(crit_items) + list(med_items) + list(info_items)
+                if len(combined) < limit:
+                    existing_ids = [it['id'] for it in combined if isinstance(it, dict) and 'id' in it]
+                    bf_sql = f"SELECT a.*, s.hostname, s.ip, s.project_id FROM alerts a LEFT JOIN servers s ON a.server_id = s.id {where_sql}"
+                    bf_params = list(params)
+                    if existing_ids:
+                        bf_sql += " AND a.id != ALL(%s)"
+                        bf_params.append(existing_ids)
+                    bf_sql += " ORDER BY a.created_at DESC LIMIT %s;"
+                    bf_params.append(limit - len(combined))
+                    try:
+                        cur.execute(bf_sql, tuple(bf_params))
+                        combined.extend(cur.fetchall() or [])
+                    except Exception:
+                        pass
+
+                combined.sort(key=lambda x: str((x.get('created_at') if isinstance(x, dict) else '') or ''), reverse=True)
+                return combined[:limit]
+            else:
+                cur.execute(f"""
+                    SELECT a.*, s.hostname, s.ip, s.project_id
+                    FROM alerts a
+                    LEFT JOIN servers s ON a.server_id = s.id
+                    {where_sql}
+                    ORDER BY a.created_at DESC LIMIT %s;
+                """, tuple(params + [limit]))
+                return cur.fetchall() or []
     except Exception as e:
         logger.error(f"Error in get_alerts: {e}")
         return []
@@ -3154,8 +3241,10 @@ def bulk_incident_action(ids: list, action: str, username: str = "admin", note: 
                         cur.execute("""
                             UPDATE alerts 
                             SET is_resolved = TRUE, status = 'closed', closed_by = %s, closed_at = NOW(), closed_note = %s, is_read = TRUE
-                            WHERE id = ANY(%s) AND status NOT IN ('closed', 'resolved');
-                        """, (username, close_note, ids))
+                            WHERE id = ANY(%s)
+                               OR (server_id IN (SELECT server_id FROM incidents WHERE id = ANY(%s))
+                                   AND title IN (SELECT title FROM incidents WHERE id = ANY(%s)));
+                        """, (username, close_note, ids, ids, ids))
                     except Exception: pass
                     msg = f"Closed {processed} incident(s)" + (f", skipped {skipped} already closed." if skipped else ".")
                     audit_action = "BULK_INCIDENTS_CLOSE"
@@ -3171,8 +3260,10 @@ def bulk_incident_action(ids: list, action: str, username: str = "admin", note: 
                         cur.execute("""
                             UPDATE alerts 
                             SET is_resolved = FALSE, status = 'open', closed_by = NULL, closed_at = NULL, closed_note = NULL, is_read = FALSE
-                            WHERE id = ANY(%s);
-                        """, (ids,))
+                            WHERE id = ANY(%s)
+                               OR (server_id IN (SELECT server_id FROM incidents WHERE id = ANY(%s))
+                                   AND title IN (SELECT title FROM incidents WHERE id = ANY(%s)));
+                        """, (ids, ids, ids))
                     except Exception: pass
                     msg = f"Reopened {processed} incident(s)."
                     audit_action = "BULK_INCIDENTS_REOPEN"

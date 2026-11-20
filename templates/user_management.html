@@ -523,20 +523,19 @@ if (!projectTags) {
             }
         }
 
-        // Lock button until password is fully strong
+        // Keep button enabled and clickable so clicks always fire validation feedback
         if (btn) {
+            btn.disabled = false;
             if (res.isStrong) {
-                btn.disabled = false;
                 btn.style.opacity = '1.0';
                 btn.style.cursor = 'pointer';
                 btn.style.filter = 'none';
                 btn.title = 'Create Account';
             } else {
-                btn.disabled = true;
-                btn.style.opacity = '0.45';
-                btn.style.cursor = 'not-allowed';
-                btn.style.filter = 'grayscale(60%)';
-                btn.title = 'Password must be 8+ characters and contain upper, lower, number, and special character';
+                btn.style.opacity = '0.9';
+                btn.style.cursor = 'pointer';
+                btn.style.filter = 'none';
+                btn.title = 'Click to validate and create account';
             }
         }
     }
@@ -562,7 +561,7 @@ if (!projectTags) {
                     </div>
                     <div>
                         <label class="stat-label">INITIAL PASSWORD (MIN 8 CHARACTERS & STRONG)</label>
-                        <input type="password" id="nu-password" style="width:100%" placeholder="••••••••" oninput="validateNuPasswordStrength(this.value)">
+                        <input type="password" id="nu-password" style="width:100%" placeholder="••••••••" oninput="validateNuPasswordStrength(this.value)" onchange="validateNuPasswordStrength(this.value)" onkeyup="validateNuPasswordStrength(this.value)" onpaste="setTimeout(()=>validateNuPasswordStrength(this.value),50)">
                         
                         <!-- Real-Time Password Strength Checklist -->
                         <div style="margin-top:8px; background:rgba(0,0,0,0.3); border:1px solid var(--border); border-radius:6px; padding:10px;">
@@ -589,7 +588,7 @@ if (!projectTags) {
                         </select>
                     </div>
                     <div style="display:flex; gap:10px; margin-top:15px">
-                        <button id="nu-submit-btn" class="btn btn-primary" style="flex:1; opacity:0.45; cursor:not-allowed; filter:grayscale(60%);" disabled onclick="execCreateUser()">CREATE ACCOUNT</button>
+                        <button id="nu-submit-btn" class="btn btn-primary" style="flex:1; cursor:pointer;" onclick="execCreateUser()">CREATE ACCOUNT</button>
                         <button class="btn btn-glass" onclick="closeModal()">CANCEL</button>
                     </div>
                 </div>
@@ -598,25 +597,56 @@ if (!projectTags) {
     }
 
     async function execCreateUser() {
-        const username = document.getElementById('nu-username').value.trim();
-        const full_name = document.getElementById('nu-fullname').value.trim();
-        const email = document.getElementById('nu-email').value.trim();
-        const password = document.getElementById('nu-password').value;
-        const role = document.getElementById('nu-role').value;
+        const uInput = document.getElementById('nu-username');
+        const pInput = document.getElementById('nu-password');
+        const username = uInput ? uInput.value.trim() : '';
+        const full_name = (document.getElementById('nu-fullname')?.value || '').trim();
+        const email = (document.getElementById('nu-email')?.value || '').trim();
+        const password = pInput ? pInput.value : '';
+        const role = document.getElementById('nu-role')?.value || 'normal';
+        const btn = document.getElementById('nu-submit-btn');
 
-        if (!username) return showToast('Username is required', 'error');
+        if (!username) {
+            showToast('Username is required', 'error');
+            if (uInput) uInput.focus();
+            return;
+        }
+        if (!password) {
+            showToast('Initial password is required', 'error');
+            if (pInput) pInput.focus();
+            return;
+        }
         const check = evalPasswordStrength(password);
         if (!check.isStrong) {
-            return showToast('Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character.', 'error');
+            const missing = [];
+            if (!check.hasLen) missing.push("8+ characters");
+            if (!check.hasCase) missing.push("upper & lower case");
+            if (!check.hasNum) missing.push("at least 1 digit (0-9)");
+            if (!check.hasSpec) missing.push("special character (!@#$...)");
+            showToast('Weak Password: Needs ' + missing.join(', '), 'error');
+            if (pInput) pInput.focus();
+            return;
         }
 
-        const body = { username, full_name, email, password, role };
+        if (btn) {
+            btn.disabled = true;
+            btn.innerText = 'CREATING...';
+        }
+
+        const body = { username, full_name, email: email || `${username}@bsmartsoc.local`, password, role };
         try {
             await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(body) });
             showToast('User created successfully', 'success');
             closeModal();
             loadData();
-        } catch (e) { showToast(e.message || 'Creation failed', 'error'); }
+        } catch (e) {
+            showToast(e.message || 'Creation failed', 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = 'CREATE ACCOUNT';
+            }
+        }
     }
 
     function openEditRoleModal(userId, currentRole) {
@@ -1180,10 +1210,16 @@ if (!projectTags) {
         const u = document.getElementById('mg-nu-uname').value.trim();
         const e = document.getElementById('mg-nu-email').value.trim();
         const p = document.getElementById('mg-nu-pass').value.trim();
-        if (!u || !p) return showToast('Username and password required', 'error');
+        if (!u) return showToast('Username is required', 'error');
+        if (!p) return showToast('Password is required', 'error');
         const check = evalPasswordStrength(p);
         if (!check.isStrong) {
-            return showToast('Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character.', 'error');
+            const missing = [];
+            if (!check.hasLen) missing.push("8+ characters");
+            if (!check.hasCase) missing.push("upper & lower case");
+            if (!check.hasNum) missing.push("at least 1 digit (0-9)");
+            if (!check.hasSpec) missing.push("special character (!@#$...)");
+            return showToast('Weak Password: Needs ' + missing.join(', '), 'error');
         }
         try {
             const newUser = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify({ username: u, email: e, password: p, role: 'normal' }) });

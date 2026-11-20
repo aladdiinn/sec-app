@@ -3627,6 +3627,7 @@ async function resolveModalSingleAlert(alertId) {
         });
         showToast('Incident marked as closed', 'success');
         if (activeModalServerId) openImage3Modal(activeModalServerId);
+        if (typeof loadDashboardData === 'function') loadDashboardData();
     } catch(e) {
         showToast('Failed to close incident', 'error');
     }
@@ -3642,6 +3643,7 @@ async function triageModalSingleAlert(alertId, verdict) {
         });
         showToast(`Incident marked as ${verdict.replace('_', ' ')}`, 'success');
         if (activeModalServerId) openImage3Modal(activeModalServerId);
+        if (typeof loadDashboardData === 'function') loadDashboardData();
     } catch(e) {
         showToast('Failed to update incident triage', 'error');
     }
@@ -3655,6 +3657,7 @@ async function reopenModalAlert(alertId) {
         });
         showToast('Incident reopened', 'info');
         if (activeModalServerId) openImage3Modal(activeModalServerId);
+        if (typeof loadDashboardData === 'function') loadDashboardData();
     } catch(e) {
         showToast('Failed to reopen incident', 'error');
     }

@@ -31,12 +31,12 @@ function getUnifiedAssetStatus(item) {
         }
 
         // 1b. CRITICAL: open critical incident or critical exploit event
-        if (critInc > 0 || critEv > 0 || a.computed_status === 'CRITICAL' || a.status === 'CRITICAL') {
+        if (critInc > 0 || critEv > 0 || (a.status === 'CRITICAL' && (critInc > 0 || openInc > 0))) {
             return 'CRITICAL';
         }
 
-        // 1c. TROUBLE: open incidents (e.g. 4 open incidents on hp-1!), high/medium attacks, open security events
-        if (openInc > 0 || highInc > 0 || openSecEv > 0 || a.computed_status === 'TROUBLE' || a.status === 'TROUBLE') {
+        // 1c. TROUBLE: open incidents, high/medium attacks, open security events
+        if (openInc > 0 || highInc > 0 || openSecEv > 0 || (a.status === 'TROUBLE' && openInc > 0)) {
             return 'TROUBLE';
         }
 
@@ -74,13 +74,13 @@ function getUnifiedAssetStatus(item) {
         return 'DOWN';
     }
 
-    // 2b. CRITICAL: critical alerts or CVEs
-    const critAlerts = Number(s.critical_alert_count || s.vuln_critical || 0);
+    // 2b. CRITICAL: open critical alerts/incidents
+    const critAlerts = Number(s.critical_alert_count || 0);
     if (critAlerts > 0) {
         return 'CRITICAL';
     }
 
-    // 2c. TROUBLE: warnings, high resources, alerts
+    // 2c. TROUBLE: warnings, high resources, open trouble alerts
     const cpu = Number(s.cpu_percent || 0);
     const ram = Number(s.memory_percent || 0);
     const disk = Number(s.disk_percent || 0);
@@ -89,7 +89,7 @@ function getUnifiedAssetStatus(item) {
     const alertCount = Number(s.alert_count || 0);
 
     const degCount = (s.degraded_collectors && typeof s.degraded_collectors === 'object') ? Object.keys(s.degraded_collectors).length : 0;
-    if (troubleAlerts > 0 || alertCount > 0 || sev === 'warning' || sev === 'high' || cpu > 85 || ram > 85 || disk > 85 || degCount > 0) {
+    if (troubleAlerts > 0 || alertCount > 0 || (sev !== 'info' && sev !== 'normal') || cpu > 85 || ram > 85 || disk > 85 || degCount > 0) {
         return 'TROUBLE';
     }
 

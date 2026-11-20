@@ -854,6 +854,7 @@ async function confirmCloseModal() {
             body: JSON.stringify({
                 action: 'close',
                 ids: ids,
+                identifiers: ids,
                 close_note: note,
                 suppress: suppressFuture
             })
@@ -865,7 +866,12 @@ async function confirmCloseModal() {
                 loadAppIncidents(activeModalAppId);
                 // Also refresh app open incident counts on modal and dashboard
                 if (typeof loadAppOverviewCounts === 'function') loadAppOverviewCounts(activeModalAppId);
-            } else if (tab === 'users') loadAppUsers(activeModalAppId);
+                if (typeof loadDashboardData === 'function') loadDashboardData();
+            } else if (tab === 'users') {
+                loadAppUsers(activeModalAppId);
+                if (typeof loadAppOverviewCounts === 'function') loadAppOverviewCounts(activeModalAppId);
+                if (typeof loadDashboardData === 'function') loadDashboardData();
+            }
         } else {
             alert('Failed to mark items as closed.');
         }
@@ -891,7 +897,8 @@ async function batchReopenRows(tab, singleId = null) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 action: 'reopen',
-                ids: ids
+                ids: ids,
+                identifiers: ids
             })
         });
         if (res.ok) {
@@ -900,7 +907,12 @@ async function batchReopenRows(tab, singleId = null) {
             else if (tab === 'incidents') {
                 loadAppIncidents(activeModalAppId);
                 if (typeof loadAppOverviewCounts === 'function') loadAppOverviewCounts(activeModalAppId);
-            } else if (tab === 'users') loadAppUsers(activeModalAppId);
+                if (typeof loadDashboardData === 'function') loadDashboardData();
+            } else if (tab === 'users') {
+                loadAppUsers(activeModalAppId);
+                if (typeof loadAppOverviewCounts === 'function') loadAppOverviewCounts(activeModalAppId);
+                if (typeof loadDashboardData === 'function') loadDashboardData();
+            }
         } else {
             alert('Failed to reopen items.');
         }
