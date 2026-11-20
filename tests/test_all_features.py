@@ -3,7 +3,7 @@ import json
 from app import app, db
 from models import User, Server, Event, Alert, Case, Playbook
 
-class BSMART SOCComprehensiveTest(unittest.TestCase):
+class BSMARTSOCComprehensiveTest(unittest.TestCase):
     def setUp(self):
         app.config['TESTING'] = True
         app.config['WTF_CSRF_ENABLED'] = False

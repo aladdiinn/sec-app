@@ -3,7 +3,7 @@ from app import app, db
 from models import User
 import json
 
-class BSMART SOCTestCase(unittest.TestCase):
+class BSMARTSOCTestCase(unittest.TestCase):
     def setUp(self):
         # Set up a test client and configure the app for testing
         app.config['TESTING'] = True

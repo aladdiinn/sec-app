@@ -161,7 +161,43 @@
         </div>
     </div>
 
-    <!-- NEW Website Level Report -->
+    <!-- NEW Malware & Threat Defense Report (Monthly / Half-Month) -->
+    <div class="card glass" style="margin-bottom:24px">
+        <h3 class="card-title" style="margin-bottom:8px">Malware & Threat Defense Report (Monthly / Half-Month)</h3>
+        <p style="font-size:13px; color:var(--text-sub); margin-bottom:20px">Generate executive and compliance PDF/CSV reports covering scheduled and manual full-server threat scans, detections, active exclusions, and hash-based intelligence.</p>
+
+        <form id="malware-report-form" style="display:grid; grid-template-columns: 1.5fr 1.5fr 1fr 1fr auto; gap:14px; align-items:flex-end; margin-bottom:0">
+            <div>
+                <label class="text-meta" style="display:block; margin-bottom:6px">Project Scope</label>
+                <select id="malware-report-project" class="mono" style="width:100%; padding:9px; background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px">
+                    <option value="all">All Projects</option>
+                    <option value="unassigned">Unassigned Assets</option>
+                </select>
+            </div>
+            <div style="position:relative">
+                <label class="text-meta" style="display:block; margin-bottom:6px">Server Filter (Optional)</label>
+                <input id="malware-report-server-search" type="text" class="mono" placeholder="All Servers or IP/Host e.g. 192.168.10.201" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px" autocomplete="off">
+                <input type="hidden" id="malware-report-server-id" value="all">
+            </div>
+            <div>
+                <label class="text-meta" style="display:block; margin-bottom:6px">Report Period</label>
+                <select id="malware-report-period-part" class="mono" style="width:100%; padding:9px; background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px">
+                    <option value="full" selected>Full Month</option>
+                    <option value="1st">1st Half (Days 1–15)</option>
+                    <option value="2nd">2nd Half (Days 16–End)</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-meta" style="display:block; margin-bottom:6px">Month / Year</label>
+                <input id="malware-report-month" type="month" class="mono" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:7.5px 10px; border-radius:4px; font-size:12px">
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-glass" id="btn-malware-prev" style="padding:9px 14px; font-size:12px; white-space:nowrap" onclick="generateMalwareReport(event, true)">Preview</button>
+                <button type="button" class="btn btn-primary" id="btn-malware-pdf" style="padding:9px 14px; font-size:12px; white-space:nowrap" onclick="generateMalwareReport(event, false)">Generate PDF</button>
+                <button type="button" class="btn btn-glass" id="btn-malware-csv" style="padding:9px 14px; font-size:12px; white-space:nowrap; color:var(--cyan); border-color:rgba(6,182,212,0.4);" onclick="exportMalwareReportCSV(event)">Export CSV</button>
+            </div>
+        </form>
+    </div>
     <div class="card glass" style="margin-bottom:24px">
         <h3 class="card-title" style="margin-bottom:8px">Website Level Report</h3>
         <p style="font-size:13px; color:var(--text-sub); margin-bottom:20px">Generate comprehensive security posture, events, incidents, and identity audit reports for a website.</p>
@@ -428,6 +464,24 @@
 
             // MTTD calculation
             document.getElementById('kpi-mttd').textContent = '< 1.5m';
+
+            // Init Malware Report Defaults
+            const nowMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            const mMonthInput = document.getElementById('malware-report-month');
+            if (mMonthInput && !mMonthInput.value) mMonthInput.value = nowMonth;
+
+            const projSelect = document.getElementById('malware-report-project');
+            if (projSelect) {
+                apiFetch('/api/projects').then(projs => {
+                    const plist = Array.isArray(projs) ? projs : (projs.projects || []);
+                    plist.forEach(p => {
+                        const opt = document.createElement('option');
+                        opt.value = p.id;
+                        opt.textContent = p.name;
+                        projSelect.appendChild(opt);
+                    });
+                }).catch(() => {});
+            }
 
             // Populate Server Autocomplete
             const srvs = await apiFetch('/api/servers').catch(() => ({items:[]}));
@@ -942,6 +996,213 @@
     }
 
     
+    // ══════════════════════════════════════════════════════════════════
+    // MALWARE & THREAT DEFENSE REPORT CONTROLLER
+    // ══════════════════════════════════════════════════════════════════
+    async function generateMalwareReport(e, isPreview=false) {
+        e.preventDefault();
+        const btn = document.getElementById(isPreview ? 'btn-malware-prev' : 'btn-malware-pdf');
+        const originalText = btn.innerText;
+        btn.disabled = true;
+        btn.innerText = isPreview ? 'Loading...' : 'Generating...';
+
+        try {
+            const projId = document.getElementById('malware-report-project')?.value || 'all';
+            const serverId = document.getElementById('malware-report-server-id')?.value || 'all';
+            const part = document.getElementById('malware-report-period-part')?.value || 'full';
+            const monthVal = document.getElementById('malware-report-month')?.value;
+
+            let year = null, month = null;
+            if (monthVal && monthVal.includes('-')) {
+                const parts = monthVal.split('-');
+                year = parseInt(parts[0]);
+                month = parseInt(parts[1]);
+            }
+
+            let url = `/api/reports/malware/data?part=${encodeURIComponent(part)}`;
+            if (projId && projId !== 'all') url += `&project_id=${encodeURIComponent(projId)}`;
+            if (serverId && serverId !== 'all') url += `&server_id=${encodeURIComponent(serverId)}`;
+            if (year) url += `&year=${year}`;
+            if (month) url += `&month=${month}`;
+
+            const res = await fetch(url);
+            const data = await res.json();
+            if (!res.ok || !data.ok) {
+                showToast(`Failed to load report data: ${data.detail || data.error || 'Unknown error'}`, 'error');
+                return;
+            }
+
+            const m = data.metrics || {};
+            const intel = data.threat_intel || {};
+            const scans = data.scans || [];
+            const findings = data.findings || [];
+            const exclusions = data.exclusions || [];
+
+            const content = `
+                <div class="pdf-container">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
+                        <div>
+                            <h2 class="pdf-h2">Malware Defense & Threat Scanning Executive Report</h2>
+                            <div style="font-size:12px; color:#475569; margin-top:4px;">Period: <strong>${escapeHtml(data.period || '')}</strong> · Scope: ${escapeHtml(projId === 'all' ? 'Entire Linux Fleet' : (projId === 'unassigned' ? 'Unassigned Assets' : 'Project #' + projId))}</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:11px; color:#64748b;">Threat Intel Version: <strong>v${escapeHtml(intel.feed_version || '2.1.9')}</strong></div>
+                            <div style="font-size:11px; color:#64748b;">Active Signatures: <strong>${(intel.active_signatures || 0).toLocaleString()}</strong></div>
+                        </div>
+                    </div>
+
+                    <!-- Metrics Grid -->
+                    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; margin-bottom:18px;">
+                        <div class="pdf-card" style="padding:12px; text-align:center;">
+                            <div style="font-size:10px; color:#64748b; text-transform:uppercase;">Scans Executed</div>
+                            <div style="font-size:18px; font-weight:bold; color:#0f172a; margin-top:2px;">${m.total_scans || 0}</div>
+                            <div style="font-size:10px; color:#64748b;">${m.scheduled_scans || 0} sched · ${m.manual_scans || 0} manual</div>
+                        </div>
+                        <div class="pdf-card" style="padding:12px; text-align:center;">
+                            <div style="font-size:10px; color:#64748b; text-transform:uppercase;">Files Inspected</div>
+                            <div style="font-size:18px; font-weight:bold; color:#0284c7; margin-top:2px;">${(m.total_files_inspected || 0).toLocaleString()}</div>
+                            <div style="font-size:10px; color:#10b981;">Cache Hit Rate: ${m.cache_hit_rate_pct || 0}%</div>
+                        </div>
+                        <div class="pdf-card" style="padding:12px; text-align:center;">
+                            <div style="font-size:10px; color:#64748b; text-transform:uppercase;">Active Threats</div>
+                            <div style="font-size:18px; font-weight:bold; color:${(m.active_threats > 0) ? '#dc2626' : '#10b981'}; margin-top:2px;">${m.active_threats || 0}</div>
+                            <div style="font-size:10px; color:#64748b;">${m.quarantined_threats || 0} quar · ${m.deleted_threats || 0} del</div>
+                        </div>
+                        <div class="pdf-card" style="padding:12px; text-align:center;">
+                            <div style="font-size:10px; color:#64748b; text-transform:uppercase;">Audited Exclusions</div>
+                            <div style="font-size:18px; font-weight:bold; color:#64748b; margin-top:2px;">${m.active_exclusions_count || 0}</div>
+                            <div style="font-size:10px; color:#64748b;">Non-silent & audited</div>
+                        </div>
+                    </div>
+
+                    <!-- Scan History Table -->
+                    <div class="pdf-card" style="margin-bottom:16px;">
+                        <h3 style="font-size:13px; font-weight:bold; color:#0f172a; margin:0 0 10px 0;">1. Scan Sessions Executed</h3>
+                        <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                            <thead>
+                                <tr style="border-bottom:1px solid #cbd5e1; background:#f8fafc; text-align:left;">
+                                    <th style="padding:6px;">Server</th>
+                                    <th style="padding:6px;">Trigger</th>
+                                    <th style="padding:6px;">Status</th>
+                                    <th style="padding:6px;">Files</th>
+                                    <th style="padding:6px;">Threats</th>
+                                    <th style="padding:6px;">Started At</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${scans.length > 0 ? scans.map(s => `
+                                    <tr style="border-bottom:1px solid #f1f5f9;">
+                                        <td style="padding:6px; font-weight:600;">${escapeHtml(s.server_name || '')} (${escapeHtml(s.server_ip || '')})</td>
+                                        <td style="padding:6px;">${escapeHtml(s.trigger_type || 'scheduled')}</td>
+                                        <td style="padding:6px; font-weight:bold; color:${s.status === 'clean' ? '#10b981' : (s.status === 'threats_found' ? '#dc2626' : '#64748b')}">${escapeHtml((s.status || '').toUpperCase())}</td>
+                                        <td style="padding:6px;">${(s.total_files_scanned || 0).toLocaleString()}</td>
+                                        <td style="padding:6px; font-weight:bold; color:${s.threats_found > 0 ? '#dc2626' : '#10b981'}">${s.threats_found || 0}</td>
+                                        <td style="padding:6px; color:#64748b;">${s.started_at ? new Date(s.started_at).toLocaleString() : '-'}</td>
+                                    </tr>
+                                `).join('') : '<tr><td colspan="6" style="padding:10px; text-align:center; color:#64748b;">No scan sessions recorded in this period.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Threats Table -->
+                    <div class="pdf-card" style="margin-bottom:16px;">
+                        <h3 style="font-size:13px; font-weight:bold; color:#0f172a; margin:0 0 10px 0;">2. Threat Findings & Remediation History</h3>
+                        <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                            <thead>
+                                <tr style="border-bottom:1px solid #cbd5e1; background:#f8fafc; text-align:left;">
+                                    <th style="padding:6px;">Target File</th>
+                                    <th style="padding:6px;">Server</th>
+                                    <th style="padding:6px;">Threat Classification</th>
+                                    <th style="padding:6px;">Status</th>
+                                    <th style="padding:6px;">Seen Count</th>
+                                    <th style="padding:6px;">Last Seen</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${findings.length > 0 ? findings.map(f => `
+                                    <tr style="border-bottom:1px solid #f1f5f9;">
+                                        <td style="padding:6px; font-family:monospace; color:#dc2626; word-break:break-all;">${escapeHtml(f.file_path || '')}</td>
+                                        <td style="padding:6px;">${escapeHtml(f.server_name || '')}</td>
+                                        <td style="padding:6px; font-weight:600;">${escapeHtml(f.threat_name || 'Malware')}</td>
+                                        <td style="padding:6px; font-weight:bold;">${escapeHtml((f.status || '').toUpperCase())}</td>
+                                        <td style="padding:6px;">${f.occurrences || 1}</td>
+                                        <td style="padding:6px; color:#64748b;">${f.last_seen ? new Date(f.last_seen).toLocaleString() : '-'}</td>
+                                    </tr>
+                                `).join('') : '<tr><td colspan="6" style="padding:10px; text-align:center; color:#10b981;">Zero malware or threat findings recorded in this period.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Active Exclusions Table -->
+                    <div class="pdf-card" style="margin-bottom:16px;">
+                        <h3 style="font-size:13px; font-weight:bold; color:#0f172a; margin:0 0 10px 0;">3. Active Audited Exclusions</h3>
+                        <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                            <thead>
+                                <tr style="border-bottom:1px solid #cbd5e1; background:#f8fafc; text-align:left;">
+                                    <th style="padding:6px;">Excluded Pattern</th>
+                                    <th style="padding:6px;">Owner</th>
+                                    <th style="padding:6px;">Audited Justification</th>
+                                    <th style="padding:6px;">Expiry</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${exclusions.length > 0 ? exclusions.map(x => `
+                                    <tr style="border-bottom:1px solid #f1f5f9;">
+                                        <td style="padding:6px; font-family:monospace; color:#0284c7;">${escapeHtml(x.path_pattern || '')}</td>
+                                        <td style="padding:6px; font-weight:600;">${escapeHtml(x.owner || 'admin')}</td>
+                                        <td style="padding:6px; color:#475569;">${escapeHtml(x.reason || 'None provided')}</td>
+                                        <td style="padding:6px; color:#64748b;">${x.expires_at ? new Date(x.expires_at).toLocaleDateString() : 'Permanent'}</td>
+                                    </tr>
+                                `).join('') : '<tr><td colspan="4" style="padding:10px; text-align:center; color:#64748b;">No active path exclusions. Full filesystem coverage maintained.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Methodology & Disclaimer -->
+                    <div style="font-size:10.5px; color:#64748b; line-height:1.5; padding:8px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px;">
+                        <strong>Audit Notice:</strong> File integrity and malware defense operates on cryptographic SHA-256 micro-hashing against known threat intelligence feeds. Pseudo-filesystems (/proc, /sys, /dev) and remote mounts are strictly bounded. Coverage statements are bounded to signatures in the active threat intelligence catalog.
+                    </div>
+                </div>
+            `;
+
+            renderPDF(
+                `Malware Defense Report (${escapeHtml(data.period || '')})`,
+                `Project: ${escapeHtml(projId === 'all' ? 'All' : projId)} | Server: ${escapeHtml(serverId === 'all' ? 'All' : serverId)}`,
+                `Generated: ${new Date().toISOString()}\nFiles Inspected: ${(m.total_files_inspected || 0).toLocaleString()}\nActive Threats: ${m.active_threats || 0}`,
+                content,
+                isPreview
+            );
+        } catch (err) {
+            showToast(err.message || 'Generation failed', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = originalText;
+        }
+    }
+
+    function exportMalwareReportCSV(e) {
+        e.preventDefault();
+        const projId = document.getElementById('malware-report-project')?.value || 'all';
+        const serverId = document.getElementById('malware-report-server-id')?.value || 'all';
+        const part = document.getElementById('malware-report-period-part')?.value || 'full';
+        const monthVal = document.getElementById('malware-report-month')?.value;
+
+        let year = null, month = null;
+        if (monthVal && monthVal.includes('-')) {
+            const parts = monthVal.split('-');
+            year = parseInt(parts[0]);
+            month = parseInt(parts[1]);
+        }
+
+        let url = `/api/reports/malware/export-csv?part=${encodeURIComponent(part)}`;
+        if (projId && projId !== 'all') url += `&project_id=${encodeURIComponent(projId)}`;
+        if (serverId && serverId !== 'all') url += `&server_id=${encodeURIComponent(serverId)}`;
+        if (year) url += `&year=${year}`;
+        if (month) url += `&month=${month}`;
+
+        window.location.href = url;
+    }
+
     // ══════════════════════════════════════════════════════════════════
     // WEBSITE LEVEL REPORT CONTROLLER & AUTOCOMPLETE
     // ══════════════════════════════════════════════════════════════════

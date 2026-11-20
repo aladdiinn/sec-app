@@ -30,9 +30,11 @@
                 <option value="MAINT">Maintenance</option>
             </select>
 
+            {% if is_admin %}
             <button class="btn btn-primary" onclick="openAddAppWizard()" style="padding:8px 16px; font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px">
                 <span>+</span> Add Application
             </button>
+            {% endif %}
         </div>
     </div>
 
@@ -49,6 +51,7 @@
 {% endblock %}
 {% block extra_js %}
 <script>
+window.IS_ADMIN_USER = {{ 'true' if is_admin else 'false' }};
 let currentApplications = [];
 
 async function loadApplications() {
@@ -95,11 +98,13 @@ function renderApplicationsGrid() {
         grid.innerHTML = `
         <div class="card glass" style="grid-column:1/-1; text-align:center; padding:60px; border:1px dashed var(--border)">
             <div style="font-size:36px; margin-bottom:12px">🛡️</div>
-            <h4 style="margin:0 0 6px 0; font-size:16px; font-weight:700; color:var(--text)">No applications yet</h4>
-            <p style="margin:0 0 18px 0; font-size:12px; color:var(--text3)">Onboard your business web applications to start collecting Tomcat and PostgreSQL security telemetry.</p>
+            <h4 style="margin:0 0 6px 0; font-size:16px; font-weight:700; color:var(--text)">No applications found</h4>
+            <p style="margin:0 0 18px 0; font-size:12px; color:var(--text3)">${window.IS_ADMIN_USER ? 'Onboard your business web applications to start collecting Tomcat and PostgreSQL security telemetry.' : 'No monitored web applications are currently assigned to your project scope.'}</p>
+            ${window.IS_ADMIN_USER ? `
             <button class="btn btn-primary" onclick="openAddAppWizard()" style="padding:8px 20px; font-size:12px; font-weight:700">
                 + Add Application
             </button>
+            ` : ''}
         </div>
         `;
         return;

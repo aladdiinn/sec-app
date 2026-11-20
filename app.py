@@ -948,6 +948,17 @@ def validate_production_config():
     Fails fast with non-zero exit code if required security or database secrets are missing.
     CRITICAL: Names only, never logs or prints secret values or connection strings.
     """
+    env_mode = (os.getenv("ENV") or os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or "").lower()
+    if os.getenv("TESTING") == "1" and env_mode in ("production", "prod", "live"):
+        import sys
+        sys.stderr.write(
+            "\n" + "=" * 74 + "\n"
+            "[FATAL CONFIGURATION ERROR] TESTING environment variable is strictly forbidden in production mode!\n"
+            + "=" * 74 + "\n\n"
+        )
+        sys.stderr.flush()
+        sys.exit(1)
+
     if os.getenv("TESTING") == "1":
         return
 
@@ -1045,8 +1056,11 @@ async def favicon():
 
 # Authentication Helpers
 def get_session_user(request: Request):
-    """Retrieve logged in user from session or return None."""
-    user_id = request.session.get("user_id")
+    """Retrieve logged in user from session or return None. No environment bypasses."""
+    session = getattr(request, "session", None)
+    if not isinstance(session, dict) and not hasattr(session, "get"):
+        return None
+    user_id = session.get("user_id")
     if not user_id:
         return None
     conn = db.get_db_connection()
@@ -1071,12 +1085,32 @@ def get_session_user(request: Request):
         conn.close()
 
 def is_admin_user(request: Request) -> bool:
-    """Returns True if the current session user has Super Admin or Admin privileges."""
+    """Returns True if user has Super Admin, Admin, or Operator role (general operational access)."""
     user = get_session_user(request)
     if not user:
         return False
     role = (user.get("role") or "").lower()
     return bool(user.get("is_admin") or role in ("superuser", "admin", "operator"))
+
+def is_pure_admin(request: Request) -> bool:
+    """Returns True strictly for Super Admin or Admin. Operators are excluded from destructive remediation."""
+    user = get_session_user(request)
+    if not user:
+        return False
+    role = (user.get("role") or "").lower()
+    if role in ("superuser", "admin"):
+        return True
+    return bool(user.get("is_admin") and role not in ("operator", "analyst", "viewer", "user"))
+
+
+def sanitize_csv_cell(val):
+    """Sanitizes CSV fields to neutralize spreadsheet formula injection (=, +, -, @, \\t, \\r)."""
+    if val is None:
+        return ""
+    s = str(val)
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return f"'{s}"
+    return s
 
 
 def get_public_base_url(request: Request) -> str:
@@ -1113,15 +1147,22 @@ def get_public_base_url(request: Request) -> str:
     return f"{scheme}://{host}"
 
 def get_effective_project_id(request: Request):
+    if not is_admin_user(request):
+        uid = request.session.get("user_id")
+        allowed = db.get_user_allowed_project_ids(uid) if uid else []
+        pid = request.query_params.get("project_id") or request.session.get("project_id")
+        if pid:
+            try:
+                ipid = int(pid)
+                if ipid in allowed:
+                    return ipid
+            except Exception:
+                pass
+        return allowed if allowed else [-9999]
     pid = request.query_params.get("project_id") or request.session.get("project_id")
     if pid:
         try: return int(pid)
         except: pass
-    if not is_admin_user(request):
-        uid = request.session.get("user_id")
-        if uid:
-            allowed = db.get_user_allowed_project_ids(uid)
-            return allowed if allowed else [-9999]
     return None
 
 def render_template(request: Request, name: str, context: dict = None):
@@ -4534,8 +4575,26 @@ def _run_direct_local_scan(server_id: int, project_id: Optional[int], scan_id: i
 def api_server_scan_malware(server_id: int, request: Request):
     """
     On-Demand trigger for zero-impact malware scan on a specific server.
+    Enforces admin RBAC and fleet concurrency cap (max 5 active scans).
     Fails fast with HTTP 400 if agent is offline or missed heartbeats (>300s).
     """
+    user = get_session_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Authentication required"})
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Admin or Operator privileges required to trigger malware scan"})
+
+    # Global concurrency cap: max 5 active running scans
+    active_scans = db.get_active_running_scans_count()
+    if active_scans >= 5:
+        return JSONResponse(status_code=429, content={
+            "status": "queued",
+            "ok": False,
+            "message": "Global concurrency limit reached (max 5 active scans). Scan placed in queue.",
+            "queue_position": active_scans + 1,
+            "retry_after": 15
+        })
+
     srv = db.get_server_by_id(server_id)
     if not srv:
         return JSONResponse(status_code=404, content={"status": "error", "message": "Server not found"})
@@ -4567,7 +4626,7 @@ def api_server_scan_malware(server_id: int, request: Request):
 
     _malware_scan_queue.add(server_id)
     scan_id = db.record_file_scan(server_id=server_id, project_id=srv.get("project_id"), trigger_type="manual", status="in_progress")
-    u = getattr(request.state, "user", None)
+    u = getattr(request.state, "user", None) or get_session_user(request)
     uname = u.get("username", "admin") if isinstance(u, dict) else "admin"
     try:
         db.log_audit(uname, "MALWARE_SCAN_REQUESTED", "server", str(server_id), f"Zero-impact malware scan requested for server {srv.get('name') or server_id}")
@@ -4581,11 +4640,27 @@ def api_server_scan_malware(server_id: int, request: Request):
         "message": f"Malware scan queued for {srv.get('name') or server_id}. Agent will scan immediately."
     }
 
+@app.post("/api/malware/scan")
+def api_malware_scan_alias(request: Request, body: dict = Body(default={})):
+    """Unified scan trigger accepting server_id or project_id in body."""
+    sid = body.get("server_id")
+    pid = body.get("project_id")
+    if sid and str(sid).lower() != "all":
+        return api_server_scan_malware(int(sid), request)
+    return api_project_scan_malware(str(pid or "all"), request)
+
 @app.post("/api/projects/{project_id}/scan-malware")
 def api_project_scan_malware(project_id: str, request: Request):
     """
     On-Demand trigger for zero-impact malware scan across all servers in a project.
+    Enforces admin RBAC and checks concurrency limits.
     """
+    user = get_session_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Authentication required"})
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Admin or Operator privileges required to trigger malware scan"})
+
     conn = db.get_db_connection()
     if not conn:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Database unavailable"})
@@ -4608,14 +4683,14 @@ def api_project_scan_malware(project_id: str, request: Request):
 
     for sid in server_ids:
         _malware_scan_queue.add(sid)
-        scan_id = db.record_file_scan(
+        db.record_file_scan(
             server_id=sid,
             project_id=None if str(project_id).lower() == 'all' else int(project_id),
             trigger_type="manual",
             status="in_progress"
         )
 
-    u = getattr(request.state, "user", None)
+    u = getattr(request.state, "user", None) or get_session_user(request)
     uname = u.get("username", "admin") if isinstance(u, dict) else "admin"
     try:
         db.log_audit(uname, "PROJECT_MALWARE_SCAN_REQUESTED", "project", str(project_id), f"Malware scan queued across {len(server_ids)} server(s) for project {project_id}")
@@ -4631,12 +4706,23 @@ def api_project_scan_malware(project_id: str, request: Request):
 
 @app.get("/api/malware/summary")
 def api_malware_summary(request: Request, project_id: Optional[str] = None, server_id: Optional[str] = None):
+    if not is_admin_user(request):
+        eff_pid = get_effective_project_id(request)
+        if isinstance(eff_pid, list):
+            eff_pid = eff_pid[0] if eff_pid else -9999
+        return db.get_malware_defense_summary(project_id=eff_pid, server_id=server_id)
     eff_pid = None if (not project_id or project_id == "all") else project_id
     eff_sid = None if (not server_id or server_id == "all") else server_id
     return db.get_malware_defense_summary(project_id=eff_pid, server_id=eff_sid)
 
 @app.get("/api/malware/scans")
 def api_malware_scans(request: Request, project_id: Optional[str] = None, server_id: Optional[str] = None, limit: int = 50):
+    if not is_admin_user(request):
+        eff_pid = get_effective_project_id(request)
+        if isinstance(eff_pid, list):
+            eff_pid = eff_pid[0] if eff_pid else -9999
+        scans = db.get_latest_file_scans(project_id=eff_pid, server_id=server_id, limit=limit)
+        return {"scans": scans}
     if server_id and server_id != "all":
         eff_pid = None
     else:
@@ -4669,6 +4755,12 @@ async def api_admin_scans_relink(request: Request):
 
 @app.get("/api/malware/findings")
 def api_malware_findings(request: Request, project_id: Optional[str] = None, server_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100):
+    if not is_admin_user(request):
+        eff_pid = get_effective_project_id(request)
+        if isinstance(eff_pid, list):
+            eff_pid = eff_pid[0] if eff_pid else -9999
+        findings = db.get_malware_findings(project_id=eff_pid, server_id=server_id, status=status, limit=limit)
+        return {"findings": findings}
     if server_id and server_id != "all":
         eff_pid = None
     else:
@@ -4680,7 +4772,15 @@ def api_malware_findings(request: Request, project_id: Optional[str] = None, ser
 async def api_malware_action(request: Request, payload: Optional[dict] = None):
     """
     Handles threat remediation: quarantine, delete, or whitelist.
+    Enforces strict role-based access control:
+    - Quarantine & Delete: Super Admin and Admin only (operator & normal user forbidden -> 403).
+    - Whitelist: Super Admin, Admin, and Operator allowed (normal user forbidden -> 403).
+    - Unauthenticated calls -> 401.
     """
+    user = get_session_user(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Authentication required"})
+
     if payload is not None:
         data = payload
     else:
@@ -4694,6 +4794,20 @@ async def api_malware_action(request: Request, payload: Optional[dict] = None):
     if not finding_id or action not in ("quarantine", "delete", "whitelist"):
         return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid finding_id or action (must be quarantine, delete, or whitelist)"})
 
+    # Quarantine and Delete are strictly Super Admin / Admin only
+    if action in ("quarantine", "delete"):
+        if not is_pure_admin(request):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Administrator privileges required: quarantine and delete are restricted to Super Admins and Admins"})
+    elif action == "whitelist":
+        if not is_admin_user(request):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Admin or Operator privileges required to whitelist findings"})
+
+    # Delete requires double confirmation in UI (confirmation === 'DELETE' or confirmed True)
+    if action == "delete":
+        conf = str(data.get("confirmation", "")).strip().upper()
+        if conf != "DELETE" and not data.get("confirmed"):
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Two confirmations required: confirmation text must be 'DELETE'"})
+
     conn = db.get_db_connection()
     if not conn:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Database unavailable"})
@@ -4701,7 +4815,7 @@ async def api_malware_action(request: Request, payload: Optional[dict] = None):
     finding = None
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, scan_id, server_id, file_path, file_name, sha256 FROM file_scan_results WHERE id = %s;", (finding_id,))
+            cur.execute("SELECT id, scan_id, server_id, file_path, file_name, sha256, permissions, owner, file_size FROM file_scan_results WHERE id = %s;", (finding_id,))
             finding = cur.fetchone()
     except Exception as e:
         logger.error(f"Error fetching finding {finding_id}: {e}")
@@ -4713,32 +4827,61 @@ async def api_malware_action(request: Request, payload: Optional[dict] = None):
 
     srv_id = finding.get("server_id") if isinstance(finding, dict) else finding[2]
     f_path = finding.get("file_path") if isinstance(finding, dict) else finding[3]
+    sha256_hash = (finding.get("sha256") if isinstance(finding, dict) else finding[5]) or ""
+    f_perms = (finding.get("permissions") if isinstance(finding, dict) else finding[6]) or ""
+    f_owner = (finding.get("owner") if isinstance(finding, dict) else finding[7]) or ""
+    f_size = (finding.get("file_size") if isinstance(finding, dict) else finding[8]) or 0
 
-    u = getattr(request.state, "user", None)
+    u = getattr(request.state, "user", None) or get_session_user(request)
     uname = u.get("username", "admin") if isinstance(u, dict) else "admin"
 
     if action == "whitelist":
-        db.update_file_scan_result_status(finding_id, "whitelisted", username=uname)
+        db.update_file_scan_result_status(finding_id, "whitelisted", username=uname, remediation_action="whitelist", details="Hash marked as benign")
         try:
             db.log_audit(uname, "MALWARE_FINDING_WHITELISTED", "file", str(finding_id), f"Finding {finding_id} ({f_path}) whitelisted by {uname}")
         except Exception: pass
         return {"status": "success", "message": f"File {f_path} marked as whitelisted."}
 
-    # For quarantine or delete, queue action to the agent
+    # Cryptographically sign task with HMAC-SHA256 using AGENT_TOKEN
+    nonce = secrets.token_hex(16)
+    ts = int(time.time())
+    tok = str(os.getenv("AGENT_TOKEN", "agent-secret-token"))
+    sig_msg = f"{action}:{f_path}:{sha256_hash}:{nonce}:{ts}"
+    sig = hmac.new(tok.encode("utf-8"), sig_msg.encode("utf-8"), hashlib.sha256).hexdigest()
+
     if srv_id:
         _malware_actions_queue[srv_id] = {
             "action": action,
-            "file_path": f_path
+            "file_path": f_path,
+            "expected_hash": sha256_hash,
+            "nonce": nonce,
+            "timestamp": ts,
+            "signature": sig
         }
+
     new_st = "quarantined" if action == "quarantine" else "deleted"
-    db.update_file_scan_result_status(finding_id, new_st, username=uname)
+    db.update_file_scan_result_status(finding_id, new_st, username=uname, remediation_action=action, details=f"Remediation task queued (nonce {nonce[:8]})")
+
+    if action == "quarantine" and srv_id:
+        q_dest = f"/var/spool/bsmart/quarantine/{sha256_hash}.dat"
+        m_json = json.dumps({
+            "original_path": f_path,
+            "sha256": sha256_hash,
+            "permissions": f_perms,
+            "owner": f_owner,
+            "file_size": f_size,
+            "quarantined_by": uname,
+            "quarantined_at": datetime.now().isoformat()
+        })
+        db.record_quarantine_manifest(srv_id, f_path, q_dest, sha256_hash, f_perms, f_owner, f_size, uname, m_json)
+
     try:
-        db.log_audit(uname, f"MALWARE_ACTION_{action.upper()}", "server", str(srv_id), f"Remediation action '{action}' queued for {f_path} on server {srv_id}")
+        db.log_audit(uname, f"MALWARE_ACTION_{action.upper()}", "server", str(srv_id), f"Remediation '{action}' dispatched for {f_path} on server {srv_id}")
     except Exception: pass
 
     return {
         "status": "success",
-        "message": f"Remediation action '{action}' queued for execution on target agent."
+        "message": f"Remediation action '{action}' cryptographically signed and queued for target agent."
     }
 
 @app.get("/api/malware/paths")
@@ -4748,6 +4891,8 @@ def api_get_malware_paths(request: Request, server_id: Optional[int] = None, pro
 
 @app.post("/api/malware/paths")
 async def api_add_malware_path(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Admin privileges required"})
     try:
         data = await request.json()
     except Exception:
@@ -4761,9 +4906,224 @@ async def api_add_malware_path(request: Request):
     return {"status": "success", "id": pid, "message": f"Monitored path '{path_pattern}' added successfully."}
 
 @app.delete("/api/malware/paths/{path_id}")
-def api_delete_malware_path(path_id: int):
+def api_delete_malware_path(request: Request, path_id: int):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Admin privileges required"})
     ok = db.delete_malware_monitored_path(path_id)
     return {"status": "success" if ok else "error", "ok": ok}
+
+@app.get("/api/malware/exclusions")
+def api_get_malware_exclusions(request: Request, server_id: Optional[int] = None, project_id: Optional[int] = None):
+    return {"exclusions": db.get_malware_path_exclusions(server_id=server_id, project_id=project_id)}
+
+@app.post("/api/malware/exclusions")
+async def api_add_malware_exclusion(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Admin privileges required"})
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid JSON body"})
+    path_pat = data.get("path_pattern", "").strip()
+    if not path_pat:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "path_pattern is required"})
+    u = get_session_user(request)
+    uname = u.get("username", "admin") if u else "admin"
+    owner = data.get("owner") or uname
+    reason = data.get("reason") or "Approved operational exclusion"
+    expires_at = data.get("expires_at")
+    ex_id = db.add_malware_path_exclusion(data.get("server_id"), data.get("project_id"), path_pat, owner, reason, expires_at)
+    db.log_audit(uname, "MALWARE_EXCLUSION_ADDED", "file", str(ex_id), f"Exclusion added: {path_pat} by {owner}")
+    return {"status": "success", "id": ex_id}
+
+@app.delete("/api/malware/exclusions/{id}")
+def api_delete_malware_exclusion(request: Request, id: int):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Admin privileges required"})
+    ok = db.delete_malware_path_exclusion(id)
+    return {"status": "success" if ok else "error", "ok": ok}
+
+@app.get("/api/malware/intel")
+def api_get_malware_intel():
+    return db.get_threat_intel_metadata()
+
+@app.post("/api/malware/intel/import")
+async def api_import_malware_intel(request: Request):
+    if not is_admin_user(request):
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Admin privileges required"})
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid JSON body"})
+    feed_name = data.get("feed_name", "ClamAV-Community-Hash-Feed")
+    version_str = data.get("version", datetime.now().strftime("%Y.%m.%d"))
+    hashes = data.get("hashes", [])
+    count = db.import_threat_intel_feed(feed_name, version_str, hashes)
+    u = get_session_user(request)
+    uname = u.get("username", "admin") if u else "admin"
+    db.log_audit(uname, "THREAT_INTEL_FEED_IMPORTED", "intel", feed_name, f"Imported {count} hashes from {feed_name}")
+    return {"status": "success", "imported_count": count}
+
+@app.get("/api/malware/schedule")
+def api_get_malware_schedule(request: Request, server_id: Optional[int] = None, project_id: Optional[int] = None):
+    return db.get_next_run_schedule(server_id=server_id, project_id=project_id)
+
+@app.post("/api/malware/scan-slot/request")
+async def api_request_malware_scan_slot(request: Request, body: dict = Body(default={})):
+    """Agent calls this endpoint to acquire a concurrency slot before starting scan."""
+    sid = body.get("server_id")
+    if not sid:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "server_id is required"})
+    res = db.request_malware_scan_slot(int(sid))
+    status_code = 200 if res.get("status") == "granted" else (429 if res.get("status") == "queued" else 500)
+    return JSONResponse(status_code=status_code, content=res)
+
+@app.post("/api/malware/scan-slot/heartbeat")
+async def api_heartbeat_malware_scan_slot(request: Request, body: dict = Body(default={})):
+    """Refreshes 10-minute lease while scan is in progress."""
+    sid = body.get("server_id")
+    if not sid:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "server_id is required"})
+    ok = db.heartbeat_malware_scan_slot(int(sid))
+    return {"status": "success" if ok else "not_found", "ok": ok}
+
+@app.post("/api/malware/scan-slot/release")
+async def api_release_malware_scan_slot(request: Request, body: dict = Body(default={})):
+    """Releases slot upon scan completion, failure, or pause, promoting next queued scan."""
+    sid = body.get("server_id")
+    if not sid:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "server_id is required"})
+    ok = db.release_malware_scan_slot(int(sid))
+    return {"status": "success" if ok else "not_found", "ok": ok}
+
+@app.get("/api/reports/malware/data")
+def api_get_malware_report(
+    request: Request,
+    project_id: Optional[str] = None,
+    server_id: Optional[str] = None,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    part: Optional[str] = "full"
+):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not is_admin_user(request):
+        eff_pid = get_effective_project_id(request)
+        allowed_list = eff_pid if isinstance(eff_pid, list) else ([eff_pid] if eff_pid and eff_pid != -9999 else [])
+        if not allowed_list:
+            raise HTTPException(status_code=403, detail="Forbidden: No assigned projects")
+        if project_id and project_id != "all":
+            try:
+                if int(project_id) not in allowed_list:
+                    raise HTTPException(status_code=403, detail="Forbidden project access")
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=403, detail="Forbidden project access")
+        else:
+            project_id = allowed_list if len(allowed_list) > 1 else str(allowed_list[0])
+
+        if server_id and server_id != "all":
+            try:
+                srv = db.get_server_by_id(int(server_id))
+                if not srv or srv.get("project_id") not in allowed_list:
+                    raise HTTPException(status_code=403, detail="Forbidden: Server does not belong to user's assigned projects")
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=403, detail="Invalid server ID")
+    return db.get_malware_report_data(project_id=project_id, server_id=server_id, year=year, month=month, part=part)
+
+@app.get("/api/reports/malware/export-csv")
+def api_export_malware_report_csv(
+    request: Request,
+    project_id: Optional[str] = None,
+    server_id: Optional[str] = None,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    part: Optional[str] = "full"
+):
+    user = get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not is_admin_user(request):
+        eff_pid = get_effective_project_id(request)
+        allowed_list = eff_pid if isinstance(eff_pid, list) else ([eff_pid] if eff_pid and eff_pid != -9999 else [])
+        if not allowed_list:
+            raise HTTPException(status_code=403, detail="Forbidden: No assigned projects")
+        if project_id and project_id != "all":
+            try:
+                if int(project_id) not in allowed_list:
+                    raise HTTPException(status_code=403, detail="Forbidden project access")
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=403, detail="Forbidden project access")
+        else:
+            project_id = allowed_list if len(allowed_list) > 1 else str(allowed_list[0])
+
+        if server_id and server_id != "all":
+            try:
+                srv = db.get_server_by_id(int(server_id))
+                if not srv or srv.get("project_id") not in allowed_list:
+                    raise HTTPException(status_code=403, detail="Forbidden: Server does not belong to user's assigned projects")
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=403, detail="Invalid server ID")
+
+    data = db.get_malware_report_data(project_id=project_id, server_id=server_id, year=year, month=month, part=part)
+    if not data.get("ok"):
+        raise HTTPException(status_code=400, detail="Failed to fetch report data")
+
+    import io, csv
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["Report Period", sanitize_csv_cell(data.get("period", ""))])
+    writer.writerow(["Generated At", datetime.now().isoformat()])
+    writer.writerow(["Threat Intel Version", sanitize_csv_cell(data.get("threat_intel", {}).get("version", ""))])
+    writer.writerow(["Active Threat Signatures", data.get("threat_intel", {}).get("record_count", 0)])
+    writer.writerow([])
+    writer.writerow(["--- DETECTED THREATS & REMEDIATION ACTIONS ---"])
+    writer.writerow(["Finding ID", "Server ID", "Server Name", "File Path", "File Name", "SHA-256", "Threat Name", "Severity", "Occurrences", "Status", "First Seen", "Last Seen", "Remediation Action", "Resolved By"])
+    for f in data.get("findings", []):
+        writer.writerow([
+            f.get("id"), f.get("server_id"),
+            sanitize_csv_cell(f.get("server_name")),
+            sanitize_csv_cell(f.get("file_path")),
+            sanitize_csv_cell(f.get("file_name")),
+            f.get("sha256"),
+            sanitize_csv_cell(f.get("threat_name")),
+            f.get("severity"),
+            f.get("occurrences", 1),
+            f.get("status"),
+            f.get("first_seen"),
+            f.get("last_seen"),
+            sanitize_csv_cell(f.get("remediation_action") or ""),
+            sanitize_csv_cell(f.get("resolved_by") or "")
+        ])
+    writer.writerow([])
+    writer.writerow(["--- SCAN SESSIONS IN PERIOD ---"])
+    writer.writerow(["Scan ID", "Server ID", "Server Name", "Trigger Type", "Status", "Files Scanned", "Cache Hits", "Threats Found", "Started At", "Completed At"])
+    for s in data.get("scans", []):
+        writer.writerow([
+            s.get("id"), s.get("server_id"),
+            sanitize_csv_cell(s.get("server_name")),
+            s.get("trigger_type"), s.get("status"),
+            s.get("total_files_scanned"), s.get("cache_hits", 0), s.get("threats_found"), s.get("started_at"), s.get("completed_at")
+        ])
+    writer.writerow([])
+    writer.writerow(["--- ACTIVE EXCLUSIONS IN PERIOD ---"])
+    writer.writerow(["Exclusion ID", "Path Pattern", "Owner", "Reason", "Expires At"])
+    for ex in data.get("exclusions", []):
+        writer.writerow([
+            ex.get("id"),
+            sanitize_csv_cell(ex.get("path_pattern")),
+            sanitize_csv_cell(ex.get("owner")),
+            sanitize_csv_cell(ex.get("reason")),
+            ex.get("expires_at") or "Permanent"
+        ])
+
+    csv_content = out.getvalue()
+    filename = f"malware_scan_report_{data.get('start_date')}_to_{data.get('end_date')}.csv"
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 @app.post("/api/vulnerabilities/scan-all")
@@ -11294,7 +11654,7 @@ def api_get_apps(request: Request, status: Optional[str] = None):
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    if request.query_params.get("all") == "true" or status in ("all_including_pending", "all"):
+    if is_admin_user(request) and (request.query_params.get("all") == "true" or status in ("all_including_pending", "all")):
         pid = None
     else:
         pid = get_effective_project_id(request)
@@ -11313,6 +11673,8 @@ def api_create_app(request: Request, payload: dict = Body(...)):
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    if not is_admin_user(request):
+        raise HTTPException(status_code=403, detail="Admin or Operator privileges required to onboard applications")
     name = (payload.get("name") or "").strip()
     primary_url = (payload.get("primary_url") or "").strip()
     if not name or not primary_url:
@@ -11434,6 +11796,8 @@ def api_delete_app(request: Request, app_id: int):
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    if not is_pure_admin(request):
+        raise HTTPException(status_code=403, detail="Super Admin or Admin privileges required to delete applications")
     app_record = db.get_application_by_id(app_id)
     if not app_record:
         raise HTTPException(status_code=404, detail="Application not found")

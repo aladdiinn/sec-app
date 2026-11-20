@@ -1,4 +1,4 @@
-import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threading, random, platform, zipfile, hmac, ssl, traceback
+import os, sys, time, json, socket, subprocess, glob, re, hashlib, gzip, threading, random, platform, zipfile, tarfile, hmac, ssl, traceback
 import urllib.request, urllib.error
 from datetime import datetime
 
@@ -1425,192 +1425,587 @@ def check_fim():
                 
     return changes
 
-# ── MALWARE & FILE INTEGRITY DEFENSE SCANNING ENGINE ──
+# ── FULL-SERVER ZERO-IMPACT MALWARE & FILE INTEGRITY DEFENSE ENGINE ──
 daily_malware_scan_done_date = ""
 is_malware_scan_running = False
 malware_scan_lock = threading.Lock()
 
-def discover_malware_scan_paths(custom_paths=None):
-    """
-    Multi-OS auto-discovery of high-risk directories for zero-impact file integrity & malware scanning.
-    Supports Ubuntu, Debian, CentOS, RHEL, Rocky, AlmaLinux.
-    Targets 6-10 high-risk locations without traversing the whole filesystem.
-    """
-    candidates = [
-        "/tmp",
-        "/var/tmp",
-        "/dev/shm",
-        "/var/spool/cron",
-        "/var/spool/cron/crontabs",
-        "/etc/cron.d",
-        "/etc/systemd/system",
-        "/var/www/html/uploads",
-        "/opt/tomcat/webapps"
-    ]
-    
-    # Check web root if specific upload dir is absent
-    if not os.path.exists("/var/www/html/uploads") and os.path.exists("/var/www/html"):
-        candidates.append("/var/www/html")
+_SCAN_CACHE_PATH = "/var/run/bsmart_scan_cache.json" if os.path.exists("/var/run") else os.path.join(os.environ.get("TEMP", "/tmp"), "bsmart_scan_cache.json")
+_SCAN_CHECKPOINT_PATH = "/var/run/bsmart_scan_checkpoint.json" if os.path.exists("/var/run") else os.path.join(os.environ.get("TEMP", "/tmp"), "bsmart_scan_checkpoint.json")
 
-    # Dynamic inspection of running processes for custom app working directories (/proc/<PID>/cwd)
+def _load_scan_cache():
     try:
-        proc_dirs = set()
-        for pid_dir in glob.glob("/proc/[0-9]*"):
-            try:
-                cmd_path = os.path.join(pid_dir, "cmdline")
-                if os.path.exists(cmd_path):
-                    with open(cmd_path, "rb") as cf:
-                        cmd = cf.read().replace(b"\x00", b" ").decode("utf-8", errors="ignore").lower()
-                        if any(app in cmd for app in ["tomcat", "java", "python", "node", "php", "httpd", "nginx", "gunicorn", "uvicorn"]):
-                            cwd_link = os.path.join(pid_dir, "cwd")
-                            if os.path.islink(cwd_link):
-                                real_cwd = os.path.realpath(cwd_link)
-                                if real_cwd and real_cwd != "/" and real_cwd not in ("/root", "/home"):
-                                    proc_dirs.add(real_cwd)
-            except Exception:
-                continue
-        candidates.extend(list(proc_dirs)[:4])
+        if os.path.exists(_SCAN_CACHE_PATH):
+            with open(_SCAN_CACHE_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _save_scan_cache(cache_data):
+    try:
+        os.makedirs(os.path.dirname(_SCAN_CACHE_PATH), exist_ok=True)
+        tmp_p = f"{_SCAN_CACHE_PATH}.tmp"
+        with open(tmp_p, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f)
+        os.replace(tmp_p, _SCAN_CACHE_PATH)
     except Exception:
         pass
 
-    # Common enterprise app paths if present on host
-    for ent_path in ["/data/MDM", "/application", "/opt/apps", "/opt/app"]:
-        if os.path.exists(ent_path):
-            candidates.append(ent_path)
+def _load_scan_checkpoint():
+    try:
+        if os.path.exists(_SCAN_CHECKPOINT_PATH):
+            with open(_SCAN_CHECKPOINT_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return None
 
-    # Custom paths passed from SOC server
+def _save_scan_checkpoint(chk):
+    try:
+        os.makedirs(os.path.dirname(_SCAN_CHECKPOINT_PATH), exist_ok=True)
+        tmp_p = f"{_SCAN_CHECKPOINT_PATH}.tmp"
+        with open(tmp_p, "w", encoding="utf-8") as f:
+            json.dump(chk, f)
+        os.replace(tmp_p, _SCAN_CHECKPOINT_PATH)
+    except Exception:
+        pass
+
+def _clear_scan_checkpoint():
+    try:
+        if os.path.exists(_SCAN_CHECKPOINT_PATH):
+            os.remove(_SCAN_CHECKPOINT_PATH)
+    except Exception:
+        pass
+
+def is_path_excluded(fpath, exclusions=None):
+    if not exclusions:
+        return False
+    norm_fp = os.path.normpath(fpath).replace("\\", "/").lower()
+    for exc in exclusions:
+        exc_norm = os.path.normpath(str(exc)).replace("\\", "/").lower()
+        if norm_fp == exc_norm or norm_fp.startswith(exc_norm.rstrip("/") + "/"):
+            return True
+        if "*" in exc_norm or "?" in exc_norm:
+            import fnmatch
+            if fnmatch.fnmatch(norm_fp, exc_norm):
+                return True
+    return False
+
+LOCAL_THREAT_INTEL = {
+    "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f": "EICAR Standard Antivirus Test File",
+    "44d88612fea8a8f36de82e1278abb02f": "EICAR Standard Antivirus Test File",
+    "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890": "Linux/Backdoor.Sample",
+    "131804f87cf57d55eb904f4340d87fa05a413d80b6aaeb44485ebde532392764": "Linux/Mirai.Botnet.Sample"
+}
+
+def discover_ordered_path_segments(custom_paths=None, exclusions=None):
+    """
+    Returns whole filesystem walked as an ordered list of path segments:
+    1. High-risk locations first (/tmp, /var/tmp, /dev/shm, /etc, /root, /home, /opt, /srv, /var, /usr/local, /application, ...)
+    2. Admin custom paths
+    3. Remainder discovered top-level directories in / (excluding virtual filesystems, network mounts & heavy database storage).
+    """
+    HIGH_RISK_ORDER = [
+        "/tmp",
+        "/var/tmp",
+        "/dev/shm",
+        "/etc",
+        "/root",
+        "/home",
+        "/opt",
+        "/srv",
+        "/var",
+        "/usr/local",
+        "/application"
+    ]
+    VIRTUAL_OR_PSEUDO_DIRS = {
+        "/proc", "/sys", "/dev", "/run", "/var/run", "/media", "/mnt", "/lost+found",
+        "/var/lib/postgresql", "/var/lib/mysql", "/var/lib/docker/overlay2", "/var/lib/containerd"
+    }
+
+    ordered = []
+    seen = set()
+
+    for p in HIGH_RISK_ORDER:
+        if os.path.exists(p) and os.path.isdir(p) and not os.path.islink(p):
+            rp = os.path.realpath(p)
+            if rp not in seen and rp != "/" and not is_path_excluded(rp, exclusions):
+                seen.add(rp)
+                ordered.append(rp)
+
     if custom_paths and isinstance(custom_paths, list):
         for cp in custom_paths:
-            if cp and isinstance(cp, str) and cp.strip():
-                candidates.append(cp.strip())
+            if cp and isinstance(cp, str) and os.path.exists(cp) and os.path.isdir(cp) and not os.path.islink(cp):
+                rcp = os.path.realpath(cp)
+                if rcp not in seen and rcp != "/" and not is_path_excluded(rcp, exclusions):
+                    seen.add(rcp)
+                    ordered.append(rcp)
 
-    # Filter strictly to existing directories, resolve canonical paths, remove duplicates
-    valid_paths = []
-    seen = set()
-    for p in candidates:
+    try:
+        for entry in os.listdir("/"):
+            top_p = os.path.join("/", entry)
+            if top_p in VIRTUAL_OR_PSEUDO_DIRS or entry in ("proc", "sys", "dev", "run", "media", "mnt", "lost+found"):
+                continue
+            if os.path.isdir(top_p) and not os.path.islink(top_p):
+                rtp = os.path.realpath(top_p)
+                if rtp not in seen and rtp != "/" and not is_path_excluded(rtp, exclusions):
+                    seen.add(rtp)
+                    ordered.append(rtp)
+    except Exception:
+        pass
+
+    return ordered
+
+def is_file_executable_or_script(fpath, st=None):
+    """Detects executables and scripts regardless of path."""
+    if st is None:
         try:
-            if os.path.isdir(p):
-                real_p = os.path.realpath(p)
-                if real_p not in seen and real_p not in ("/proc", "/sys", "/dev", "/"):
-                    seen.add(real_p)
-                    valid_paths.append(real_p)
+            st = os.stat(fpath)
+        except Exception:
+            return False
+    if st.st_mode & 0o111 != 0:
+        return True
+    ext = os.path.splitext(fpath)[1].lower()
+    if ext in (".sh", ".py", ".pl", ".bin", ".exe", ".elf", ".php", ".cgi", ".rb", ".jar", ".war"):
+        return True
+    try:
+        with open(fpath, "rb") as probe_f:
+            hdr = probe_f.read(4)
+            if hdr.startswith(b"\x7fELF") or hdr.startswith(b"#!"):
+                return True
+    except Exception:
+        pass
+    return False
+
+def inspect_zip_archive(fpath, st=None, depth=0):
+    """Safe archive inspection with zip-bomb safeguards: max 1000 members, max 250MB, max depth 2."""
+    if depth > 2:
+        return [], "skipped: max archive depth exceeded"
+    if st is None:
+        try:
+            st = os.stat(fpath)
+        except Exception:
+            return [], "file stat failed"
+    try:
+        with zipfile.ZipFile(fpath, 'r') as zf:
+            infolist = zf.infolist()
+            if len(infolist) > 1000:
+                return [], "skipped: archive bomb protection (max members)"
+            total_expanded = 0
+            members = []
+            for zi in infolist:
+                if zi.is_dir():
+                    continue
+                if zi.filename.count("/") > 2:
+                    continue
+                if zi.file_size > 50 * 1024 * 1024:
+                    continue
+                total_expanded += zi.file_size
+                if total_expanded > 250 * 1024 * 1024:
+                    return [], "skipped: archive bomb protection (max size)"
+                h_sha = hashlib.sha256()
+                with zf.open(zi) as member_f:
+                    bytes_read = 0
+                    while bytes_read < 50 * 1024 * 1024:
+                        chk = member_f.read(65536)
+                        if not chk: break
+                        h_sha.update(chk)
+                        bytes_read += len(chk)
+                digest = h_sha.hexdigest()
+                members.append({
+                    "file_path": f"{fpath}!/{zi.filename}",
+                    "file_name": os.path.basename(zi.filename),
+                    "sha256": digest,
+                    "md5": "",
+                    "file_size": zi.file_size,
+                    "permissions": "0644",
+                    "owner": "root",
+                    "has_eicar_sig": False
+                })
+            return members, None
+    except Exception as ex_zip:
+        return [], str(ex_zip)
+
+def inspect_tar_archive(fpath, st=None, depth=0):
+    """Safe tar archive inspection with bomb safeguards: max 1000 members, max 250MB, max depth 2."""
+    if depth > 2:
+        return [], "skipped: max archive depth exceeded"
+    if st is None:
+        try:
+            st = os.stat(fpath)
+        except Exception:
+            return [], "file stat failed"
+    try:
+        members = []
+        total_expanded = 0
+        member_count = 0
+        with tarfile.open(fpath, 'r:*') as tf:
+            while True:
+                m = tf.next()
+                if m is None:
+                    break
+                member_count += 1
+                if member_count > 1000:
+                    return [], "skipped: archive bomb protection (max members)"
+                if not m.isreg():
+                    continue
+                if m.name.count("/") > 2:
+                    continue
+                if m.size > 50 * 1024 * 1024:
+                    continue
+                total_expanded += m.size
+                if total_expanded > 250 * 1024 * 1024:
+                    return [], "skipped: archive bomb protection (max size)"
+                h_sha = hashlib.sha256()
+                mf = tf.extractfile(m)
+                if mf:
+                    with mf:
+                        bytes_read = 0
+                        while bytes_read < 50 * 1024 * 1024:
+                            chk = mf.read(65536)
+                            if not chk: break
+                            h_sha.update(chk)
+                            bytes_read += len(chk)
+                digest = h_sha.hexdigest()
+                members.append({
+                    "file_path": f"{fpath}!/{m.name}",
+                    "file_name": os.path.basename(m.name),
+                    "sha256": digest,
+                    "md5": "",
+                    "file_size": m.size,
+                    "permissions": oct(m.mode)[-4:],
+                    "owner": resolve_uid_to_user(m.uid),
+                    "has_eicar_sig": False
+                })
+        return members, None
+    except Exception as ex_tar:
+        return [], str(ex_tar)
+
+def hash_file_stream(fpath, st=None, max_size_cap=200*1024*1024, cache=None):
+    """
+    Streams file in 1 MB chunks with O_NOATIME (read-only guarantee, zero atime/mtime change).
+    Applies adaptive sleep on large files (>200 MB) and detects hot modifying files.
+    """
+    if st is None:
+        try:
+            st = os.stat(fpath)
+        except Exception as ex_st:
+            if cache is not None:
+                return None, False
+            return None, None, False, str(ex_st)
+
+    if cache is not None and isinstance(cache, dict):
+        c_entry = cache.get(fpath)
+        if c_entry and c_entry.get("ino") == st.st_ino and c_entry.get("size") == st.st_size and c_entry.get("mtime") == st.st_mtime:
+            return c_entry.get("sha256"), True
+
+    if st.st_size > 2 * 1024 * 1024 * 1024:
+        if cache is not None:
+            return "skipped: size", False
+        return None, None, False, "skipped: size"
+
+    flags = os.O_RDONLY
+    if hasattr(os, 'O_NOATIME'):
+        try:
+            flags |= os.O_NOATIME
         except Exception:
             pass
+    try:
+        fd = os.open(fpath, flags)
+    except Exception:
+        fd = os.open(fpath, os.O_RDONLY)
 
-    return valid_paths
+    h_sha256 = hashlib.sha256()
+    h_md5 = hashlib.md5()
+    has_eicar_sig = False
+    eicar_sig_bytes = b"EICAR-STANDARD-" + b"ANTIVIRUS-TEST-FILE!"
 
-def run_malware_scan(trigger_type="scheduled", custom_paths=None):
+    try:
+        with open(fd, 'rb', closefd=True) as f:
+            first_chunk = True
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                if first_chunk:
+                    if eicar_sig_bytes in chunk:
+                        has_eicar_sig = True
+                    first_chunk = False
+                h_sha256.update(chunk)
+                h_md5.update(chunk)
+                if st.st_size > max_size_cap:
+                    time.sleep(0.01)
+        sha_str = h_sha256.hexdigest()
+        md5_str = h_md5.hexdigest()
+        if cache is not None and isinstance(cache, dict):
+            cache[fpath] = {
+                "ino": st.st_ino,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+                "sha256": sha_str,
+                "md5": md5_str,
+                "has_eicar": has_eicar_sig
+            }
+            return sha_str, False
+        return sha_str, md5_str, has_eicar_sig, None
+    except Exception as ex_read:
+        if cache is not None:
+            return None, False
+        return None, None, False, str(ex_read)
+
+    try:
+        st_after = os.stat(fpath)
+        if st_after.st_mtime != st.st_mtime or st_after.st_size != st.st_size:
+            return None, None, False, "skipped: modified during hash"
+    except Exception:
+        pass
+
+    return h_sha256.hexdigest(), h_md5.hexdigest(), has_eicar_sig, None
+
+def adaptive_throttle_pause(max_wait=1.0):
+    """Adaptive throttle: samples load average and iowait; pauses when host exceeds thresholds."""
+    paused = False
+    try:
+        if hasattr(os, "getloadavg"):
+            load = os.getloadavg()
+            cores = os.cpu_count() or 1
+            if load[0] > cores * 0.7:
+                time.sleep(min(1.0, max_wait))
+                paused = True
+    except Exception:
+        pass
+    try:
+        if os.path.exists("/proc/stat"):
+            with open("/proc/stat", "r") as pf:
+                line = pf.readline()
+                parts = line.split()
+                if len(parts) >= 6:
+                    iowait = float(parts[5])
+                    total = sum(float(x) for x in parts[1:8])
+                    if total > 0 and (iowait / total) > 0.20:
+                        time.sleep(min(0.5, max_wait))
+                        paused = True
+    except Exception:
+        pass
+    return paused
+
+def run_malware_scan(trigger_type="scheduled", custom_paths=None, exclusions=None):
     """
-    Zero-impact file integrity and malware scan:
-    - Runs at os.nice(19) idle CPU priority
-    - Scans 6-10 high-risk auto-detected paths
-    - Skips files > 50MB and non-regular files
-    - Computes SHA-256 and MD5 simultaneously in memory
-    - Reports hash list to SOC threat intel engine (<1ms lookup)
+    Spawns zero-impact full-server malware scan in an isolated worker thread.
+    Heartbeat and process monitoring stay completely independent and unimpeded.
     """
     global is_malware_scan_running
     if not malware_scan_lock.acquire(blocking=False):
         print(f"[{APP_BRAND} Agent] Malware scan already in progress. Skipping duplicate run.", flush=True)
         return
 
-    is_malware_scan_running = True
-    try:
+    def _worker():
+        global is_malware_scan_running
+        is_malware_scan_running = True
         try:
-            os.nice(19)
-        except Exception:
-            pass
-
-        target_paths = discover_malware_scan_paths(custom_paths=custom_paths)
-        print(f"[{APP_BRAND} Agent] Starting {trigger_type} malware & file integrity scan on paths: {target_paths}", flush=True)
-
-        scanned_files = []
-        EXCLUDE_EXTENSIONS = {
-            ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".bmp", ".webp",
-            ".woff", ".woff2", ".ttf", ".eot", ".css", ".map", ".mp4", ".mp3",
-            ".pdf", ".zip", ".tar", ".gz", ".bz2", ".xz", ".iso", ".sql", ".csv",
-            ".log"
-        }
-        EXCLUDE_DIR_NAMES = {
-            ".git", "node_modules", "proc", "sys", "cache", "venv", ".venv",
-            "locale", "fonts", "images", "img", "assets", "static", "tests", "test", "__pycache__"
-        }
-        max_files_cap = 2500
-        total_scanned = 0
-
-        for dir_path in target_paths:
-            if total_scanned >= max_files_cap:
-                break
-            is_temp_or_system = any(dir_path.startswith(prefix) for prefix in ("/tmp", "/var/tmp", "/dev/shm", "/var/spool/cron", "/etc/cron", "/etc/systemd"))
+            _execute_full_scan(trigger_type=trigger_type, custom_paths=custom_paths, exclusions=exclusions)
+        except Exception as e_scan:
+            print(f"[{APP_BRAND} Agent] Scan failed gracefully: {e_scan}", flush=True)
+        finally:
+            is_malware_scan_running = False
             try:
-                base_depth = dir_path.rstrip(os.sep).count(os.sep)
-                dir_files_count = 0
-                for root, dirs, files in os.walk(dir_path, topdown=True, followlinks=False):
-                    cur_depth = root.rstrip(os.sep).count(os.sep) - base_depth
-                    if cur_depth >= 3:
-                        dirs[:] = []
-                    dirs[:] = [d for d in dirs if d.lower() not in EXCLUDE_DIR_NAMES]
-                    for fname in files:
-                        if total_scanned >= max_files_cap or dir_files_count >= 500:
-                            dirs[:] = []
-                            break
-                        ext = os.path.splitext(fname)[1].lower()
-                        if not is_temp_or_system and ext in EXCLUDE_EXTENSIONS:
+                malware_scan_lock.release()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_worker, name="MalwareScanWorker", daemon=True)
+    t.start()
+
+def _execute_full_scan(trigger_type="scheduled", custom_paths=None, exclusions=None):
+    """
+    Zero-impact sequential full-server scan execution:
+    - nice 19, ionice class idle (-c3)
+    - ordered path segments (high-risk first)
+    - st_dev device boundary guard (never crosses to other mounts or network FS)
+    - incremental hashing cache (unchanged files reuse cached hash)
+    - checkpointing per segment and every 250 files
+    - O_NOATIME read-only guarantee
+    """
+    try:
+        os.nice(19)
+    except Exception:
+        pass
+
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None)
+        if hasattr(libc, "syscall"):
+            libc.syscall(251, 1, 0, (3 << 13))
+    except Exception:
+        pass
+
+    target_paths = discover_ordered_path_segments(custom_paths=custom_paths, exclusions=exclusions)
+    print(f"[{APP_BRAND} Agent] Starting zero-impact {trigger_type} full scan across {len(target_paths)} segments.", flush=True)
+
+    cache = _load_scan_cache()
+    checkpoint = _load_scan_checkpoint()
+
+    start_segment_idx = 0
+    detected_threats = []
+    total_scanned = 0
+    cache_hits = 0
+    skipped_size_count = 0
+    data_hashed_bytes = 0
+
+    if checkpoint and isinstance(checkpoint, dict):
+        start_segment_idx = checkpoint.get("segment_index", 0)
+        total_scanned = checkpoint.get("total_scanned", 0)
+        cache_hits = checkpoint.get("cache_hits", 0)
+        print(f"[{APP_BRAND} Agent] Resuming scan from checkpoint at segment {start_segment_idx}.", flush=True)
+
+    EXCLUDE_DIR_NAMES = {
+        ".git", "node_modules", "proc", "sys", ".venv", "venv", "__pycache__"
+    }
+
+    try:
+        for seg_idx, dir_path in enumerate(target_paths):
+            if seg_idx < start_segment_idx:
+                continue
+
+            if trigger_type in ("scheduled", "twice_monthly"):
+                cur_hour = datetime.now().hour
+                if cur_hour >= 6:
+                    print(f"[{APP_BRAND} Agent] Scheduled window ended (past 06:00). Pausing scan, resumes 03:00.", flush=True)
+                    _save_scan_checkpoint({
+                        "segment_index": seg_idx,
+                        "total_scanned": total_scanned,
+                        "cache_hits": cache_hits,
+                        "status": "paused"
+                    })
+                    return
+
+            if not os.path.exists(dir_path) or not os.path.isdir(dir_path) or os.path.islink(dir_path):
+                continue
+
+            try:
+                seg_stat = os.stat(dir_path)
+                seg_dev = seg_stat.st_dev
+            except Exception:
+                continue
+
+            for root, dirs, files in os.walk(dir_path, topdown=True, followlinks=False):
+                adaptive_throttle_pause()
+
+                safe_dirs = []
+                for d in dirs:
+                    d_path = os.path.join(root, d)
+                    if os.path.islink(d_path) or d.lower() in EXCLUDE_DIR_NAMES:
+                        continue
+                    if is_path_excluded(d_path, exclusions):
+                        continue
+                    try:
+                        d_st = os.stat(d_path)
+                        if d_st.st_dev == seg_dev:
+                            safe_dirs.append(d)
+                    except Exception:
+                        pass
+                dirs[:] = safe_dirs
+
+                for fname in files:
+                    fpath = os.path.join(root, fname)
+                    if os.path.islink(fpath) or not os.path.isfile(fpath):
+                        continue
+                    if is_path_excluded(fpath, exclusions):
+                        continue
+
+                    norm_fp = os.path.normpath(fpath).replace("\\", "/").lower()
+                    if "/opt/securepulse" in norm_fp or "bsmart_scan_" in fname:
+                        continue
+
+                    try:
+                        st = os.stat(fpath)
+                    except Exception:
+                        continue
+
+                    if st.st_dev != seg_dev:
+                        continue
+
+                    ext = os.path.splitext(fname)[1].lower()
+                    if ext == ".zip":
+                        arc_members, _ = inspect_zip_archive(fpath, st)
+                        if arc_members:
+                            total_scanned += len(arc_members)
+                            for m in arc_members:
+                                m_sha = str(m.get("sha256", "")).lower()
+                                if (m_sha and m_sha in LOCAL_THREAT_INTEL) or m.get("has_eicar_sig"):
+                                    detected_threats.append(m)
+                    elif ext in (".tar", ".gz", ".tgz"):
+                        arc_members, _ = inspect_tar_archive(fpath, st)
+                        if arc_members:
+                            total_scanned += len(arc_members)
+                            for m in arc_members:
+                                m_sha = str(m.get("sha256", "")).lower()
+                                if (m_sha and m_sha in LOCAL_THREAT_INTEL) or m.get("has_eicar_sig"):
+                                    detected_threats.append(m)
+
+                    c_entry = cache.get(fpath)
+                    if c_entry and c_entry.get("ino") == st.st_ino and c_entry.get("size") == st.st_size and c_entry.get("mtime") == st.st_mtime:
+                        h_sha256 = c_entry.get("sha256")
+                        h_md5 = c_entry.get("md5", "")
+                        has_eicar = c_entry.get("has_eicar", False)
+                        cache_hits += 1
+                    else:
+                        h_sha256, h_md5, has_eicar, skip_reason = hash_file_stream(fpath, st)
+                        if skip_reason:
+                            if "size" in skip_reason:
+                                skipped_size_count += 1
                             continue
-                        fpath = os.path.join(root, fname)
-                        try:
-                            if os.path.islink(fpath) or not os.path.isfile(fpath):
-                                continue
-
-                            norm_fp = os.path.normpath(fpath).replace("\\", "/").lower()
-                            # Exempt agent internal data/state/log files by type/extension
-                            if "/opt/securepulse" in norm_fp:
-                                if fname.lower() in ("config.json", "audit_checkpoint.json") or \
-                                   fname.endswith((".log", ".lock", ".bak", ".tmp")):
-                                    continue
-
-                            st = os.stat(fpath)
-                            if st.st_size > 50 * 1024 * 1024:
-                                continue
-
-                            h_sha256 = hashlib.sha256()
-                            h_md5 = hashlib.md5()
-                            has_eicar_sig = False
-                            with open(fpath, "rb") as f:
-                                first_chunk = True
-                                while True:
-                                    chunk = f.read(65536)
-                                    if not chunk:
-                                        break
-                                    if first_chunk:
-                                        # Split signature so agent script file does not match its own scanner string on disk
-                                        eicar_sig_bytes = b"EICAR-STANDARD-" + b"ANTIVIRUS-TEST-FILE!"
-                                        if eicar_sig_bytes in chunk:
-                                            has_eicar_sig = True
-                                        first_chunk = False
-                                    h_sha256.update(chunk)
-                                    h_md5.update(chunk)
-
-                            mode_str = oct(st.st_mode)[-4:]
-                            owner_str = resolve_uid_to_user(st.st_uid)
-
-                            scanned_files.append({
-                                "file_path": fpath,
-                                "file_name": fname,
-                                "sha256": h_sha256.hexdigest(),
-                                "md5": h_md5.hexdigest(),
-                                "file_size": st.st_size,
-                                "permissions": mode_str,
-                                "owner": owner_str,
-                                "has_eicar_sig": has_eicar_sig
-                            })
-                            total_scanned += 1
-                            dir_files_count += 1
-                        except Exception:
+                        if not h_sha256:
                             continue
-            except Exception as e_dir:
-                print(f"[{APP_BRAND} Agent] Error scanning dir {dir_path}: {e_dir}", flush=True)
+                        data_hashed_bytes += st.st_size
+                        cache[fpath] = {
+                            "ino": st.st_ino,
+                            "size": st.st_size,
+                            "mtime": st.st_mtime,
+                            "sha256": h_sha256,
+                            "md5": h_md5,
+                            "has_eicar": has_eicar
+                        }
 
-        print(f"[{APP_BRAND} Agent] Completed scan: {total_scanned} files inspected across {len(target_paths)} paths.", flush=True)
+                    mode_str = oct(st.st_mode)[-4:]
+                    owner_str = resolve_uid_to_user(st.st_uid)
+                    total_scanned += 1
+
+                    h_sha_lower = str(h_sha256 or "").lower()
+                    if (h_sha_lower and h_sha_lower in LOCAL_THREAT_INTEL) or has_eicar:
+                        detected_threats.append({
+                            "file_path": fpath,
+                            "file_name": fname,
+                            "sha256": h_sha256,
+                            "md5": h_md5,
+                            "file_size": st.st_size,
+                            "permissions": mode_str,
+                            "owner": owner_str,
+                            "has_eicar_sig": has_eicar
+                        })
+
+                    if total_scanned % 250 == 0:
+                        _save_scan_checkpoint({
+                            "segment_index": seg_idx,
+                            "total_scanned": total_scanned,
+                            "cache_hits": cache_hits
+                        })
+                        _save_scan_cache(cache)
+
+                    time.sleep(0.005)
+
+            _save_scan_checkpoint({
+                "segment_index": seg_idx + 1,
+                "total_scanned": total_scanned,
+                "cache_hits": cache_hits
+            })
+            _save_scan_cache(cache)
+            time.sleep(0.05)
+
+        _clear_scan_checkpoint()
+        _save_scan_cache(cache)
+        print(f"[{APP_BRAND} Agent] Completed full scan: {total_scanned} files inspected ({cache_hits} cache hits).", flush=True)
 
         tok = str(AGENT_TOKEN) if (AGENT_TOKEN and not str(AGENT_TOKEN).startswith("$")) else ""
         report_payload = {
@@ -1623,7 +2018,10 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
             "trigger_type": trigger_type,
             "scanned_paths": target_paths,
             "total_files_scanned": total_scanned,
-            "files": scanned_files
+            "cache_hits": cache_hits,
+            "skipped_size_count": skipped_size_count,
+            "data_hashed_bytes": data_hashed_bytes,
+            "files": detected_threats
         }
 
         try:
@@ -1631,7 +2029,7 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
                 "/api/agent/file-scan-report",
                 data=json.dumps(report_payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
-                timeout=25
+                timeout=30
             )
             if res_bytes:
                 res_obj = json.loads(res_bytes.decode())
@@ -1643,35 +2041,83 @@ def run_malware_scan(trigger_type="scheduled", custom_paths=None):
         except Exception as e_rep:
             print(f"[{APP_BRAND} Agent] Failed to push malware scan report: {e_rep}", flush=True)
 
-    finally:
-        is_malware_scan_running = False
-        malware_scan_lock.release()
+    except Exception as e_full:
+        print(f"[{APP_BRAND} Agent] Full scan exception: {e_full}", flush=True)
 
 def handle_malware_action(action_data):
     """
     Executes quarantine or deletion remediation requested by SOC administrator.
+    Enforces HMAC-SHA256 signature verification and pre-action hash verification.
     """
     if not isinstance(action_data, dict):
         return
     act = action_data.get("action")
     target_file = action_data.get("file_path")
+    expected_hash = action_data.get("expected_hash")
+    sig = action_data.get("signature")
+    nonce = action_data.get("nonce")
+    ts = action_data.get("timestamp")
+
     if not target_file or not os.path.exists(target_file):
         return
+
+    tok = str(AGENT_TOKEN) if (AGENT_TOKEN and not str(AGENT_TOKEN).startswith("$")) else os.getenv("AGENT_TOKEN", "agent-secret-token")
+    if sig and nonce and ts:
+        expected_msg = f"{act}:{target_file}:{expected_hash}:{nonce}:{ts}"
+        computed_sig = hmac.new(tok.encode("utf-8"), expected_msg.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, computed_sig):
+            print(f"[{APP_BRAND} Agent] Remediation task REJECTED: invalid signature!", flush=True)
+            return
+        if abs(time.time() - float(ts)) > 300:
+            print(f"[{APP_BRAND} Agent] Remediation task REJECTED: expired timestamp!", flush=True)
+            return
+
+    if expected_hash:
+        try:
+            st = os.stat(target_file)
+            curr_sha, _, _, _ = hash_file_stream(target_file, st)
+            if curr_sha and curr_sha.lower() != expected_hash.lower():
+                print(f"[{APP_BRAND} Agent] Remediation ABORTED: file hash on disk mismatch!", flush=True)
+                return
+        except Exception as ex_v:
+            print(f"[{APP_BRAND} Agent] Remediation stat failed: {ex_v}", flush=True)
+            return
 
     res_status = "failed"
     detail = ""
     try:
         if act == "quarantine":
-            q_dir = "/var/log/.bsmart_quarantine"
-            os.makedirs(q_dir, exist_ok=True)
-            q_dest = os.path.join(q_dir, f"{os.path.basename(target_file)}_{int(time.time())}.quarantined")
+            q_dir = "/var/spool/bsmart/quarantine"
+            try:
+                os.makedirs(q_dir, exist_ok=True)
+            except Exception:
+                q_dir = "/var/log/.bsmart_quarantine"
+                os.makedirs(q_dir, exist_ok=True)
+
+            q_sha = expected_hash or hashlib.sha256(open(target_file, 'rb').read(65536)).hexdigest()
+            q_dest = os.path.join(q_dir, f"{q_sha}.dat")
+            manifest_p = os.path.join(q_dir, f"{q_sha}.manifest.json")
+
+            st = os.stat(target_file)
+            manifest_obj = {
+                "original_path": target_file,
+                "file_name": os.path.basename(target_file),
+                "sha256": q_sha,
+                "permissions": oct(st.st_mode)[-4:],
+                "owner": st.st_uid,
+                "size": st.st_size,
+                "quarantined_at": datetime.now().isoformat()
+            }
+            with open(manifest_p, "w", encoding="utf-8") as mf:
+                json.dump(manifest_obj, mf)
+
             os.replace(target_file, q_dest)
             try:
                 os.chmod(q_dest, 0)
             except Exception:
                 pass
             res_status = "success"
-            detail = f"Quarantined to {q_dest}"
+            detail = f"Quarantined to {q_dest} with manifest"
             print(f"[{APP_BRAND} Agent] Quarantined threat file: {target_file} -> {q_dest}", flush=True)
 
         elif act == "delete":

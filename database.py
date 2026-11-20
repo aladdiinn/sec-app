@@ -56,7 +56,13 @@ class DictRowWrapper:
     def rowcount(self):
         return getattr(self.cursor, 'rowcount', 0)
     def execute(self, query, params=None):
-        query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("INTERVAL '45 seconds'", "'-45 seconds'").replace("INTERVAL '30 seconds'", "'-30 seconds'").replace("INTERVAL '15 seconds'", "'-15 seconds'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN").replace("ILIKE", "LIKE").replace("JSONB", "TEXT")
+        query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("INTERVAL '45 seconds'", "'-45 seconds'").replace("INTERVAL '30 seconds'", "'-30 seconds'").replace("INTERVAL '15 seconds'", "'-15 seconds'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("TIMESTAMPTZ", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN").replace("ILIKE", "LIKE").replace("JSONB", "TEXT")
+        query_sql = re.sub(r'::[a-zA-Z0-9_]+', '', query_sql)
+        if "ADD COLUMN" in query_sql and "DEFAULT CURRENT_TIMESTAMP" in query_sql:
+            query_sql = query_sql.replace("DEFAULT CURRENT_TIMESTAMP", "")
+        if "PARTITION OF" in query_sql.upper():
+            return None
+        query_sql = re.sub(r'\)\s*PARTITION\s+BY\s+RANGE\s*\([^)]+\)', ')', query_sql, flags=re.IGNORECASE)
         
         # Expand = ANY(?) into IN (?, ...) for SQLite
         if "= ANY(?)" in query_sql and params is not None:
@@ -109,6 +115,14 @@ class DictRowWrapper:
 class SQLiteConnectionWrapper:
     def __init__(self, conn):
         self.conn = conn
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            self.rollback()
+        else:
+            self.commit()
+        self.close()
     def cursor(self):
         return DictRowWrapper(self.conn)
     def commit(self):
@@ -617,6 +631,10 @@ def init_db():
                     total_files_scanned INT DEFAULT 0,
                     threats_found INT DEFAULT 0,
                     scanned_paths JSONB DEFAULT '[]',
+                    scan_scope VARCHAR(32) DEFAULT 'full',
+                    cache_hits INT DEFAULT 0,
+                    skipped_size_count INT DEFAULT 0,
+                    data_hashed_bytes BIGINT DEFAULT 0,
                     started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     completed_at TIMESTAMP WITH TIME ZONE
                 );
@@ -624,6 +642,8 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS file_scan_results (
                     id SERIAL PRIMARY KEY,
                     scan_id INT REFERENCES file_scans(id) ON DELETE CASCADE,
+                    first_scan_id INT,
+                    last_scan_id INT,
                     server_id INT,
                     file_path TEXT NOT NULL,
                     file_name VARCHAR(255),
@@ -635,7 +655,15 @@ def init_db():
                     threat_name VARCHAR(255),
                     severity VARCHAR(32) DEFAULT 'info',
                     status VARCHAR(32) DEFAULT 'clean',
-                    detected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    occurrences INT DEFAULT 1,
+                    first_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    last_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    resolved_at TIMESTAMP WITH TIME ZONE,
+                    resolved_by VARCHAR(128),
+                    remediation_action VARCHAR(32),
+                    remediation_details TEXT,
+                    detected_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_file_scan_results_srv_path_sha UNIQUE (server_id, file_path, sha256)
                 );
 
                 CREATE TABLE IF NOT EXISTS file_hash_whitelist (
@@ -692,6 +720,34 @@ def init_db():
                     except Exception:
                         pass
 
+            # File Scan Results Table Migrations
+            for col, col_type in [
+                ("first_scan_id", "INT"),
+                ("last_scan_id", "INT"),
+                ("occurrences", "INT DEFAULT 1"),
+                ("first_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
+                ("last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
+                ("resolved_at", "TIMESTAMP WITH TIME ZONE"),
+                ("resolved_by", "VARCHAR(128)"),
+                ("remediation_action", "VARCHAR(32)"),
+                ("remediation_details", "TEXT"),
+            ]:
+                try:
+                    cur.execute(f"ALTER TABLE file_scan_results ADD COLUMN IF NOT EXISTS {col} {col_type};")
+                    if hasattr(conn, 'commit'): conn.commit()
+                except Exception:
+                    try:
+                        cur.execute(f"ALTER TABLE file_scan_results ADD COLUMN {col} {col_type};")
+                        if hasattr(conn, 'commit'): conn.commit()
+                    except Exception:
+                        pass
+
+            try:
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_file_scan_results_srv_path_sha ON file_scan_results(server_id, file_path, sha256);")
+                if hasattr(conn, 'commit'): conn.commit()
+            except Exception:
+                pass
+
             cur.execute("""
 
                 CREATE TABLE IF NOT EXISTS malware_monitored_paths (
@@ -703,11 +759,69 @@ def init_db():
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS malware_path_exclusions (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT,
+                    project_id INT,
+                    path_pattern TEXT NOT NULL,
+                    owner VARCHAR(128) NOT NULL,
+                    reason TEXT NOT NULL,
+                    expires_at TIMESTAMP WITH TIME ZONE,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS threat_intel_metadata (
+                    id SERIAL PRIMARY KEY,
+                    feed_name VARCHAR(128) NOT NULL,
+                    version VARCHAR(64) NOT NULL,
+                    record_count INT DEFAULT 0,
+                    last_updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS malware_scan_queue (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT NOT NULL UNIQUE,
+                    project_id INT,
+                    scheduled_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    window_start_hour INT DEFAULT 3,
+                    window_end_hour INT DEFAULT 6,
+                    stagger_offset_sec INT DEFAULT 0,
+                    estimated_start_at TIMESTAMP WITH TIME ZONE,
+                    queue_position INT DEFAULT 0,
+                    status VARCHAR(32) DEFAULT 'scheduled',
+                    scan_type VARCHAR(32) DEFAULT 'full',
+                    lease_expires_at TIMESTAMP WITH TIME ZONE,
+                    last_heartbeat_at TIMESTAMP WITH TIME ZONE,
+                    progress_json TEXT DEFAULT '{}',
+                    error_message TEXT,
+                    started_at TIMESTAMP WITH TIME ZONE,
+                    completed_at TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS quarantined_files (
+                    id SERIAL PRIMARY KEY,
+                    server_id INT NOT NULL,
+                    original_path TEXT NOT NULL,
+                    quarantine_path TEXT NOT NULL,
+                    sha256 VARCHAR(64) NOT NULL,
+                    permissions VARCHAR(32),
+                    owner VARCHAR(64),
+                    file_size BIGINT DEFAULT 0,
+                    quarantined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    quarantined_by VARCHAR(128),
+                    status VARCHAR(32) DEFAULT 'quarantined',
+                    manifest_json TEXT
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_file_scans_srv ON file_scans(server_id, started_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_file_scans_mid ON file_scans(machine_id);
                 CREATE INDEX IF NOT EXISTS idx_file_scan_res_sha ON file_scan_results(sha256);
                 CREATE INDEX IF NOT EXISTS idx_file_scan_res_srv_st ON file_scan_results(server_id, status);
                 CREATE INDEX IF NOT EXISTS idx_threat_intel_ioc_val ON threat_intel(ioc_value);
+                CREATE INDEX IF NOT EXISTS idx_malware_queue_srv ON malware_scan_queue(server_id, status);
+                CREATE INDEX IF NOT EXISTS idx_malware_excl_srv ON malware_path_exclusions(server_id, is_active);
             """)
             # Migrate existing tables that may be missing the new columns
             for table_name, col_name, col_type in [
@@ -716,6 +830,17 @@ def init_db():
                 ("file_scans", "server_hostname", "VARCHAR(255)"),
                 ("file_scans", "server_ip", "VARCHAR(64)"),
                 ("file_scans", "machine_id", "VARCHAR(128)"),
+                ("file_scans", "scan_scope", "VARCHAR(32) DEFAULT 'full'"),
+                ("file_scans", "cache_hits", "INT DEFAULT 0"),
+                ("file_scans", "skipped_size_count", "INT DEFAULT 0"),
+                ("file_scans", "data_hashed_bytes", "BIGINT DEFAULT 0"),
+                ("file_scan_results", "occurrences", "INT DEFAULT 1"),
+                ("file_scan_results", "first_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
+                ("file_scan_results", "last_seen", "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"),
+                ("file_scan_results", "resolved_at", "TIMESTAMP WITH TIME ZONE"),
+                ("file_scan_results", "resolved_by", "VARCHAR(128)"),
+                ("file_scan_results", "remediation_action", "VARCHAR(32)"),
+                ("file_scan_results", "remediation_details", "TEXT"),
                 ("servers", "degraded_collectors", "JSONB DEFAULT '{}'"),
                 ("pushed_logs", "source", "VARCHAR(512)")
             ]:
@@ -729,6 +854,54 @@ def init_db():
                         if hasattr(conn, 'commit'): conn.commit()
                     except Exception:
                         if hasattr(conn, 'rollback'): conn.rollback()
+
+            # Create backup table for file_scan_results before deduplicating
+            try:
+                cur.execute("CREATE TABLE IF NOT EXISTS file_scan_results_backup AS SELECT * FROM file_scan_results;")
+                if hasattr(conn, 'commit'): conn.commit()
+            except Exception:
+                pass
+
+            # Deduplicate existing duplicate rows in file_scan_results
+            try:
+                cur.execute("""
+                    SELECT server_id, file_path, sha256, COUNT(*) as cnt, MIN(id) as keep_id,
+                           MIN(detected_at) as min_dt, MAX(detected_at) as max_dt
+                    FROM file_scan_results
+                    GROUP BY server_id, file_path, sha256
+                    HAVING COUNT(*) > 1;
+                """)
+                dup_rows = cur.fetchall() or []
+                for dr in dup_rows:
+                    s_id = dr['server_id'] if isinstance(dr, dict) else dr[0]
+                    f_pt = dr['file_path'] if isinstance(dr, dict) else dr[1]
+                    s_hs = dr['sha256'] if isinstance(dr, dict) else dr[2]
+                    c_nt = dr['cnt'] if isinstance(dr, dict) else dr[3]
+                    k_id = dr['keep_id'] if isinstance(dr, dict) else dr[4]
+                    mn_d = dr['min_dt'] if isinstance(dr, dict) else dr[5]
+                    mx_d = dr['max_dt'] if isinstance(dr, dict) else dr[6]
+
+                    cur.execute("""
+                        UPDATE file_scan_results
+                        SET occurrences = %s,
+                            first_seen = COALESCE(first_seen, %s),
+                            last_seen = %s
+                        WHERE id = %s;
+                    """, (c_nt, mn_d, mx_d, k_id))
+
+                    cur.execute("""
+                        DELETE FROM file_scan_results
+                        WHERE server_id = %s AND file_path = %s AND sha256 = %s AND id != %s;
+                    """, (s_id, f_pt, s_hs, k_id))
+                if hasattr(conn, 'commit'): conn.commit()
+            except Exception as ex_dedup:
+                logger.debug(f"Deduplication notice: {ex_dedup}")
+
+            try:
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_file_scan_results_srv_path_sha ON file_scan_results(server_id, file_path, sha256);")
+                if hasattr(conn, 'commit'): conn.commit()
+            except Exception:
+                pass
 
             # Optimal composite indices to prevent "backward sequence scan" during ORDER BY id DESC LIMIT 100
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_srv_id_desc ON pushed_logs (server_id, id DESC);")
@@ -3453,8 +3626,13 @@ def get_incidents(status=None, severity=None, limit=50, offset=0, project_id=Non
                 except (ValueError, TypeError):
                     sid_val = server_id
                 linked_ids = get_linked_server_ids(sid_val)
-                where_clauses.append("i.server_id = ANY(%s)")
-                params.append(linked_ids)
+                if len(linked_ids) <= 1:
+                    where_clauses.append("i.server_id = %s")
+                    params.append(sid_val)
+                else:
+                    placeholders = ",".join(["%s"] * len(linked_ids))
+                    where_clauses.append(f"i.server_id IN ({placeholders})")
+                    params.extend(linked_ids)
 
             # Query filter (title, description, hostname, or ID)
             if q and str(q).strip():
@@ -4169,8 +4347,11 @@ def complete_file_scan(scan_id, status='clean', total_files_scanned=0, threats_f
 
 def record_file_scan_results(scan_id, server_id, findings):
     """
-    Inserts a list of scan findings into file_scan_results.
-    Each finding dict: {file_path, file_name, sha256, md5, file_size, permissions, owner, threat_name, severity, status}
+    Inserts or updates scan findings into file_scan_results.
+    Unique finding identity: (server_id, file_path, sha256).
+    Uses PostgreSQL ON CONFLICT upsert.
+    Preserves first_scan_id, updates last_scan_id, increments occurrences,
+    updates last_seen, and maintains whitelisted status without overwrite.
     Checked against reversible hash whitelist.
     """
     if not findings: return 0
@@ -4182,28 +4363,44 @@ def record_file_scan_results(scan_id, server_id, findings):
         with conn.cursor() as cur:
             for item in findings:
                 sha256_val = str(item.get('sha256', '')).strip()
-                status_val = item.get('status', 'detected')
+                status_val = item.get('status', 'threat_detected')
+                fpath_val = item.get('file_path', '')
                 if is_hash_whitelisted(sha256_val):
                     status_val = 'whitelisted'
 
+                fname_val = item.get('file_name', '') or os.path.basename(fpath_val)
+                fsize_val = item.get('file_size', 0)
+                perms_val = item.get('permissions', '')
+                owner_val = item.get('owner', '')
+                tname_val = item.get('threat_name', 'Malware Finding')
+                sev_val = item.get('severity', 'critical')
+                md5_val = item.get('md5', '')
+
                 cur.execute("""
                     INSERT INTO file_scan_results (
-                        scan_id, server_id, file_path, file_name, sha256, md5,
-                        file_size, permissions, owner, threat_name, severity, status, detected_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP);
+                        scan_id, first_scan_id, last_scan_id, server_id, file_path, file_name, sha256, md5,
+                        file_size, permissions, owner, threat_name, severity, status,
+                        occurrences, first_seen, last_seen, detected_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    ON CONFLICT (server_id, file_path, sha256) DO UPDATE SET
+                        occurrences = file_scan_results.occurrences + 1,
+                        last_seen = CURRENT_TIMESTAMP,
+                        last_scan_id = EXCLUDED.scan_id,
+                        scan_id = EXCLUDED.scan_id,
+                        file_size = EXCLUDED.file_size,
+                        permissions = EXCLUDED.permissions,
+                        owner = EXCLUDED.owner,
+                        status = CASE
+                            WHEN file_scan_results.status = 'whitelisted' THEN 'whitelisted'
+                            WHEN file_scan_results.status IN ('quarantined', 'deleted', 'resolved') THEN 'reappeared'
+                            ELSE EXCLUDED.status
+                        END;
                 """, (
-                    scan_id,
-                    server_id,
-                    item.get('file_path', ''),
-                    item.get('file_name', '') or os.path.basename(item.get('file_path', '')),
-                    sha256_val,
-                    item.get('md5', ''),
-                    item.get('file_size', 0),
-                    item.get('permissions', ''),
-                    item.get('owner', ''),
-                    item.get('threat_name', 'Malware Finding'),
-                    item.get('severity', 'critical'),
-                    status_val
+                    scan_id, scan_id, scan_id, server_id, fpath_val, fname_val, sha256_val, md5_val,
+                    fsize_val, perms_val, owner_val, tname_val, sev_val, status_val
                 ))
                 inserted += 1
             if hasattr(conn, 'commit'): conn.commit()
@@ -4214,37 +4411,173 @@ def record_file_scan_results(scan_id, server_id, findings):
     finally:
         conn.close()
 
+def reconcile_resolved_findings(server_id, scan_id, current_threat_paths):
+    """
+    When a scan completes, any previously active threats for this server
+    that were NOT detected in the latest scan are marked 'resolved'.
+    """
     conn = get_db_connection()
     if not conn: return 0
-    inserted = 0
     try:
         with conn.cursor() as cur:
-            for item in findings:
+            if current_threat_paths:
                 cur.execute("""
-                    INSERT INTO file_scan_results (
-                        scan_id, server_id, file_path, file_name, sha256, md5,
-                        file_size, permissions, owner, threat_name, severity, status, detected_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP);
-                """, (
-                    scan_id,
-                    server_id,
-                    item.get('file_path', ''),
-                    item.get('file_name', '') or os.path.basename(item.get('file_path', '')),
-                    item.get('sha256', ''),
-                    item.get('md5', ''),
-                    item.get('file_size', 0),
-                    item.get('permissions', ''),
-                    item.get('owner', ''),
-                    item.get('threat_name', 'Unknown Threat'),
-                    item.get('severity', 'critical'),
-                    item.get('status', 'threat_detected')
-                ))
-                inserted += 1
-            if hasattr(conn, 'commit'): conn.commit()
-        return inserted
+                    UPDATE file_scan_results
+                    SET status = 'resolved',
+                        resolved_at = CURRENT_TIMESTAMP,
+                        resolved_by = 'system_scanner',
+                        remediation_action = 'auto_resolve',
+                        remediation_details = 'Auto-resolved: File absent in subsequent completed scan'
+                    WHERE server_id = %s
+                      AND status IN ('threat_detected', 'reappeared')
+                      AND file_path NOT IN %s;
+                """, (server_id, tuple(current_threat_paths)))
+            else:
+                cur.execute("""
+                    UPDATE file_scan_results
+                    SET status = 'resolved',
+                        resolved_at = CURRENT_TIMESTAMP,
+                        resolved_by = 'system_scanner',
+                        remediation_action = 'auto_resolve',
+                        remediation_details = 'Auto-resolved: File absent in subsequent completed scan'
+                    WHERE server_id = %s
+                      AND status IN ('threat_detected', 'reappeared');
+                """, (server_id,))
+            if hasattr(conn, "commit"): conn.commit()
+            return getattr(cur, "rowcount", 0)
     except Exception as e:
-        logger.error(f"Error in record_file_scan_results: {e}")
-        return inserted
+        logger.error(f"Error reconciling resolved findings: {e}")
+        return 0
+    finally:
+        conn.close()
+
+def request_malware_scan_slot(server_id: int, max_concurrency: int = 5):
+    """
+    Implements concurrency queue with 10-minute lease expiry.
+    If active running scans < max_concurrency, grants slot.
+    Otherwise places scan in queue and returns queue position and retry delay.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return {"status": "error", "message": "Database unavailable"}
+    try:
+        with conn.cursor() as cur:
+            # 1. Release expired leases
+            cur.execute("""
+                DELETE FROM malware_scan_queue
+                WHERE status = 'running' AND (lease_expires_at < CURRENT_TIMESTAMP OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < CURRENT_TIMESTAMP - INTERVAL '10 minutes'));
+            """)
+
+            # 2. Check if this server already has an active running slot
+            cur.execute("""
+                SELECT id, status, queue_position FROM malware_scan_queue
+                WHERE server_id = %s;
+            """, (server_id,))
+            existing = cur.fetchone()
+
+            if existing:
+                ex_st = existing.get("status") if isinstance(existing, dict) else existing[1]
+                if ex_st == "running":
+                    cur.execute("""
+                        UPDATE malware_scan_queue
+                        SET lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+                            last_heartbeat_at = CURRENT_TIMESTAMP
+                        WHERE server_id = %s;
+                    """, (server_id,))
+                    if hasattr(conn, "commit"): conn.commit()
+                    return {"status": "granted", "lease_seconds": 600}
+
+            # 3. Count active running scans
+            cur.execute("SELECT COUNT(*) FROM malware_scan_queue WHERE status = 'running';")
+            r_cnt = cur.fetchone()
+            active_running = int(r_cnt[0] if not isinstance(r_cnt, dict) else r_cnt['count'])
+
+            if active_running < max_concurrency:
+                cur.execute("""
+                    INSERT INTO malware_scan_queue (
+                        server_id, status, scheduled_at, started_at, last_heartbeat_at, lease_expires_at
+                    ) VALUES (%s, 'running', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '10 minutes')
+                    ON CONFLICT (server_id) DO UPDATE SET
+                        status = 'running',
+                        started_at = CURRENT_TIMESTAMP,
+                        last_heartbeat_at = CURRENT_TIMESTAMP,
+                        lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '10 minutes';
+                """, (server_id,))
+                if hasattr(conn, "commit"): conn.commit()
+                return {"status": "granted", "lease_seconds": 600}
+            else:
+                cur.execute("SELECT COUNT(*) FROM malware_scan_queue WHERE status = 'queued';")
+                q_r = cur.fetchone()
+                q_len = int(q_r[0] if not isinstance(q_r, dict) else q_r['count'])
+                pos = q_len + 1
+                cur.execute("""
+                    INSERT INTO malware_scan_queue (
+                        server_id, status, scheduled_at, queue_position, last_heartbeat_at, lease_expires_at
+                    ) VALUES (%s, 'queued', CURRENT_TIMESTAMP, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '5 minutes')
+                    ON CONFLICT (server_id) DO UPDATE SET
+                        status = 'queued',
+                        queue_position = %s,
+                        last_heartbeat_at = CURRENT_TIMESTAMP,
+                        lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '5 minutes';
+                """, (server_id, pos, pos))
+                if hasattr(conn, "commit"): conn.commit()
+                return {"status": "queued", "queue_position": pos, "retry_after": 15}
+    except Exception as e:
+        logger.error(f"Error in request_malware_scan_slot for server {server_id}: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        conn.close()
+
+def heartbeat_malware_scan_slot(server_id: int):
+    """Refreshes 10-minute lease for active running scan."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE malware_scan_queue
+                SET lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+                    last_heartbeat_at = CURRENT_TIMESTAMP
+                WHERE server_id = %s AND status = 'running';
+            """, (server_id,))
+            if hasattr(conn, "commit"): conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error in heartbeat_malware_scan_slot: {e}")
+        return False
+    finally:
+        conn.close()
+
+def release_malware_scan_slot(server_id: int):
+    """Releases active scan slot and promotes next queued server."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM malware_scan_queue WHERE server_id = %s;", (server_id,))
+            cur.execute("SELECT COUNT(*) FROM malware_scan_queue WHERE status = 'running';")
+            r_cnt = cur.fetchone()
+            active_running = int(r_cnt[0] if not isinstance(r_cnt, dict) else r_cnt['count'])
+            if active_running < 5:
+                cur.execute("""
+                    SELECT server_id FROM malware_scan_queue
+                    WHERE status = 'queued'
+                    ORDER BY queue_position ASC, scheduled_at ASC
+                    LIMIT 1;
+                """)
+                next_q = cur.fetchone()
+                if next_q:
+                    next_sid = next_q.get("server_id") if isinstance(next_q, dict) else next_q[0]
+                    cur.execute("""
+                        UPDATE malware_scan_queue
+                        SET status = 'running', started_at = CURRENT_TIMESTAMP, last_heartbeat_at = CURRENT_TIMESTAMP, lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '10 minutes'
+                        WHERE server_id = %s;
+                    """, (next_sid,))
+            if hasattr(conn, "commit"): conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error releasing scan slot for server {server_id}: {e}")
+        return False
     finally:
         conn.close()
 
@@ -4331,8 +4664,13 @@ def get_malware_findings(project_id=None, server_id=None, status=None, limit=100
                 except (ValueError, TypeError):
                     sid_val = server_id
                 linked_ids = get_linked_server_ids(sid_val)
-                where_clauses.append("r.server_id = ANY(%s)")
-                params.append(linked_ids)
+                if len(linked_ids) <= 1:
+                    where_clauses.append("r.server_id = %s")
+                    params.append(linked_ids[0] if linked_ids else sid_val)
+                else:
+                    placeholders = ",".join(["%s"] * len(linked_ids))
+                    where_clauses.append(f"r.server_id IN ({placeholders})")
+                    params.extend(linked_ids)
         if status and str(status).lower() != 'all':
             where_clauses.append("r.status = %s")
             params.append(status)
@@ -4345,6 +4683,10 @@ def get_malware_findings(project_id=None, server_id=None, status=None, limit=100
                 SELECT r.id, r.scan_id, r.server_id, r.file_path, r.file_name,
                        r.sha256, r.md5, r.file_size, r.permissions, r.owner,
                        r.threat_name, r.severity, r.status, r.detected_at,
+                       COALESCE(r.occurrences, 1) as occurrences,
+                       COALESCE(r.first_seen, r.detected_at) as first_seen,
+                       COALESCE(r.last_seen, r.detected_at) as last_seen,
+                       r.resolved_at, r.resolved_by, r.remediation_action, r.remediation_details,
                        COALESCE(s.name, fs.server_name, 'Server #' || r.server_id) AS server_name,
                        COALESCE(s.ip, fs.server_ip, '') AS server_ip,
                        p.name AS project_name, p.id AS project_id
@@ -4353,7 +4695,7 @@ def get_malware_findings(project_id=None, server_id=None, status=None, limit=100
                 LEFT JOIN servers s ON r.server_id = s.id
                 LEFT JOIN projects p ON s.project_id = p.id
                 WHERE {where_sql}
-                ORDER BY r.detected_at DESC
+                ORDER BY COALESCE(r.last_seen, r.detected_at) DESC
                 LIMIT %s;
             """, params)
             return cur.fetchall() or []
@@ -4363,19 +4705,32 @@ def get_malware_findings(project_id=None, server_id=None, status=None, limit=100
     finally:
         conn.close()
 
-def update_file_scan_result_status(result_id, new_status, username=None):
+def update_file_scan_result_status(result_id, new_status, username=None, remediation_action=None, details=None):
     """
-    Updates finding status: 'threat_detected', 'quarantined', 'deleted', 'whitelisted'.
+    Updates finding status: 'threat_detected', 'quarantined', 'deleted', 'whitelisted', 'resolved'.
+    Also records resolved_at, resolved_by, remediation_action, remediation_details.
     """
     conn = get_db_connection()
     if not conn: return False
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE file_scan_results
-                SET status = %s
-                WHERE id = %s;
-            """, (new_status, result_id))
+            resolved_at = datetime.now(timezone.utc) if new_status in ('quarantined', 'deleted', 'whitelisted', 'resolved') else None
+            try:
+                cur.execute("""
+                    UPDATE file_scan_results
+                    SET status = %s,
+                        resolved_at = COALESCE(%s, resolved_at),
+                        resolved_by = COALESCE(%s, resolved_by),
+                        remediation_action = COALESCE(%s, remediation_action),
+                        remediation_details = COALESCE(%s, remediation_details)
+                    WHERE id = %s;
+                """, (new_status, resolved_at, username, remediation_action, details, result_id))
+            except Exception:
+                cur.execute("""
+                    UPDATE file_scan_results
+                    SET status = %s
+                    WHERE id = %s;
+                """, (new_status, result_id))
             if hasattr(conn, 'commit'): conn.commit()
             return True
     except Exception as e:
@@ -4498,7 +4853,7 @@ def get_malware_defense_summary(project_id=None, server_id=None):
                 elif st in ('threat_detected', 'critical', 'active'):
                     summary['active_threats'] += cnt
 
-            if summary['active_threats'] == 0:
+            if len(rows) == 0 and summary['quarantined_count'] == 0 and summary['deleted_count'] == 0 and summary['whitelisted_count'] == 0:
                 if p_filter_scan:
                     cur.execute(f"""
                         SELECT COALESCE(SUM(threats_found), 0) as tf
@@ -4699,6 +5054,411 @@ def delete_malware_monitored_path(path_id):
             return True
     except Exception as e:
         logger.error(f"Error in delete_malware_monitored_path: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def get_malware_path_exclusions(server_id=None, project_id=None):
+    """
+    Retrieves configured path exclusions for malware scanning.
+    Exclusions are explicit, per-asset or fleet-wide, with owner, reason, and optional expiry.
+    """
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        where_clauses = ["is_active = TRUE"]
+        params = []
+        if server_id:
+            where_clauses.append("(server_id = %s OR server_id IS NULL)")
+            params.append(server_id)
+        if project_id:
+            where_clauses.append("(project_id = %s OR project_id IS NULL)")
+            params.append(project_id)
+        where_sql = " AND ".join(where_clauses)
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT id, server_id, project_id, path_pattern, owner, reason, expires_at, created_at, is_active
+                FROM malware_path_exclusions
+                WHERE {where_sql}
+                ORDER BY created_at ASC;
+            """, params)
+            return cur.fetchall() or []
+    except Exception as e:
+        logger.error(f"Error in get_malware_path_exclusions: {e}")
+        return []
+    finally:
+        conn.close()
+
+def add_malware_path_exclusion(server_id, project_id, path_pattern, owner, reason, expires_at=None):
+    """
+    Configures an explicit audited path exclusion.
+    """
+    if not path_pattern or not str(path_pattern).strip():
+        return None
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO malware_path_exclusions (
+                    server_id, project_id, path_pattern, owner, reason, expires_at, is_active, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, TRUE, CURRENT_TIMESTAMP)
+                RETURNING id;
+            """, (server_id, project_id, str(path_pattern).strip(), str(owner or 'admin').strip(), str(reason or '').strip(), expires_at))
+            row = cur.fetchone()
+            if hasattr(conn, 'commit'): conn.commit()
+            return row['id'] if isinstance(row, dict) else (row[0] if row else None)
+    except Exception as e:
+        logger.error(f"Error in add_malware_path_exclusion: {e}")
+        return None
+    finally:
+        conn.close()
+
+def delete_malware_path_exclusion(exclusion_id):
+    """
+    Removes an exclusion.
+    """
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM malware_path_exclusions WHERE id = %s;", (exclusion_id,))
+            if hasattr(conn, 'commit'): conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error in delete_malware_path_exclusion: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_threat_intel_metadata():
+    """
+    Returns threat intel metadata: feed name, version, signature count, and last update time.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return {"feed_name": "BSMART-SOC-Core", "version": "2026.11", "record_count": 0, "last_updated_at": None}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM threat_intel;")
+            r_cnt = cur.fetchone()
+            cnt = int(list(r_cnt.values())[0] if isinstance(r_cnt, dict) else r_cnt[0])
+            cur.execute("SELECT feed_name, version, record_count, last_updated_at FROM threat_intel_metadata ORDER BY id DESC LIMIT 1;")
+            row = cur.fetchone()
+            if row:
+                return {
+                    "feed_name": row['feed_name'] if isinstance(row, dict) else row[0],
+                    "version": row['version'] if isinstance(row, dict) else row[1],
+                    "record_count": cnt,
+                    "last_updated_at": str(row['last_updated_at'] if isinstance(row, dict) else row[3])
+                }
+            return {
+                "feed_name": "BSMART-SOC-Core",
+                "version": "2026.11.01",
+                "record_count": cnt,
+                "last_updated_at": datetime.now().isoformat()
+            }
+    except Exception as e:
+        logger.error(f"Error in get_threat_intel_metadata: {e}")
+        return {"feed_name": "BSMART-SOC-Core", "version": "2026.11", "record_count": 0, "last_updated_at": None}
+    finally:
+        conn.close()
+
+def import_threat_intel_feed(feed_name, version_str, hashes_list, default_severity='critical', default_description='Imported IOC Threat'):
+    """
+    Imports a batch of threat IOC hashes (ClamAV / YARA signature hashes) into threat_intel.
+    """
+    if not hashes_list:
+        return 0
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    imported = 0
+    try:
+        with conn.cursor() as cur:
+            for h in hashes_list:
+                clean_h = str(h).strip().lower()
+                if not clean_h or len(clean_h) not in (32, 64):
+                    continue
+                ioc_type = "sha256" if len(clean_h) == 64 else "md5"
+                try:
+                    cur.execute("""
+                        INSERT INTO threat_intel (ioc_value, ioc_type, severity, description, source, created_at)
+                        VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP);
+                    """, (clean_h, ioc_type, default_severity, default_description, feed_name))
+                    imported += 1
+                except Exception:
+                    pass
+
+            cur.execute("""
+                INSERT INTO threat_intel_metadata (feed_name, version, record_count, last_updated_at)
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP);
+            """, (feed_name, version_str, imported))
+            if hasattr(conn, 'commit'): conn.commit()
+        return imported
+    except Exception as e:
+        logger.error(f"Error in import_threat_intel_feed: {e}")
+        return imported
+    finally:
+        conn.close()
+
+def get_next_run_schedule(server_id=None, project_id=None):
+    """
+    Computes schedule for twice-monthly full malware scans (1st and 15th at 03:00 local time).
+    Determines whether currently inside execution window (03:00-06:00), estimated start time,
+    and deterministic stagger offset to scale to 200+ agents without thundering herds.
+    """
+    import hashlib
+    now = datetime.now()
+    y = now.year
+    m = now.month
+
+    c1 = datetime(y, m, 1, 3, 0, 0)
+    c2 = datetime(y, m, 15, 3, 0, 0)
+
+    if now < c1:
+        target = c1
+    elif c1 <= now < datetime(y, m, 1, 6, 0, 0):
+        target = c1
+    elif datetime(y, m, 1, 6, 0, 0) <= now < c2:
+        target = c2
+    elif c2 <= now < datetime(y, m, 15, 6, 0, 0):
+        target = c2
+    else:
+        nm = 1 if m == 12 else m + 1
+        ny = y + 1 if m == 12 else y
+        target = datetime(ny, nm, 1, 3, 0, 0)
+
+    window_start = target
+    window_end = target.replace(hour=6, minute=0, second=0)
+    is_in_window = (window_start <= now <= window_end)
+
+    agent_seed = str(server_id or 1)
+    stagger_offset = int(hashlib.sha256(agent_seed.encode()).hexdigest()[:8], 16) % 7200
+    estimated_start = window_start + timedelta(seconds=stagger_offset)
+
+    return {
+        "schedule_type": "twice_monthly",
+        "days": [1, 15],
+        "scheduled_time": "03:00",
+        "window_start": window_start.strftime("%Y-%m-%d %H:%M:%S"),
+        "window_end": window_end.strftime("%Y-%m-%d %H:%M:%S"),
+        "is_in_window": is_in_window,
+        "stagger_offset_sec": stagger_offset,
+        "estimated_start": estimated_start.strftime("%Y-%m-%d %H:%M:%S"),
+        "concurrency_cap": 5
+    }
+
+def get_active_running_scans_count():
+    """Returns number of active running scans across fleet."""
+    conn = get_db_connection()
+    if not conn: return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) FROM file_scans
+                WHERE status = 'in_progress' AND started_at >= NOW() - INTERVAL '300 seconds';
+            """)
+            r = cur.fetchone()
+            return int(r[0] if not isinstance(r, dict) else r['count'])
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+def get_malware_report_data(project_id=None, server_id=None, year=None, month=None, part='full'):
+    """
+    Compiles complete data model for Malware Scan Report:
+    - Scope: All / Single Project / Unassigned, specific server
+    - Period: Month/Year, Part (Full Month / 1st Half / 2nd Half)
+    - Coverage metrics, scans executed, threats detected, active exclusions, threat intel stats.
+    """
+    import calendar
+    now = datetime.now()
+    y = int(year) if year else now.year
+    m = int(month) if month else now.month
+    part_clean = str(part or 'full').lower().strip()
+
+    if part_clean in ('1st', 'first_half', 'part1', '1'):
+        start_dt = datetime(y, m, 1, 0, 0, 0)
+        end_dt = datetime(y, m, 15, 23, 59, 59)
+        part_label = "1st Half (Days 1 to 15)"
+    elif part_clean in ('2nd', 'second_half', 'part2', '2'):
+        last_d = calendar.monthrange(y, m)[1]
+        start_dt = datetime(y, m, 16, 0, 0, 0)
+        end_dt = datetime(y, m, last_d, 23, 59, 59)
+        part_label = f"2nd Half (Days 16 to {last_d})"
+    else:
+        last_d = calendar.monthrange(y, m)[1]
+        start_dt = datetime(y, m, 1, 0, 0, 0)
+        end_dt = datetime(y, m, last_d, 23, 59, 59)
+        part_label = "Full Month"
+
+    period_str = f"{start_dt.strftime('%B %Y')} — {part_label}"
+
+    conn = get_db_connection()
+    if not conn:
+        return {"ok": False, "error": "Database unavailable"}
+
+    try:
+        scan_filters = ["fs.started_at >= %s AND fs.started_at <= %s"]
+        scan_params = [start_dt, end_dt]
+
+        if server_id and str(server_id).lower() != 'all':
+            linked_ids = get_linked_server_ids(server_id)
+            if len(linked_ids) <= 1:
+                scan_filters.append("fs.server_id = %s")
+                scan_params.append(linked_ids[0] if linked_ids else server_id)
+            else:
+                placeholders = ",".join(["%s"] * len(linked_ids))
+                scan_filters.append(f"fs.server_id IN ({placeholders})")
+                scan_params.extend(linked_ids)
+        elif project_id and str(project_id).lower() != 'all':
+            scan_filters.append("(fs.project_id = %s OR s.project_id = %s)")
+            scan_params.extend([project_id, project_id])
+
+        scan_where = " AND ".join(scan_filters)
+
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT fs.id, fs.server_id, fs.project_id, fs.trigger_type, fs.status,
+                       fs.total_files_scanned, fs.threats_found, fs.scanned_paths,
+                       COALESCE(fs.cache_hits, 0) as cache_hits,
+                       COALESCE(fs.skipped_size_count, 0) as skipped_size_count,
+                       COALESCE(fs.data_hashed_bytes, 0) as data_hashed_bytes,
+                       fs.started_at, fs.completed_at,
+                       COALESCE(s.name, fs.server_name, 'Server #' || fs.server_id) AS server_name,
+                       COALESCE(s.ip, fs.server_ip, '') AS server_ip,
+                       p.name AS project_name
+                FROM file_scans fs
+                LEFT JOIN servers s ON fs.server_id = s.id
+                LEFT JOIN projects p ON COALESCE(fs.project_id, s.project_id) = p.id
+                WHERE {scan_where}
+                ORDER BY fs.started_at DESC;
+            """, scan_params)
+            scans = cur.fetchall() or []
+
+            res_filters = ["((r.detected_at >= %s AND r.detected_at <= %s) OR (r.first_seen <= %s AND r.last_seen >= %s))"]
+            res_params = [start_dt, end_dt, end_dt, start_dt]
+            if server_id and str(server_id).lower() != 'all':
+                linked_ids = get_linked_server_ids(server_id)
+                if len(linked_ids) <= 1:
+                    res_filters.append("r.server_id = %s")
+                    res_params.append(linked_ids[0] if linked_ids else server_id)
+                else:
+                    placeholders = ",".join(["%s"] * len(linked_ids))
+                    res_filters.append(f"r.server_id IN ({placeholders})")
+                    res_params.extend(linked_ids)
+            elif project_id and str(project_id).lower() != 'all':
+                res_filters.append("s.project_id = %s")
+                res_params.append(project_id)
+
+            res_where = " AND ".join(res_filters)
+            cur.execute(f"""
+                SELECT r.id, r.scan_id, r.server_id, r.file_path, r.file_name,
+                       r.sha256, r.md5, r.file_size, r.permissions, r.owner,
+                       r.threat_name, r.severity, r.status, r.detected_at,
+                       COALESCE(r.occurrences, 1) as occurrences,
+                       COALESCE(r.first_seen, r.detected_at) as first_seen,
+                       COALESCE(r.last_seen, r.detected_at) as last_seen,
+                       r.resolved_at, r.resolved_by, r.remediation_action, r.remediation_details,
+                       COALESCE(s.name, fs.server_name, 'Server #' || r.server_id) AS server_name,
+                       COALESCE(s.ip, fs.server_ip, '') AS server_ip,
+                       p.name AS project_name
+                FROM file_scan_results r
+                LEFT JOIN file_scans fs ON r.scan_id = fs.id
+                LEFT JOIN servers s ON r.server_id = s.id
+                LEFT JOIN projects p ON s.project_id = p.id
+                WHERE {res_where}
+                ORDER BY COALESCE(r.last_seen, r.detected_at) DESC;
+            """, res_params)
+            findings = cur.fetchall() or []
+
+            excl_params = []
+            excl_where = "is_active = TRUE"
+            if server_id and str(server_id).lower() != 'all':
+                excl_where += " AND (server_id = %s OR server_id IS NULL)"
+                excl_params.append(server_id)
+            elif project_id and str(project_id).lower() != 'all':
+                excl_where += " AND (project_id = %s OR project_id IS NULL)"
+                excl_params.append(project_id)
+            cur.execute(f"""
+                SELECT id, server_id, project_id, path_pattern, owner, reason, expires_at, created_at
+                FROM malware_path_exclusions
+                WHERE {excl_where};
+            """, excl_params)
+            exclusions = cur.fetchall() or []
+
+        total_scans = len(scans)
+        scheduled_scans = sum(1 for s in scans if (s.get('trigger_type') if isinstance(s, dict) else s[3]) in ('scheduled', 'twice_monthly'))
+        manual_scans = total_scans - scheduled_scans
+        total_files = sum(int(s.get('total_files_scanned', 0) if isinstance(s, dict) else (s[5] or 0)) for s in scans)
+        total_cache_hits = sum(int(s.get('cache_hits', 0) if isinstance(s, dict) else (s[8] or 0)) for s in scans)
+        total_data_bytes = sum(int(s.get('data_hashed_bytes', 0) if isinstance(s, dict) else (s[10] or 0)) for s in scans)
+        cache_hit_rate = round((total_cache_hits / (total_files or 1)) * 100, 1)
+
+        threats_count = len(findings)
+        quarantined = sum(1 for f in findings if (f.get('status') if isinstance(f, dict) else f[12]) in ('quarantined', 'quarantine'))
+        deleted = sum(1 for f in findings if (f.get('status') if isinstance(f, dict) else f[12]) in ('deleted', 'delete'))
+        whitelisted = sum(1 for f in findings if (f.get('status') if isinstance(f, dict) else f[12]) in ('whitelisted', 'whitelist'))
+        active = sum(1 for f in findings if (f.get('status') if isinstance(f, dict) else f[12]) in ('threat_detected', 'active', 'reappeared'))
+
+        intel_meta = get_threat_intel_metadata()
+
+        return {
+            "ok": True,
+            "period": period_str,
+            "start_date": start_dt.strftime("%Y-%m-%d"),
+            "end_date": end_dt.strftime("%Y-%m-%d"),
+            "scope": {
+                "project_id": project_id,
+                "server_id": server_id
+            },
+            "metrics": {
+                "total_scans": total_scans,
+                "scheduled_scans": scheduled_scans,
+                "manual_scans": manual_scans,
+                "total_files_inspected": total_files,
+                "total_cache_hits": total_cache_hits,
+                "cache_hit_rate_pct": cache_hit_rate,
+                "total_data_hashed_mb": round(total_data_bytes / (1024 * 1024), 2),
+                "threats_detected": threats_count,
+                "active_threats": active,
+                "quarantined_threats": quarantined,
+                "deleted_threats": deleted,
+                "whitelisted_threats": whitelisted,
+                "active_exclusions_count": len(exclusions)
+            },
+            "threat_intel": intel_meta,
+            "scans": scans,
+            "findings": findings,
+            "exclusions": exclusions
+        }
+    except Exception as e:
+        logger.error(f"Error compiling malware report data: {e}")
+        return {"ok": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def record_quarantine_manifest(server_id, original_path, quarantine_path, sha256, permissions, owner, file_size, quarantined_by, manifest_json):
+    """
+    Inserts a quarantine manifest entry for forensics and rollback capability.
+    """
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO quarantined_files (
+                    server_id, original_path, quarantine_path, sha256, permissions, owner,
+                    file_size, quarantined_at, quarantined_by, status, manifest_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, 'quarantined', %s);
+            """, (server_id, original_path, quarantine_path, sha256, permissions, owner, file_size, quarantined_by, manifest_json))
+            if hasattr(conn, 'commit'): conn.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error in record_quarantine_manifest: {e}")
         return False
     finally:
         conn.close()
