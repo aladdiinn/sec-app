@@ -87,6 +87,8 @@ class TestSesMailerComprehensive(unittest.TestCase):
         self.assertIn("SECURE CONNECTION ESTABLISHED", alert_html)
         self.assertIn("ENC: AES-256 | V2.4.1", alert_html)
         self.assertIn("ACCESS INCIDENT IN SOC", alert_html)
+        self.assertIn("https://soc.bsmartone.com:3443/alerts", alert_html)
+        self.assertEqual(ses_mailer.get_soc_base_url(), "https://soc.bsmartone.com:3443")
         self.assertIn("#INC-537", alert_html)
 
         test_html = ses_mailer.build_test_email_html(

@@ -3006,11 +3006,13 @@ def main():
                     daily_inventory_done_date = today_str
                     threading.Thread(target=collect_and_send_inventory, kwargs={"force_full": False}, daemon=True).start()
 
-            # Daily scheduled zero-impact malware scan at 03:00 AM (lowest traffic window on BijliMitra)
+            # Scheduled zero-impact malware scan twice a month (1st and 15th at 03:00 AM local time)
             if today_str != daily_malware_scan_done_date:
-                if now_dt.hour == 3 and now_dt.minute >= 0:
+                chk = _load_scan_checkpoint()
+                is_paused = chk and chk.get("status") == "paused"
+                if (now_dt.day in (1, 15) or is_paused) and 3 <= now_dt.hour < 6:
                     daily_malware_scan_done_date = today_str
-                    threading.Thread(target=run_malware_scan, kwargs={"trigger_type": "scheduled"}, daemon=True).start()
+                    threading.Thread(target=run_malware_scan, kwargs={"trigger_type": "twice_monthly"}, daemon=True).start()
 
             sid = check_assigned_server_id()
             cur_ip = get_node_ip()

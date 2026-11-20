@@ -522,17 +522,22 @@ def send_email_per_recipient(subject: str, html_body: str, alert_id: int = None)
 # ── Brand Template Builders & URL Resolution ──────────────────────────────────
 def get_soc_base_url() -> str:
     """Returns the base URL for the BSmart SOC dashboard."""
-    base = os.getenv("SOC_BASE_URL") or os.getenv("SOC_URL")
+    base = os.getenv("SOC_BASE_URL") or os.getenv("PUBLIC_SOC_URL") or os.getenv("SOC_URL")
     if base and base.strip():
-        return base.strip().rstrip("/")
+        val = base.strip().rstrip("/")
+        # If the environment variable contains an IP address instead of domain, prefer the domain
+        if not re.search(r"://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", val):
+            return val
     try:
         import database as db
         settings = db.get_settings()
         if settings.get("soc_base_url"):
-            return settings.get("soc_base_url").strip().rstrip("/")
+            val = settings.get("soc_base_url").strip().rstrip("/")
+            if not re.search(r"://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", val):
+                return val
     except Exception:
         pass
-    return "http://192.168.10.201:8000"
+    return "https://soc.bsmartone.com:3443"
 
 def _build_brand_header(status_text: str = "STATUS: ACTIVE INCIDENT", status_color: str = "#ef4444", sys_indicator: str = "SYS_AUTH V2.4 • SOC_ENGINE") -> str:
     """
