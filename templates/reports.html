@@ -174,11 +174,11 @@
                     <option value="unassigned">Unassigned Assets</option>
                 </select>
             </div>
-            <div style="position:relative">
+            <div style="position:relative; z-index:60">
                 <label class="text-meta" style="display:block; margin-bottom:6px">Server Filter (Optional)</label>
                 <input id="malware-report-server-search" type="text" class="mono" placeholder="All Servers or IP/Host e.g. 192.168.10.201" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px" autocomplete="off">
                 <input type="hidden" id="malware-report-server-id" value="all">
-                <div id="malware-report-server-autocomplete" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--bg2); border:1px solid var(--border); border-top:none; z-index:100; max-height:220px; overflow-y:auto; border-bottom-left-radius:4px; border-bottom-right-radius:4px; box-shadow:0 4px 6px rgba(0,0,0,0.3);"></div>
+                <div id="malware-report-server-autocomplete" style="display:none; position:absolute; top:100%; left:0; right:0; background:#0f172a; border:1px solid rgba(255,255,255,0.18); border-top:none; z-index:9999; max-height:240px; overflow-y:auto; border-bottom-left-radius:6px; border-bottom-right-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,0.85);"></div>
             </div>
             <div>
                 <label class="text-meta" style="display:block; margin-bottom:6px">Report Period</label>
@@ -488,6 +488,7 @@
             const srvs = await apiFetch('/api/servers').catch(() => ({items:[]}));
             const srvItems = Array.isArray(srvs) ? srvs : (srvs.servers || srvs.items || []);
             malwareServerCachedList = srvItems;
+            setupMalwareReportServerAutocomplete();
             const srvInput = document.getElementById('srv-search');
             const srvDropdown = document.getElementById('srv-autocomplete');
             
@@ -496,6 +497,7 @@
                 const renderItems = (query) => {
                     const q = query.toLowerCase();
                     const matches = srvItems.filter(s => 
+                        (s.name && s.name.toLowerCase().includes(q)) ||
                         (s.hostname && s.hostname.toLowerCase().includes(q)) || 
                         (s.ip && s.ip.includes(q)) || 
                         (s.ip_address && s.ip_address.includes(q))
@@ -1367,31 +1369,43 @@
         const hiddenId = document.getElementById('malware-report-server-id');
         const projectSelect = document.getElementById('malware-report-project');
         if (!searchInput || !dropdown) return;
+        if (searchInput._autocompleteBound) return;
+        searchInput._autocompleteBound = true;
 
         function getScopedServers() {
+            if (!malwareServerCachedList || !malwareServerCachedList.length) return [];
             const projVal = projectSelect ? projectSelect.value : 'all';
-            if (projVal === 'unassigned') {
-                return malwareServerCachedList.filter(s => {
+            const projText = projectSelect && projectSelect.selectedIndex >= 0 ? 
+                (projectSelect.options[projectSelect.selectedIndex]?.textContent || '').trim().toLowerCase() : '';
+
+            if (projVal === 'unassigned' || projText === 'unassigned assets' || projText === 'unassigned') {
+                const unassignedMatches = malwareServerCachedList.filter(s => {
                     const pid = s.project_id;
-                    const pName = (s.project_name || '').toLowerCase();
-                    return !pid || pid === 'unassigned' || pid === 0 || pName === 'unassigned';
+                    const pName = (s.project_name || s.project || '').toLowerCase().trim();
+                    return !pid || pid === 'unassigned' || pid === 0 || pid === '0' || pName === 'unassigned';
                 });
+                return unassignedMatches.length ? unassignedMatches : malwareServerCachedList;
             } else if (projVal && projVal !== 'all') {
-                return malwareServerCachedList.filter(s => String(s.project_id) === String(projVal));
+                const valStr = String(projVal).toLowerCase().trim();
+                const matched = malwareServerCachedList.filter(s => {
+                    const sPid = String(s.project_id || '').toLowerCase().trim();
+                    const sPName = (s.project_name || s.project || '').toLowerCase().trim();
+                    return sPid === valStr || sPName === valStr || (projText && sPName === projText);
+                });
+                return matched.length ? matched : malwareServerCachedList;
             }
             return malwareServerCachedList;
         }
 
         function renderDropdown(items, query) {
-            malwareServerResults = items;
+            malwareServerResults = items || [];
             malwareServerActiveIndex = -1;
 
             let html = '';
             // Always offer "All Servers in Scope" option at top
             if (!query || 'all servers'.includes(query.toLowerCase())) {
                 html += `
-                    <div class="malware-srv-autocomplete-item" data-id="all" style="padding:9px 12px; font-size:12px; cursor:pointer; border-bottom:1px solid var(--border); color:var(--cyan); font-weight:600;"
-                         onclick="selectMalwareServer('all', 'All Servers (In Scope)')">
+                    <div class="malware-srv-autocomplete-item" data-id="all" style="padding:9px 12px; font-size:12px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.08); color:var(--cyan); font-weight:600;">
                         <span>All Servers (In Scope)</span>
                     </div>
                 `;
@@ -1407,8 +1421,7 @@
                     const sIp = srv.ip || srv.ip_address || '0.0.0.0';
                     const sProj = srv.project_name || 'Unassigned';
                     return `
-                        <div class="malware-srv-autocomplete-item" data-idx="${idx}" style="padding:8px 12px; font-size:12px; cursor:pointer; border-bottom:1px solid var(--border); color:var(--text);"
-                             onclick="selectMalwareServer('${srv.id}', '${escapeHtml(sName)} (${escapeHtml(sIp)})')">
+                        <div class="malware-srv-autocomplete-item" data-idx="${idx}" data-id="${srv.id}" style="padding:8px 12px; font-size:12px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.06); color:var(--text);">
                             <div style="font-weight:bold; color:var(--text); display:flex; justify-content:space-between; align-items:center;">
                                 <span>${escapeHtml(sName)}</span>
                                 <span style="font-size:10px; font-family:monospace; color:var(--cyan);">#${srv.id}</span>
@@ -1432,11 +1445,26 @@
                 el.addEventListener('mouseleave', () => {
                     el.style.background = 'transparent';
                 });
+                el.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const sId = el.getAttribute('data-id');
+                    if (sId === 'all') {
+                        selectMalwareServer('all', 'All Servers (In Scope)');
+                    } else {
+                        const idx = parseInt(el.getAttribute('data-idx'));
+                        if (!isNaN(idx) && malwareServerResults[idx]) {
+                            const s = malwareServerResults[idx];
+                            const sName = s.name || s.hostname || `Server #${s.id}`;
+                            const sIp = s.ip || s.ip_address || '0.0.0.0';
+                            selectMalwareServer(s.id, `${sName} (${sIp})`);
+                        }
+                    }
+                });
             });
         }
 
         async function triggerSearch(q) {
-            if (!malwareServerCachedList.length) {
+            if (!malwareServerCachedList || !malwareServerCachedList.length) {
                 await loadMalwareReportServers();
             }
             const scoped = getScopedServers();
@@ -1445,13 +1473,25 @@
                 renderDropdown(scoped, '');
                 return;
             }
-            const filtered = scoped.filter(s => {
+            let filtered = scoped.filter(s => {
                 const sName = (s.name || '').toLowerCase();
                 const sHost = (s.hostname || '').toLowerCase();
                 const sIp = (s.ip || s.ip_address || '').toLowerCase();
                 const sId = String(s.id);
                 return sName.includes(query) || sHost.includes(query) || sIp.includes(query) || sId === query;
             });
+
+            // If filtered is empty within scope, search the entire cached server list as fallback
+            if (filtered.length === 0 && malwareServerCachedList.length > 0) {
+                filtered = malwareServerCachedList.filter(s => {
+                    const sName = (s.name || '').toLowerCase();
+                    const sHost = (s.hostname || '').toLowerCase();
+                    const sIp = (s.ip || s.ip_address || '').toLowerCase();
+                    const sId = String(s.id);
+                    return sName.includes(query) || sHost.includes(query) || sIp.includes(query) || sId === query;
+                });
+            }
+
             renderDropdown(filtered, query);
         }
 
@@ -1464,6 +1504,10 @@
         });
 
         searchInput.addEventListener('focus', () => {
+            triggerSearch(searchInput.value);
+        });
+
+        searchInput.addEventListener('click', () => {
             triggerSearch(searchInput.value);
         });
 
@@ -1930,11 +1974,14 @@ Total Telemetry Queried: ${summary.total_events || 0} events from Database`;
         }
     }
 
-    window.addEventListener('load', () => {
+    function initReportsPage() {
         const now = new Date();
         const thirtyDaysAgo = new Date(now - 30 * 86400000);
-        document.getElementById('date_to').value = now.toISOString().split('T')[0];
-        document.getElementById('date_from').value = thirtyDaysAgo.toISOString().split('T')[0];
+        const dTo = document.getElementById('date_to');
+        const dFrom = document.getElementById('date_from');
+        if (dTo) dTo.value = now.toISOString().split('T')[0];
+        if (dFrom) dFrom.value = thirtyDaysAgo.toISOString().split('T')[0];
+
         loadKPIs();
         setupAppReportAutocomplete();
         setupMalwareReportServerAutocomplete();
@@ -1950,7 +1997,14 @@ Total Telemetry Queried: ${summary.total_events || 0} events from Database`;
             const vulnIds = vulnParam.split(',').map(x => parseInt(x.trim())).filter(Boolean);
             generateReportForSelectedVulns(vulnIds);
         }
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initReportsPage);
+        window.addEventListener('load', initReportsPage);
+    } else {
+        initReportsPage();
+    }
 </script>
 
 <style>

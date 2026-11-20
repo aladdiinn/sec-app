@@ -801,7 +801,7 @@ let virt_rowHeight = 28;
 let virt_visibleBuffer = 8;
 let virt_scrollListener = null;
 
-document.addEventListener('DOMContentLoaded', () => {
+function initLogMonitor() {
     try {
         fetchLogsNow();
         startAutoRefresh();
@@ -809,7 +809,14 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
         console.error("Init Error:", e);
     }
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initLogMonitor);
+    window.addEventListener('load', initLogMonitor);
+} else {
+    initLogMonitor();
+}
 
 // ── SERVER DROPDOWN LOGIC ──
 function toggleServerDropdown(e) {
@@ -880,9 +887,12 @@ function onServiceDropdownChanged(val) {
 }
 
 // ── CASCADING LOG FILE DROPDOWN ──
+let currentServerLogFiles = [];
+
 function onLogFileSelected() {
     const sel = document.getElementById('log-file-selector');
     selectedLogFilePath = (sel && sel.value) ? sel.value : null;
+    filterLogLines();
     if (!isAutoRefresh) {
         startAutoRefresh();
     } else {
@@ -891,57 +901,101 @@ function onLogFileSelected() {
 }
 
 async function updateLogFileSelectorForServer(serverId) {
-    const sel = document.getElementById('log-file-selector');
-    if (!sel) return;
     if (!serverId) {
-        sel.innerHTML = '<option value="">-- All Discovered Files --</option>';
+        currentServerLogFiles = [];
+        updateLogFileSelector();
         return;
     }
     try {
         const res = await apiFetch(`/api/servers/${serverId}/log-files`);
-        let files = (res && res.files) ? res.files : [];
-        const svc = (currentServiceType || '').toLowerCase();
-
-        if (svc === 'postgres') {
-            files = files.filter(f => {
-                const src = (f.source || '').toLowerCase();
-                if (src.includes('journal') || src.includes('syslog') || src.includes('auth.log')) return false;
-                return (f.log_type || '').toLowerCase() === 'postgres' || src.includes('postgres') || src.includes('pgsql');
-            });
-        } else if (svc === 'tomcat') {
-            files = files.filter(f => {
-                const src = (f.source || '').toLowerCase();
-                if (src.includes('journal') || src.includes('syslog') || src.includes('auth.log')) return false;
-                return (f.log_type || '').toLowerCase() === 'tomcat' || src.includes('tomcat') || src.includes('catalina') || src.includes('nohup') || src.includes('mdm');
-            });
-        } else if (svc === 'os') {
-            files = files.filter(f => {
-                const src = (f.source || '').toLowerCase();
-                if (src.includes('postgres') || src.includes('pgsql') || src.includes('catalina') || src.includes('tomcat')) return false;
-                return true;
-            });
-        }
-
-        const uniqueFiles = [];
-        const seen = new Set();
-        for (const f of files) {
-            if (!f || !f.source) continue;
-            const src = f.source;
-            if (seen.has(src)) continue;
-
-            const dir = src.substring(0, src.lastIndexOf('/') + 1);
-            const sameDirHasCatalinaOut = files.some(other => (other.source || '') === (dir + 'catalina.out'));
-
-            if (sameDirHasCatalinaOut && /\.\d{4}-\d{2}-\d{2}\.log$/i.test(src)) continue;
-            if (sameDirHasCatalinaOut && /localhost\.|manager\.|host-manager\./i.test(src)) continue;
-
-            seen.add(src);
-            uniqueFiles.push(f);
-        }
-        sel.innerHTML = '<option value="">-- All Discovered Files (' + uniqueFiles.length + ') --</option>' +
-            uniqueFiles.map(f => `<option value="${escapeHtml(f.source)}">${escapeHtml(f.source)} (${f.count || 0} lines)</option>`).join('');
+        currentServerLogFiles = (res && res.files) ? res.files : [];
     } catch(e) {
-        sel.innerHTML = '<option value="">-- All Discovered Files --</option>';
+        currentServerLogFiles = [];
+    }
+    updateLogFileSelector();
+}
+
+function updateLogFileSelector() {
+    const sel = document.getElementById('log-file-selector');
+    if (!sel) return;
+
+    let available = (currentServerLogFiles && currentServerLogFiles.length > 0) ? [...currentServerLogFiles] : [];
+
+    // Live sync & fallback matching Asset modal: extract sources from active log lines
+    if (allLogLines && allLogLines.length > 0) {
+        const srcCounts = {};
+        const srcTypes = {};
+        for (const l of allLogLines) {
+            const s = (l.source || l.service || l.log_path || '').trim();
+            if (!s) continue;
+            srcCounts[s] = (srcCounts[s] || 0) + 1;
+            srcTypes[s] = l.log_type || 'os';
+        }
+        const existingSources = new Set(available.map(f => (f.source || '').trim()));
+        for (const [src, cnt] of Object.entries(srcCounts)) {
+            if (!existingSources.has(src)) {
+                available.push({
+                    source: src,
+                    log_type: srcTypes[src] || 'os',
+                    count: cnt
+                });
+                existingSources.add(src);
+            } else {
+                const target = available.find(f => (f.source || '').trim() === src);
+                if (target && (!target.count || target.count === 0)) {
+                    target.count = cnt;
+                }
+            }
+        }
+    }
+
+    // Filter by selected log service type (os, postgres, tomcat) matching asset modal
+    if (currentServiceType && currentServiceType !== 'all') {
+        const svc = currentServiceType.toLowerCase();
+        available = available.filter(f => {
+            const ft = (f.log_type || '').toLowerCase();
+            const src = (f.source || '').toLowerCase();
+
+            if (svc === 'postgres') {
+                if (src.includes('journal') || src.includes('syslog') || src.includes('auth.log') || src.includes('messages')) return false;
+                return ft === 'postgres' || anyMatch(src, ['postgres', 'pgsql', '5432']);
+            }
+            if (svc === 'tomcat') {
+                if (src.includes('journal') || src.includes('syslog') || src.includes('auth.log') || src.includes('messages')) return false;
+                return ft === 'tomcat' || anyMatch(src, ['tomcat', 'catalina', 'nohup', 'coyote', 'mdm']);
+            }
+            if (svc === 'os') {
+                if (src.includes('postgres') || src.includes('pgsql') || src.includes('catalina') || src.includes('tomcat')) return false;
+                return ft === 'os' || anyMatch(src, ['auth', 'syslog', 'secure', 'audit', 'kern', 'journal', 'systemd']);
+            }
+            return true;
+        });
+    }
+
+    const hasMainCatalina = available.some(f => (f.source || '').endsWith('catalina.out'));
+    const uniqueFiles = [];
+    const seen = new Set();
+    for (const f of available) {
+        if (!f || !f.source) continue;
+        const src = f.source;
+        if (seen.has(src)) continue;
+
+        if (hasMainCatalina && /\.\d{4}-\d{2}-\d{2}\.log$/i.test(src)) continue;
+        if (hasMainCatalina && /localhost\.|manager\.|host-manager\./i.test(src)) continue;
+
+        seen.add(src);
+        uniqueFiles.push(f);
+    }
+
+    const prevVal = selectedLogFilePath || sel.value;
+    sel.innerHTML = '<option value="">-- All Discovered Files (' + uniqueFiles.length + ') --</option>' +
+        uniqueFiles.map(f => `<option value="${escapeHtml(f.source)}">${escapeHtml(f.source)} (${f.count || 0} lines)</option>`).join('');
+
+    if (prevVal && uniqueFiles.some(f => f.source === prevVal)) {
+        sel.value = prevVal;
+    } else if (selectedLogFilePath && !uniqueFiles.some(f => f.source === selectedLogFilePath)) {
+        sel.value = '';
+        selectedLogFilePath = null;
     }
 }
 
@@ -1023,6 +1077,7 @@ async function fetchLogsNow(isAutoRefreshCall = false) {
                 return l;
             });
             filterLogLines();
+            updateLogFileSelector();
 
             let localHist = {};
             allLogLines.forEach(l => {
@@ -1103,7 +1158,13 @@ function filterLogLines() {
             }
         }
 
-        // 2. Search box string evaluation
+        // 2. Specific log file selection filter
+        if (selectedLogFilePath) {
+            const chosen = selectedLogFilePath.toLowerCase().trim();
+            if (src !== chosen && !src.includes(chosen)) return false;
+        }
+
+        // 3. Search box string evaluation
         if (q) {
             if (!msg.includes(q) && !src.includes(q) && !time.includes(q) && !lvl.toLowerCase().includes(q)) return false;
         }
