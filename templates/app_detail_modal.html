@@ -848,18 +848,34 @@ async function confirmCloseModal() {
 
     closeCloseModal();
     try {
-        const res = await fetch(`/api/apps/${activeModalAppId}/${tab}/close`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'close',
-                ids: ids,
-                identifiers: ids,
-                close_note: note,
-                suppress: suppressFuture
-            })
-        });
-        if (res.ok) {
+        let isSuccess = false;
+        if (window.apiFetch) {
+            await window.apiFetch(`/api/apps/${activeModalAppId}/${tab}/close`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'close',
+                    ids: ids,
+                    identifiers: ids,
+                    close_note: note,
+                    suppress: suppressFuture
+                })
+            });
+            isSuccess = true;
+        } else {
+            const res = await fetch(`/api/apps/${activeModalAppId}/${tab}/close`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'close',
+                    ids: ids,
+                    identifiers: ids,
+                    close_note: note,
+                    suppress: suppressFuture
+                })
+            });
+            isSuccess = res.ok;
+        }
+        if (isSuccess) {
             clearTabSelection(tab);
             if (tab === 'events') loadAppEvents(activeModalAppId);
             else if (tab === 'incidents') {
@@ -871,6 +887,9 @@ async function confirmCloseModal() {
                 loadAppUsers(activeModalAppId);
                 if (typeof loadAppOverviewCounts === 'function') loadAppOverviewCounts(activeModalAppId);
                 if (typeof loadDashboardData === 'function') loadDashboardData();
+            }
+            if (typeof showToast === 'function') {
+                showToast('Items marked as closed successfully', 'success');
             }
         } else {
             alert('Failed to mark items as closed.');
@@ -892,16 +911,30 @@ async function batchReopenRows(tab, singleId = null) {
     }
 
     try {
-        const res = await fetch(`/api/apps/${activeModalAppId}/${tab}/close`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'reopen',
-                ids: ids,
-                identifiers: ids
-            })
-        });
-        if (res.ok) {
+        let isSuccess = false;
+        if (window.apiFetch) {
+            await window.apiFetch(`/api/apps/${activeModalAppId}/${tab}/close`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    action: 'reopen',
+                    ids: ids,
+                    identifiers: ids
+                })
+            });
+            isSuccess = true;
+        } else {
+            const res = await fetch(`/api/apps/${activeModalAppId}/${tab}/close`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'reopen',
+                    ids: ids,
+                    identifiers: ids
+                })
+            });
+            isSuccess = res.ok;
+        }
+        if (isSuccess) {
             clearTabSelection(tab);
             if (tab === 'events') loadAppEvents(activeModalAppId);
             else if (tab === 'incidents') {
@@ -912,6 +945,9 @@ async function batchReopenRows(tab, singleId = null) {
                 loadAppUsers(activeModalAppId);
                 if (typeof loadAppOverviewCounts === 'function') loadAppOverviewCounts(activeModalAppId);
                 if (typeof loadDashboardData === 'function') loadDashboardData();
+            }
+            if (typeof showToast === 'function') {
+                showToast('Items reopened successfully', 'success');
             }
         } else {
             alert('Failed to reopen items.');
