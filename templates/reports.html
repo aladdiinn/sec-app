@@ -178,6 +178,7 @@
                 <label class="text-meta" style="display:block; margin-bottom:6px">Server Filter (Optional)</label>
                 <input id="malware-report-server-search" type="text" class="mono" placeholder="All Servers or IP/Host e.g. 192.168.10.201" style="width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border); padding:8px 12px; border-radius:4px; font-size:12px" autocomplete="off">
                 <input type="hidden" id="malware-report-server-id" value="all">
+                <div id="malware-report-server-autocomplete" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--bg2); border:1px solid var(--border); border-top:none; z-index:100; max-height:220px; overflow-y:auto; border-bottom-left-radius:4px; border-bottom-right-radius:4px; box-shadow:0 4px 6px rgba(0,0,0,0.3);"></div>
             </div>
             <div>
                 <label class="text-meta" style="display:block; margin-bottom:6px">Report Period</label>
@@ -486,6 +487,7 @@
             // Populate Server Autocomplete
             const srvs = await apiFetch('/api/servers').catch(() => ({items:[]}));
             const srvItems = Array.isArray(srvs) ? srvs : (srvs.servers || srvs.items || []);
+            malwareServerCachedList = srvItems;
             const srvInput = document.getElementById('srv-search');
             const srvDropdown = document.getElementById('srv-autocomplete');
             
@@ -1343,6 +1345,189 @@
         document.getElementById('app-autocomplete').style.display = 'none';
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // MALWARE REPORT SERVER AUTOCOMPLETE & SCOPE FILTER
+    // ══════════════════════════════════════════════════════════════════
+    let malwareServerCachedList = [];
+    let malwareServerResults = [];
+    let malwareServerActiveIndex = -1;
+
+    async function loadMalwareReportServers() {
+        try {
+            const res = await apiFetch('/api/servers');
+            malwareServerCachedList = Array.isArray(res) ? res : (res.servers || res.items || []);
+        } catch (err) {
+            malwareServerCachedList = [];
+        }
+    }
+
+    function setupMalwareReportServerAutocomplete() {
+        const searchInput = document.getElementById('malware-report-server-search');
+        const dropdown = document.getElementById('malware-report-server-autocomplete');
+        const hiddenId = document.getElementById('malware-report-server-id');
+        const projectSelect = document.getElementById('malware-report-project');
+        if (!searchInput || !dropdown) return;
+
+        function getScopedServers() {
+            const projVal = projectSelect ? projectSelect.value : 'all';
+            if (projVal === 'unassigned') {
+                return malwareServerCachedList.filter(s => {
+                    const pid = s.project_id;
+                    const pName = (s.project_name || '').toLowerCase();
+                    return !pid || pid === 'unassigned' || pid === 0 || pName === 'unassigned';
+                });
+            } else if (projVal && projVal !== 'all') {
+                return malwareServerCachedList.filter(s => String(s.project_id) === String(projVal));
+            }
+            return malwareServerCachedList;
+        }
+
+        function renderDropdown(items, query) {
+            malwareServerResults = items;
+            malwareServerActiveIndex = -1;
+
+            let html = '';
+            // Always offer "All Servers in Scope" option at top
+            if (!query || 'all servers'.includes(query.toLowerCase())) {
+                html += `
+                    <div class="malware-srv-autocomplete-item" data-id="all" style="padding:9px 12px; font-size:12px; cursor:pointer; border-bottom:1px solid var(--border); color:var(--cyan); font-weight:600;"
+                         onclick="selectMalwareServer('all', 'All Servers (In Scope)')">
+                        <span>All Servers (In Scope)</span>
+                    </div>
+                `;
+            }
+
+            if (!items || items.length === 0) {
+                if (!html) {
+                    html = '<div style="padding:10px 12px; font-size:12px; color:var(--text-sub);">No matching servers found</div>';
+                }
+            } else {
+                html += items.map((srv, idx) => {
+                    const sName = srv.name || srv.hostname || `Server #${srv.id}`;
+                    const sIp = srv.ip || srv.ip_address || '0.0.0.0';
+                    const sProj = srv.project_name || 'Unassigned';
+                    return `
+                        <div class="malware-srv-autocomplete-item" data-idx="${idx}" style="padding:8px 12px; font-size:12px; cursor:pointer; border-bottom:1px solid var(--border); color:var(--text);"
+                             onclick="selectMalwareServer('${srv.id}', '${escapeHtml(sName)} (${escapeHtml(sIp)})')">
+                            <div style="font-weight:bold; color:var(--text); display:flex; justify-content:space-between; align-items:center;">
+                                <span>${escapeHtml(sName)}</span>
+                                <span style="font-size:10px; font-family:monospace; color:var(--cyan);">#${srv.id}</span>
+                            </div>
+                            <div style="font-size:11px; color:var(--text-meta); margin-top:2px;">
+                                ${escapeHtml(sIp)} &bull; <span style="color:var(--text3);">${escapeHtml(sProj)}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            dropdown.innerHTML = html;
+            dropdown.style.display = 'block';
+
+            dropdown.querySelectorAll('.malware-srv-autocomplete-item').forEach(el => {
+                el.addEventListener('mouseenter', () => {
+                    dropdown.querySelectorAll('.malware-srv-autocomplete-item').forEach(x => x.style.background = 'transparent');
+                    el.style.background = 'var(--bg3)';
+                });
+                el.addEventListener('mouseleave', () => {
+                    el.style.background = 'transparent';
+                });
+            });
+        }
+
+        async function triggerSearch(q) {
+            if (!malwareServerCachedList.length) {
+                await loadMalwareReportServers();
+            }
+            const scoped = getScopedServers();
+            const query = (q || '').trim().toLowerCase();
+            if (!query) {
+                renderDropdown(scoped, '');
+                return;
+            }
+            const filtered = scoped.filter(s => {
+                const sName = (s.name || '').toLowerCase();
+                const sHost = (s.hostname || '').toLowerCase();
+                const sIp = (s.ip || s.ip_address || '').toLowerCase();
+                const sId = String(s.id);
+                return sName.includes(query) || sHost.includes(query) || sIp.includes(query) || sId === query;
+            });
+            renderDropdown(filtered, query);
+        }
+
+        searchInput.addEventListener('input', (e) => {
+            const q = e.target.value;
+            if (!q.trim()) {
+                hiddenId.value = 'all';
+            }
+            triggerSearch(q);
+        });
+
+        searchInput.addEventListener('focus', () => {
+            triggerSearch(searchInput.value);
+        });
+
+        searchInput.addEventListener('keydown', (e) => {
+            const items = dropdown.querySelectorAll('.malware-srv-autocomplete-item');
+            if (dropdown.style.display === 'none' || items.length === 0) return;
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                malwareServerActiveIndex = (malwareServerActiveIndex + 1) % items.length;
+                updateMalwareActiveItem(items);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                malwareServerActiveIndex = (malwareServerActiveIndex - 1 + items.length) % items.length;
+                updateMalwareActiveItem(items);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (malwareServerActiveIndex >= 0 && malwareServerActiveIndex < items.length) {
+                    items[malwareServerActiveIndex].click();
+                } else if (items.length > 0) {
+                    items[0].click();
+                }
+            } else if (e.key === 'Escape') {
+                dropdown.style.display = 'none';
+            }
+        });
+
+        function updateMalwareActiveItem(items) {
+            items.forEach((item, idx) => {
+                if (idx === malwareServerActiveIndex) {
+                    item.style.background = 'var(--bg3)';
+                    item.scrollIntoView({ block: 'nearest' });
+                } else {
+                    item.style.background = 'transparent';
+                }
+            });
+        }
+
+        if (projectSelect) {
+            projectSelect.addEventListener('change', () => {
+                searchInput.value = '';
+                hiddenId.value = 'all';
+                if (dropdown.style.display === 'block') {
+                    triggerSearch('');
+                }
+            });
+        }
+
+        document.addEventListener('click', (e) => {
+            if (!searchInput.contains(e.target) && !dropdown.contains(e.target)) {
+                dropdown.style.display = 'none';
+            }
+        });
+    }
+
+    function selectMalwareServer(id, label) {
+        const searchInput = document.getElementById('malware-report-server-search');
+        const hiddenId = document.getElementById('malware-report-server-id');
+        const dropdown = document.getElementById('malware-report-server-autocomplete');
+        if (hiddenId) hiddenId.value = id;
+        if (searchInput) searchInput.value = (id === 'all') ? '' : label;
+        if (dropdown) dropdown.style.display = 'none';
+    }
+
     async function getValidatedAppId() {
         let appId = document.getElementById('app-report-id').value;
         const searchInput = document.getElementById('app-report-search');
@@ -1752,6 +1937,7 @@ Total Telemetry Queried: ${summary.total_events || 0} events from Database`;
         document.getElementById('date_from').value = thirtyDaysAgo.toISOString().split('T')[0];
         loadKPIs();
         setupAppReportAutocomplete();
+        setupMalwareReportServerAutocomplete();
 
         // Check for report-for-selected query parameters
         const urlParams = new URLSearchParams(window.location.search);
