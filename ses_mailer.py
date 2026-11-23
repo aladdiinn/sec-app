@@ -12,9 +12,11 @@ from email.mime.image import MIMEImage
 import boto3
 from botocore.exceptions import ClientError, EndpointConnectionError
 from botocore.config import Config
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 logger = logging.getLogger("ses_mailer")
 logger.setLevel(logging.INFO)
@@ -31,11 +33,11 @@ _DIGEST_WORKER_STARTED = False
 
 def get_ses_config():
     """Reads exactly SES_* configuration variables with fallback names and live .env reload."""
-    # Dynamically re-read .env from disk so edits on host take effect immediately without container rebuilds
+    # Check readable .env paths if accessible
     try:
         from dotenv import load_dotenv
         for env_path in ["/application/Soc/.env", "/app/.env", ".env"]:
-            if os.path.exists(env_path):
+            if os.path.exists(env_path) and os.access(env_path, os.R_OK):
                 load_dotenv(env_path, override=True)
                 break
     except Exception:

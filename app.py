@@ -8,8 +8,11 @@ import geoip_service
 geoip_service.ensure_database_downloaded_async()
 import psycopg2, psycopg2.extras
 import ses_mailer
-from dotenv import load_dotenv
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 import version
 
 _watcher_auth_pos = 0
