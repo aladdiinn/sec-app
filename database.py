@@ -2738,14 +2738,7 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
                     """, (ip_address, ip_address, clean_hostname, clean_hostname, f"%{clean_hostname}%", f"%{clean_hostname}%"))
                     existing_srv = cur.fetchone()
 
-                # Check 4: Match by unique machine_id alone if machine_id is not shared across multiple servers
-                if not existing_srv and machine_id:
-                    cur.execute("SELECT id, name, hostname, ip, agent_token, api_token, status, approved_by FROM servers WHERE machine_id = %s;", (machine_id,))
-                    mid_rows = cur.fetchall()
-                    if len(mid_rows) == 1:
-                        existing_srv = mid_rows[0]
-
-                # Check 5: Match by IP alone for non-local IP (picks most recent active asset)
+                # Check 4: Match by IP alone for non-local IP (picks most recent active asset)
                 if not existing_srv and ip_address and ip_address not in ("127.0.0.1", "0.0.0.0"):
                     cur.execute("""
                         SELECT id, name, hostname, ip, agent_token, api_token, status, approved_by
@@ -3038,14 +3031,7 @@ def approve_request(app_id: int, approved_by: str = "admin"):
                 """, (ip, ip, clean_hostname, clean_hostname, f"%{clean_hostname}%", f"%{clean_hostname}%"))
                 existing_srv = cur.fetchone()
 
-            # Check 4: Match by unique machine_id alone if machine_id is not shared across multiple servers
-            if not existing_srv and machine_id:
-                cur.execute("SELECT id FROM servers WHERE machine_id = %s ORDER BY id DESC;", (machine_id,))
-                mid_rows = cur.fetchall()
-                if len(mid_rows) == 1:
-                    existing_srv = mid_rows[0]
-
-            # Check 5: Match by IP alone if non-local (picks most recent active asset)
+            # Check 4: Match by IP alone if non-local (picks most recent active asset)
             if not existing_srv and ip and ip not in ("127.0.0.1", "0.0.0.0"):
                 cur.execute("SELECT id FROM servers WHERE (ip = %s OR ip_address = %s) AND status != 'merged' ORDER BY id DESC LIMIT 1;", (ip, ip))
                 existing_srv = cur.fetchone()

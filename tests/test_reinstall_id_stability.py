@@ -102,6 +102,17 @@ class TestReinstallIdStability(unittest.TestCase):
         self.assertNotIn(11, linked_m1, "Mitra 2 must never bleed into Mitra 1")
         self.assertNotIn(10, linked_m2, "Mitra 1 must never bleed into Mitra 2")
 
+        # Verify onboarding a new clone with the same machine_id but different IP NEVER overwrites Mitra 1 or Mitra 2
+        res_m3 = db.add_approval_request(
+            hostname="Jvvnl -Mitra 3",
+            ip_address="192.168.150.17",
+            machine_id=cloned_mid,
+            token="sp-token-new-mitra3",
+            node_type="server"
+        )
+        self.assertNotEqual(res_m3.get("server_id"), 10, "Must NEVER overwrite Mitra 1")
+        self.assertNotEqual(res_m3.get("server_id"), 11, "Must NEVER overwrite Mitra 2")
+
     def test_4_scan_aliasing_and_summary_consistency(self):
         """4. Scans for historical alias IDs (e.g. 36) are queryable by target ID 39."""
         with self.conn.cursor() as cur:
