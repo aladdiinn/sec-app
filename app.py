@@ -2761,6 +2761,10 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
     if _is_suppressed(server_id, alert_type, message):
         return  # Silently suppress based on allowlist rules
 
+    # Mute noisy routine warning alert for govind.b application directory modification
+    if "app mod alert by govind.b" in str(title or "").lower() or (str(alert_type).upper() == "AUDIT_APP_MOD" and "govind.b" in str(message or "").lower()):
+        return
+
     is_session_or_temp = (
         "session" in str(alert_type).lower() or 
         "session" in str(title or "").lower() or 
@@ -3051,6 +3055,8 @@ def _check_unified_fim(server_id, data):
                 actor = "mannan"
 
         if matched_key:
+            if matched_key == "app_mod" and "govind.b" in str(actor or "").lower():
+                continue
             alerted_keys.add(matched_key)
             display_key = matched_key.replace('_', ' ').title()
             title = f"{display_key} Alert by {actor}"
@@ -3132,6 +3138,8 @@ def _check_unified_fim(server_id, data):
         if ".bash_history" in filename_str and "bash" in exe_str_val.lower():
             continue
         if key in ("app_mod", "data_mod") and any(n in f_lower for n in ["/logs/", ".log", "/.git/", "/tmp/", "/temp/"]):
+            continue
+        if key == "app_mod" and "govind.b" in real_actor.lower():
             continue
         if ("apache" in f_lower or "tomcat" in f_lower) and any(x in f_lower for x in ["/temp/", "/work/", "/webapps/"]):
             continue
