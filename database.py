@@ -2818,15 +2818,15 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
             elif app_id:
                 node_type = "app"
 
-            # Check if an approval record exists for this machine_id or exact token
+            # Check if an approval record exists for this (machine_id AND ip_address) or exact token
             row = None
-            if machine_id:
+            if machine_id and ip_address and ip_address not in ("127.0.0.1", "0.0.0.0"):
                 cur.execute("""
                     SELECT id, agent_token, status, node_type, approved_by, approved_at 
                     FROM approvals 
-                    WHERE machine_id = %s 
+                    WHERE machine_id = %s AND ip_address = %s
                     ORDER BY id DESC LIMIT 1;
-                """, (machine_id,))
+                """, (machine_id, ip_address))
                 row = cur.fetchone()
             if not row and token:
                 cur.execute("""
