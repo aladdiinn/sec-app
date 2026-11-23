@@ -1694,6 +1694,11 @@ function switchI3Tab(tabName, btn) {
     if (tabName === 'vulns' && activeModalServerId) {
         loadModalVulnerabilities(activeModalServerId);
     }
+    if (tabName === 'logs' && activeModalServerId) {
+        if (!currentModalLogs || currentModalLogs.length === 0) {
+            fetchModalLogsFromServer();
+        }
+    }
 }
 
 function closeImage3Modal() {
@@ -1705,8 +1710,49 @@ async function openImage3Modal(serverId) {
     activeModalServerId = serverId;
     document.getElementById('i3-modal-overlay').style.display = 'block';
     document.getElementById('i3-modal').style.display = 'flex';
-    document.getElementById('i3-srv-name').innerText = 'Loading asset details...';
-    document.getElementById('i3-srv-sub').innerText = 'Please wait...';
+
+    // Instant pre-population from loaded dashboard cache to eliminate waiting
+    const cached = (globalServersList || []).find(s => s.id === serverId);
+    if (cached) {
+        const cName = cached.hostname || cached.name || 'Server Node';
+        const cIp = cached.ip_address || cached.ip || '0.0.0.0';
+        const cStatus = (cached.status || 'online').toLowerCase();
+        document.getElementById('i3-srv-name').innerText = cName;
+        document.getElementById('i3-srv-sub').innerText = `Host: ${cIp} · OS: ${cached.os_info || 'Linux'} · Project: ${cached.project_name || 'Unassigned'}`;
+        const b = document.getElementById('i3-srv-status-badge');
+        if (b) {
+            b.innerText = cStatus.toUpperCase();
+            b.style.background = cStatus === 'online' ? 'var(--green)' : cStatus === 'maintenance' ? 'var(--amber)' : 'var(--red)';
+        }
+        if (document.getElementById('i3-info-name')) document.getElementById('i3-info-name').innerText = cName;
+        if (document.getElementById('i3-info-type')) document.getElementById('i3-info-type').innerText = cached.os_info || 'Linux Server';
+        if (document.getElementById('i3-info-host')) document.getElementById('i3-info-host').innerText = cIp;
+        if (document.getElementById('i3-info-db')) document.getElementById('i3-info-db').innerText = cached.name || cName;
+        if (document.getElementById('i3-info-machine') && cached.machine_id) {
+            document.getElementById('i3-info-machine').innerText = cached.machine_id;
+            document.getElementById('i3-info-machine').style.color = 'var(--cyan)';
+        }
+        if (document.getElementById('i3-info-status')) {
+            document.getElementById('i3-info-status').innerText = cStatus.toUpperCase();
+            document.getElementById('i3-info-status').style.color = cStatus === 'online' ? 'var(--green)' : 'var(--red)';
+        }
+        const cpu = cached.cpu_percent || 0;
+        const ram = cached.memory_percent || 0;
+        const disk = cached.disk_percent || 0;
+        if (document.getElementById('i3-conn-pct')) document.getElementById('i3-conn-pct').innerText = cpu + '%';
+        if (document.getElementById('i3-conn-bar')) {
+            document.getElementById('i3-conn-bar').style.width = Math.min(cpu, 100) + '%';
+            document.getElementById('i3-conn-bar').style.background = cpu > 85 ? 'var(--red)' : cpu > 70 ? 'var(--amber)' : 'var(--cyan)';
+        }
+        if (document.getElementById('i3-conn-sub')) document.getElementById('i3-conn-sub').innerText = `CPU: ${cpu}% · RAM: ${ram}% · Disk: ${disk}%`;
+        if (document.getElementById('i3-m-cpu')) document.getElementById('i3-m-cpu').innerText = cpu + '%';
+        if (document.getElementById('i3-m-ram')) document.getElementById('i3-m-ram').innerText = ram + '%';
+        if (document.getElementById('i3-m-disk')) document.getElementById('i3-m-disk').innerText = disk + '%';
+        if (typeof updateModalDonuts === 'function') updateModalDonuts(cpu, ram, disk);
+    } else {
+        document.getElementById('i3-srv-name').innerText = 'Loading asset details...';
+        document.getElementById('i3-srv-sub').innerText = 'Please wait...';
+    }
 
     // Reset tabs
     switchI3Tab('overview', document.querySelector('.i3-tab'));
@@ -1855,18 +1901,14 @@ async function openImage3Modal(serverId) {
         const btnAll = document.getElementById('btn-cat-all');
         if (btnAll) btnAll.classList.add('active');
 
-        // Fetch discovered log files
-        try {
-            const filesRes = await apiFetch(`/api/servers/${serverId}/log-files`);
-            currentModalFiles = filesRes.files || [];
+        // Fetch discovered log files in background (non-blocking)
+        apiFetch(`/api/servers/${serverId}/log-files`).then(filesRes => {
+            currentModalFiles = (filesRes && filesRes.files) || [];
             updateModalFileSelector();
-        } catch(ef) {
+        }).catch(() => {
             currentModalFiles = [];
             updateModalFileSelector();
-        }
-
-        await fetchModalLogsFromServer();
-        loadModalVulnerabilities(serverId);
+        });
 
     } catch(e) {
         console.error('Modal load error:', e);

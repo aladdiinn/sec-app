@@ -2121,11 +2121,19 @@ async def api_get_server_by_id(server_id: int):
         raise HTTPException(status_code=404, detail="Server not found")
     return server
 
+_server_details_cache = {}
+
 @app.get("/api/servers/{server_id}/details")
 async def api_get_server_details(server_id: int):
-    details = db.get_server_details(server_id)
+    now = time.time()
+    cached = _server_details_cache.get(server_id)
+    if cached and (now - cached[0] < 3.0):
+        return cached[1]
+    from fastapi.concurrency import run_in_threadpool
+    details = await run_in_threadpool(db.get_server_details, server_id)
     if not details:
         raise HTTPException(status_code=404, detail="Server not found")
+    _server_details_cache[server_id] = (now, details)
     return details
 
 @app.post("/api/servers/add")

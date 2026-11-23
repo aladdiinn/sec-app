@@ -908,6 +908,34 @@ def init_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_cfg_id_desc ON pushed_logs (config_id, id DESC);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_pushed_logs_created_at ON pushed_logs (created_at);")
 
+            # High-Performance Indexes for Fast Asset Details Modal, Dashboard Polling & Alerts Queries
+            perf_indexes = [
+                "CREATE INDEX IF NOT EXISTS idx_incidents_server_id ON incidents (server_id);",
+                "CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents (status);",
+                "CREATE INDEX IF NOT EXISTS idx_incidents_server_status ON incidents (server_id, status);",
+                "CREATE INDEX IF NOT EXISTS idx_incidents_created_at_desc ON incidents (created_at DESC);",
+                "CREATE INDEX IF NOT EXISTS idx_alerts_server_id ON alerts (server_id);",
+                "CREATE INDEX IF NOT EXISTS idx_alerts_is_resolved ON alerts (is_resolved);",
+                "CREATE INDEX IF NOT EXISTS idx_alerts_server_resolved ON alerts (server_id, is_resolved);",
+                "CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts (severity);",
+                "CREATE INDEX IF NOT EXISTS idx_alerts_created_at_desc ON alerts (created_at DESC);",
+                "CREATE INDEX IF NOT EXISTS idx_commands_server_exec ON commands (server_id, executed_at DESC);",
+                "CREATE INDEX IF NOT EXISTS idx_open_ports_server_id ON open_ports (server_id);",
+                "CREATE INDEX IF NOT EXISTS idx_server_ports_server_id ON server_ports (server_id);",
+                "CREATE INDEX IF NOT EXISTS idx_log_configs_server_id ON log_configs (server_id);",
+                "CREATE INDEX IF NOT EXISTS idx_approvals_machine_ip ON approvals (machine_id, ip_address);",
+                "CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals (status);",
+                "CREATE INDEX IF NOT EXISTS idx_servers_machine_ip ON servers (machine_id, ip_address);",
+                "CREATE INDEX IF NOT EXISTS idx_servers_status ON servers (status);",
+                "CREATE INDEX IF NOT EXISTS idx_server_identity_links_curr ON server_identity_links (current_server_id);",
+                "CREATE INDEX IF NOT EXISTS idx_server_identity_links_link ON server_identity_links (linked_server_id);"
+            ]
+            for idx_stmt in perf_indexes:
+                try:
+                    cur.execute(idx_stmt)
+                except Exception as ex_idx:
+                    logger.debug(f"Index creation notice: {ex_idx}")
+
             # Backfill existing pushed_logs so categories (postgres, tomcat, os) display immediately
             try:
                 cur.execute("""
@@ -2455,11 +2483,6 @@ def get_server_details(server_id: int):
     if conn:
         try:
             with conn.cursor() as cur:
-                try:
-                    merge_duplicate_incidents_with_audit(server_id)
-                except Exception as ex_m:
-                    logger.debug(f"merge_duplicate_incidents_with_audit warning: {ex_m}")
-                
                 try:
                     inc_data = get_incidents(status="all", server_id=server_id, limit=150)
                     inc_items = inc_data.get("items") or []
@@ -6223,64 +6246,67 @@ def merge_duplicate_incidents_with_audit(server_id: int = None):
         return 0
     try:
         with conn.cursor() as cur:
-            # Auto-clean any past incidents that had fake port evidence attached to user deletion / OS admin rules
-            try:
-                cur.execute("""
-                    UPDATE incidents
-                    SET evidence_data = NULL
-                    WHERE (title ILIKE '%user account%' OR title ILIKE '%user deletion%' OR description ILIKE '%userdel%')
-                      AND (evidence_data::text ILIKE '%DET-NET-010%' OR evidence_data::text ILIKE '%unexpected open port%');
-                """)
-                # 1. Historical attribution preserved (no blind root->mannan overwrite)
-                # 2. Specifically clean and attribute #INC-813 and #INC-805
-                cur.execute("""
-                    UPDATE incidents
-                    SET title = 'User Account Deletion ΓÇö mannan',
-                        description = 'by user \'mannan\' executed: `userdel[578346]: delete user \'prajwal\'`. This matches the detection rule \'User Account Deletion\'.'
-                    WHERE id = 813 OR (title ILIKE 'User Account Deletion%' AND description ILIKE '%578346%');
-                """)
-                cur.execute("""
-                    UPDATE incidents
-                    SET title = 'User Account Deletion ΓÇö mannan',
-                        description = 'by user \'mannan\' executed: `Nov 9 18:20:25 ubuntu-DEV userdel[400722]: delete user \'prajwal\'`. This matches the detection rule \'User Account Deletion\'.'
-                    WHERE id = 805 OR (title ILIKE 'User Account Deletion%' AND description ILIKE '%400722%');
-                """)
+            # Auto-clean any past incidents that had fake port evidence attached to user deletion / OS admin rules (Run once only)
+            global _has_run_incident_audit_migrations
+            if not globals().get('_has_run_incident_audit_migrations'):
+                _has_run_incident_audit_migrations = True
+                try:
+                    cur.execute("""
+                        UPDATE incidents
+                        SET evidence_data = NULL
+                        WHERE (title ILIKE '%user account%' OR title ILIKE '%user deletion%' OR description ILIKE '%userdel%')
+                          AND (evidence_data::text ILIKE '%DET-NET-010%' OR evidence_data::text ILIKE '%unexpected open port%');
+                    """)
+                    # 1. Historical attribution preserved (no blind root->mannan overwrite)
+                    # 2. Specifically clean and attribute #INC-813 and #INC-805
+                    cur.execute("""
+                        UPDATE incidents
+                        SET title = 'User Account Deletion — mannan',
+                            description = 'by user \'mannan\' executed: `userdel[578346]: delete user \'prajwal\'`. This matches the detection rule \'User Account Deletion\'.'
+                        WHERE id = 813 OR (title ILIKE 'User Account Deletion%' AND description ILIKE '%578346%');
+                    """)
+                    cur.execute("""
+                        UPDATE incidents
+                        SET title = 'User Account Deletion — mannan',
+                            description = 'by user \'mannan\' executed: `Nov 9 18:20:25 ubuntu-DEV userdel[400722]: delete user \'prajwal\'`. This matches the detection rule \'User Account Deletion\'.'
+                        WHERE id = 805 OR (title ILIKE 'User Account Deletion%' AND description ILIKE '%400722%');
+                    """)
 
-                # 4. Monitored files like /etc/passwd that became OS File Modification Alert become Identity Alert
-                cur.execute("""
-                    UPDATE incidents
-                    SET title = 'Identity Alert by mannan',
-                        description = 'Detection Rule [Kernel Audit]: identity event triggered by user \'mannan\' (AUID: 1005) on file \'/etc/passwd\'.'
-                    WHERE (title ILIKE '%OS File Modification%' OR title ILIKE '%Correlated File%')
-                      AND (description ILIKE '%/etc/passwd%' OR description ILIKE '%/etc/shadow%');
-                """)
-                # 5. Universally set all audit rules and security command alerts to CRITICAL
-                cur.execute("""
-                    UPDATE incidents
-                    SET severity = 'critical'
-                    WHERE (title ILIKE '%Alert by%' 
-                        OR title ILIKE 'User %' 
-                        OR title ILIKE '%System Config%'
-                        OR title ILIKE '%Privilege Escalation%'
-                        OR title ILIKE '%Permission Grant%'
-                        OR title ILIKE '%Ownership Changed%'
-                        OR title ILIKE '%Sudoers%')
-                      AND severity != 'critical';
-                """)
-                cur.execute("""
-                    UPDATE alerts
-                    SET severity = 'critical'
-                    WHERE (title ILIKE '%Alert by%' 
-                        OR title ILIKE 'User %' 
-                        OR title ILIKE '%System Config%'
-                        OR title ILIKE '%Privilege Escalation%'
-                        OR title ILIKE '%Permission Grant%'
-                        OR title ILIKE '%Ownership Changed%'
-                        OR title ILIKE '%Sudoers%')
-                      AND severity != 'critical';
-                """)
-            except Exception as ex_mig:
-                logger.debug(f"Incident migration notice: {ex_mig}")
+                    # 4. Monitored files like /etc/passwd that became OS File Modification Alert become Identity Alert
+                    cur.execute("""
+                        UPDATE incidents
+                        SET title = 'Identity Alert by mannan',
+                            description = 'Detection Rule [Kernel Audit]: identity event triggered by user \'mannan\' (AUID: 1005) on file \'/etc/passwd\'.'
+                        WHERE (title ILIKE '%OS File Modification%' OR title ILIKE '%Correlated File%')
+                          AND (description ILIKE '%/etc/passwd%' OR description ILIKE '%/etc/shadow%');
+                    """)
+                    # 5. Universally set all audit rules and security command alerts to CRITICAL
+                    cur.execute("""
+                        UPDATE incidents
+                        SET severity = 'critical'
+                        WHERE (title ILIKE '%Alert by%' 
+                            OR title ILIKE 'User %' 
+                            OR title ILIKE '%System Config%'
+                            OR title ILIKE '%Privilege Escalation%'
+                            OR title ILIKE '%Permission Grant%'
+                            OR title ILIKE '%Ownership Changed%'
+                            OR title ILIKE '%Sudoers%')
+                          AND severity != 'critical';
+                    """)
+                    cur.execute("""
+                        UPDATE alerts
+                        SET severity = 'critical'
+                        WHERE (title ILIKE '%Alert by%' 
+                            OR title ILIKE 'User %' 
+                            OR title ILIKE '%System Config%'
+                            OR title ILIKE '%Privilege Escalation%'
+                            OR title ILIKE '%Permission Grant%'
+                            OR title ILIKE '%Ownership Changed%'
+                            OR title ILIKE '%Sudoers%')
+                          AND severity != 'critical';
+                    """)
+                except Exception as ex_mig:
+                    logger.debug(f"Incident migration notice: {ex_mig}")
 
             where_sql = "status IN ('open', 'active', 'investigating')"
             params = []
