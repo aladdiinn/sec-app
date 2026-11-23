@@ -30,7 +30,17 @@ _DIGEST_LOCK = threading.Lock()
 _DIGEST_WORKER_STARTED = False
 
 def get_ses_config():
-    """Reads exactly SES_* configuration variables with fallback names."""
+    """Reads exactly SES_* configuration variables with fallback names and live .env reload."""
+    # Dynamically re-read .env from disk so edits on host take effect immediately without container rebuilds
+    try:
+        from dotenv import load_dotenv
+        for env_path in ["/application/Soc/.env", "/app/.env", ".env"]:
+            if os.path.exists(env_path):
+                load_dotenv(env_path, override=True)
+                break
+    except Exception:
+        pass
+
     region = os.environ.get("SES_AWS_REGION") or os.environ.get("AWS_REGION")
     key_id = os.environ.get("SES_AWS_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
     secret_key = os.environ.get("SES_AWS_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY")
@@ -49,7 +59,7 @@ def get_ses_config():
         "key_id": key_id,
         "secret_key": secret_key,
         "sender": sender.strip() if sender else None,
-        "recipient_str": recipient_str,
+        "recipient_str": recipient_str.strip() if recipient_str else None,
         "missing": missing
     }
 
@@ -110,6 +120,7 @@ def perform_ses_self_check():
         "sender_verified": False,
         "sandbox_mode": "Unknown",
         "recipients": [],
+        "recipient_str": cfg["recipient_str"],
         "quota": None,
         "reachability": False,
         "error": None

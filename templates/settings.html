@@ -176,7 +176,7 @@ input:checked + .slider:before { transform: translateX(14px); background-color: 
         </div>
 
         <!-- Diagnostic Overview Cards -->
-        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:16px" id="ses-diagnostics-bar">
+        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:12px; margin-bottom:16px" id="ses-diagnostics-bar">
             <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
                 <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">SES Region</div>
                 <div style="font-size:14px; font-weight:700; color:var(--text); font-family:monospace; margin-top:4px" id="ses-diag-region">--</div>
@@ -188,6 +188,10 @@ input:checked + .slider:before { transform: translateX(14px); background-color: 
             <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
                 <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">Sender Identity</div>
                 <div style="font-size:14px; font-weight:700; color:var(--text); margin-top:4px" id="ses-diag-sender">--</div>
+            </div>
+            <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
+                <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">Configured Recipient</div>
+                <div style="font-size:12px; font-weight:700; color:var(--cyan); margin-top:4px; word-break:break-all;" id="ses-diag-recipient">--</div>
             </div>
             <div style="background:var(--bg3); padding:10px 14px; border-radius:6px; border:1px solid var(--border)">
                 <div style="font-size:10px; color:var(--text3); text-transform:uppercase; font-weight:700">24h Quota / Sent</div>
@@ -429,6 +433,14 @@ async function loadSesStatus() {
             document.getElementById('ses-diag-quota').innerText = `${res.quota.sent_24h} / ${res.quota.max_24h}`;
         } else {
             document.getElementById('ses-diag-quota').innerText = '--';
+        }
+
+        if (document.getElementById('ses-diag-recipient')) {
+            document.getElementById('ses-diag-recipient').innerText = res.recipient_str || 'Not Set';
+        }
+        const rcptInput = document.getElementById('test_email_recipient');
+        if (rcptInput) {
+            rcptInput.placeholder = res.recipient_str ? `Configured Default (${res.recipient_str})` : 'Custom recipient (leave blank for configured default)';
         }
     } catch (e) {
         console.error('Error loading SES status:', e);

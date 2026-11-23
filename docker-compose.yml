@@ -60,8 +60,10 @@ services:
       # Persistent host-mounted storage (logs, offline GeoIP database, local state)
       - /application/Soc/logs:/app/logs
       - /application/Soc/data:/app/data
+      - /application/Soc/.env:/app/.env:ro
       - /application/Soc/app.py:/app/app.py
       - /application/Soc/database.py:/app/database.py
+      - /application/Soc/ses_mailer.py:/app/ses_mailer.py
       - /application/Soc/version.py:/app/version.py
       - /application/Soc/agent_extracted.py:/app/agent_extracted.py
       - /application/Soc/agent_verifier.py:/app/agent_verifier.py
