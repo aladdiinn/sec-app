@@ -1924,6 +1924,20 @@ def categorize_command(cmd_str: str) -> str:
 
 def log_alert(server_id: int, alert_type: str, message: str, severity: str = "warning", title: str = None):
     """Log alert, auto-resolving valid server_id, and creating both alert and incident."""
+    # Suppress false-positive systemd / cgroup delete artifacts on root
+    t_low = str(title or "").lower()
+    m_low = str(message or "").lower()
+    at_up = str(alert_type or "").upper()
+    if "delete alert" in t_low or at_up == "AUDIT_DELETE":
+        if any(sd in m_low for sd in ["systemd", "containerd", "dockerd", "journald", "logind", "udevd", "tmpfiles", "cron"]):
+            return
+        if any(rf in m_low for rf in ["on file '/'", "on file ''", "on file '//'", "on file 'none'"]):
+            return
+        if any(ephem in m_low for ephem in ["/run/", "/proc/", "/sys/", "/dev/", ".socket", ".cgroup"]):
+            return
+    if "session alert" in t_low or at_up == "AUDIT_SESSION":
+        return
+
     is_session_or_temp = (
         "session" in (alert_type or "").lower() or 
         "session" in (title or "").lower() or 

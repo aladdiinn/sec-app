@@ -2810,29 +2810,48 @@ def _is_suppressed(server_id, alert_type, message):
 
 def _create_alert_dedup(server_id, alert_type, severity, title, message):
     """Create alert only if similar alert not created within last 2 minutes, and trigger SOAR audit."""
-    
-    # Check if server is in maintenance mode (Suppress Active Alerts)
-    srv = db.get_server_by_id(server_id)
-    if srv and srv.get("is_maintenance"):
-        return  # Silently suppress alert to prevent spam during OS patching
-        
-    if _is_suppressed(server_id, alert_type, message):
-        return  # Silently suppress based on allowlist rules
+    # Fast in-memory suppression checks (no DB queries required)
+    clean_t = str(title or "").lower()
+    clean_m = str(message or "").lower()
+    at_up = str(alert_type or "").upper()
+
+    # Mute false-positive systemd / cgroup delete events on '/'
+    if "delete alert by" in clean_t or at_up == "AUDIT_DELETE":
+        if any(sd in clean_m for sd in ["systemd", "containerd", "dockerd", "journald", "logind", "udevd", "tmpfiles", "cron"]):
+            return
+        if any(rf in clean_m for rf in ["on file '/'", "on file ''", "on file '//'", "on file 'none'"]):
+            return
+        if any(ephem in clean_m for ephem in ["/run/", "/proc/", "/sys/", "/dev/", ".socket", ".cgroup"]):
+            return
+
+    # Mute routine session open/close alerts unless explicitly enabled in rules
+    if at_up == "AUDIT_SESSION" or "session alert by" in clean_t:
+        if not _is_rule_enabled('AUDIT_SESSION', default=False) and not _is_rule_enabled('session', default=False):
+            return
 
     # Mute noisy routine warning alert for application directory modifications (App Mod Alert) across all users unless explicitly enabled
-    if (str(alert_type).upper() == "AUDIT_APP_MOD" or "app mod alert by" in str(title or "").lower()) and not _is_rule_enabled('AUDIT_APP_MOD', default=False) and not _is_rule_enabled('app_mod', default=False):
+    if (at_up == "AUDIT_APP_MOD" or "app mod alert by" in clean_t) and not _is_rule_enabled('AUDIT_APP_MOD', default=False) and not _is_rule_enabled('app_mod', default=False):
         return
 
     # Suppress specific noisy routine operations for user sateesh.j (without disabling the underlying rules)
-    clean_t = str(title or "").lower()
-    clean_m = str(message or "").lower()
     if "sateesh.j" in clean_t or "sateesh.j" in clean_m:
         # Routine application directory permission maintenance falsely flagging as Sudoers Modification
         if "sudoers modification" in clean_t and ("/application/" in clean_m or "/etc/sudoers" not in clean_m):
             return
         # Routine SSSD PAM authentication failure noise
-        if ("failed root escalation" in clean_t or str(alert_type).upper() == "SUDO_ROOT_ESCALATION") and "pam_sss" in clean_m:
+        if ("failed root escalation" in clean_t or at_up == "SUDO_ROOT_ESCALATION") and "pam_sss" in clean_m:
             return
+
+    # Check if server is in maintenance mode (Suppress Active Alerts)
+    try:
+        srv = db.get_server_by_id(server_id)
+        if srv and srv.get("is_maintenance"):
+            return  # Silently suppress alert to prevent spam during OS patching
+    except Exception:
+        pass
+        
+    if _is_suppressed(server_id, alert_type, message):
+        return  # Silently suppress based on allowlist rules
 
     is_session_or_temp = (
         "session" in str(alert_type).lower() or 
@@ -3132,6 +3151,17 @@ def _check_unified_fim(server_id, data):
         if matched_key:
             if matched_key == "app_mod" and not _is_rule_enabled('AUDIT_APP_MOD', default=False) and not _is_rule_enabled('app_mod', default=False):
                 continue
+            if matched_key == "session" and not _is_rule_enabled('AUDIT_SESSION', default=False) and not _is_rule_enabled('session', default=False):
+                continue
+            if matched_key == "delete":
+                c_m_pre = re.search(r'comm="?([^"\s]+)"?', last_event.get("line", "")) if last_event else None
+                e_m_pre = re.search(r'exe="?([^"\s]+)"?', last_event.get("line", "")) if last_event else None
+                comm_pre = (c_m_pre.group(1).lower() if c_m_pre else "")
+                exe_pre = (e_m_pre.group(1).lower() if e_m_pre else "")
+                if any(sd in exe_pre or sd in comm_pre for sd in ["systemd", "containerd", "dockerd", "journald", "logind", "udevd", "tmpfiles", "cron"]):
+                    continue
+                if str(path).strip() in ("/", "", "//"):
+                    continue
             alerted_keys.add(matched_key)
             display_key = matched_key.replace('_', ' ').title()
             title = f"{display_key} Alert by {actor}"
@@ -3215,6 +3245,17 @@ def _check_unified_fim(server_id, data):
         if key in ("app_mod", "data_mod") and any(n in f_lower for n in ["/logs/", ".log", "/.git/", "/tmp/", "/temp/"]):
             continue
         if key == "app_mod" and not _is_rule_enabled('AUDIT_APP_MOD', default=False) and not _is_rule_enabled('app_mod', default=False):
+            continue
+        if key == "delete":
+            comm_val = (c_m.group(1) if c_m else "").lower()
+            exe_val = exe_str_val.lower()
+            if any(sd in exe_val or sd in comm_val for sd in ["systemd", "containerd", "dockerd", "journald", "logind", "udevd", "tmpfiles", "cron"]):
+                continue
+            if filename_str in ("/", "", "//", None) or f_lower in ("/", "", "//"):
+                continue
+            if any(ephem in f_lower for ephem in ["/run/", "/tmp/", "/temp/", "/proc/", "/sys/", "/dev/", ".pid", ".socket", ".cgroup"]):
+                continue
+        if key == "session" and not _is_rule_enabled('AUDIT_SESSION', default=False) and not _is_rule_enabled('session', default=False):
             continue
         if ("apache" in f_lower or "tomcat" in f_lower) and any(x in f_lower for x in ["/temp/", "/work/", "/webapps/"]):
             continue
