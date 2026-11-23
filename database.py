@@ -1935,8 +1935,6 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
             return
         if any(ephem in m_low for ephem in ["/run/", "/proc/", "/sys/", "/dev/", ".socket", ".cgroup"]):
             return
-    if "session alert" in t_low or at_up == "AUDIT_SESSION":
-        return
 
     is_session_or_temp = (
         "session" in (alert_type or "").lower() or 
