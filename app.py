@@ -8652,10 +8652,7 @@ StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
-Type=notify
-WatchdogSec=60
-TimeoutStartSec=45
-NotifyAccess=all
+Type=simple
 User=root
 WorkingDirectory=/opt/securepulse
 Environment=PYTHONUNBUFFERED=1

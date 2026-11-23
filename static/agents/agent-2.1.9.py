@@ -4,7 +4,7 @@ from datetime import datetime
 
 AGENT_VERSION = "2.1.9"
 APP_BRAND = "BSMART SOC"
-SOC_URL = "https://192.168.10.201:3443".rstrip("/")
+SOC_URL = "https://soc.bsmartone.com:3443".rstrip("/")
 TARGET_IP = "$NODE_IP"
 TARGET_NAME = "$NODE_NAME"
 AGENT_TOKEN = "$TOKEN"
@@ -83,14 +83,16 @@ def _save_persistent_config():
 def _recover_legacy_credentials():
     global TARGET_IP, TARGET_NAME, AGENT_TOKEN, ASSIGNED_SERVER_ID, SOC_URL
     cfg_file = os.environ.get("SECUREPULSE_CONFIG", "/opt/securepulse/config.json")
+    has_valid_url = False
     if os.path.isfile(cfg_file):
         try:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 raw_c = f.read()
             raw_c = re.sub(r'("[^"]+")\.rstrip\([^\)]*\)', r'\1', raw_c)
             cdata = json.loads(raw_c)
-            if cdata.get("SOC_URL") and not str(cdata["SOC_URL"]).startswith("$"):
+            if cdata.get("SOC_URL") and not str(cdata["SOC_URL"]).startswith("$") and "192.168.10.201" not in str(cdata["SOC_URL"]):
                 SOC_URL = str(cdata["SOC_URL"]).rstrip("/")
+                has_valid_url = True
             if cdata.get("TARGET_IP") and not str(cdata["TARGET_IP"]).startswith("$") and str(cdata["TARGET_IP"]) != "127.0.0.1":
                 TARGET_IP = str(cdata["TARGET_IP"])
             if cdata.get("TARGET_NAME") and not str(cdata["TARGET_NAME"]).startswith("$"):
@@ -103,9 +105,9 @@ def _recover_legacy_credentials():
         except Exception:
             pass
 
+    # Never inspect running node_push_agent.py itself (preserves valid config from being overwritten)
     backup_candidates = [
-        "/opt/securepulse/node_push_agent.py.backup",
-        "/opt/securepulse/node_push_agent.py"
+        "/opt/securepulse/node_push_agent.py.backup"
     ] + glob.glob("/opt/securepulse/node_push_agent.py.bak.*")
     
     for fpath in backup_candidates:
@@ -126,7 +128,7 @@ def _recover_legacy_credentials():
             if m_sid and ASSIGNED_SERVER_ID is None:
                 ASSIGNED_SERVER_ID = int(m_sid.group(1))
             m_soc = re.search(r'SOC_URL\s*=\s*["\']([^"\']+)["\']', content)
-            if m_soc and not m_soc.group(1).startswith("$"):
+            if m_soc and not m_soc.group(1).startswith("$") and not has_valid_url and "192.168.10.201" not in m_soc.group(1):
                 SOC_URL = m_soc.group(1).rstrip("/")
         except Exception:
             pass
@@ -160,7 +162,7 @@ except Exception:
     _ssl_ctx = None
 
 CANDIDATE_SOC_URLS = [SOC_URL]
-for _candidate in ["http://127.0.0.1:8001", "https://192.168.10.201:3443", "https://127.0.0.1:3443"]:
+for _candidate in ["https://soc.bsmartone.com:3443", "http://127.0.0.1:8001", "https://127.0.0.1:3443"]:
     if _candidate not in CANDIDATE_SOC_URLS:
         CANDIDATE_SOC_URLS.append(_candidate)
 
@@ -2967,6 +2969,9 @@ def main():
         except Exception:
             pass
     print(f"[{APP_BRAND} Agent] Starting. SOC: {SOC_URL}, Node: {TARGET_NAME} ({TARGET_IP}), Server ID: {ASSIGNED_SERVER_ID}", flush=True)
+
+    # Inform systemd service manager of active ready state immediately
+    notify_systemd("READY=1")
 
     # Start dedicated independent heartbeat thread and send immediate initial heartbeat before heavy collectors run
     hb_thread = HeartbeatThread(interval=PUSH_INTERVAL)
