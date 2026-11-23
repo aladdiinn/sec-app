@@ -9326,6 +9326,7 @@ async def api_approval_request(request: Request):
         display_hostname = f"[{app_name} | {role.upper()}] {hostname}"
 
     res = db.add_approval_request(display_hostname, ip, token=token, node_type=node_type, app_id=app_id, role=role, machine_id=machine_id)
+    _servers_cache.clear()
     return {"ok": True, "id": res.get("id"), "token": res.get("token"), "status": res.get("status"), "server_id": res.get("server_id"), "node_type": res.get("node_type", node_type)}
 
 @app.post("/agents/register")
@@ -9605,6 +9606,7 @@ async def api_approve_request(app_id: int, request: Request):
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     uname = request.session.get('username', 'admin') if hasattr(request, 'session') else 'admin'
     if db.approve_request(app_id, approved_by=uname):
+        _servers_cache.clear()
         return {"ok": True, "message": "Asset approved successfully"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Approval failed"})
 
@@ -9614,6 +9616,7 @@ async def api_reject_request(app_id: int, request: Request):
         return JSONResponse(status_code=403, content={"ok": False, "message": "Access Denied: Admin privileges required."})
     uname = request.session.get('username', 'admin') if hasattr(request, 'session') else 'admin'
     if db.reject_request(app_id, rejected_by=uname):
+        _servers_cache.clear()
         return {"ok": True, "message": "Asset request rejected"}
     return JSONResponse(status_code=400, content={"ok": False, "message": "Rejection failed"})
 
