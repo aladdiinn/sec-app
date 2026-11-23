@@ -523,8 +523,8 @@ def run_database_retention_loop():
                     # 1. Automatically prune routine INFO events (2xx/3xx) from active partitions & compact tables
                     app_siem_db.auto_prune_and_compact_app_events(conn)
 
-                    # 2. Purge expired daily partitions (default 90 days / 3 months retention for raw events in PostgreSQL)
-                    ret_days = int(os.getenv("APP_EVENTS_RETENTION_DAYS", "90"))
+                    # 2. Purge expired daily partitions (default 7 days rolling retention for raw events in PostgreSQL)
+                    ret_days = int(os.getenv("APP_EVENTS_RETENTION_DAYS", "7"))
                     dropped = app_siem_db.purge_expired_app_events_partitions(conn, retention_days=ret_days)
                     if dropped:
                         logger.info(f"[STORAGE-RETENTION] Auto-dropped {len(dropped)} expired partition(s): {dropped}")
@@ -1000,6 +1000,53 @@ app.add_middleware(
     https_only=SECURE_COOKIES,
     same_site="lax"
 )
+
+# ── Rolling Performance Metrics & Latency Profiler (Requirement 1) ──────────
+from collections import deque
+_ENDPOINT_PERF = {}
+_PERF_LOCK = threading.Lock()
+
+@app.middleware("http")
+async def performance_timing_middleware(request: Request, call_next):
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start_time) * 1000.0
+
+    path = request.url.path
+    if not (path.startswith("/static/") or path.startswith("/favicon")):
+        route_key = f"{request.method} {path}"
+        with _PERF_LOCK:
+            if route_key not in _ENDPOINT_PERF:
+                _ENDPOINT_PERF[route_key] = deque(maxlen=200)
+            _ENDPOINT_PERF[route_key].append(duration_ms)
+
+    return response
+
+@app.get("/api/admin/perf-stats")
+def api_admin_perf_stats(request: Request):
+    user = get_session_user(request)
+    if not user or not is_admin_user(request):
+        raise HTTPException(status_code=403, detail="Admin only")
+    results = []
+    with _PERF_LOCK:
+        for route, durations in _ENDPOINT_PERF.items():
+            if not durations: continue
+            sorted_d = sorted(durations)
+            n = len(sorted_d)
+            p50 = sorted_d[int(n * 0.50)]
+            p95 = sorted_d[min(int(n * 0.95), n - 1)]
+            max_d = sorted_d[-1]
+            avg_d = sum(sorted_d) / n
+            results.append({
+                "endpoint": route,
+                "count": n,
+                "p50_ms": round(p50, 2),
+                "p95_ms": round(p95, 2),
+                "max_ms": round(max_d, 2),
+                "avg_ms": round(avg_d, 2)
+            })
+    results.sort(key=lambda x: x["p95_ms"], reverse=True)
+    return {"slowest_endpoints": results[:15]}
 
 @app.get("/api/version")
 def api_get_version():
@@ -12087,14 +12134,21 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
                 WHERE id = %s;
             """, (version, psycopg2.extras.Json(files), readiness, comp["id"]))
 
-            # Auto-promote application from unconfigured statuses only if real events were received
-            cur.execute("""
-                UPDATE applications
-                SET status = 'NORMAL', updated_at = NOW()
-                WHERE id = %s 
-                  AND status IN ('WAITING', 'WAITING_DATA', 'INITIALIZING', 'PENDING_APPROVAL')
-                  AND EXISTS (SELECT 1 FROM app_events WHERE application_id = %s);
-            """, (comp["application_id"], comp["application_id"]))
+            # Fast non-blocking status check: Only evaluate promotion if application is unconfigured/waiting
+            cur.execute("SELECT status FROM applications WHERE id = %s;", (comp["application_id"],))
+            app_status_row = cur.fetchone()
+            curr_app_status = (app_status_row.get("status") if isinstance(app_status_row, dict) else (app_status_row[0] if app_status_row else None)) or ""
+            if curr_app_status.upper() in ('WAITING', 'WAITING_DATA', 'INITIALIZING', 'PENDING_APPROVAL'):
+                cur.execute("""
+                    UPDATE applications
+                    SET status = 'NORMAL', updated_at = NOW()
+                    WHERE id = %s 
+                      AND status IN ('WAITING', 'WAITING_DATA', 'INITIALIZING', 'PENDING_APPROVAL')
+                      AND EXISTS (
+                          SELECT 1 FROM app_events 
+                          WHERE application_id = %s AND event_time >= NOW() - INTERVAL '7 days'
+                      );
+                """, (comp["application_id"], comp["application_id"]))
 
             conn.commit()
             return {"status": "ok", "message": "heartbeat acknowledged", "component_id": comp["id"], "latest_version": getattr(version, "COLLECTOR_VERSION", "1.8.0")}

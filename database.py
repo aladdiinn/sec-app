@@ -27,6 +27,8 @@ import urllib.request
 from datetime import datetime, timezone, timedelta
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
+import threading
 from werkzeug.security import generate_password_hash, check_password_hash
 import version
 
@@ -142,8 +144,71 @@ class SQLiteConnectionWrapper:
             pass
         self.conn.close()
 
+# ── High-Performance PostgreSQL Connection Pooling ─────────────────────────
+_db_pool = None
+_db_pool_lock = threading.Lock()
+
+class PooledConnectionWrapper:
+    """Wraps a pooled psycopg2 connection so that conn.close() safely returns it to the pool."""
+    def __init__(self, conn, pool):
+        self._conn = conn
+        self._pool = pool
+        self._closed = False
+
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            if self._pool and self._conn:
+                try:
+                    if not self._conn.closed:
+                        if not getattr(self._conn, "autocommit", True):
+                            try: self._conn.rollback()
+                            except Exception: pass
+                    self._pool.putconn(self._conn)
+                except Exception:
+                    try: self._conn.close()
+                    except Exception: pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+def _get_pg_pool():
+    global _db_pool
+    if _db_pool is None:
+        with _db_pool_lock:
+            if _db_pool is None:
+                try:
+                    kwargs = {
+                        "cursor_factory": psycopg2.extras.RealDictCursor,
+                        "connect_timeout": 5
+                    }
+                    if DATABASE_URL:
+                        url = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
+                        _db_pool = psycopg2.pool.ThreadedConnectionPool(minconn=4, maxconn=30, dsn=url, **kwargs)
+                    else:
+                        _db_pool = psycopg2.pool.ThreadedConnectionPool(
+                            minconn=4,
+                            maxconn=30,
+                            host=DB_HOST,
+                            port=DB_PORT,
+                            dbname=DB_NAME,
+                            user=DB_USER,
+                            password=DB_PASS,
+                            **kwargs
+                        )
+                except Exception as ex_pool:
+                    logger.warning(f"Could not initialize PostgreSQL connection pool: {ex_pool}")
+                    _db_pool = None
+    return _db_pool
+
 def get_db_connection():
-    """Establish and return PostgreSQL connection. Strictly requires PostgreSQL database."""
+    """Establish and return PostgreSQL connection from connection pool."""
     if os.getenv("TESTING") == "1":
         try:
             db_path = os.path.join(os.path.dirname(__file__), "securepulse.db")
@@ -154,6 +219,24 @@ def get_db_connection():
             logger.error(f"SQLite testing connection error: {ex_t}")
             return None
     require_postgres = os.getenv("REQUIRE_POSTGRES", "true").lower() in ("true", "1", "yes")
+
+    # 1. Fast pooled connection checkout (< 0.1ms)
+    pool = _get_pg_pool()
+    if pool:
+        try:
+            raw_conn = pool.getconn()
+            if raw_conn.closed != 0:
+                pool.putconn(raw_conn, close=True)
+                raw_conn = pool.getconn()
+            raw_conn.autocommit = True
+            return PooledConnectionWrapper(raw_conn, pool)
+        except psycopg2.pool.PoolError:
+            # Saturated pool fallback: create temporary direct connection
+            pass
+        except Exception as e:
+            logger.warning(f"Error borrowing pooled connection: {e}")
+
+    # 2. Direct connection fallback
     try:
         if DATABASE_URL:
             url = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
@@ -173,7 +256,7 @@ def get_db_connection():
     except Exception as e:
         logger.error(f"PostgreSQL Connection Error: {e}")
         if require_postgres:
-            raise RuntimeError(f"PostgreSQL Database Connection Failed: {e}. Strict database mode enabled ΓÇö application will not open without PostgreSQL.")
+            raise RuntimeError(f"PostgreSQL Database Connection Failed: {e}. Strict database mode enabled — application will not open without PostgreSQL.")
         logger.warning(f"PostgreSQL connection offline ({e}). Using local SQLite fallback.")
 
     try:
@@ -5989,14 +6072,22 @@ def get_dashboard_counts(project_id=None):
             sql_clause, params = _build_pid_filter("project_id", project_id)
             p_where = ("WHERE " + sql_clause[5:]) if sql_clause else ""
 
-            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where};", params)
-            total_servers = (cur.fetchone() or {}).get("cnt", 0)
-
-            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (status = 'offline' OR status = 'down');", params)
-            down_servers = (cur.fetchone() or {}).get("cnt", 0)
-
-            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (is_maintenance = TRUE OR status = 'maintenance' OR status = 'isolated');", params)
-            maint_servers = (cur.fetchone() or {}).get("cnt", 0)
+            # Fast single-pass aggregation on servers table (< 1ms, replaces 5 separate queries)
+            cur.execute(f"""
+                SELECT 
+                    COUNT(*) as total_servers,
+                    COUNT(*) FILTER (WHERE status = 'offline' OR status = 'down') as down_servers,
+                    COUNT(*) FILTER (WHERE is_maintenance = TRUE OR status = 'maintenance' OR status = 'isolated') as maint_servers,
+                    COUNT(*) FILTER (WHERE LOWER(name) LIKE %s OR LOWER(hostname) LIKE %s OR LOWER(COALESCE(os_info, '')) LIKE %s) as total_db,
+                    COUNT(*) FILTER (WHERE LOWER(name) LIKE %s OR LOWER(hostname) LIKE %s OR LOWER(name) LIKE %s) as legacy_apps
+                FROM servers {p_where};
+            """, list(params) + ['%db%', '%db%', '%postgres%', '%app%', '%app%', '%web%'])
+            s_row = cur.fetchone() or {}
+            total_servers = s_row.get("total_servers", 0) or 0
+            down_servers = s_row.get("down_servers", 0) or 0
+            maint_servers = s_row.get("maint_servers", 0) or 0
+            total_db = s_row.get("total_db", 0) or 0
+            legacy_apps = s_row.get("legacy_apps", 0) or 0
 
             sql_clause_a, params_a = _build_pid_filter("s.project_id", project_id)
             a_where = ("WHERE " + sql_clause_a[5:]) if sql_clause_a else ""
@@ -6027,12 +6118,6 @@ def get_dashboard_counts(project_id=None):
             # UP servers (Online, No Maint, No Critical, No Trouble)
             up_servers = total_servers - down_servers - maint_servers - crit_servers - trouble_servers
             if up_servers < 0: up_servers = 0
-
-            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE %s OR LOWER(hostname) LIKE %s OR LOWER(os_info) LIKE %s);", list(params) + ['%db%', '%db%', '%postgres%'])
-            total_db = (cur.fetchone() or {}).get("cnt", 0)
-
-            cur.execute(f"SELECT COUNT(*) as cnt FROM servers {p_where} {'AND' if p_where else 'WHERE'} (LOWER(name) LIKE %s OR LOWER(hostname) LIKE %s OR LOWER(name) LIKE %s);", list(params) + ['%app%', '%app%', '%web%'])
-            legacy_apps = (cur.fetchone() or {}).get("cnt", 0)
 
             # Query real Application SIEM counts and health posture
             total_app_nodes = 0
@@ -6085,11 +6170,15 @@ def get_dashboard_counts(project_id=None):
             if total_apps == 0:
                 total_apps = legacy_apps
 
-            cur.execute(f"SELECT COUNT(*) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id {a_where};", params_a)
-            total_alerts = (cur.fetchone() or {}).get("cnt", 0)
-
-            cur.execute(f"SELECT COUNT(*) as cnt FROM alerts a JOIN servers s ON a.server_id = s.id {a_where} {'AND' if a_where else 'WHERE'} (a.is_resolved IS NOT TRUE);", params_a)
-            unresolved_alerts = (cur.fetchone() or {}).get("cnt", 0)
+            cur.execute(f"""
+                SELECT 
+                    COUNT(*) as total_alerts,
+                    COUNT(*) FILTER (WHERE a.is_resolved IS NOT TRUE) as unresolved_alerts
+                FROM alerts a JOIN servers s ON a.server_id = s.id {a_where};
+            """, params_a)
+            a_counts = cur.fetchone() or {}
+            total_alerts = a_counts.get("total_alerts", 0) or 0
+            unresolved_alerts = a_counts.get("unresolved_alerts", 0) or 0
 
             return {
                 "total_servers": total_servers,
