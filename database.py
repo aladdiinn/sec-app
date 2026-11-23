@@ -2311,7 +2311,7 @@ def get_servers(project_id=None):
                     OR s.approved_at IS NOT NULL
                     OR EXISTS (
                         SELECT 1 FROM approvals a2 
-                        WHERE (a2.server_id = s.id OR LOWER(a2.hostname) = LOWER(s.hostname) OR LOWER(a2.hostname) = LOWER(s.name) OR a2.ip_address = s.ip OR a2.ip_address = s.ip_address) 
+                        WHERE (LOWER(a2.hostname) = LOWER(s.hostname) OR LOWER(a2.hostname) = LOWER(s.name) OR a2.ip_address = s.ip OR a2.ip_address = s.ip_address) 
                         AND a2.status = 'approved'
                     )
                     OR NOT EXISTS (
@@ -2761,6 +2761,7 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
                     if not srv_tok or srv_tok.startswith("sp-token-"):
                         if not srv_tok:
                             srv_tok = f"sp-token-{secrets.token_urlsafe(24)}"
+                    unassigned_pid = get_unassigned_project_id() or 1
                     cur.execute("""
                         UPDATE servers 
                         SET status = 'online', last_seen = NOW(), 
@@ -2772,15 +2773,15 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
                             machine_id = COALESCE(NULLIF(%s, ''), machine_id),
                             approved_by = COALESCE(approved_by, 'admin'),
                             approved_at = COALESCE(approved_at, NOW()),
-                            project_id = COALESCE(project_id, (SELECT id FROM projects WHERE is_unassigned = TRUE LIMIT 1), 1)
+                            project_id = COALESCE(project_id, %s)
                         WHERE id = %s;
-                    """, (clean_hostname, clean_hostname, ip_address, ip_address, srv_tok, machine_id, srv_id))
+                    """, (clean_hostname, clean_hostname, ip_address, ip_address, srv_tok, machine_id, unassigned_pid, srv_id))
                     # Also record in approvals
                     try:
                         cur.execute("""
-                            INSERT INTO approvals (hostname, ip_address, agent_token, status, node_type, machine_id, requested_at, approved_at, approved_by, created_at, registered_at, server_id)
-                            VALUES (%s, %s, %s, 'approved', 'server', %s, NOW(), NOW(), %s, NOW(), NOW(), %s);
-                        """, (clean_hostname, ip_address, srv_tok, machine_id, existing_srv.get("approved_by") or "admin", srv_id))
+                            INSERT INTO approvals (hostname, ip_address, agent_token, status, node_type, machine_id, requested_at, approved_at, approved_by, created_at, registered_at)
+                            VALUES (%s, %s, %s, 'approved', 'server', %s, NOW(), NOW(), %s, NOW(), NOW());
+                        """, (clean_hostname, ip_address, srv_tok, machine_id, existing_srv.get("approved_by") or "admin"))
                     except Exception:
                         pass
                     # Clear any stale pending approvals for this IP so get_servers does not hide it
@@ -2788,8 +2789,8 @@ def add_approval_request(hostname: str, ip_address: str, token: str = None, node
                         cur.execute("""
                             UPDATE approvals
                             SET status = 'approved', approved_at = NOW(), approved_by = COALESCE(approved_by, 'admin')
-                            WHERE (ip_address = %s OR LOWER(hostname) = LOWER(%s) OR server_id = %s) AND status = 'pending';
-                        """, (ip_address, clean_hostname, srv_id))
+                            WHERE (ip_address = %s OR LOWER(hostname) = LOWER(%s)) AND status = 'pending';
+                        """, (ip_address, clean_hostname))
                     except Exception:
                         pass
                     # Register identity link
