@@ -3719,13 +3719,16 @@ def authenticate_agent_request(request: Request, body_data: dict = None) -> tupl
             except Exception: pass
             finally: conn.close()
 
-    # Step 0.5: Match by Machine ID (Hardware Fingerprint)
+    # Step 0.5: Match by Machine ID (Hardware Fingerprint) — require IP match to isolate cloned VMs
     if not server_id and machine_id:
         conn = db.get_db_connection()
         if conn:
             try:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT id FROM servers WHERE machine_id = %s LIMIT 1;", (machine_id,))
+                    if server_ip and server_ip not in ("127.0.0.1", "0.0.0.0", "localhost"):
+                        cur.execute("SELECT id FROM servers WHERE machine_id = %s AND (ip = %s OR ip_address = %s) LIMIT 1;", (machine_id, server_ip, server_ip))
+                    else:
+                        cur.execute("SELECT id FROM servers WHERE machine_id = %s LIMIT 1;", (machine_id,))
                     r = cur.fetchone()
                     if r:
                         server_id = r["id"] if isinstance(r, dict) else r[0]
