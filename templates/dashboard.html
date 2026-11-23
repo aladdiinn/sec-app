@@ -1113,66 +1113,72 @@ let globalAppsList = [];
 let activeModalServerId = null;
 
 let _isDashboardLoading = false;
+
+function applyCounts(counts) {
+    if (!counts) return;
+    if (document.getElementById('noc-c-down')) document.getElementById('noc-c-down').innerText = counts.down_servers ?? 0;
+    if (document.getElementById('noc-c-critical')) document.getElementById('noc-c-critical').innerText = counts.critical_alerts ?? 0;
+    if (document.getElementById('noc-c-trouble')) document.getElementById('noc-c-trouble').innerText = counts.trouble_servers ?? 0;
+    if (document.getElementById('noc-c-maint')) document.getElementById('noc-c-maint').innerText = counts.maintenance_servers ?? 0;
+    if (document.getElementById('noc-c-up')) document.getElementById('noc-c-up').innerText = counts.online_servers ?? 0;
+
+    if (document.getElementById('sum-servers')) document.getElementById('sum-servers').innerText = counts.total_servers ?? 0;
+    if (document.getElementById('sum-app-nodes')) {
+        document.getElementById('sum-app-nodes').innerText = counts.total_app_nodes ?? 0;
+    }
+    if (document.getElementById('sum-apps')) {
+        document.getElementById('sum-apps').innerText = counts.total_apps ?? 0;
+    }
+    if (document.getElementById('sum-monitored')) {
+        document.getElementById('sum-monitored').innerText = (counts.total_servers ?? 0) + (counts.total_app_nodes ?? 0);
+    }
+    if (document.getElementById('sum-active-issues')) {
+        document.getElementById('sum-active-issues').innerText = (counts.critical_alerts ?? 0) + (counts.trouble_servers ?? 0);
+    }
+}
+
+// ── INSTANT ZERO-MILLISECOND RESTORE FROM LOCAL CACHE (STALE-WHILE-REVALIDATE) ──
+try {
+    const cCounts = JSON.parse(localStorage.getItem('soc_dash_counts') || 'null');
+    const cServers = JSON.parse(localStorage.getItem('soc_dash_servers') || 'null');
+    const cApps = JSON.parse(localStorage.getItem('soc_dash_apps') || 'null');
+    if (cCounts) applyCounts(cCounts);
+    if (cServers && Array.isArray(cServers) && cServers.length > 0) globalServersList = cServers;
+    if (cApps && Array.isArray(cApps) && cApps.length > 0) globalAppsList = cApps;
+    if ((globalServersList && globalServersList.length > 0) || (globalAppsList && globalAppsList.length > 0)) {
+        renderServicesGrid();
+    }
+} catch(e) {}
+
 async function loadDashboardData() {
     if (_isDashboardLoading) return;
     _isDashboardLoading = true;
     try {
-        // Parallelize fetching counts, servers, and apps with client-side timeout protection (Requirement 14)
-        const [countsResult, serversResult, appsResult] = await Promise.allSettled([
-            apiFetch('/api/dashboard/counts', { timeout: 8000 }),
-            apiFetch('/api/servers', { timeout: 8000 }),
-            apiFetch('/api/apps', { timeout: 8000 }).catch(() => [])
-        ]);
-
-        let hasData = false;
-
-        if (countsResult.status === 'fulfilled' && countsResult.value) {
-            hasData = true;
-            const counts = countsResult.value;
-            document.getElementById('noc-c-down').innerText = counts.down_servers ?? 0;
-            document.getElementById('noc-c-critical').innerText = counts.critical_alerts ?? 0;
-            document.getElementById('noc-c-trouble').innerText = counts.trouble_servers ?? 0;
-            document.getElementById('noc-c-maint').innerText = counts.maintenance_servers ?? 0;
-            document.getElementById('noc-c-up').innerText = counts.online_servers ?? 0;
-
-            document.getElementById('sum-servers').innerText = counts.total_servers ?? 0;
-            if (document.getElementById('sum-app-nodes')) {
-                document.getElementById('sum-app-nodes').innerText = counts.total_app_nodes ?? 0;
+        // Parallel non-blocking fetches — update UI immediately as each endpoint resolves
+        const countsPromise = apiFetch('/api/dashboard/counts', { timeout: 8000 }).then(counts => {
+            if (counts) {
+                applyCounts(counts);
+                try { localStorage.setItem('soc_dash_counts', JSON.stringify(counts)); } catch(e){}
             }
-            if (document.getElementById('sum-apps')) {
-                document.getElementById('sum-apps').innerText = counts.total_apps ?? 0;
+        }).catch(err => console.debug('counts fetch err', err));
+
+        const serversPromise = apiFetch('/api/servers', { timeout: 8000 }).then(sVal => {
+            if (sVal) {
+                globalServersList = Array.isArray(sVal) ? sVal : (sVal.servers || []);
+                try { localStorage.setItem('soc_dash_servers', JSON.stringify(globalServersList)); } catch(e){}
+                renderServicesGrid();
             }
-            document.getElementById('sum-monitored').innerText = (counts.total_servers ?? 0) + (counts.total_app_nodes ?? 0);
-            document.getElementById('sum-active-issues').innerText = (counts.critical_alerts ?? 0) + (counts.trouble_servers ?? 0);
-        }
+        }).catch(err => console.debug('servers fetch err', err));
 
-        if (serversResult.status === 'fulfilled' && serversResult.value) {
-            hasData = true;
-            const sVal = serversResult.value;
-            globalServersList = Array.isArray(sVal) ? sVal : (sVal.servers || []);
-        }
-
-        if (appsResult.status === 'fulfilled' && appsResult.value) {
-            hasData = true;
-            globalAppsList = Array.isArray(appsResult.value) ? appsResult.value : [];
-        }
-
-        // Only re-render if we received data or if we already had assets rendered
-        if (hasData || (globalServersList && globalServersList.length > 0) || (globalAppsList && globalAppsList.length > 0)) {
-            renderServicesGrid();
-        } else {
-            // First load failed under heavy ingestion load: show Degraded / Retry banner instead of infinite spinner
-            const grid = document.getElementById('services-cards-grid');
-            if (grid) {
-                grid.innerHTML = `
-                    <div style="grid-column:1/-1; padding:60px 20px; text-align:center; background:rgba(239,68,68,0.05); border:1px solid rgba(239,68,68,0.25); border-radius:12px; margin:20px 0;">
-                        <div style="font-size:32px; margin-bottom:12px;">⚠️</div>
-                        <div style="font-size:16px; font-weight:700; color:var(--red); margin-bottom:6px;">TELEMETRY INGESTION HIGH LOAD — DASHBOARD DEGRADED</div>
-                        <div style="font-size:13px; color:var(--text3); max-width:550px; margin:0 auto 16px;">The central monitoring backend is processing incoming telemetry batches or shedding load. Monitored nodes and NOC counters will catch up automatically.</div>
-                        <button class="btn btn-sm btn-outline-cyan" onclick="loadDashboardData()" style="padding:6px 18px; font-size:12px; cursor:pointer;">🔄 Retry Connection</button>
-                    </div>`;
+        const appsPromise = apiFetch('/api/apps', { timeout: 8000 }).then(aVal => {
+            if (aVal) {
+                globalAppsList = Array.isArray(aVal) ? aVal : [];
+                try { localStorage.setItem('soc_dash_apps', JSON.stringify(globalAppsList)); } catch(e){}
+                renderServicesGrid();
             }
-        }
+        }).catch(err => console.debug('apps fetch err', err));
+
+        await Promise.allSettled([countsPromise, serversPromise, appsPromise]);
     } catch(e) {
         console.error('Error loading dashboard data:', e);
         const grid = document.getElementById('services-cards-grid');
@@ -1588,7 +1594,15 @@ function renderServicesGrid() {
 
         // Alert box content
         let alertBox = '<div class="service-alert-box sab-normal"> <strong>NORMAL</strong> All checks operational</div>';
-        const degEntries = s.degraded_collectors && typeof s.degraded_collectors === 'object' ? Object.entries(s.degraded_collectors) : [];
+        const degEntries = s.degraded_collectors && typeof s.degraded_collectors === 'object' 
+            ? Object.entries(s.degraded_collectors).filter(([k, v]) => {
+                const kl = k.toLowerCase();
+                if (kl.includes('heartbeat') || kl.includes('telemetry_loop') || kl.includes('network') || kl.includes('socket')) return false;
+                const msg = String((v && v.message) || v || '').toLowerCase();
+                if (msg.includes('connection refused') || msg.includes('errno 111') || msg.includes('timed out') || msg.includes('unreachable')) return false;
+                return true;
+            })
+            : [];
         if (item.computedStatus === 'DOWN') {
             alertBox = '<div class="service-alert-box" style="background:rgba(239, 68, 68, 0.1); color:var(--red); border:1px solid rgba(239, 68, 68, 0.3);"> <strong>OFFLINE / DOWN</strong> Connection Lost</div>';
         } else if (degEntries.length > 0) {

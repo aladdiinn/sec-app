@@ -547,6 +547,24 @@ async function openAppDetailsModal(id) {
     modal.style.display = 'block';
     switchModalTab('overview');
 
+    // Instant pre-population from in-memory apps cache (0ms lag)
+    const appsPool = (typeof globalAppsList !== 'undefined' && Array.isArray(globalAppsList) && globalAppsList.length > 0) 
+        ? globalAppsList 
+        : (typeof currentApplications !== 'undefined' && Array.isArray(currentApplications) ? currentApplications : []);
+    const cachedApp = appsPool.find(a => a.id === id);
+    if (cachedApp) {
+        document.getElementById('pop-app-name').innerText = cachedApp.name || 'Application';
+        document.getElementById('pop-app-url').innerText = cachedApp.primary_url || '';
+        if (typeof updateAppReadUI === 'function') updateAppReadUI(cachedApp.is_read === true || cachedApp.is_read === 'true');
+        document.getElementById('pop-metric-comps').innerText = cachedApp.components_ratio || (cachedApp.components ? cachedApp.components.length : 0);
+        document.getElementById('pop-metric-epm').innerText = cachedApp.events_per_min ?? 0;
+        document.getElementById('pop-metric-inc').innerText = cachedApp.open_incidents ?? 0;
+        document.getElementById('pop-metric-last').innerText = cachedApp.last_event_formatted || 'never';
+        if (document.getElementById('set-app-name')) document.getElementById('set-app-name').innerText = cachedApp.name || '-';
+        if (document.getElementById('set-app-url')) document.getElementById('set-app-url').innerText = cachedApp.primary_url || '-';
+        if (document.getElementById('set-app-env')) document.getElementById('set-app-env').innerText = cachedApp.environment || 'Production';
+    }
+
     // Update URL hash without navigation to support browser back button
     if (window.location.hash !== `#app-${id}`) {
         history.pushState({ appModal: id }, '', `#app-${id}`);

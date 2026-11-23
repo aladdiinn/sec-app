@@ -88,7 +88,15 @@ function getUnifiedAssetStatus(item) {
     const troubleAlerts = Number(s.trouble_alert_count || 0);
     const alertCount = Number(s.alert_count || 0);
 
-    const degCount = (s.degraded_collectors && typeof s.degraded_collectors === 'object') ? Object.keys(s.degraded_collectors).length : 0;
+    const degCount = (s.degraded_collectors && typeof s.degraded_collectors === 'object')
+        ? Object.entries(s.degraded_collectors).filter(([k, v]) => {
+            const kl = k.toLowerCase();
+            if (kl.includes('heartbeat') || kl.includes('telemetry_loop') || kl.includes('network') || kl.includes('socket')) return false;
+            const msg = String((v && v.message) || v || '').toLowerCase();
+            if (msg.includes('connection refused') || msg.includes('errno 111') || msg.includes('timed out') || msg.includes('unreachable')) return false;
+            return true;
+        }).length
+        : 0;
     if (troubleAlerts > 0 || alertCount > 0 || (sev !== 'info' && sev !== 'normal') || cpu > 85 || ram > 85 || disk > 85 || degCount > 0) {
         return 'TROUBLE';
     }

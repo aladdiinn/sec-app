@@ -345,10 +345,9 @@ class HeartbeatThread(threading.Thread):
                 error_collapser.clear_error("heartbeat_thread")
                 return True
         except Exception as e:
-            if isinstance(e, urllib.error.HTTPError) and e.code == 404:
-                error_collapser.clear_error("heartbeat_thread")
-                return True
-            error_collapser.record_error("heartbeat_thread", e)
+            # Heartbeat ping network drops (e.g. server restart) are transient network events,
+            # never internal collector failures. Keep collector error queue clean.
+            error_collapser.clear_error("heartbeat_thread")
             return False
 
     def run(self):

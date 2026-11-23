@@ -2326,8 +2326,15 @@ def get_servers(project_id=None):
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE servers SET status = 'offline' WHERE (last_seen < NOW() - INTERVAL '3 minutes' OR last_seen IS NULL) AND status = 'online' AND is_maintenance IS NOT TRUE;")
-            conn.commit()
+            global _last_servers_offline_check_time
+            now_ts = time.time()
+            if '_last_servers_offline_check_time' not in globals() or (now_ts - _last_servers_offline_check_time > 60):
+                _last_servers_offline_check_time = now_ts
+                try:
+                    cur.execute("UPDATE servers SET status = 'offline' WHERE (last_seen < NOW() - INTERVAL '3 minutes' OR last_seen IS NULL) AND status = 'online' AND is_maintenance IS NOT TRUE;")
+                    conn.commit()
+                except Exception:
+                    pass
             sql_clause, params = _build_pid_filter("s.project_id", project_id)
             where_parts = []
             if sql_clause:
@@ -4225,8 +4232,20 @@ def update_server_heartbeat(server_id: int, cpu=0.0, memory=0.0, disk=0.0, degra
     conn = get_db_connection()
     if not conn: return False
     try:
+        # Filter out transient network transmission errors (heartbeat_thread, connection refused, timeouts)
+        clean_deg = {}
+        if isinstance(degraded_collectors, dict):
+            for k, v in degraded_collectors.items():
+                k_lower = str(k).lower()
+                if any(net_key in k_lower for net_key in ["heartbeat", "telemetry_loop", "network", "socket"]):
+                    continue
+                msg = str((v.get("message") if isinstance(v, dict) else v) or "").lower()
+                if any(net_err in msg for net_err in ["connection refused", "errno 111", "timed out", "unreachable", "handshake"]):
+                    continue
+                clean_deg[k] = v
+
         with conn.cursor() as cur:
-            deg_json = json.dumps(degraded_collectors or {})
+            deg_json = json.dumps(clean_deg)
             cur.execute("""
                 UPDATE servers
                 SET last_seen = NOW(),
