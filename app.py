@@ -2823,6 +2823,17 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
     if (str(alert_type).upper() == "AUDIT_APP_MOD" or "app mod alert by" in str(title or "").lower()) and not _is_rule_enabled('AUDIT_APP_MOD', default=False) and not _is_rule_enabled('app_mod', default=False):
         return
 
+    # Suppress specific noisy routine operations for user sateesh.j (without disabling the underlying rules)
+    clean_t = str(title or "").lower()
+    clean_m = str(message or "").lower()
+    if "sateesh.j" in clean_t or "sateesh.j" in clean_m:
+        # Routine application directory permission maintenance falsely flagging as Sudoers Modification
+        if "sudoers modification" in clean_t and ("/application/" in clean_m or "/etc/sudoers" not in clean_m):
+            return
+        # Routine SSSD PAM authentication failure noise
+        if ("failed root escalation" in clean_t or str(alert_type).upper() == "SUDO_ROOT_ESCALATION") and "pam_sss" in clean_m:
+            return
+
     is_session_or_temp = (
         "session" in str(alert_type).lower() or 
         "session" in str(title or "").lower() or 
@@ -2937,7 +2948,7 @@ def _check_sudo_misuse(server_id, data):
         # Passwd dumping / tampering
         (re.compile(r'cat\s+/etc/shadow', re.IGNORECASE), 'Shadow File Dumping', 'critical', 'Credential Access Alert', 'SUDO_SHADOW_FILE_DUMPING'),
         (re.compile(r'cat\s+/etc/passwd', re.IGNORECASE), 'Passwd File Access', 'critical', 'Credential Access Alert', 'SUDO_PASSWD_FILE_ACCESS'),
-        (re.compile(r'(visudo|sudoedit|tee.*sudoers|>>.*sudoers|(?:vi|vim|nano)\s+/etc/sudoers)', re.IGNORECASE), 'Sudoers Modification', 'critical', 'Privilege Escalation Alert', 'SUDO_SUDOERS_MODIFICATION'),
+        (re.compile(r'\b(visudo|sudoedit)\b|tee\s+(?:-a\s+)?/etc/sudoers(?:\.d/|\b)|>>\s*/etc/sudoers(?:\.d/|\b)|(?:vi|vim|nano)\s+/etc/sudoers(?:\.d/|\b)', re.IGNORECASE), 'Sudoers Modification', 'critical', 'Privilege Escalation Alert', 'SUDO_SUDOERS_MODIFICATION'),
         # PostgreSQL CLI Deletions and Privilege grants via command line
         (re.compile(r'\b(dropdb|dropuser)\b', re.IGNORECASE), 'PostgreSQL CLI Deletion', 'critical', 'PostgreSQL Database Deletion Alert', 'PG_DB_DELETED'),
         (re.compile(r'\b(createuser\s+.*(?:-s|--superuser))\b', re.IGNORECASE), 'PostgreSQL Superuser Creation', 'critical', 'PostgreSQL Privilege Escalation Alert', 'PG_PRIVILEGE_CHANGE'),
@@ -3001,6 +3012,12 @@ def _check_sudo_misuse(server_id, data):
             if rule_name in matched_rules:
                 continue
             if pat.search(text):
+                # Suppress false-positive Sudoers Modification if text does not touch /etc/sudoers
+                if rule_name == 'Sudoers Modification' and '/etc/sudoers' not in text:
+                    continue
+                # Suppress routine SSSD PAM authentication failures for user sateesh.j
+                if rule_name == 'Failed Root Escalation Attempt' and 'pam_sss' in text and ('sateesh.j' in text or 'sateesh.j' in str(actor or "")):
+                    continue
                 matched_rules.add(rule_name)
                 # Universally resolve human user (never root/unknown)
                 display_actor = _resolve_server_human_actor(server_id, data, text, rule_name)
