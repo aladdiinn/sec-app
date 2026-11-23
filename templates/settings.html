@@ -165,6 +165,7 @@ input:checked + .slider:before { transform: translateX(14px); background-color: 
             </div>
         </form>
     </div>
+    {% endif %}
 
     {% if user and (user.role == 'admin' or user.role == 'superuser') %}
     <!-- Email Notifications & SES Health (Admin Only) -->
