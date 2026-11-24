@@ -577,6 +577,10 @@ def run_s3_archiver_loop():
         import s3_archiver
     except ImportError:
         logger.warning("s3_archiver module not found. S3 archival disabled.")
+        try:
+            __lock_conn.close()
+        except Exception:
+            pass
         return
         
     _last_s3_purge = 0.0
@@ -812,7 +816,7 @@ app = FastAPI(title="EC2 Security Monitor", version=APP_VERSION, lifespan=lifesp
 MAX_COMPRESSED_INVENTORY_BYTES = 2 * 1024 * 1024      # 2 MB
 MAX_DECOMPRESSED_INVENTORY_BYTES = 10 * 1024 * 1024  # 10 MB
 
-MAX_CONCURRENT_EVENT_INGESTIONS = 4
+MAX_CONCURRENT_EVENT_INGESTIONS = 20
 _active_event_ingestion_count = 0
 _concurrency_lock = threading.Lock()
 _rate_limit_buckets = {}  # ip -> list of timestamps
@@ -823,7 +827,7 @@ _last_throttled_log = {}  # (ip, reason) -> timestamp
 class RawAgentFloodMiddleware:
     """
     Pure Raw ASGI Rate Limiter & Concurrency Load Shedder (Zero AnyIO memory streams).
-    - Capped to MAX_CONCURRENT_EVENT_INGESTIONS (4) concurrent DB transactions on /api/app/events.
+    - Capped to MAX_CONCURRENT_EVENT_INGESTIONS (20) concurrent DB transactions on /api/app/events.
     - Excess load shed immediately with HTTP 503 and Retry-After: 3.
     - O(1) in-memory rate limiting: max 10 requests / 5s per IP. Exceeding triggers HTTP 429 and Retry-After: 30.
     - Quarantines malicious / unauthorized agent floods (HTTP 401 repeated failures) with cooldown.
@@ -869,14 +873,14 @@ class RawAgentFloodMiddleware:
                 bucket.append(now)
                 _rate_limit_buckets[client_ip] = bucket
 
-                if len(bucket) > 25:
+                if len(bucket) > 50:
                     _quarantined_agent_ips[client_ip] = now + 15.0
                     log_key = (client_ip, "rate_limit")
                     if now - _last_throttled_log.get(log_key, 0.0) > 60:
                         _last_throttled_log[log_key] = now
-                        logger.warning(f"[RATE-LIMIT] Agent {client_ip} exceeded threshold (>25 reqs/5s). Applying 15s cooldown.")
+                        logger.warning(f"[RATE-LIMIT] Agent {client_ip} exceeded threshold (>50 reqs/5s). Applying 15s cooldown.")
 
-                    resp_body = b'{"status":"error","code":429,"reason":"Rate limited. Exceeded 25 requests per 5s. Back off.","retry_after":15}'
+                    resp_body = b'{"status":"error","code":429,"reason":"Rate limited. Exceeded 50 requests per 5s. Back off.","retry_after":15}'
                     await send({
                         "type": "http.response.start",
                         "status": 429,
@@ -1514,6 +1518,9 @@ async def auth_login(request: Request):
                 conn.commit()
         except Exception:
             pass
+        finally:
+            try: conn.close()
+            except Exception: pass
         return JSONResponse(status_code=403, content={"ok": False, "error": "Access Denied: Admin interface restricted to authorized IP allowlist"})
 
     try:
@@ -1678,7 +1685,7 @@ async def servers_page(request: Request):
 
 @app.get("/apps", response_class=HTMLResponse)
 @app.get("/applications", response_class=HTMLResponse)
-def apps_page(request: Request):
+async def apps_page(request: Request):
     user = get_session_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
@@ -5734,6 +5741,19 @@ def api_get_alerts(request: Request = None, limit: int = 100, severity: str = No
     finally:
         conn.close()
 
+@app.get("/api/alerts/unread-count")
+def api_alerts_unread_count(request: Request, server_id: Optional[int] = None, project_id: Optional[str] = None):
+    pid = get_effective_project_id(request)
+    open_cnt = db.get_open_incidents_count(project_id=pid)
+    unread_cnt = db.get_unread_alerts_count(project_id=pid)
+    active_cnt = open_cnt if open_cnt > 0 else unread_cnt
+    return {
+        "unread_count": active_cnt,
+        "unread": unread_cnt,
+        "open_count": open_cnt,
+        "count": active_cnt
+    }
+
 @app.get("/api/alerts/{id}")
 async def api_get_alert_by_id(id: int):
     conn = db.get_db_connection()
@@ -9773,19 +9793,6 @@ async def api_reject_request(app_id: int, request: Request):
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Incidents
-@app.get("/api/alerts/unread-count")
-def api_alerts_unread_count(request: Request):
-    pid = get_effective_project_id(request)
-    open_cnt = db.get_open_incidents_count(project_id=pid)
-    unread_cnt = db.get_unread_alerts_count(project_id=pid)
-    active_cnt = open_cnt if open_cnt > 0 else unread_cnt
-    return {
-        "unread_count": active_cnt,
-        "unread": unread_cnt,
-        "open_count": open_cnt,
-        "count": active_cnt
-    }
-
 @app.get("/api/incidents")
 async def api_get_incidents(
     request: Request,
@@ -11808,7 +11815,7 @@ _apps_cache = {}
 
 @app.get("/api/apps")
 @app.get("/api/applications")
-def api_get_apps(request: Request, status: Optional[str] = None):
+async def api_get_apps(request: Request, status: Optional[str] = None):
     user = get_session_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -11819,10 +11826,10 @@ def api_get_apps(request: Request, status: Optional[str] = None):
     now = time.time()
     cache_key = (str(pid), str(status))
     entry = _apps_cache.get(cache_key)
-    if entry and (now - entry[0] < 3.0):
+    if entry and (now - entry[0] < 5.0):
         return entry[1]
 
-    apps = db.get_applications(project_id=pid, status_filter=status)
+    apps = await run_in_threadpool(db.get_applications, project_id=pid, status_filter=status)
     _apps_cache[cache_key] = (now, apps)
     return apps
 

@@ -727,8 +727,20 @@ def get_applications(conn, project_id=None, status_filter=None):
             GROUP BY a.id, p.name
             ORDER BY a.name ASC;
         """
-        cur.execute(sql, tuple(params))
-        rows = cur.fetchall()
+        try:
+            try:
+                cur.execute("SET LOCAL statement_timeout = '4000ms';")
+            except Exception:
+                pass
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        except Exception as ex_fetch:
+            logger.warning(f"Fast get_applications fallback triggered: {ex_fetch}")
+            try:
+                cur.execute(f"SELECT a.*, p.name as project_name FROM applications a LEFT JOIN projects p ON a.project_id = p.id WHERE {' AND '.join(where_clauses)} ORDER BY a.name ASC;", tuple(params))
+                rows = cur.fetchall()
+            except Exception:
+                rows = []
 
         result = []
         now_utc = datetime.now(timezone.utc)

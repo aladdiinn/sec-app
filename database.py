@@ -164,9 +164,10 @@ class PooledConnectionWrapper:
             if self._pool and self._conn:
                 try:
                     if not self._conn.closed:
-                        if not getattr(self._conn, "autocommit", True):
-                            try: self._conn.rollback()
-                            except Exception: pass
+                        try:
+                            self._conn.rollback()
+                        except Exception:
+                            pass
                     self._pool.putconn(self._conn)
                 except Exception:
                     try: self._conn.close()
@@ -1686,6 +1687,15 @@ def init_db():
 
             # Update existing rules for chmod/chown and SSH
             try:
+                # Deduplicate detection_rules by name and ensure unique index
+                try:
+                    cur.execute("""
+                        DELETE FROM detection_rules a USING detection_rules b
+                        WHERE a.id > b.id AND a.name = b.name;
+                    """)
+                    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_detection_rules_name ON detection_rules (name);")
+                except Exception:
+                    pass
                 cur.execute("UPDATE detection_rules SET pattern = 'chmod|chown' WHERE name = 'Global Permission Modification' AND pattern = 'chmod 777';")
                 cur.execute("UPDATE detection_rules SET pattern = 'Failed password|authentication failure|AUTH_FAIL|Invalid user' WHERE name = 'SSH Brute Force Attempt' AND pattern NOT LIKE '%Invalid user%';")
                 cur.execute(r"UPDATE detection_rules SET pattern = ':\\(\\)\\s*\\{\\s*:\|:&\\s*\\};:|:(){:|:&};:|:(){ :|:& };:' WHERE name = 'Fork Bomb Denial of Service';")
@@ -1808,8 +1818,9 @@ def init_db():
                 try:
                     cur.execute("""
                         INSERT INTO detection_rules (name, pattern, severity, enabled, event_type, mitre_tactic, mitre_technique)
-                        VALUES (%s, %s, %s, TRUE, %s, %s, %s) ON CONFLICT (name) DO NOTHING;
-                    """, (r_name, r_pat, r_sev, r_type, r_tac, r_tech))
+                        SELECT %s, %s, %s, TRUE, %s, %s, %s
+                        WHERE NOT EXISTS (SELECT 1 FROM detection_rules WHERE name = %s);
+                    """, (r_name, r_pat, r_sev, r_type, r_tac, r_tech, r_name))
                 except Exception:
                     pass
 
@@ -9348,7 +9359,7 @@ def synthesize_services_for_server(server_id, conn=None):
             # 2. Fetch server ports
             ports_data = []
             try:
-                cur.execute("SELECT port, proto, process, cmdline, user FROM server_ports WHERE server_id = %s;", (server_id,))
+                cur.execute("SELECT port, proto, process_name AS process, cmdline, user_name AS \"user\" FROM server_ports WHERE server_id = %s;", (server_id,))
                 for r in cur.fetchall():
                     ports_data.append(dict(r) if isinstance(r, dict) else {
                         "port": r[0], "proto": r[1], "process": r[2], "cmdline": r[3], "user": r[4]
