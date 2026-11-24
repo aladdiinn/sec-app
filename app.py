@@ -3658,6 +3658,11 @@ def _analyze_application_and_db_logs(server_id, data):
     for item in all_items:
         line = item.get("line", "")
         if not line: continue
+
+        # Ignore Linux kernel auditd syscall telemetry in SQL/application log analyzer
+        if "type=SYSCALL" in line or "msg=audit(" in line:
+            continue
+
         log_type = (item.get("log_type") or "").lower()
         source = (item.get("source") or "").lower()
 

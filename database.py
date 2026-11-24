@@ -1791,6 +1791,19 @@ def init_db():
                     UPDATE incidents
                     SET status = 'closed', updated_at = NOW()
                     WHERE id IN (SELECT id FROM ranked_cves WHERE rn > 1);
+
+                    -- Auto-close false-positive PostgreSQL Database Deletion alerts triggered on benign daemon syscalls
+                    UPDATE incidents
+                    SET status = 'closed', resolution = 'Auto-closed: Benign PostgreSQL internal daemon WAL/storage truncate syscall (uid=70)', closed_at = NOW(), updated_at = NOW()
+                    WHERE status = 'open'
+                      AND (title ILIKE '%PostgreSQL Database Deletion%' OR dedup_key ILIKE '%PG_DB_DELETED%')
+                      AND (description ILIKE '%type=SYSCALL%' OR description ILIKE '%uid=70%' OR description ILIKE '%auid=4294967295%');
+
+                    UPDATE alerts
+                    SET is_resolved = TRUE, resolved_at = NOW()
+                    WHERE is_resolved IS NOT TRUE
+                      AND (title ILIKE '%PostgreSQL Database Deletion%' OR alert_type = 'PG_DB_DELETED')
+                      AND (message ILIKE '%type=SYSCALL%' OR message ILIKE '%uid=70%' OR message ILIKE '%auid=4294967295%');
                 """)
             except Exception as ex_mig:
                 logger.debug(f"Rule migration error: {ex_mig}")
@@ -4034,8 +4047,9 @@ def get_detection_rules():
                     try:
                         cur.execute("""
                             INSERT INTO detection_rules (name, pattern, severity, enabled, event_type, mitre_tactic, mitre_technique)
-                            VALUES (%s, %s, %s, TRUE, %s, %s, %s) ON CONFLICT (name) DO NOTHING;
-                        """, (r_name, r_pat, r_sev, r_type, r_tac, r_tech))
+                            SELECT %s, %s, %s, TRUE, %s, %s, %s
+                            WHERE NOT EXISTS (SELECT 1 FROM detection_rules WHERE name = %s);
+                        """, (r_name, r_pat, r_sev, r_type, r_tac, r_tech, r_name))
                     except Exception:
                         pass
                 cur.execute("SELECT * FROM detection_rules ORDER BY id ASC;")
