@@ -88,6 +88,24 @@ def get_ses_client():
         config=boto_config
     )
 
+def get_ses_v2_client():
+    """Initializes boto3 SESv2 client for modern account diagnostics."""
+    cfg = get_ses_config()
+    if cfg["missing"]:
+        raise ValueError(f"Missing required SES environment variables: {', '.join(cfg['missing'])}")
+    boto_config = Config(
+        retries={'max_attempts': 3, 'mode': 'standard'},
+        connect_timeout=5,
+        read_timeout=10
+    )
+    return boto3.client(
+        'sesv2',
+        region_name=cfg["region"],
+        aws_access_key_id=cfg["key_id"],
+        aws_secret_access_key=cfg["secret_key"],
+        config=boto_config
+    )
+
 def parse_recipients(recipient_str: str):
     """
     Splits recipient string on commas or semicolons, trims quotes and spaces,
@@ -151,15 +169,19 @@ def perform_ses_self_check():
 
         # 2. Account / Sandbox Status
         try:
-            acc = client.get_account()
+            v2 = get_ses_v2_client()
+            acc = v2.get_account()
             prod_enabled = acc.get("ProductionAccessEnabled", False)
             result["sandbox_mode"] = "Production (Out of Sandbox)" if prod_enabled else "SES Sandbox (Verified Emails Only)"
-        except ClientError as e:
-            code = e.response.get('Error', {}).get('Code', '')
-            if code == "AccessDenied":
-                result["sandbox_mode"] = "Unknown (IAM lacks ses:GetAccount permission)"
+        except Exception as e_acc:
+            # Fallback to SES v1 send quota: sandbox limit is 200/day
+            max_24h = (result.get("quota") or {}).get("max_24h", 0)
+            if max_24h > 200:
+                result["sandbox_mode"] = f"Production (24h Quota: {int(max_24h):,})"
+            elif max_24h > 0:
+                result["sandbox_mode"] = "SES Sandbox (200 emails/day quota)"
             else:
-                result["sandbox_mode"] = f"Check failed ({code})"
+                result["sandbox_mode"] = "Standard SES (v1 connected)"
 
         # 3. Verification status for Sender & Recipients
         all_emails = [cfg["sender"]] + recipients
