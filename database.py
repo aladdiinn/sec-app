@@ -9643,7 +9643,7 @@ def save_detected_services(server_id: int, services_list: list):
                     with conn.cursor() as cur:
                         cur.execute("""
                             UPDATE incidents
-                            SET status = 'closed', resolved_at = NOW(), updated_at = NOW()
+                            SET status = 'closed', updated_at = NOW()
                             WHERE server_id = %s
                               AND title = %s
                               AND status = 'open';
