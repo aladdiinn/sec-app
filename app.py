@@ -4162,6 +4162,16 @@ async def api_agent_push(request: Request):
         except Exception as e_ds:
             logger.error(f"Error saving detected services: {e_ds}")
 
+    # Live scan progress update
+    scan_prog = data.get("scan_progress")
+    if scan_prog and server_id and isinstance(scan_prog, dict):
+        total_scanned_cnt = scan_prog.get("total_scanned", 0)
+        if total_scanned_cnt > 0:
+            try:
+                db.update_in_progress_scan_progress(server_id, total_scanned_cnt)
+            except Exception:
+                pass
+
     # Task Status Update (e.g. running)
     if "task_status_update" in data:
         try:

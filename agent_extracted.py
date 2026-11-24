@@ -2970,6 +2970,19 @@ def main():
             proc_conns = _safe_run("process_connections", get_process_connections, {})
             det_services = _safe_run("services", discover_services, [])
 
+            scan_prog = None
+            if is_malware_scan_running:
+                try:
+                    chk = _load_scan_checkpoint()
+                    if chk and isinstance(chk, dict):
+                        scan_prog = {
+                            "total_scanned": chk.get("total_scanned", 0),
+                            "segment_index": chk.get("segment_index", 0),
+                            "cache_hits": chk.get("cache_hits", 0)
+                        }
+                except Exception:
+                    pass
+
             payload = {
                 "server_id": sid,
                 "agent_token": tok,
@@ -2997,6 +3010,7 @@ def main():
                 "audit_events": audit_events,
                 "discovered_log_paths": list(discovered_paths.keys()),
                 "detected_services": det_services,
+                "scan_progress": scan_prog,
                 "degraded_collectors": error_collapser.get_failing_collectors(),
                 "task_results": task_results_queue[:]
             }

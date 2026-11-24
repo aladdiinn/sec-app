@@ -4487,6 +4487,25 @@ def complete_file_scan(scan_id, status='clean', total_files_scanned=0, threats_f
             return True
     finally: conn.close()
 
+def update_in_progress_scan_progress(server_id: int, total_scanned: int):
+    """Updates the live files inspected count on any active in-progress scan."""
+    if not server_id or not total_scanned: return
+    conn = get_db_connection()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE file_scans
+                SET total_files_scanned = %s, status = 'in_progress'
+                WHERE server_id = %s AND status IN ('in_progress', 'timeout')
+                  AND started_at >= NOW() - INTERVAL '4 hours';
+            """, (total_scanned, server_id))
+            if hasattr(conn, 'commit'): conn.commit()
+    except Exception as e:
+        logger.debug(f"Error updating in_progress scan progress: {e}")
+    finally:
+        conn.close()
+
 def record_file_scan_results(scan_id, server_id, findings):
     """
     Inserts or updates scan findings into file_scan_results.
@@ -4752,14 +4771,14 @@ def get_latest_file_scans(project_id=None, server_id=None, limit=50):
         params.append(limit)
         
         with conn.cursor() as cur:
-            # Auto-expire stale in_progress scans (allow up to 30 minutes for full scans, or 10 min if server is offline)
+            # Auto-expire stale in_progress scans (allow up to 2 hours for massive cold scans, or 10 min if server is offline)
             try:
                 cur.execute("""
                     UPDATE file_scans fs
                     SET status = 'timeout', completed_at = CURRENT_TIMESTAMP
                     WHERE fs.status = 'in_progress'
                       AND (
-                          fs.started_at < NOW() - INTERVAL '1800 seconds'
+                          fs.started_at < NOW() - INTERVAL '7200 seconds'
                           OR (
                               fs.started_at < NOW() - INTERVAL '600 seconds'
                               AND EXISTS (
@@ -4948,14 +4967,14 @@ def get_malware_defense_summary(project_id=None, server_id=None):
         }
 
         with conn.cursor() as cur:
-            # Auto-expire stale in_progress scans (allow up to 30 minutes for full scans, or 10 min if server is offline)
+            # Auto-expire stale in_progress scans (allow up to 2 hours for massive cold scans, or 10 min if server is offline)
             try:
                 cur.execute("""
                     UPDATE file_scans fs
                     SET status = 'timeout', completed_at = CURRENT_TIMESTAMP
                     WHERE fs.status = 'in_progress'
                       AND (
-                          fs.started_at < NOW() - INTERVAL '1800 seconds'
+                          fs.started_at < NOW() - INTERVAL '7200 seconds'
                           OR (
                               fs.started_at < NOW() - INTERVAL '600 seconds'
                               AND EXISTS (
