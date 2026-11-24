@@ -9615,8 +9615,34 @@ def save_detected_services(server_id: int, services_list: list):
             if is_pinned and not is_currently_running:
                 stopped_pinned_count += 1
 
+            # Auto-resolve "Service Stopped" incident when the service is confirmed running healthy
+            if is_currently_running:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            UPDATE incidents
+                            SET status = 'closed', resolved_at = NOW(), updated_at = NOW()
+                            WHERE server_id = %s
+                              AND title = %s
+                              AND status = 'open';
+
+                            UPDATE alerts
+                            SET is_resolved = TRUE, resolved_at = NOW()
+                            WHERE server_id = %s
+                              AND title = %s
+                              AND alert_type = 'service_stopped'
+                              AND is_resolved IS NOT TRUE;
+                        """, (server_id, f"Service Stopped — {monitored.get('name')}",
+                              server_id, f"Service Stopped — {monitored.get('name')}"))
+                except Exception:
+                    pass
+
             # Transition from running to stopped
             if was_previously_running and curr_match and curr_match.get("status") == "stopped" and not is_maintenance:
+                # The SOC application and database containers (bsmart-soc-app, bsmart-soc-db) restart during updates/deployments
+                if m_name in ("bsmart-soc-app", "soc-app", "bsmart-soc-db", "soc-db"):
+                    continue
+
                 # Check if this stop was triggered intentionally from dashboard
                 intentional_stop = False
                 try:

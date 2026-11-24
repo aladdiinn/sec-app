@@ -552,10 +552,11 @@ def discover_services(force=False):
         pass
 
     # 3. Docker containers discovery
+    docker_success = False
     try:
         docker_out = subprocess.check_output(
             ["docker", "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"],
-            stderr=subprocess.DEVNULL, timeout=8
+            stderr=subprocess.DEVNULL, timeout=12
         ).decode("utf-8", errors="ignore")
         for dline in docker_out.strip().splitlines():
             dparts = dline.split(chr(9))
@@ -594,11 +595,15 @@ def discover_services(force=False):
                 "cmdline": "docker run " + str(cimg),
                 "working_dir": ""
             }
+        docker_success = True
     except Exception:
         pass
 
     # 4. Handle vanished services: mark as stopped instead of deleting
     for sid, sdata in list(known_services.items()):
+        # If docker discovery failed or timed out, preserve previous container status
+        if sid.startswith("docker:") and not docker_success:
+            continue
         if sid not in current_found:
             sdata["status"] = "stopped"
             sdata["pid"] = None
