@@ -4467,7 +4467,7 @@ async def api_agent_file_scan_report(request: Request, payload: Optional[dict] =
 
     scan_status = "threats_found" if detected_threats else "clean"
 
-    # Check if there is an existing in-progress scan for this server (e.g. from on-demand "SCAN NOW")
+    # Check if there is an existing in-progress (or recently timed-out) scan for this server (e.g. from on-demand "SCAN NOW")
     existing_scan = None
     conn = db.get_db_connection()
     if conn:
@@ -4475,7 +4475,8 @@ async def api_agent_file_scan_report(request: Request, payload: Optional[dict] =
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT id FROM file_scans
-                    WHERE server_id = %s AND status = 'in_progress'
+                    WHERE server_id = %s AND status IN ('in_progress', 'timeout')
+                      AND started_at >= NOW() - INTERVAL '2 hours'
                     ORDER BY started_at DESC LIMIT 1;
                 """, (server_id,))
                 existing_scan = cur.fetchone()
