@@ -392,7 +392,7 @@ def run_background_host_watcher():
                 if ps_out.stdout:
                     for pline in ps_out.stdout.splitlines()[1:]:
                         p_str = pline.strip()
-                        if any(skip in p_str for skip in ["python3 app.py", "ps -eo", "grep", "kworker"]):
+                        if any(skip in p_str for skip in ["python3 app.py", "ps -eo", "grep", "kworker", "node_push_agent", "bsmart"]):
                             continue
                         for r_name, r_pat, fallback_cmd in MALICIOUS_PAYLOAD_RULES:
                             if re.search(r_pat, p_str, re.IGNORECASE):
@@ -2829,6 +2829,11 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
         if not _is_rule_enabled('AUDIT_SESSION', default=False) and not _is_rule_enabled('session', default=False):
             return
 
+    # Suppress false-positive Mass Process Kill on SOC agent process restarts/cleanups
+    if at_up == "MASS_PROCESS_KILL" or "mass process kill" in clean_t or "process kill" in clean_t:
+        if any(ag in clean_m for ag in ["node_push_agent", "securepulse", "bsmart-agent", "bsmart_agent", "agent-2.1"]):
+            return
+
     # Mute noisy routine warning alert for application directory modifications (App Mod Alert) across all users unless explicitly enabled
     if (at_up == "AUDIT_APP_MOD" or "app mod alert by" in clean_t) and not _is_rule_enabled('AUDIT_APP_MOD', default=False) and not _is_rule_enabled('app_mod', default=False):
         return
@@ -2984,8 +2989,8 @@ def _check_sudo_misuse(server_id, data):
     ]
 
     _OWN_URLS = [
-        "setup_node.sh", "setup_app.sh", "securepulse", "/api/agent/",
-        "debian-sa1", "/usr/lib/sysstat/sa1", "/usr/lib/sysstat/sa2",
+        "setup_node.sh", "setup_app.sh", "securepulse", "node_push_agent", "bsmart-agent", "bsmart_agent",
+        "/api/agent/", "debian-sa1", "/usr/lib/sysstat/sa1", "/usr/lib/sysstat/sa2",
         "sysstat", "/usr/lib64/sa/sa1", "/usr/lib64/sa/sa2",
         "logrotate", "systemd-tmpfiles", "run-parts",
     ]
@@ -3036,6 +3041,11 @@ def _check_sudo_misuse(server_id, data):
                     continue
                 # Suppress routine SSSD PAM authentication failures for user sateesh.j
                 if rule_name == 'Failed Root Escalation Attempt' and 'pam_sss' in text and ('sateesh.j' in text or 'sateesh.j' in str(actor or "")):
+                    continue
+                # Suppress Mass Process Kill when targeting internal SOC agent processes (routine admin/updater maintenance)
+                if rule_name == 'Mass Process Kill' and any(ag in text.lower() for ag in [
+                    "node_push_agent", "securepulse", "bsmart-agent", "bsmart_agent", "agent-2.1"
+                ]):
                     continue
                 matched_rules.add(rule_name)
                 # Universally resolve human user (never root/unknown)

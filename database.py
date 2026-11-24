@@ -60,6 +60,9 @@ class DictRowWrapper:
     def execute(self, query, params=None):
         query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("INTERVAL '45 seconds'", "'-45 seconds'").replace("INTERVAL '30 seconds'", "'-30 seconds'").replace("INTERVAL '15 seconds'", "'-15 seconds'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("TIMESTAMPTZ", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN").replace("ILIKE", "LIKE").replace("JSONB", "TEXT")
         query_sql = re.sub(r'::[a-zA-Z0-9_]+', '', query_sql)
+        query_sql = re.sub(r"(?:NOW\(\)|CURRENT_TIMESTAMP)\s*-\s*INTERVAL\s*'(\d+)\s*([a-zA-Z]+)'", r"datetime('now', '-\1 \2')", query_sql, flags=re.IGNORECASE)
+        query_sql = re.sub(r"(?:NOW\(\)|CURRENT_TIMESTAMP)\s*\+\s*INTERVAL\s*'(\d+)\s*([a-zA-Z]+)'", r"datetime('now', '+\1 \2')", query_sql, flags=re.IGNORECASE)
+        query_sql = re.sub(r"INTERVAL\s*'(\d+)\s*([a-zA-Z]+)'", r"'\1 \2'", query_sql, flags=re.IGNORECASE)
         if "ADD COLUMN" in query_sql and "DEFAULT CURRENT_TIMESTAMP" in query_sql:
             query_sql = query_sql.replace("DEFAULT CURRENT_TIMESTAMP", "")
         if "PARTITION OF" in query_sql.upper():
@@ -1732,6 +1735,19 @@ def init_db():
                            OR summary ILIKE '%backupForPureSwapping%'
                            OR summary ILIKE '%backupForDataCorrection%');
                 """)
+                cur.execute("""
+                    UPDATE incidents
+                    SET status = 'closed', updated_at = NOW()
+                    WHERE status = 'open'
+                      AND (title ILIKE '%Mass Process Kill%' OR dedup_key ILIKE '%MASS_PROCESS_KILL%')
+                      AND (description ILIKE '%node_push_agent%' OR description ILIKE '%securepulse%' OR description ILIKE '%bsmart%');
+
+                    UPDATE alerts
+                    SET is_resolved = TRUE, resolved_at = NOW()
+                    WHERE is_resolved IS NOT TRUE
+                      AND (title ILIKE '%Mass Process Kill%' OR alert_type = 'MASS_PROCESS_KILL')
+                      AND (message ILIKE '%node_push_agent%' OR message ILIKE '%securepulse%' OR message ILIKE '%bsmart%');
+                """)
             except Exception as ex_mig:
                 logger.debug(f"Rule migration error: {ex_mig}")
 
@@ -1888,6 +1904,8 @@ def categorize_command(cmd_str: str) -> str:
     kill_patterns = [r'kill\s+-9\s+-1', r'killall\s+-9', r'pkill\s+-9\s+ssh', r'kill\s+-9', r'killall', r'pkill']
     for pattern in kill_patterns:
         if re.search(pattern, cmd):
+            if any(ag in cmd.lower() for ag in ["node_push_agent", "securepulse", "bsmart-agent", "bsmart_agent", "agent-2.1"]):
+                continue
             return "PROCESS_KILL"
 
     net_patterns = [r'iptables\s+-F', r'iptables\s+-P\s+INPUT\s+DROP', r'iptables', r'ufw\s+disable']
@@ -1934,6 +1952,11 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
         if any(rf in m_low for rf in ["on file '/'", "on file ''", "on file '//'", "on file 'none'"]):
             return
         if any(ephem in m_low for ephem in ["/run/", "/proc/", "/sys/", "/dev/", ".socket", ".cgroup"]):
+            return
+
+    # Suppress false-positive Mass Process Kill when targeting internal SOC telemetry agent
+    if at_up == "MASS_PROCESS_KILL" or "mass process kill" in t_low or "process kill" in t_low:
+        if any(ag in m_low for ag in ["node_push_agent", "securepulse", "bsmart-agent", "bsmart_agent", "agent-2.1"]):
             return
 
     is_session_or_temp = (

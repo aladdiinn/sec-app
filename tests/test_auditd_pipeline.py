@@ -346,5 +346,29 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
             db.backfill_historical_audit_attributions()
             self.assertTrue(mock_cur.execute.called)
 
+    def test_t15_mass_process_kill_suppression_on_agent_restart(self):
+        """Verify pkill on node_push_agent is suppressed, while hostile pkill still triggers."""
+        created_alerts = []
+        with patch.object(app_module, "_create_alert_dedup", side_effect=lambda s, at, sev, t, m: created_alerts.append((at, sev, t, m))):
+            # 1. Administrator restarts SOC agent: pkill -9 -f node_push_agent
+            data_agent = {
+                "commands": [{"command": "pkill -9 -f node_push_agent", "user": "mannan.shariff"}],
+                "sudo_events": [],
+                "log_lines": []
+            }
+            app_module._check_sudo_misuse(54, data_agent)
+            self.assertEqual(len(created_alerts), 0, "pkill on node_push_agent should NOT trigger Mass Process Kill")
+
+            # 2. Hostile mass process kill: pkill -9 nginx
+            data_hostile = {
+                "commands": [{"command": "pkill -9 nginx", "user": "attacker"}],
+                "sudo_events": [],
+                "log_lines": []
+            }
+            app_module._check_sudo_misuse(54, data_hostile)
+            self.assertEqual(len(created_alerts), 1, "pkill -9 nginx MUST trigger Mass Process Kill")
+            self.assertEqual(created_alerts[0][0], "MASS_PROCESS_KILL")
+            self.assertEqual(created_alerts[0][1], "critical")
+
 if __name__ == '__main__':
     unittest.main()
