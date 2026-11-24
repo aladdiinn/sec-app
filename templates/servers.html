@@ -2887,6 +2887,8 @@ function renderModalIncidentsList(rawAlerts, srv) {
             try { ev = JSON.parse(ev); } catch(e) { ev = null; }
         }
 
+        const incTarget = escapeHtml(inc.hostname || inc.server_name || srv.hostname || srv.ip || 'This Asset');
+
         return `
         <div class="inc-row-container" id="modal-inc-card-${inc.id}">
             <div class="inc-compact-row" style="border-left-color:${sevColor}" onclick="toggleModalIncidentExpand(${inc.id}, event)">
@@ -2905,8 +2907,8 @@ function renderModalIncidentsList(rawAlerts, srv) {
                     ${descText ? `<span class="inc-desc-muted"> &mdash; ${escapeHtml(descText)}</span>` : ''}
                 </div>
 
-                <span style="font-size:11px; color:var(--text2); white-space:nowrap; max-width:130px; overflow:hidden; text-overflow:ellipsis; flex-shrink:0" title="Target Asset: ${targetName}">
-                    🖥️ ${targetName}
+                <span style="font-size:11px; color:var(--text2); white-space:nowrap; max-width:130px; overflow:hidden; text-overflow:ellipsis; flex-shrink:0" title="Target Asset: ${incTarget}">
+                    🖥️ ${incTarget}
                 </span>
 
                 <span style="font-size:11px; color:var(--text3); white-space:nowrap; max-width:100px; overflow:hidden; text-overflow:ellipsis; flex-shrink:0" title="Assigned: ${assigned}">
@@ -2924,7 +2926,7 @@ function renderModalIncidentsList(rawAlerts, srv) {
 
             <!-- Accordion Details Panel -->
             <div class="inc-details-panel" id="modal-inc-details-${inc.id}">
-                ${renderModalIncidentDetails(inc, ev, targetName, fullDate)}
+                ${renderModalIncidentDetails(inc, ev, incTarget, fullDate)}
             </div>
         </div>`;
     }).join('');

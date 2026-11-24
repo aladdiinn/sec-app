@@ -3909,8 +3909,8 @@ def authenticate_agent_request(request: Request, body_data: dict = None) -> tupl
                 with conn.cursor() as cur:
                     cur.execute("""
                         SELECT id FROM servers 
-                        WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s), 'soc-server', 'ubuntu-dev') 
-                           OR LOWER(name) IN (LOWER(%s), LOWER(%s), 'soc-server', 'ubuntu-dev') 
+                        WHERE LOWER(hostname) IN (LOWER(%s), LOWER(%s)) 
+                           OR LOWER(name) IN (LOWER(%s), LOWER(%s)) 
                         ORDER BY id DESC LIMIT 1;
                     """, (hostname, clean_host, hostname, clean_host))
                     r = cur.fetchone()

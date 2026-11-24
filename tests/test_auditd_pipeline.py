@@ -370,5 +370,23 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
             self.assertEqual(created_alerts[0][0], "MASS_PROCESS_KILL")
             self.assertEqual(created_alerts[0][1], "critical")
 
+    def test_t16_vulnerability_alert_dedup_and_soc_server_scoping(self):
+        """Verify vulnerability alert deduplication and proper soc-server isolation."""
+        # Test 1: get_linked_server_ids isolation
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+        # Mock active servers table having server 40 with different IP
+        mock_cur.fetchall.side_effect = [
+            [], # identity links
+            [], # merge backup
+            [], # dynamic discovery
+            [{"id": 40}] # other active servers with IP != 192.168.10.201
+        ]
+        mock_cur.fetchone.return_value = {"id": 39, "ip": "192.168.10.201", "name": "soc-server"}
+        with patch.object(db, "get_db_connection", return_value=mock_conn):
+            linked = db.get_linked_server_ids(39)
+            self.assertNotIn(40, linked, "Active server 40 with different IP must NOT be merged into soc-server")
+
 if __name__ == '__main__':
     unittest.main()

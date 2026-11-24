@@ -291,6 +291,7 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
 
             scanned_keys = set()
             crit_cnt, high_cnt, med_cnt, low_cnt = 0, 0, 0, 0
+            newly_installed_or_changed_cves = set()
 
             for f in findings:
                 sev = f["severity"].upper()
@@ -302,6 +303,12 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
                 reopened_by = None
 
                 if existing:
+                    old_version = (existing.get("installed_version") or "").strip()
+                    curr_version = str(f.get("installed_version") or "").strip()
+                    if old_version and curr_version and old_version != curr_version:
+                        # Version changed on the server! (e.g. package upgraded/reinstalled)
+                        newly_installed_or_changed_cves.add(cve_key)
+
                     old_status = existing.get("status")
                     close_reason = (existing.get("close_reason") or "").strip().lower()
                     risk_expiry = existing.get("risk_expiry_date")
@@ -363,7 +370,8 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
                             WHERE id = %s;
                         """, (f["installed_version"], f["fixed_version"], sev, f["cvss_score"], f["epss_score"], f["is_cisa_kev"], f["reboot_required"], f["running_kernel_affected"], f["summary"], new_status, existing["id"]))
                 else:
-                    # New finding
+                    # New finding (1st time asset added or new package installed)
+                    newly_installed_or_changed_cves.add(cve_key)
                     cur.execute("""
                         INSERT INTO server_vulnerabilities (
                             server_id, cve_id, package_name, installed_version, fixed_version,
@@ -412,15 +420,23 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
             """, (crit_cnt, high_cnt, med_cnt, low_cnt, server_id))
 
             # Step 6: Alerts & Audit Log for Critical vulnerabilities
+            # ONLY alert when asset is added 1st time, or when a new/upgraded package version is detected.
+            # Do NOT repeatedly generate daily alerts for existing unchanged packages!
             server_name = server.get("hostname") or server.get("name") or f"Server #{server_id}"
             for f in findings:
+                cve_key = (f["cve_id"], f["package_name"])
+                if cve_key not in newly_installed_or_changed_cves:
+                    continue  # Package and version already known from previous scans — skip daily repeating alert
+
                 if f["severity"] == "CRITICAL" and (f["is_cisa_kev"] or f["cvss_score"] >= 9.0) and f["fixed_version"] and f["fixed_version"] != "None":
                     try:
+                        # Check if an alert for this server, CVE, and installed version was ALREADY logged (whether open or closed)
                         cur.execute("""
                             SELECT id FROM alerts 
                             WHERE server_id = %s AND alert_type = 'VULNERABILITY_CRITICAL' 
-                              AND title LIKE %s AND is_resolved IS NOT TRUE;
-                        """, (server_id, f"%{f['cve_id']}%"))
+                              AND title LIKE %s AND message LIKE %s
+                            LIMIT 1;
+                        """, (server_id, f"%{f['cve_id']}%", f"%({f['installed_version']})%"))
                         if not cur.fetchone():
                             alert_title = f"CRITICAL CVE DETECTED: {f['cve_id']} on {server_name}"
                             alert_msg = f"Package {f['package_name']} ({f['installed_version']}) is vulnerable to {f['cve_id']} (CVSS {f['cvss_score']:.1f}). Fixed in {f['fixed_version']}."

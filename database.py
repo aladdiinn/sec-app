@@ -1747,6 +1747,40 @@ def init_db():
                     WHERE is_resolved IS NOT TRUE
                       AND (title ILIKE '%Mass Process Kill%' OR alert_type = 'MASS_PROCESS_KILL')
                       AND (message ILIKE '%node_push_agent%' OR message ILIKE '%securepulse%' OR message ILIKE '%bsmart%');
+
+                    -- Correct incidents/alerts misattributed to soc-server that belong to JVVNL- CCC- 1
+                    UPDATE incidents i
+                    SET server_id = s.id, updated_at = NOW()
+                    FROM servers s
+                    WHERE i.title ILIKE '%on JVVNL- CCC- 1%'
+                      AND (s.hostname ILIKE '%JVVNL- CCC- 1%' OR s.name ILIKE '%JVVNL- CCC- 1%' OR s.ip = '192.168.150.20')
+                      AND i.server_id != s.id;
+
+                    UPDATE alerts a
+                    SET server_id = s.id
+                    FROM servers s
+                    WHERE a.title ILIKE '%on JVVNL- CCC- 1%'
+                      AND (s.hostname ILIKE '%JVVNL- CCC- 1%' OR s.name ILIKE '%JVVNL- CCC- 1%' OR s.ip = '192.168.150.20')
+                      AND a.server_id != s.id;
+
+                    -- Sever any invalid identity links between soc-server and other distinct server assets
+                    DELETE FROM server_identity_links
+                    WHERE (current_server_id IN (SELECT id FROM servers WHERE ip = '192.168.10.201' OR name ILIKE '%soc-server%')
+                           AND linked_server_id IN (SELECT id FROM servers WHERE ip != '192.168.10.201' AND name NOT ILIKE '%soc-server%'))
+                       OR (linked_server_id IN (SELECT id FROM servers WHERE ip = '192.168.10.201' OR name ILIKE '%soc-server%')
+                           AND current_server_id IN (SELECT id FROM servers WHERE ip != '192.168.10.201' AND name NOT ILIKE '%soc-server%'));
+
+                    -- Deduplicate open CVE incidents: keep the original, close redundant daily duplicates
+                    WITH ranked_cves AS (
+                        SELECT id,
+                               ROW_NUMBER() OVER(PARTITION BY server_id, title ORDER BY id ASC) as rn
+                        FROM incidents
+                        WHERE title ILIKE 'CRITICAL CVE DETECTED:%'
+                          AND status = 'open'
+                    )
+                    UPDATE incidents
+                    SET status = 'closed', updated_at = NOW()
+                    WHERE id IN (SELECT id FROM ranked_cves WHERE rn > 1);
                 """)
             except Exception as ex_mig:
                 logger.debug(f"Rule migration error: {ex_mig}")
@@ -2033,6 +2067,11 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                     _mp = _re.search(r'port\s+(\d+)', message or "", _re.I) or _re.search(r'PORT_(\d+)', alert_type or "", _re.I)
                     if _mp:
                         dedup_sub = f"port_{_mp.group(1)}"
+                elif "cve-" in (message or "").lower() or "cve-" in (final_title or "").lower() or "vulnerability" in (alert_type or "").lower():
+                    import re as _re
+                    _mc = _re.search(r'(CVE-\d+-\d+)', f"{final_title} {message}", _re.I)
+                    if _mc:
+                        dedup_sub = _mc.group(1).upper()
                 canonical_dedup_key = f"{valid_server_id}:{alert_type}:{dedup_sub}" if dedup_sub else f"{valid_server_id}:{alert_type}"
 
                 # Deduplication: Re-use active OPEN incident for the same server and key instead of creating duplicate rows
@@ -4332,11 +4371,17 @@ def get_linked_server_ids(server_id) -> list:
 
             # 6. Historical fallback for production soc-server (IP 192.168.10.201 or hostname soc-server)
             is_soc_server = False
-            if sid in (36, 38, 39, 40) or (target_ip == '192.168.10.201') or (target_host and 'soc-server' in str(target_host).lower()):
+            if (target_ip == '192.168.10.201') or (target_host and 'soc-server' in str(target_host).lower()):
                 is_soc_server = True
             if is_soc_server:
-                for old_id in (25, 26, 30, 33, 34, 36, 38, 39, 40):
-                    linked_ids.add(old_id)
+                try:
+                    cur.execute("SELECT id FROM servers WHERE ip IS NOT NULL AND ip != '192.168.10.201' AND ip != '127.0.0.1';")
+                    other_active_ids = {r["id"] if isinstance(r, dict) else r[0] for r in cur.fetchall()}
+                except Exception:
+                    other_active_ids = set()
+                for old_id in (25, 26, 30, 33, 34, 36, 38, 39):
+                    if old_id not in other_active_ids:
+                        linked_ids.add(old_id)
 
     except Exception as e:
         logger.error(f"Error in get_linked_server_ids for server {server_id}: {e}")
