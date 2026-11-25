@@ -32,7 +32,7 @@ _DIGEST_LOCK = threading.Lock()
 _DIGEST_WORKER_STARTED = False
 
 def get_ses_config():
-    """Reads exactly SES_* configuration variables with fallback names and live .env reload."""
+    """Reads exactly SES_* configuration variables with fallback names, database settings, and live .env reload."""
     # Check readable .env paths if accessible
     try:
         from dotenv import load_dotenv
@@ -43,11 +43,35 @@ def get_ses_config():
     except Exception:
         pass
 
-    region = os.environ.get("SES_AWS_REGION") or os.environ.get("AWS_REGION")
-    key_id = os.environ.get("SES_AWS_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
-    secret_key = os.environ.get("SES_AWS_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY")
-    sender = os.environ.get("SES_SENDER_EMAIL")
-    recipient_str = os.environ.get("SES_RECIPIENT_EMAIL")
+    db_settings = {}
+    try:
+        import database as db
+        db_settings = db.get_settings() or {}
+    except Exception:
+        pass
+
+    region = os.environ.get("SES_AWS_REGION") or os.environ.get("AWS_REGION") or db_settings.get("ses_aws_region")
+    key_id = os.environ.get("SES_AWS_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID") or db_settings.get("ses_aws_access_key_id")
+    secret_key = os.environ.get("SES_AWS_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY") or db_settings.get("ses_aws_secret_access_key")
+    sender = os.environ.get("SES_SENDER_EMAIL") or db_settings.get("ses_sender_email")
+    recipient_str = os.environ.get("SES_RECIPIENT_EMAIL") or db_settings.get("ses_recipient_email") or db_settings.get("email_recipients")
+
+    # Fallback to active admin user emails if no recipient is configured
+    if not recipient_str:
+        try:
+            import database as db
+            conn = db.get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT email FROM users WHERE is_active = true AND (role IN ('admin', 'superuser') OR is_admin = true) AND email IS NOT NULL AND email != '';")
+                        admin_emails = [r["email"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+                        if admin_emails:
+                            recipient_str = ", ".join(admin_emails)
+                finally:
+                    conn.close()
+        except Exception:
+            pass
 
     missing = []
     if not region: missing.append("SES_AWS_REGION")
@@ -173,7 +197,7 @@ def perform_ses_self_check():
             acc = v2.get_account()
             prod_enabled = acc.get("ProductionAccessEnabled", False)
             result["sandbox_mode"] = "Production (Out of Sandbox)" if prod_enabled else "SES Sandbox (Verified Emails Only)"
-        except Exception as e_acc:
+        except Exception:
             # Fallback to SES v1 send quota: sandbox limit is 200/day
             max_24h = (result.get("quota") or {}).get("max_24h", 0)
             if max_24h > 200:
@@ -204,7 +228,7 @@ def perform_ses_self_check():
         err_code = ce.response.get('Error', {}).get('Code', 'ClientError')
         err_msg = ce.response.get('Error', {}).get('Message', str(ce))
         result["error"] = f"{err_code}: {err_msg}"
-    except EndpointConnectionError as ece:
+    except EndpointConnectionError:
         result["error"] = f"EndpointConnectionError: Cannot reach AWS SES on HTTPS port 443 in {cfg['region']}"
     except Exception as ex:
         result["error"] = str(ex)
@@ -469,12 +493,22 @@ def send_email_per_recipient(subject: str, html_body: str, alert_id: int = None)
     if cfg["missing"]:
         err_msg = f"Cannot send email: missing {', '.join(cfg['missing'])}"
         logger.error(f"[SES] {err_msg}")
+        try:
+            import database as db
+            db.log_email_attempt("unconfigured", subject, "FAILED", None, err_msg, alert_id)
+        except Exception:
+            pass
         return {"ok": False, "error": err_msg, "results": []}
 
     recipients = parse_recipients(cfg["recipient_str"])
     if not recipients:
-        err_msg = "No valid recipient email addresses found in SES_RECIPIENT_EMAIL"
+        err_msg = "No valid recipient email addresses found in SES_RECIPIENT_EMAIL or Settings"
         logger.error(f"[SES] {err_msg}")
+        try:
+            import database as db
+            db.log_email_attempt("unconfigured", subject, "FAILED", None, err_msg, alert_id)
+        except Exception:
+            pass
         return {"ok": False, "error": err_msg, "results": []}
 
     import database as db
@@ -1036,6 +1070,13 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
     """
     if not force and not is_email_dispatch_enabled():
         logger.info(f"[SES] Alert email dispatch suppressed for #{alert_id} ({alert_title}): email_notifications_enabled is DISABLED in Settings.")
+        try:
+            import database as db
+            cfg = get_ses_config()
+            rcpt = (parse_recipients(cfg.get("recipient_str")) or ["unconfigured"])[0]
+            db.log_email_attempt(rcpt, f"[SUPPRESSED] {alert_title}", "SUPPRESSED", None, "Global Alert Dispatch is DISABLED in Settings", alert_id)
+        except Exception:
+            pass
         return False
     rule_key = str(alert_type).upper()
     now = time.time()
@@ -1050,6 +1091,13 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
             last_sent = _CRITICAL_EMAIL_DEDUP.get(dedup_tuple, 0)
             if now - last_sent < 900: # 15 minutes = 900 seconds
                 logger.info(f"[SES DEDUP] Suppressing duplicate Critical email for {rule_key} on {server_ip} for {actor_key} (Sent {int(now - last_sent)}s ago)")
+                try:
+                    import database as db
+                    cfg = get_ses_config()
+                    rcpt = (parse_recipients(cfg.get("recipient_str")) or ["unconfigured"])[0]
+                    db.log_email_attempt(rcpt, f"[DEDUP] {alert_title}", "SUPPRESSED", None, f"15-minute anti-flood deduplication active (sent {int(now - last_sent)}s ago)", alert_id)
+                except Exception:
+                    pass
                 return False
             _CRITICAL_EMAIL_DEDUP[dedup_tuple] = now
 

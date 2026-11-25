@@ -228,6 +228,14 @@ input:checked + .slider:before { transform: translateX(14px); background-color: 
                 </div>
             </div>
 
+            <div style="margin-bottom:16px; padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:6px;">
+                <label style="display:block; font-size:12px; font-weight:700; color:var(--text); margin-bottom:4px;">
+                    Notification Recipient Emails
+                </label>
+                <div class="text-meta" style="margin-bottom:8px;">Comma-separated list of verified email addresses to receive Critical &amp; Audit alert notifications.</div>
+                <input type="text" id="ses_recipient_email" class="glass" placeholder="e.g. security-team@company.com, admin@company.com" style="width:100%; padding:8px 12px; font-size:12px;">
+            </div>
+
             <div style="display:flex; justify-content:flex-end; margin-bottom:20px">
                 <button type="submit" class="btn btn-primary" id="btn-email">Save Notification Preferences</button>
             </div>
@@ -308,6 +316,11 @@ async function loadSettings() {
             });
         }
 
+        const rcptEl = document.getElementById('ses_recipient_email');
+        if (rcptEl && (data.ses_recipient_email || data.email_recipients)) {
+            rcptEl.value = data.ses_recipient_email || data.email_recipients || '';
+        }
+
         loadSesStatus();
         loadEmailLogs();
         loadAutoUpdateSettings();
@@ -373,12 +386,19 @@ async function saveSettings(e, btnId) {
         if (emailToggle) {
             payload.email_notifications_enabled = emailToggle.checked ? 'true' : 'false';
         }
+
+        const rcptField = document.getElementById('ses_recipient_email');
+        if (rcptField) {
+            payload.ses_recipient_email = rcptField.value.trim();
+        }
         
         // Remove undefined values
         Object.keys(payload).forEach(key => payload[key] === undefined && delete payload[key]);
 
         await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
         showToast('Settings saved successfully', 'success');
+        if (typeof loadSesStatus === 'function') loadSesStatus();
+        if (typeof loadEmailLogs === 'function') loadEmailLogs();
     } catch (err) {
         showToast(err.message || 'Failed to save', 'error');
     } finally {
