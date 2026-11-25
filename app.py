@@ -12254,7 +12254,7 @@ def api_app_heartbeat(request: Request, payload: dict = Body(...)):
         conn.close()
 
 TOMCAT_ACCESS_RE = re.compile(
-    r'^(?P<ip>[^ ]+)\s+(?P<ident>[^ ]+)\s+(?P<user>[^ ]+)\s+\[(?P<time>[^\]]+)\]\s+"(?P<method>[A-Z]+)\s+(?P<path>.+?)\s+HTTP/[0-9\.]+"\s+(?P<status>\d+)\s+(?P<bytes>[^ ]+)(?:\s+.*)?$'
+    r'^(?P<ip>.+?)\s+(?:(?P<ident>-|\S+)\s+(?P<user>-|\S+)\s+)?\[(?P<time>[^\]]+)\]\s+"(?P<method>[A-Z]+)\s+(?P<path>.+?)(?:\s+HTTP/[0-9\.]+)?\"\s+(?P<status>\d{3})\s+(?P<bytes>-|\d+)(?:\s+.*)?$'
 )
 
 def trigger_critical_app_incident_email(app_id: int, inc_id: int, title: str, event_type: str, severity: str, client_ip: str, user_name: str, payload_sample: str, node_name: str, role: str):
@@ -12600,11 +12600,16 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
                     conf = "HIGH"
                     why = f"Confirmed SQL injection data extraction (HTTP {status} with abnormal response size {bytes_sent} bytes)."
                     return "SQL_INJECTION", sev, "Successful SQL Injection Data Extraction (HTTP 200)", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "SQL Injection Data Extraction", conf, why, signals_fired, "Legitimate administrative query or report.", "Audit endpoint data protection and parameterization.")
-                elif repeated_attempts:
+                elif is_extraction or repeated_attempts:
                     sev = "high"
                     conf = "HIGH"
-                    why = f"Sustained SQL injection attack cluster ({sqli_velocity} attempts from {ip}) accepted with HTTP {status}."
-                    return "SQL_INJECTION", sev, "Sustained SQL Injection Attack Cluster (HTTP 200)", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "Sustained SQL Injection Attack", conf, why, signals_fired, "Automated vulnerability scanner probe against secured endpoint.", "Review endpoint sanitization.")
+                    if is_extraction:
+                        why = f"Explicit SQL data extraction payload (UNION/SELECT payload) accepted with HTTP {status}."
+                        title = "SQL Injection Data Extraction Payload (HTTP 200)"
+                    else:
+                        why = f"Sustained SQL injection attack cluster ({sqli_velocity} attempts from {ip}) accepted with HTTP {status}."
+                        title = "Sustained SQL Injection Attack Cluster (HTTP 200)"
+                    return "SQL_INJECTION", sev, title, "T1190 - Exploit Public-Facing Application", make_evidence("W01", "SQL Injection Attack", conf, why, signals_fired, "Automated vulnerability scanner probe against secured endpoint.", "Review endpoint sanitization.")
                 else:
                     sev = "low"
                     conf = "LOW"
@@ -13133,7 +13138,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
             if is_noise_tomcat_access_log(raw_line):
                 continue
             c_ip = m.group("ip").split(",")[0].strip()
-            user = m.group("user")
+            user = m.group("user") if ("user" in m.groupdict() and m.group("user")) else "-"
             method = m.group("method")
             raw_path = m.group("path")
 
@@ -13141,7 +13146,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
             if m_ip:
                 c_ip = m_ip.group(1)
             status_code = int(m.group("status"))
-            bytes_sent = int(m.group("bytes")) if m.group("bytes").isdigit() else 0
+            bytes_sent = int(m.group("bytes")) if (m.group("bytes") and m.group("bytes").isdigit()) else 0
 
             if user == "-" or not user:
                 m_u = re.search(r'''(?:\?|&)(?:user(?:name|_name|id|_id)?|usr|uname|login(?:id|_id)?|account|email|emp(?:id|_id)?|u)=([^& \t\r\n\'\"]+)''', raw_path, re.IGNORECASE)

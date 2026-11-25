@@ -21,9 +21,9 @@ _s3_stream_buffer = []
 _s3_stream_lock = threading.Lock()
 _s3_flusher_thread_started = False
 
-# Regex for Apache / Tomcat / Nginx access log lines
+# Regex for Apache / Tomcat / Nginx access log lines (resilient to comma-separated proxy IPs and HTTP/2)
 TOMCAT_ACCESS_RE = re.compile(
-    r'^(?P<ip>[^ ]+)\s+(?P<ident>[^ ]+)\s+(?P<user>[^ ]+)\s+\[(?P<time>[^\]]+)\]\s+"(?P<method>[A-Z]+)\s+(?P<path>.+?)\s+HTTP/[0-9\.]+"\s+(?P<status>\d+)\s+(?P<bytes>[^ ]+)(?:\s+.*)?$'
+    r'^(?P<ip>.+?)\s+(?:(?P<ident>-|\S+)\s+(?P<user>-|\S+)\s+)?\[(?P<time>[^\]]+)\]\s+"(?P<method>[A-Z]+)\s+(?P<path>.+?)(?:\s+HTTP/[0-9\.]+)?\"\s+(?P<status>\d{3})\s+(?P<bytes>-|\d+)(?:\s+.*)?$'
 )
 GENERIC_ACCESS_RE = re.compile(
     r'"[A-Z]+\s+(?P<path>.+?)\s+HTTP/[0-9\.]+"\s+(?P<status>\d{3})\b'
