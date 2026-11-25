@@ -445,6 +445,14 @@ No markdown fences, no extra text."""
                     for pseudo, real in sorted(reverse_map.items(), key=lambda x: len(x[0]), reverse=True):
                         val = re.sub(r'\b' + re.escape(pseudo) + r'\b', real, val)
                     data[field] = val
+                elif isinstance(val, list):
+                    new_list = []
+                    for item in val:
+                        item_str = str(item)
+                        for pseudo, real in sorted(reverse_map.items(), key=lambda x: len(x[0]), reverse=True):
+                            item_str = re.sub(r'\b' + re.escape(pseudo) + r'\b', real, item_str)
+                        new_list.append(item_str)
+                    data[field] = new_list
 
         return data
 
@@ -470,18 +478,45 @@ def generate_alert_analysis(alert_title: str, alert_type: str, message: str, ser
     Wrapper for email dispatch path reusing the unified analysis function and cache.
     Never blocks email dispatch.
     """
-    res = generate_comprehensive_alert_analysis({
-        "title": alert_title,
-        "severity": alert_type,
-        "message": message,
-        "server_ip": server_ip,
-        "username": username
-    })
-    return {
-        "analysis": f"<li>Summary: {html.escape(res.get('summary', ''))}</li><li>Likely Cause: {html.escape(res.get('likely_cause', ''))}</li><li>Confidence: {html.escape(res.get('confidence', 'Medium'))}</li>",
-        "risk": f"<p>{html.escape(res.get('risk_impact', ''))}</p>",
-        "recommendations": f"<li>{html.escape(res.get('recommendations', ''))}</li>"
-    }
+    try:
+        res = generate_comprehensive_alert_analysis({
+            "title": alert_title,
+            "severity": alert_type,
+            "message": message,
+            "server_ip": server_ip,
+            "username": username
+        })
+        
+        def _to_str(val):
+            if isinstance(val, list):
+                return " ".join(str(x) for x in val if x)
+            return str(val or "")
+
+        summary_txt = html.escape(_to_str(res.get('summary', '')))
+        likely_txt = html.escape(_to_str(res.get('likely_cause', '')))
+        conf_txt = html.escape(_to_str(res.get('confidence', 'Medium')))
+        risk_txt = html.escape(_to_str(res.get('risk_impact', '')))
+
+        raw_recs = res.get('recommendations', '')
+        if isinstance(raw_recs, list):
+            rec_items = [f"<li>{html.escape(str(r))}</li>" for r in raw_recs if str(r).strip()]
+            rec_html = "".join(rec_items) if rec_items else "<li>Review telemetry logs in BSmart SOC dashboard.</li>"
+        else:
+            rec_str = str(raw_recs or "").strip()
+            rec_html = f"<li>{html.escape(rec_str)}</li>" if rec_str else "<li>Review telemetry logs in BSmart SOC dashboard.</li>"
+
+        return {
+            "analysis": f"<li>Summary: {summary_txt}</li><li>Likely Cause: {likely_txt}</li><li>Confidence: {conf_txt}</li>",
+            "risk": f"<p>{risk_txt}</p>",
+            "recommendations": rec_html
+        }
+    except Exception as e:
+        logger.warning(f"[SES] Failed to generate AI analysis for alert email: {e}")
+        return {
+            "analysis": f"<li>Summary: Automated rule trigger matched threat signature.</li><li>Evidence: {html.escape(str(message)[:250])}</li>",
+            "risk": "<p>Review potential threat impact and affected node telemetry in BSmart SOC dashboard.</p>",
+            "recommendations": "<li>Inspect active network connections and daemon logs on target node.</li><li>Verify firewall policies and review audit event logs.</li>"
+        }
 
 def send_email_per_recipient(subject: str, html_body: str, alert_id: int = None):
     """
@@ -1101,8 +1136,16 @@ def send_smart_alert_email(alert_id: int, alert_title: str, alert_type: str, mes
                 return False
             _CRITICAL_EMAIL_DEDUP[dedup_tuple] = now
 
-    # 2. Get LLM Analysis (Safe fallback if Gemini missing)
-    llm_data = generate_alert_analysis(alert_title, alert_type, message, server_ip)
+    # 2. Get LLM Analysis (Safe fallback if Gemini missing or fails)
+    try:
+        llm_data = generate_alert_analysis(alert_title, alert_type, message, server_ip)
+    except Exception as e_ai:
+        logger.warning(f"[SES] Exception during generate_alert_analysis: {e_ai}")
+        llm_data = {
+            "analysis": "<li>Summary: Automated rule trigger matched threat signature.</li>",
+            "risk": "<p>Review potential threat impact in BSmart SOC dashboard.</p>",
+            "recommendations": "<li>Inspect active network connections and system logs on target node.</li>"
+        }
 
     # 3. Format Subject & Body
     subject = f"[BSMART SOC] {severity.upper()} - {alert_title} on {hostname}"
