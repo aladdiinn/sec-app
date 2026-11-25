@@ -269,9 +269,11 @@
                     </p>
                 </div>
                 <div style="display:flex; align-items:center; gap:14px">
+                    {% if active != 'malware' and not hide_project_view %}
                     <a href="/projects/select" class="btn-project-view" style="font-family:var(--font-sans); font-size:11px; font-weight:700; letter-spacing:1px; color:var(--cyan); background:var(--cyan3); border:1px solid var(--cyan); padding:6px 14px; border-radius:4px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s ease">
                         <span style="font-size:12px">⊞</span> PROJECT VIEW
                     </a>
+                    {% endif %}
                     {% block topbar_actions %}{% endblock %}
                     
                     <!-- Theme Toggle Switch (Sun / Moon) -->
