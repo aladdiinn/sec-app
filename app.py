@@ -12600,16 +12600,11 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
                     conf = "HIGH"
                     why = f"Confirmed SQL injection data extraction (HTTP {status} with abnormal response size {bytes_sent} bytes)."
                     return "SQL_INJECTION", sev, "Successful SQL Injection Data Extraction (HTTP 200)", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "SQL Injection Data Extraction", conf, why, signals_fired, "Legitimate administrative query or report.", "Audit endpoint data protection and parameterization.")
-                elif is_extraction or repeated_attempts:
+                elif repeated_attempts:
                     sev = "high"
                     conf = "HIGH"
-                    if is_extraction:
-                        why = f"Explicit SQL data extraction payload (UNION/SELECT payload) accepted with HTTP {status}."
-                        title = "SQL Injection Data Extraction Payload (HTTP 200)"
-                    else:
-                        why = f"Sustained SQL injection attack cluster ({sqli_velocity} attempts from {ip}) accepted with HTTP {status}."
-                        title = "Sustained SQL Injection Attack Cluster (HTTP 200)"
-                    return "SQL_INJECTION", sev, title, "T1190 - Exploit Public-Facing Application", make_evidence("W01", "SQL Injection Attack", conf, why, signals_fired, "Automated vulnerability scanner probe against secured endpoint.", "Review endpoint sanitization.")
+                    why = f"Sustained SQL injection attack cluster ({sqli_velocity} attempts from {ip}) accepted with HTTP {status}."
+                    return "SQL_INJECTION", sev, "Sustained SQL Injection Attack Cluster (HTTP 200)", "T1190 - Exploit Public-Facing Application", make_evidence("W01", "Sustained SQL Injection Attack", conf, why, signals_fired, "Automated vulnerability scanner probe against secured endpoint.", "Review endpoint sanitization.")
                 else:
                     sev = "low"
                     conf = "LOW"
