@@ -1,4 +1,5 @@
 import os, sys, time, logging, json, re
+from datetime import datetime
 import database as db
 import vuln_version
 
@@ -430,23 +431,41 @@ def scan_server_vulnerabilities(server_id: int) -> dict:
 
                 if f["severity"] == "CRITICAL" and (f["is_cisa_kev"] or f["cvss_score"] >= 9.0) and f["fixed_version"] and f["fixed_version"] != "None":
                     try:
-                        # Check if an alert for this server, CVE, and installed version was ALREADY logged (whether open or closed)
+                        # 1. Check if an incident for this server, CVE, and installed version ALREADY exists (whether open or closed)
                         cur.execute("""
-                            SELECT id FROM alerts 
+                            SELECT id, description FROM incidents 
+                            WHERE server_id = %s 
+                              AND (title LIKE %s OR dedup_key LIKE %s OR description LIKE %s)
+                            ORDER BY id DESC LIMIT 1;
+                        """, (server_id, f"%{f['cve_id']}%", f"%{f['cve_id']}%", f"%{f['cve_id']}%"))
+                        existing_inc_row = cur.fetchone()
+                        if existing_inc_row:
+                            inc_desc_str = (existing_inc_row.get("description") if isinstance(existing_inc_row, dict) else existing_inc_row[1]) or ""
+                            if f"({f['installed_version']})" in inc_desc_str:
+                                continue  # Already alerted for this exact version on this server
+
+                        # 2. Check if an alert for this server and CVE was ALREADY logged (whether open or resolved)
+                        cur.execute("""
+                            SELECT id, message FROM alerts 
                             WHERE server_id = %s AND alert_type = 'VULNERABILITY_CRITICAL' 
-                              AND title LIKE %s AND message LIKE %s
-                            LIMIT 1;
-                        """, (server_id, f"%{f['cve_id']}%", f"%({f['installed_version']})%"))
-                        if not cur.fetchone():
-                            alert_title = f"CRITICAL CVE DETECTED: {f['cve_id']} on {server_name}"
-                            alert_msg = f"Package {f['package_name']} ({f['installed_version']}) is vulnerable to {f['cve_id']} (CVSS {f['cvss_score']:.1f}). Fixed in {f['fixed_version']}."
-                            db.log_alert(
-                                server_id=server_id,
-                                alert_type="VULNERABILITY_CRITICAL",
-                                message=alert_msg,
-                                severity="critical",
-                                title=alert_title
-                            )
+                              AND title LIKE %s
+                            ORDER BY id DESC LIMIT 1;
+                        """, (server_id, f"%{f['cve_id']}%"))
+                        existing_al_row = cur.fetchone()
+                        if existing_al_row:
+                            al_msg_str = (existing_al_row.get("message") if isinstance(existing_al_row, dict) else existing_al_row[1]) or ""
+                            if f"({f['installed_version']})" in al_msg_str:
+                                continue  # Already alerted for this exact version on this server
+
+                        alert_title = f"CRITICAL CVE DETECTED: {f['cve_id']} on {server_name}"
+                        alert_msg = f"Package {f['package_name']} ({f['installed_version']}) is vulnerable to {f['cve_id']} (CVSS {f['cvss_score']:.1f}). Fixed in {f['fixed_version']}."
+                        db.log_alert(
+                            server_id=server_id,
+                            alert_type="VULNERABILITY_CRITICAL",
+                            message=alert_msg,
+                            severity="critical",
+                            title=alert_title
+                        )
                     except Exception as ex_a:
                         logger.error(f"Failed to log vulnerability alert: {ex_a}")
 

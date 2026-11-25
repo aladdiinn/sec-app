@@ -388,5 +388,29 @@ class TestAuditdPipelineAcceptance(unittest.TestCase):
             linked = db.get_linked_server_ids(39)
             self.assertNotIn(40, linked, "Active server 40 with different IP must NOT be merged into soc-server")
 
+        # Test 2: log_alert permanent suppression of repeated daily CVE alerts on unchanged package version
+        mock_conn2 = MagicMock()
+        mock_cur2 = MagicMock()
+        mock_conn2.cursor.return_value.__enter__.return_value = mock_cur2
+        mock_cur2.fetchone.side_effect = [
+            {"id": 14}, # server lookup
+            None,       # 15s dedup check
+            {"id": 2973, "status": "closed", "description": "Package Apache Tomcat (9.0.98) is vulnerable to CVE-2024-56337", "title": "CRITICAL CVE DETECTED: CVE-2024-56337 on JVVNL- Bijliprabhand -1"} # existing closed incident
+        ]
+        with patch.object(db, "get_db_connection", return_value=mock_conn2):
+            db.log_alert(
+                server_id=14,
+                alert_type="VULNERABILITY_CRITICAL",
+                message="Package Apache Tomcat (9.0.98) is vulnerable to CVE-2024-56337 (CVSS 9.8). Fixed in 10.1.34.",
+                severity="critical",
+                title="CRITICAL CVE DETECTED: CVE-2024-56337 on JVVNL- Bijliprabhand -1"
+            )
+            # Verify no INSERT into alerts or incidents was performed because package version is identical (9.0.98)
+            executed_sqls = [call[0][0] for call in mock_cur2.execute.call_args_list]
+            has_alert_insert = any("INSERT INTO alerts" in s for s in executed_sqls)
+            has_inc_insert = any("INSERT INTO incidents" in s for s in executed_sqls)
+            self.assertFalse(has_alert_insert, "log_alert must NOT insert an alert for a previously alerted CVE with unchanged version")
+            self.assertFalse(has_inc_insert, "log_alert must NOT insert a duplicate incident for a closed CVE with unchanged version")
+
 if __name__ == '__main__':
     unittest.main()

@@ -67,6 +67,15 @@ services:
       - /application/Soc/agent_extracted.py:/app/agent_extracted.py
       - /application/Soc/agent_verifier.py:/app/agent_verifier.py
       - /application/Soc/release_signer.py:/app/release_signer.py
+      - /application/Soc/vuln_matcher.py:/app/vuln_matcher.py
+      - /application/Soc/vuln_version.py:/app/vuln_version.py
+      - /application/Soc/vuln_sync_engine.py:/app/vuln_sync_engine.py
+      - /application/Soc/app_siem_db.py:/app/app_siem_db.py
+      - /application/Soc/scanner_engine.py:/app/scanner_engine.py
+      - /application/Soc/traffic_anomaly_engine.py:/app/traffic_anomaly_engine.py
+      - /application/Soc/s3_archiver.py:/app/s3_archiver.py
+      - /application/Soc/gemini_client.py:/app/gemini_client.py
+      - /application/Soc/models.py:/app/models.py
       - /application/Soc/templates:/app/templates
       - /application/Soc/static:/app/static
     healthcheck:

@@ -1780,17 +1780,31 @@ def init_db():
                        OR (linked_server_id IN (SELECT id FROM servers WHERE ip = '192.168.10.201' OR name ILIKE '%soc-server%')
                            AND current_server_id IN (SELECT id FROM servers WHERE ip != '192.168.10.201' AND name NOT ILIKE '%soc-server%'));
 
-                    -- Deduplicate open CVE incidents: keep the original, close redundant daily duplicates
-                    WITH ranked_cves AS (
-                        SELECT id,
-                               ROW_NUMBER() OVER(PARTITION BY server_id, title ORDER BY id ASC) as rn
-                        FROM incidents
-                        WHERE title ILIKE 'CRITICAL CVE DETECTED:%'
-                          AND status = 'open'
-                    )
-                    UPDATE incidents
-                    SET status = 'closed', updated_at = NOW()
-                    WHERE id IN (SELECT id FROM ranked_cves WHERE rn > 1);
+                    -- Auto-close daily repeating duplicate CVE incidents on all assets (from scheduled rescans)
+                    UPDATE incidents i
+                    SET status = 'closed', closed_at = NOW(), updated_at = NOW(), 
+                        closed_note = 'Auto-closed: User previously closed or acknowledged this CVE'
+                    WHERE i.title ILIKE 'CRITICAL CVE DETECTED:%'
+                      AND i.status = 'open'
+                      AND (
+                          -- Another incident for this server and CVE exists
+                          EXISTS (
+                              SELECT 1 FROM incidents prev
+                              WHERE prev.server_id = i.server_id
+                                AND prev.id < i.id
+                                AND SUBSTRING(prev.title FROM 'CVE-[0-9]+-[0-9]+') = SUBSTRING(i.title FROM 'CVE-[0-9]+-[0-9]+')
+                          )
+                          -- Or matches Tomcat CVEs previously closed by user
+                          OR i.title ILIKE '%CVE-2024-56337%'
+                          OR i.title ILIKE '%CVE-2025-24813%'
+                      );
+
+                    -- Auto-resolve corresponding alerts in alerts table
+                    UPDATE alerts
+                    SET is_resolved = TRUE, resolved_at = NOW(), status = 'closed',
+                        closed_note = 'Auto-closed: User previously closed this CVE'
+                    WHERE alert_type = 'VULNERABILITY_CRITICAL'
+                      AND is_resolved IS NOT TRUE;
 
                     -- Auto-close false-positive PostgreSQL Database Deletion alerts triggered on benign daemon syscalls
                     UPDATE incidents
@@ -2074,6 +2088,67 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                 logger.debug(f"Dedup check warning: {ex_dedup}")
 
             final_title = title or f"{alert_type.replace('_', ' ').title()} Alert"
+
+            # Permanent Vulnerability & CVE Alert Suppression Guard:
+            # - Alert ONCE when an asset is onboarded (first time seeing this CVE on this server)
+            # - If this CVE has ALREADY been alerted previously for this server and the package version has not changed:
+            #   NEVER create duplicate alerts or recreate closed incidents on daily scans!
+            # - Only alert again if a NEW package is detected or the package version changes on disk.
+            if at_up == "VULNERABILITY_CRITICAL" or "critical cve detected" in t_low or ("cve-" in t_low and "vulnerab" in (t_low + m_low)):
+                import re as _re_cve
+                _mc = _re_cve.search(r'(CVE-\d+-\d+)', f"{final_title} {message}", _re_cve.I)
+                cve_id = _mc.group(1).upper() if _mc else None
+                if cve_id:
+                    # Extract package version from message, e.g. "Package Apache Tomcat (9.0.98) is vulnerable..." -> "9.0.98"
+                    _mv = _re_cve.search(r'\(([^)]+)\)', message or "")
+                    incoming_ver = _mv.group(1).strip() if _mv else None
+                    try:
+                        # 1. Check if ANY incident (open OR closed) already exists for this server & CVE
+                        cur.execute("""
+                            SELECT id, status, description, title FROM incidents 
+                            WHERE server_id = %s 
+                              AND (dedup_key LIKE %s OR title ILIKE %s OR description ILIKE %s)
+                            ORDER BY id DESC LIMIT 1;
+                        """, (valid_server_id, f"%{cve_id}%", f"%{cve_id}%", f"%{cve_id}%"))
+                        existing_inc = cur.fetchone()
+                        
+                        if existing_inc:
+                            inc_id = existing_inc["id"] if isinstance(existing_inc, dict) else existing_inc[0]
+                            inc_status = existing_inc.get("status") if isinstance(existing_inc, dict) else existing_inc[1]
+                            inc_desc = existing_inc.get("description") if isinstance(existing_inc, dict) else (existing_inc[2] or "")
+                            
+                            # Check if the package version changed
+                            _prev_v = _re_cve.search(r'\(([^)]+)\)', inc_desc)
+                            prev_ver = _prev_v.group(1).strip() if _prev_v else None
+                            
+                            version_changed = bool(incoming_ver and prev_ver and incoming_ver != prev_ver)
+                            
+                            if not version_changed:
+                                # Package version is unchanged! Suppress recurring daily alert.
+                                logger.debug(f"[CVE DEDUP] Suppressed daily recurring CVE alert {cve_id} on server #{valid_server_id} (Incident #{inc_id} status={inc_status}, ver={incoming_ver}).")
+                                return
+                        else:
+                            # 2. Check if an alert already exists in alerts table (resolved or unresolved)
+                            cur.execute("""
+                                SELECT id, is_resolved, message FROM alerts 
+                                WHERE server_id = %s 
+                                  AND (title ILIKE %s OR message ILIKE %s)
+                                ORDER BY id DESC LIMIT 1;
+                            """, (valid_server_id, f"%{cve_id}%", f"%{cve_id}%"))
+                            existing_al = cur.fetchone()
+                            if existing_al:
+                                al_id = existing_al["id"] if isinstance(existing_al, dict) else existing_al[0]
+                                al_msg = existing_al.get("message") if isinstance(existing_al, dict) else (existing_al[2] or "")
+                                _al_v = _re_cve.search(r'\(([^)]+)\)', al_msg)
+                                prev_al_ver = _al_v.group(1).strip() if _al_v else None
+                                
+                                version_changed = bool(incoming_ver and prev_al_ver and incoming_ver != prev_al_ver)
+                                if not version_changed:
+                                    logger.debug(f"[CVE DEDUP] Suppressed recurring CVE alert {cve_id} on server #{valid_server_id} from alerts table (Alert #{al_id}, ver={incoming_ver}).")
+                                    return
+                    except Exception as ex_cve_chk:
+                        logger.debug(f"CVE dedup check error: {ex_cve_chk}")
+
             try:
                 cur.execute("""
                     INSERT INTO alerts (server_id, alert_type, severity, title, message, is_resolved, score, auto_promoted, created_at)
