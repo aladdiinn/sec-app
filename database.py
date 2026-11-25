@@ -10545,29 +10545,34 @@ def get_server_user_activity(server_id: int, limit: int = 50) -> list:
     if not conn: return []
     try:
         with conn.cursor() as cur:
+            linked_ids = get_linked_server_ids(server_id) or [server_id]
             try:
                 cur.execute("""
                     SELECT id, server_id, audit_key, auid, login_user, effective_user,
                            process, exe, target_path, created_at
                     FROM raw_audit_events
-                    WHERE server_id = %s
+                    WHERE server_id = ANY(%s)
                     ORDER BY created_at DESC LIMIT %s;
-                """, (server_id, limit))
+                """, (linked_ids, limit))
                 rows = [dict(r) for r in cur.fetchall()]
                 if rows:
                     return rows
-            except Exception:
-                pass
+            except Exception as ex_raw:
+                logger.debug(f"raw_audit_events fetch error: {ex_raw}")
+
             try:
                 cur.execute("""
-                    SELECT id, server_id, command, executed_by as login_user, status, executed_at as created_at
+                    SELECT id, server_id, command, username as login_user, category as audit_key, is_sudo, executed_at as created_at
                     FROM commands
-                    WHERE server_id = %s
+                    WHERE server_id = ANY(%s)
                     ORDER BY executed_at DESC LIMIT %s;
-                """, (server_id, limit))
-                return [dict(r) for r in cur.fetchall()]
-            except Exception:
-                return []
+                """, (linked_ids, limit))
+                rows = [dict(r) for r in cur.fetchall()]
+                if rows:
+                    return rows
+            except Exception as ex_cmd:
+                logger.debug(f"commands fetch error: {ex_cmd}")
+            return []
     except Exception as e:
         logger.debug(f"get_server_user_activity error: {e}")
         return []

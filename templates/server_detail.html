@@ -420,10 +420,10 @@
                 if (items.length > 0) {
                     uList.innerHTML = items.map(act => {
                         const actor = act.login_user || act.actor || (act.title ? act.title.split('by ').pop() : 'Unverified');
-                        const exe = act.exe || act.process || 'command';
+                        const exe = act.command || act.exe || act.process || 'command';
                         const path = act.target_path || act.path || '';
                         const timeStr = act.created_at ? new Date(act.created_at).toLocaleString() : 'Recent';
-                        const key = act.audit_key || act.alert_type || 'ACTIVITY';
+                        const key = act.audit_key || act.category || act.alert_type || 'ACTIVITY';
                         return `
                             <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; font-size:12px">
                                 <div>
