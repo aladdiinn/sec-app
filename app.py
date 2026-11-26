@@ -2668,12 +2668,14 @@ _AUDIT_KEY_DESCRIPTIONS = {
     "obfuscated_exec": "Obfuscation / Base64 Invocation",
     "scheduled_tasks_cmd": "Scheduled Task Command Invocation",
     "history_tamper":  "Shell History Tampering / Truncation",
+    "service_control": "Systemd Service Control Action",
 }
 
 _COMMAND_TRACKING_KEYS = frozenset({
     "process_kill", "recon_tools", "data_transfer", "c2_tools",
     "ssh_persistence", "firewall_change", "archive_staging",
     "obfuscated_exec", "scheduled_tasks_cmd", "history_tamper",
+    "service_control",
 })
 
 import threading as _threading_ctx
@@ -2702,6 +2704,22 @@ def _extract_audit_cmdline(raw_line: str) -> str:
     if not raw_line:
         return ""
     import re as _re
+
+    # Decode Linux x86_64/arm64 kill(pid, sig) syscall (62) from shell builtins (e.g. bash `kill -9 <pid>`),
+    # because `proctitle` in that case shows `-bash` rather than the `kill` command and PID.
+    if _re.search(r'\bsyscall=62\b', raw_line) and "type=EXECVE" not in raw_line:
+        a0_m = _re.search(r'\ba0=([0-9A-Fa-f]+)', raw_line)
+        a1_m = _re.search(r'\ba1=([0-9A-Fa-f]+)', raw_line)
+        if a0_m and a1_m:
+            try:
+                pid_val = int(a0_m.group(1), 16)
+                if pid_val >= (1 << 63):
+                    pid_val -= (1 << 64)
+                sig_val = int(a1_m.group(1), 16)
+                if sig_val > 0 and pid_val > 0:
+                    return f"kill -{sig_val} {pid_val}"
+            except Exception:
+                pass
 
     ptitle_m = _re.search(r'proctitle=([^\s]+)', raw_line)
     if ptitle_m:
@@ -2815,6 +2833,20 @@ def _build_securepulse_audit_rules_snippet() -> str:
         fi
     }
 
+    # Interactive-only watch (avoids logging background agent/systemd polls where auid=-1)
+    add_interactive_exec_rule() {
+        local bin_cmd="$1"
+        local bin_key="$2"
+        local resolved_bin=""
+        resolved_bin=$(type -P "$bin_cmd" 2>/dev/null || true)
+        if [ -n "$resolved_bin" ] && [ -x "$resolved_bin" ]; then
+            local canonical_bin
+            canonical_bin=$(readlink -f "$resolved_bin" 2>/dev/null || echo "$resolved_bin")
+            local rule_line="-a always,exit -F path=$canonical_bin -F perm=x -F auid>=1000 -F auid!=-1 -k $bin_key"
+            grep -qxF -- "$rule_line" "$RULES_FILE" 2>/dev/null || echo "$rule_line" >> "$RULES_FILE"
+        fi
+    }
+
     cat << 'AUDIT_EOF' > "$RULES_FILE"
 # 0. Buffer and Rate Limiting
 -D
@@ -2882,11 +2914,13 @@ def _build_securepulse_audit_rules_snippet() -> str:
 
 # 11. Command Execution Tracking (user attribution for tools attackers/operators abuse)
 # Known shell builtin gaps:
-#   - `kill` in interactive bash/sh is a shell builtin (never execs /bin/kill); pkill/killall
-#     provide reliable execve coverage, while external kill watch below catches sudo/env/`/bin/kill`.
+#   - Interactive bash/sh `kill` without `-9` (e.g. SIGTERM) is a shell builtin and bypasses /bin/kill;
+#     we catch interactive `kill -9` (SIGKILL, a1=9) below via syscall filter while avoiding kill(pid,0) probe floods,
+#     and pkill/killall + external /bin/kill provide full execve coverage.
 #   - `history -c` / `unset HISTFILE` are shell builtins unwatchable via execve;
 #     file watch on /root/.bash_history catches truncation/deletion attempts instead.
 -w /root/.bash_history -p wa -k history_tamper
+-a always,exit -F arch=b64 -S kill -F a1=9 -F auid>=1000 -F auid!=-1 -k process_kill
 AUDIT_EOF
 
     # Cross-distro binary watches resolved at install/rollout time
@@ -2909,6 +2943,7 @@ AUDIT_EOF
     add_exec_rule crontab scheduled_tasks_cmd
     add_exec_rule useradd identity
     add_exec_rule passwd identity
+    add_interactive_exec_rule systemctl service_control
 
     if command -v augenrules >/dev/null 2>&1; then
         augenrules --load >/dev/null 2>&1 || true
@@ -3559,11 +3594,20 @@ def _check_unified_fim(server_id, data):
             comm_raw_low = (c_m.group(1) if c_m else (cur_event.get("comm") or "")).lower()
             cmd_check_low = f"{cmdline} {line}".lower()
 
-            # Suppress internal SOC agent self-restarts and read-only pgrep (shares inode with pkill)
+            # Suppress internal SOC agent self-restarts, read-only pgrep, and redundant syscall=62 from pkill/killall
             if key == "process_kill":
                 if any(ag in cmd_check_low for ag in ["node_push_agent", "securepulse", "bsmart-agent", "bsmart_agent", "agent-2.1"]):
                     continue
                 if comm_raw_low == "pgrep" and not (cmdline or "").strip().lower().startswith("pkill"):
+                    continue
+                if re.search(r'\bsyscall=62\b', line or "") and comm_raw_low in ("pkill", "killall"):
+                    continue
+
+            # For interactive systemctl (service_control), alert only on state-changing subcommands
+            if key == "service_control":
+                sc_toks_low = [t.lower() for t in (cmdline or comm_raw_low or "").split()]
+                sc_actions = {"stop", "restart", "reload", "kill", "disable", "mask", "isolate", "enable", "unmask"}
+                if not any(act in sc_toks_low for act in sc_actions):
                     continue
 
             # Suppress read-only firewall inspection and automated Docker bridge/NAT plumbing on shared xtables-nft-multi inode

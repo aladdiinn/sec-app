@@ -1422,7 +1422,8 @@ def init_db():
                         ('archive_staging', 'critical', 100, 60, TRUE),
                         ('obfuscated_exec', 'critical', 100, 60, TRUE),
                         ('scheduled_tasks_cmd', 'critical', 100, 60, TRUE),
-                        ('history_tamper', 'critical', 100, 60, TRUE)
+                        ('history_tamper', 'critical', 100, 60, TRUE),
+                        ('service_control', 'critical', 100, 60, TRUE)
                     ON CONFLICT (audit_key) DO NOTHING;
                 """)
                 cur.execute("""
@@ -1431,7 +1432,8 @@ def init_db():
                     WHERE LOWER(audit_key) IN (
                         'process_kill', 'recon_tools', 'data_transfer', 'c2_tools',
                         'ssh_persistence', 'firewall_change', 'archive_staging',
-                        'obfuscated_exec', 'scheduled_tasks_cmd', 'history_tamper'
+                        'obfuscated_exec', 'scheduled_tasks_cmd', 'history_tamper',
+                        'service_control'
                     )
                       AND LOWER(default_severity) <> 'critical';
                 """)
@@ -2055,6 +2057,7 @@ _COMMAND_TRACKING_AUDIT_KEYS = frozenset({
     "process_kill", "recon_tools", "data_transfer", "c2_tools",
     "ssh_persistence", "firewall_change", "archive_staging",
     "obfuscated_exec", "scheduled_tasks_cmd", "history_tamper",
+    "service_control",
 })
 _COMMAND_TRACKING_AUDIT_ALERT_TYPES = frozenset(f"AUDIT_{k.upper()}" for k in _COMMAND_TRACKING_AUDIT_KEYS)
 
@@ -2168,6 +2171,8 @@ def _classify_correlation_role(alert_type: str, title: str, message: str) -> Opt
     if "service_stopped" in at_low or "service stopped" in t_low:
         return "service_stopped"
     if any(k in at_low for k in ("audit_process_kill", "process_kill", "mass_process_kill")) or "process kill" in t_low or "process termination" in t_low:
+        return "process_kill"
+    if "audit_service_control" in at_low and any(w in f"{t_low} {(message or '').lower()}" for w in ("stop", "kill", "disable", "mask")):
         return "process_kill"
     if at_low.startswith("port_scan_") or at_low.startswith("dangerous_port_"):
         return "port_opened"
@@ -2699,7 +2704,8 @@ def log_alert(
                     "AUDIT_RECON_TOOLS", "AUDIT_DATA_TRANSFER", "AUDIT_C2_TOOLS", "AUDIT_PROCESS_KILL",
                     "AUDIT_SSH_PERSISTENCE", "AUDIT_FIREWALL_CHANGE", "AUDIT_ARCHIVE_STAGING",
                     "AUDIT_OBFUSCATED_EXEC", "AUDIT_SCHEDULED_TASKS_CMD", "AUDIT_HISTORY_TAMPER",
-                    "AUDIT_IDENTITY", "MASS_PROCESS_KILL", "CRON_PERSISTENCE", "USER_CREATED", "PASSWD_CHANGED",
+                    "AUDIT_IDENTITY", "AUDIT_SERVICE_CONTROL", "MASS_PROCESS_KILL",
+                    "CRON_PERSISTENCE", "USER_CREATED", "PASSWD_CHANGED",
                 ):
                     _, _cmd_str = _extract_actor_and_cmd(final_title, message, ev_dict)
                     if _cmd_str and _cmd_str != "command":

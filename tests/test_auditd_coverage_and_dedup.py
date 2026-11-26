@@ -342,7 +342,8 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         keys_expected = [
             "recon_tools", "data_transfer", "c2_tools", "process_kill",
             "ssh_persistence", "firewall_change", "archive_staging",
-            "obfuscated_exec", "scheduled_tasks_cmd", "history_tamper"
+            "obfuscated_exec", "scheduled_tasks_cmd", "history_tamper",
+            "service_control",
         ]
         for k in keys_expected:
             self.assertIn(k, app_module._AUDIT_KEY_DESCRIPTIONS)
@@ -393,17 +394,20 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         self.assertEqual(resp.media_type, "text/x-shellscript")
         script = resp.body.decode("utf-8")
 
-        # T4: Builtin gaps documented & alternatives implemented
-        self.assertIn("kill` in interactive bash/sh is a shell builtin", script)
+        # T4: Builtin gaps documented & targeted SIGKILL + interactive systemctl alternatives implemented
+        self.assertIn("without `-9` (e.g. SIGTERM) is a shell builtin", script)
         self.assertIn("history -c", script)
         self.assertIn("-w /root/.bash_history -p wa -k history_tamper", script)
         self.assertIn("type -P", script, "Must use `type -P` so bash builtin kill resolves external binary")
-        self.assertNotIn("-S kill ", script, "Must NOT use noisy global -S kill syscall watch that floods kill(pid, 0)")
+        self.assertIn("-a always,exit -F arch=b64 -S kill -F a1=9 -F auid>=1000 -F auid!=-1 -k process_kill", script)
+        self.assertNotIn("-S kill -k ", script, "Must NOT use unfiltered -S kill syscall watch that floods kill(pid, 0)")
+        self.assertNotIn("-S kill -F auid", script, "Must require -F a1=9 before -F auid so kill(pid, 0) never fires")
 
         # All commands covered
         for cmd in ("wget", "curl", "scp", "rsync", "sftp", "nc", "ncat", "pkill", "killall",
                     "kill", "ssh-keygen", "iptables", "ufw", "tar", "zip", "base64", "crontab", "useradd", "passwd"):
             self.assertIn(f"add_exec_rule {cmd} ", script)
+        self.assertIn("add_interactive_exec_rule systemctl service_control", script)
         self.assertIn("-w /root/.ssh/authorized_keys -p wa -k ssh_persistence", script)
 
         # Benign O_APPEND bash history logout ignored, while O_TRUNC / truncate tool triggers
@@ -514,6 +518,163 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
                 )
         ordered = db.get_incidents(status="all", server_id=14)["items"]
         self.assertEqual(ordered[0]["title"], "New Open Warning", "Open incidents must appear before historical closed critical rows")
+
+    def test_interactive_sigkill_syscall62_decoding_and_correlation(self):
+        """
+        Verify bash builtin `kill -9 837954` (syscall=62, a0=cc942, a1=9, proctitle=-bash)
+        decodes cleanly to `kill -9 837954`, creates 1 CRITICAL AUDIT_PROCESS_KILL incident,
+        suppresses duplicate syscall=62 emitted directly by pkill, and correlates via PID with service_stopped.
+        """
+        ts = time.time() - 3.0
+        bash_hex = "-bash".encode("utf-8").hex()
+        kill_line = (
+            f'type=SYSCALL msg=audit({ts:.3f}:9201): arch=c000003e syscall=62 success=yes exit=0 '
+            f'a0=cc942 a1=9 auid=1002 uid=0 pid=99100 comm="bash" exe="/usr/bin/bash" '
+            f'key="process_kill" proctitle={bash_hex}'
+        )
+        self.assertEqual(app_module._extract_audit_cmdline(kill_line), "kill -9 837954")
+
+        with patch.object(app_module, "_is_rule_enabled", return_value=True):
+            app_module._check_unified_fim(14, {
+                "audit_events": [{
+                    "serial": 9201,
+                    "epoch": ts,
+                    "key": "process_kill",
+                    "auid": "1002",
+                    "username": "govind.b",
+                    "effective_user": "root",
+                    "comm": "bash",
+                    "exe": "/usr/bin/bash",
+                    "pid": "99100",
+                    "line": kill_line,
+                }],
+                "file_changes": [],
+            })
+            # Redundant syscall=62 directly from pkill/killall must be ignored (already tracked via execve)
+            app_module._check_unified_fim(15, {
+                "audit_events": [{
+                    "serial": 9202,
+                    "epoch": ts,
+                    "key": "process_kill",
+                    "auid": "1002",
+                    "username": "govind.b",
+                    "effective_user": "root",
+                    "comm": "pkill",
+                    "exe": "/usr/bin/pkill",
+                    "pid": "99101",
+                    "line": (
+                        f'type=SYSCALL msg=audit({ts:.3f}:9202): arch=c000003e syscall=62 success=yes exit=0 '
+                        f'a0=cc942 a1=9 auid=1002 uid=0 pid=99101 comm="pkill" exe="/usr/bin/pkill" '
+                        f'key="process_kill" proctitle={"pkill\x00-9\x00sleep".encode("utf-8").hex()}'
+                    ),
+                }],
+                "file_changes": [],
+            })
+
+        self.assertEqual(len(self._fetch_open_incidents(15)), 0, "Redundant syscall=62 from pkill must be skipped")
+
+        incs = self._fetch_open_incidents(14)
+        self.assertEqual(len(incs), 1)
+        self.assertEqual(incs[0]["severity"], "critical")
+        self.assertIn("kill -9 837954", incs[0]["title"])
+        self.assertIn("govind.b", incs[0]["title"])
+
+        # Seed running Tomcat with PID 837954 then transition to stopped -> Pair 1 PID merge
+        with db.get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE servers SET detected_services = %s WHERE id = 14;",
+                    (json.dumps([{"id": "proc:tomcat-tomcat", "name": "Tomcat", "unit_name": "", "pid": 837954, "status": "running"}]),)
+                )
+        db.save_detected_services(
+            server_id=14,
+            services_list=[{"id": "proc:tomcat-tomcat", "name": "Tomcat", "unit_name": "", "pid": None, "status": "stopped"}],
+            event_ts=ts + 2.0,
+        )
+        merged = self._fetch_open_incidents(14)
+        self.assertEqual(len(merged), 1, f"Interactive kill -9 <pid> must merge with service_stopped, got {merged}")
+        self.assertEqual(merged[0]["severity"], "critical")
+        self.assertIn("Service Terminated", merged[0]["title"])
+        self.assertIn("kill -9 837954", merged[0]["title"])
+        self.assertIn("govind.b", merged[0]["title"])
+
+    def test_service_control_systemctl_filtering_and_correlation(self):
+        """
+        Verify interactive `systemctl` (`service_control`) ignores read-only `systemctl status ssh`,
+        alerts CRITICAL on `systemctl restart ssh`, and merges `systemctl stop tomcat` with `service_stopped`.
+        """
+        ts = time.time() - 3.0
+        st_hex = "systemctl\x00status\x00ssh".encode("utf-8").hex()
+        rst_hex = "systemctl\x00restart\x00ssh".encode("utf-8").hex()
+        stop_hex = "systemctl\x00stop\x00tomcat".encode("utf-8").hex()
+
+        with patch.object(app_module, "_is_rule_enabled", return_value=True):
+            app_module._check_unified_fim(14, {
+                "audit_events": [{
+                    "serial": 9301,
+                    "epoch": ts,
+                    "key": "service_control",
+                    "auid": "1002",
+                    "username": "govind.b",
+                    "comm": "systemctl",
+                    "exe": "/usr/bin/systemctl",
+                    "line": f'type=SYSCALL msg=audit({ts:.3f}:9301): auid=1002 comm="systemctl" exe="/usr/bin/systemctl" key="service_control" proctitle={st_hex}',
+                }],
+                "file_changes": [],
+            })
+            self.assertEqual(len(self._fetch_open_incidents(14)), 0, "systemctl status must not alert")
+
+            app_module._check_unified_fim(14, {
+                "audit_events": [{
+                    "serial": 9302,
+                    "epoch": ts + 1.0,
+                    "key": "service_control",
+                    "auid": "1002",
+                    "username": "govind.b",
+                    "comm": "systemctl",
+                    "exe": "/usr/bin/systemctl",
+                    "line": f'type=SYSCALL msg=audit({ts+1:.3f}:9302): auid=1002 comm="systemctl" exe="/usr/bin/systemctl" key="service_control" proctitle={rst_hex}',
+                }],
+                "file_changes": [],
+            })
+
+            incs_14 = self._fetch_open_incidents(14)
+            self.assertEqual(len(incs_14), 1)
+            self.assertEqual(incs_14[0]["severity"], "critical")
+            self.assertIn("systemctl restart ssh", incs_14[0]["title"])
+            self.assertIn("govind.b", incs_14[0]["title"])
+
+            app_module._check_unified_fim(15, {
+                "audit_events": [{
+                    "serial": 9303,
+                    "epoch": ts,
+                    "key": "service_control",
+                    "auid": "1002",
+                    "username": "govind.b",
+                    "comm": "systemctl",
+                    "exe": "/usr/bin/systemctl",
+                    "line": f'type=SYSCALL msg=audit({ts:.3f}:9303): auid=1002 comm="systemctl" exe="/usr/bin/systemctl" key="service_control" proctitle={stop_hex}',
+                }],
+                "file_changes": [],
+            })
+
+        with db.get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE servers SET detected_services = %s WHERE id = 15;",
+                    (json.dumps([{"id": "systemd:tomcat", "name": "Tomcat", "unit_name": "tomcat.service", "pid": 4412, "status": "running"}]),)
+                )
+        db.save_detected_services(
+            server_id=15,
+            services_list=[{"id": "systemd:tomcat", "name": "Tomcat", "unit_name": "tomcat.service", "pid": None, "status": "stopped"}],
+            event_ts=ts + 2.0,
+        )
+        incs_15 = self._fetch_open_incidents(15)
+        self.assertEqual(len(incs_15), 1, f"systemctl stop tomcat + service_stopped must merge into 1 incident, got {incs_15}")
+        self.assertEqual(incs_15[0]["severity"], "critical")
+        self.assertIn("Service Terminated", incs_15[0]["title"])
+        self.assertIn("systemctl stop tomcat", incs_15[0]["title"])
+        self.assertIn("govind.b", incs_15[0]["title"])
 
 
 if __name__ == "__main__":
