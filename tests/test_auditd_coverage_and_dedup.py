@@ -812,6 +812,67 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         self.assertIn("Target:", html)
         self.assertIn("/application/vcloud/apache-tomcat-9.0.98", html)
 
+    def test_no_false_positives_on_fchown_sudo_or_pg_truncate_logs_while_tomcat_oom_alerts(self):
+        """
+        Verify:
+        1) Raw auditd `SYSCALL=fchown ... UID="root"` with bash `proctitle=-bash` and benign `sudo su`
+           do NOT fire `Ownership Changed to Root` (CHOWN_ROOT).
+        2) Actual CLI `chown root:root /etc/passwd` still triggers CHOWN_ROOT with decoded command text.
+        3) Generic `"TRUNCATE"` / `DROP TABLE` log lines do NOT fire `PG_DB_DELETED` on Server SIEM,
+           while Tomcat `catalina.out` `OutOfMemoryError` STILL triggers CRITICAL `TOMCAT_CRITICAL_ERROR`
+           (and OS logs mentioning `tomcat` do not trigger Tomcat errors).
+        """
+        ts = time.time() - 2.0
+        bash_hex = "-bash".encode("utf-8").hex()
+        chown_hex = "chown\x00root:root\x00/etc/passwd".encode("utf-8").hex()
+
+        with patch.object(app_module, "_is_rule_enabled", return_value=True):
+            # 1) fchown + sudo su + random "TRUNCATE" log + OS syslog mentioning tomcat OutOfMemoryError -> 0 incidents!
+            app_module._check_sudo_misuse(14, {
+                "sudo_events": [
+                    {"user": "mannan.shariff", "line": "Nov 26 18:10:00 host sudo: mannan.shariff : TTY=pts/1 ; USER=root ; COMMAND=/bin/su"},
+                ],
+                "audit_events": [{
+                    "serial": 9601, "epoch": ts, "key": "perm_mod", "auid": "1742601308",
+                    "username": "mannan.shariff", "comm": "bash", "exe": "/usr/bin/bash",
+                    "line": f'type=SYSCALL msg=audit({ts:.3f}:9601): syscall=93 success=yes auid=1742601308 comm="bash" exe="/usr/bin/bash" key="perm_mod" ARCH=x86_64 SYSCALL=fchown AUID="mannan.shariff" UID="root" EUID="root" type=PROCTITLE proctitle={bash_hex}',
+                }],
+                "log_lines": [],
+            })
+            app_module._analyze_application_and_db_logs(14, {
+                "logs": [
+                    {"line": '"TRUNCATE"', "source": "/application/ticket/catalina.out", "log_type": "tomcat"},
+                    {"line": "DROP TABLE audit_temp;", "source": "/var/log/syslog", "log_type": "os"},
+                    {"line": "java.lang.OutOfMemoryError mentioning tomcat user session", "source": "/var/log/syslog", "log_type": "os"},
+                ],
+                "log_lines": ['"TRUNCATE"', "GRANT ALL PRIVILEGES ON test.*"],
+            })
+
+            self.assertEqual(len(self._fetch_open_incidents(14)), 0, f"Unexpected FP incidents: {self._fetch_open_incidents(14)}")
+
+            # 2) Genuine CLI `chown root:root /etc/passwd` + real Tomcat OutOfMemoryError -> 2 CRITICAL incidents
+            app_module._check_sudo_misuse(15, {
+                "audit_events": [{
+                    "serial": 9602, "epoch": ts + 1.0, "key": "perm_mod", "auid": "1742601308",
+                    "username": "mannan.shariff", "comm": "chown", "exe": "/usr/bin/chown",
+                    "line": f'type=SYSCALL msg=audit({ts+1:.3f}:9602): syscall=92 auid=1742601308 comm="chown" exe="/usr/bin/chown" key="perm_mod" UID="root" type=PROCTITLE proctitle={chown_hex}',
+                }],
+            })
+            app_module._analyze_application_and_db_logs(15, {
+                "logs": [
+                    {"line": "Exception in thread main java.lang.OutOfMemoryError: Java heap space", "source": "/application/vcloud/catalina.out", "log_type": "tomcat"},
+                ],
+            })
+
+        incs_15 = self._fetch_open_incidents(15)
+        self.assertEqual(len(incs_15), 2, f"Expected CHOWN_ROOT + TOMCAT_CRITICAL_ERROR, got {incs_15}")
+        titles = [i["title"] for i in incs_15]
+        descs = [i["description"] for i in incs_15]
+        self.assertTrue(any("Ownership Changed to Root" in t for t in titles))
+        self.assertTrue(any("chown root:root /etc/passwd" in d for d in descs))
+        self.assertTrue(any("Application Fatal Error Alert" in t for t in titles))
+        self.assertTrue(all(i["severity"] == "critical" for i in incs_15))
+
 
 if __name__ == "__main__":
     unittest.main()

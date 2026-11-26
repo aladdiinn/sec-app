@@ -3358,9 +3358,9 @@ def _check_sudo_misuse(server_id, data):
         # Privilege Escalation via usermod / group modification (Critical)
         (re.compile(r'usermod\s+.*(?:-G|-aG|--groups|\+G)\s+.*(?:sudo|wheel|root|docker|adm|shadow)\b', re.IGNORECASE), 'User Added to Privileged Group', 'critical', 'Privilege Escalation Alert (usermod)', 'SUDO_PRIVILEGE_ESCALATION'),
         # Insecure Permissions / SUID (Critical)
-        (re.compile(r'chmod\s+([0-7]*777|[0-7]*[4-7][0-7]{3}|\+s|u\+s)\b', re.IGNORECASE), 'Insecure Permission Grant', 'critical', 'Insecure Permission Grant (chmod 777 / SUID)', 'INSECURE_PERM_CHANGE'),
-        # Ownership changed to root (Warning)
-        (re.compile(r'chown\s+.*root\b', re.IGNORECASE), 'Ownership Changed to Root', 'critical', 'File Ownership Transferred to Root', 'CHOWN_ROOT'),
+        (re.compile(r'\bchmod\s+([0-7]*777|[0-7]*[4-7][0-7]{3}|\+s|u\+s)\b', re.IGNORECASE), 'Insecure Permission Grant', 'critical', 'Insecure Permission Grant (chmod 777 / SUID)', 'INSECURE_PERM_CHANGE'),
+        # Ownership changed to root (requires CLI `chown` — never `fchown` syscall or `UID="root"` metadata)
+        (re.compile(r'\bchown\s+(?:-[A-Za-z]+\s+)*(?:[^\s"\']*:)?root\b', re.IGNORECASE), 'Ownership Changed to Root', 'critical', 'File Ownership Transferred to Root', 'CHOWN_ROOT'),
         # Passwd dumping / tampering
         (re.compile(r'cat\s+/etc/shadow', re.IGNORECASE), 'Shadow File Dumping', 'critical', 'Credential Access Alert', 'SUDO_SHADOW_FILE_DUMPING'),
         (re.compile(r'cat\s+/etc/passwd', re.IGNORECASE), 'Passwd File Access', 'critical', 'Credential Access Alert', 'SUDO_PASSWD_FILE_ACCESS'),
@@ -3394,13 +3394,15 @@ def _check_sudo_misuse(server_id, data):
         if not user:
             sm = re.search(r'sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:', line)
             if sm: user = sm.group(1).strip()
-        candidates.append((line, user))
+        candidates.append((line, user, line))
     for c in commands:
         cmd = c.get("command", "") if isinstance(c, dict) else str(c)
         user = c.get("user", c.get("username", "")) if isinstance(c, dict) else ""
-        candidates.append((cmd, user))
+        candidates.append((cmd, user, cmd))
     for item in log_lines:
         line = item.get("line", "") if isinstance(item, dict) else str(item)
+        if "type=SYSCALL" in line or "msg=audit(" in line:
+            continue
         u_match = re.search(r'\(([^)]+)\)\s+(?:REPLACE|LIST|BEGIN)|sudo:\s+([a-zA-Z0-9_\-\.]+)\s*:|\buser=([\w]+)', line)
         extracted_user = (u_match.group(1) or u_match.group(2) or u_match.group(3) or "").strip() if u_match else ""
         line_low = line.lower()
@@ -3409,17 +3411,19 @@ def _check_sudo_misuse(server_id, data):
             "chmod", "chown", "dropdb", "dropuser", "createuser", "passwd", "useradd", "adduser", "psql",
             "cron", "crontab", "begin edit"
         ]):
-            candidates.append((line, extracted_user))
+            candidates.append((line, extracted_user, line))
 
-    # Also inspect audit_events for any direct command execution
+    # Also inspect audit_events using decoded command line ONLY (never match raw SYSCALL=fchown / UID="root" metadata)
     for ae in data.get("audit_events", []):
         raw_line = ae.get("line", "")
-        if any(cmd in raw_line.lower() for cmd in ["userdel", "passwd", "usermod", "useradd", "chmod", "chown", "dropdb"]):
-            candidates.append((raw_line, ae.get("username", "")))
+        ae_cmd = (_extract_audit_cmdline(raw_line) or ae.get("comm") or "").strip()
+        if ae_cmd and any(cmd in ae_cmd.lower() for cmd in ["userdel", "passwd", "usermod", "useradd", "chmod", "chown", "dropdb", "pkill", "killall"]):
+            candidates.append((ae_cmd, ae.get("username", ""), raw_line))
 
     matched_rules = set()
-    for text, actor in candidates:
-        if any(own in text for own in _OWN_URLS):
+    for text, actor, raw_ctx in candidates:
+        ctx_for_meta = raw_ctx or text
+        if any(own in ctx_for_meta for own in _OWN_URLS):
             continue
         if "type=PATH" in text:
             continue
@@ -3429,7 +3433,7 @@ def _check_sudo_misuse(server_id, data):
                 continue
             if pat.search(text):
                 # Suppress false-positive Sudoers Modification if text does not touch /etc/sudoers
-                if rule_name == 'Sudoers Modification' and '/etc/sudoers' not in text:
+                if rule_name == 'Sudoers Modification' and '/etc/sudoers' not in ctx_for_meta:
                     continue
                 # Suppress routine SSSD PAM authentication failures for user sateesh.j
                 if rule_name == 'Failed Root Escalation Attempt' and 'pam_sss' in text and ('sateesh.j' in text or 'sateesh.j' in str(actor or "")):
@@ -3441,7 +3445,7 @@ def _check_sudo_misuse(server_id, data):
                     continue
                 matched_rules.add(rule_name)
                 # Universally resolve human user (never root/unknown)
-                display_actor = _resolve_server_human_actor(server_id, data, text, rule_name)
+                display_actor = _resolve_server_human_actor(server_id, data, ctx_for_meta, rule_name)
                 if not display_actor or "attribution unverified" in display_actor or display_actor in ("unknown", "root", ""):
                     srv = None
                     try:
@@ -3485,7 +3489,7 @@ def _check_sudo_misuse(server_id, data):
 
                 # Attach structured context + event timestamp (epoch from payload or audit line if present)
                 ev_ts_val = None
-                _au_epoch_m = re.search(r'msg=audit\(([\d\.]+):', text)
+                _au_epoch_m = re.search(r'msg=audit\(([\d\.]+):', ctx_for_meta)
                 if _au_epoch_m:
                     try:
                         ev_ts_val = float(_au_epoch_m.group(1))
@@ -4224,7 +4228,7 @@ def _check_vpn_subnets_and_reverse_shell(server_id, data):
             _create_alert_dedup(server_id, 'REVERSE_SHELL_DETECTED', 'critical', 'Database Reverse Shell', f'Detection Rule [Reverse Shell]: Suspicious outbound shell connection initiated from database process context: {c[:200]}')
 
 def _analyze_application_and_db_logs(server_id, data):
-    """Detection: Application (Tomcat, nohup) & Database (PostgreSQL) log anomalies with SOAR response."""
+    """Detection: Application (Tomcat, nohup) fatal error & outage anomalies (PostgreSQL SOAR log alerts retired)."""
     raw_logs = data.get("logs", []) or []
     raw_lines = data.get("log_lines", []) or []
 
@@ -4238,63 +4242,24 @@ def _analyze_application_and_db_logs(server_id, data):
         if isinstance(l, str):
             all_items.append({"line": l, "source": "", "log_type": ""})
 
-    # PostgreSQL regex patterns
-    pg_drop_pat = re.compile(r'\b(DROP\s+DATABASE|DROP\s+SCHEMA|DROP\s+TABLE|TRUNCATE(?:\s+TABLE)?|ALTER\s+DATABASE\s+.*\s+RENAME|DROP\s+EXTENSION)\b', re.IGNORECASE)
-    pg_priv_pat = re.compile(r'\b(ALTER\s+USER|ALTER\s+ROLE|GRANT\s+(?:ALL|SELECT|INSERT|UPDATE|DELETE|SUPERUSER|CREATEDB|CREATEROLE)|REVOKE\s+|CREATE\s+ROLE|CREATE\s+USER|DROP\s+ROLE|DROP\s+USER|WITH\s+SUPERUSER|WITH\s+CREATEROLE)\b', re.IGNORECASE)
-    pg_denied_pat = re.compile(r'\b(permission\s+denied\s+for\s+(?:database|table|schema|relation|sequence)|must\s+be\s+superuser)\b', re.IGNORECASE)
-    pg_auth_pat = re.compile(r'(fatal:\s+password\s+authentication\s+failed|fatal:\s+no\s+pg_hba\.conf\s+entry)', re.IGNORECASE)
-
     for item in all_items:
         line = item.get("line", "")
         if not line: continue
 
-        # Ignore Linux kernel auditd syscall telemetry in SQL/application log analyzer
+        # Ignore Linux kernel auditd syscall telemetry and OS auth/syslog in Tomcat log analyzer
         if "type=SYSCALL" in line or "msg=audit(" in line:
             continue
 
         log_type = (item.get("log_type") or "").lower()
         source = (item.get("source") or "").lower()
+        if log_type == "os" or any(k in source for k in ("/var/log/auth", "/var/log/syslog", "/var/log/audit", "/var/log/kern", "/var/log/messages")):
+            continue
 
-        is_pg = (log_type in ["postgres", "pgsql"] or 
-                 any(k in source for k in ["postgres", "pgsql"]) or 
-                 any(k in line.lower() for k in ["postgres", "pgsql", "pg_hba", "fatal:  password authentication", "permission denied for database", "must be superuser"]))
-        
         is_tomcat = (log_type in ["tomcat", "catalina"] or 
                      any(k in source for k in ["tomcat", "catalina", "nohup"]) or 
                      any(k in line.lower() for k in ["catalina", "org.apache.catalina", "tomcat"]))
 
-        # 1. PostgreSQL Threat Detections
-        if is_pg or pg_drop_pat.search(line) or pg_priv_pat.search(line):
-            # A. Destructive Database / Table / Schema Deletion (Critical)
-            if pg_drop_pat.search(line):
-                _create_alert_dedup(
-                    server_id, 'PG_DB_DELETED', 'critical',
-                    'PostgreSQL Database Deletion Alert',
-                    f'SOAR Detections [PostgreSQL Data Deletion]: Destructive database query detected in logs: {line[:250]}'
-                )
-            # B. Privilege Escalation / User Role Tampering (Critical)
-            elif pg_priv_pat.search(line):
-                _create_alert_dedup(
-                    server_id, 'PG_PRIVILEGE_CHANGE', 'critical',
-                    'PostgreSQL Privilege Escalation Alert',
-                    f'SOAR Detections [PostgreSQL Privilege Modification]: Database role or permission modification detected in logs: {line[:250]}'
-                )
-            # C. Access Denied / Superuser Violation (Warning)
-            elif pg_denied_pat.search(line):
-                _create_alert_dedup(
-                    server_id, 'PG_ACCESS_DENIED', 'warning',
-                    'PostgreSQL Access Violation Alert',
-                    f'SOAR Detections [PostgreSQL Access Denied]: Unauthorized database operation attempted: {line[:250]}'
-                )
-            # D. Authentication Failures (Warning)
-            elif pg_auth_pat.search(line):
-                _create_alert_dedup(
-                    server_id, 'PG_AUTH_FAILURE', 'warning',
-                    'PostgreSQL Auth Failure Alert',
-                    f'SOAR Detections [PostgreSQL Auth Failure]: Database login authentication failure: {line[:250]}'
-                )
-
-        # 2. Tomcat / Application Detections
+        # Tomcat / Application Detections
         if is_tomcat:
             if any(w in line.upper() for w in ["OUTOFMEMORYERROR", "STACKOVERFLOWERROR"]):
                 _create_alert_dedup(
