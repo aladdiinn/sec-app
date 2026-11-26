@@ -551,6 +551,7 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
                 "file_changes": [],
             })
             # Redundant syscall=62 directly from pkill/killall must be ignored (already tracked via execve)
+            pkill_sleep_hex = "pkill\x00-9\x00sleep".encode("utf-8").hex()
             app_module._check_unified_fim(15, {
                 "audit_events": [{
                     "serial": 9202,
@@ -565,7 +566,7 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
                     "line": (
                         f'type=SYSCALL msg=audit({ts:.3f}:9202): arch=c000003e syscall=62 success=yes exit=0 '
                         f'a0=cc942 a1=9 auid=1002 uid=0 pid=99101 comm="pkill" exe="/usr/bin/pkill" '
-                        f'key="process_kill" proctitle={"pkill\x00-9\x00sleep".encode("utf-8").hex()}'
+                        f'key="process_kill" proctitle={pkill_sleep_hex}'
                     ),
                 }],
                 "file_changes": [],
