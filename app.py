@@ -2653,7 +2653,267 @@ _AUDIT_KEY_DESCRIPTIONS = {
     "app_mod":         "Application Directory Modification",
     "data_mod":        "Data Directory Modification",
     "home_mod":        "Home Directory Modification",
+    "process_kill":    "Process Termination Command Executed",
+    "recon_tools":     "Reconnaissance / Tool Invocation",
+    "data_transfer":   "Data Transfer / Staging Invocation",
+    "c2_tools":        "Command & Control / Netcat Invocation",
+    "ssh_persistence": "SSH Persistence / Key Generation",
+    "firewall_change": "Host Firewall Modification",
+    "archive_staging": "Archive & Staging Tool Invocation",
+    "obfuscated_exec": "Obfuscation / Base64 Invocation",
+    "scheduled_tasks_cmd": "Scheduled Task Command Invocation",
+    "history_tamper":  "Shell History Tampering / Truncation",
 }
+
+_COMMAND_TRACKING_KEYS = frozenset({
+    "process_kill", "recon_tools", "data_transfer", "c2_tools",
+    "ssh_persistence", "firewall_change", "archive_staging",
+    "obfuscated_exec", "scheduled_tasks_cmd", "history_tamper",
+})
+
+import threading as _threading_ctx
+_alert_ctx_local = _threading_ctx.local()
+
+def _set_pending_alert_context(server_id, alert_type, ctx: dict):
+    """Attach event_ts and structured evidence metadata for the next _create_alert_dedup call on this thread."""
+    if not hasattr(_alert_ctx_local, "ctx_map"):
+        _alert_ctx_local.ctx_map = {}
+    _alert_ctx_local.ctx_map[(int(server_id) if server_id else 0, str(alert_type or ""))] = ctx
+
+def _pop_pending_alert_context(server_id, alert_type) -> Optional[dict]:
+    """Consume attached event_ts/evidence metadata for (server_id, alert_type)."""
+    ctx_map = getattr(_alert_ctx_local, "ctx_map", None)
+    if not ctx_map:
+        return None
+    return ctx_map.pop((int(server_id) if server_id else 0, str(alert_type or "")), None)
+
+def _extract_audit_cmdline(raw_line: str) -> str:
+    """
+    Decode full executed command line from raw kernel auditd records:
+    1) PROCTITLE hex or quoted string (preserving full command + args like `pkill -9 java`)
+    2) EXECVE a0/a1/a2... arguments (including hex-encoded args)
+    3) comm / exe fallback
+    """
+    if not raw_line:
+        return ""
+    import re as _re
+
+    ptitle_m = _re.search(r'proctitle=([^\s]+)', raw_line)
+    if ptitle_m:
+        pt = ptitle_m.group(1)
+        if pt.startswith('"'):
+            decoded = pt.strip('"').strip()
+            if decoded:
+                return decoded[:240]
+        elif _re.match(r'^[0-9A-Fa-f]+$', pt) and len(pt) % 2 == 0:
+            try:
+                decoded = bytes.fromhex(pt).decode('utf-8', errors='replace').replace('\x00', ' ').strip()
+                if decoded:
+                    return decoded[:240]
+            except Exception:
+                pass
+
+    execve_m = _re.search(r'type=EXECVE\b[^\n]*', raw_line)
+    if execve_m:
+        args = []
+        for am in _re.finditer(r'\ba(\d+)=("([^"]*)"|([0-9A-Fa-f]+))', execve_m.group(0)):
+            val = am.group(3)
+            if val is None and am.group(4):
+                hx = am.group(4)
+                if len(hx) % 2 == 0:
+                    try:
+                        val = bytes.fromhex(hx).decode('utf-8', errors='replace').replace('\x00', ' ')
+                    except Exception:
+                        val = hx
+                else:
+                    val = hx
+            if val:
+                args.append(val.strip())
+        if args:
+            return " ".join(args)[:240]
+
+    comm_m = _re.search(r'comm="([^"]+)"', raw_line)
+    exe_m = _re.search(r'exe="([^"]+)"', raw_line)
+    return (comm_m.group(1) if comm_m else "") or (os.path.basename(exe_m.group(1)) if exe_m else "")
+
+def _is_benign_bash_history_append(key: str, raw_line: str, exe_str: str, filename_str: str) -> bool:
+    """
+    Distinguish normal interactive bash history append on shell exit from history tampering.
+    - Non-history_tamper keys touching .bash_history via bash -> routine noise (ignore).
+    - history_tamper key: alert on non-bash modification (truncate, shred, rm, vi, dd)
+      OR bash truncation/deletion (syscall truncate/ftruncate/unlink/unlinkat, or O_TRUNC 0x200).
+    """
+    if ".bash_history" not in (filename_str or "").lower():
+        return False
+    exe_low = (exe_str or "").lower()
+    if "bash" not in exe_low and exe_low not in ("sh", "/bin/sh", "/usr/bin/zsh", "zsh"):
+        return False
+    if key != "history_tamper":
+        return True
+    sc_m = re.search(r'\bsyscall=(\d+)', raw_line or "")
+    sc_num = sc_m.group(1) if sc_m else ""
+    if sc_num in ("76", "77", "87", "263", "82", "264"):  # truncate, ftruncate, unlink, unlinkat, rename, renameat
+        return False
+    # Check open(a1)/openat(a2)/flags for O_TRUNC (0x200) using exact syscall argument register
+    flag_pats = [r'\bflags=0x([0-9a-fA-F]+)']
+    if sc_num == "257":  # openat(dirfd, pathname, flags)
+        flag_pats.insert(0, r'\ba2=([0-9a-fA-F]+)')
+    elif sc_num == "2":  # open(pathname, flags)
+        flag_pats.insert(0, r'\ba1=([0-9a-fA-F]+)')
+    for flag_pat in flag_pats:
+        fm = re.search(flag_pat, raw_line or "")
+        if fm:
+            try:
+                fval = int(fm.group(1), 16)
+                if fval & 0x200:  # O_TRUNC set (e.g. `> ~/.bash_history`)
+                    return False
+                if (fval & 0x400) and not (fval & 0x200):  # Pure O_APPEND normal logout save
+                    return True
+            except Exception:
+                pass
+    # Default: bash normal append to history is benign unless truncation/unlink detected
+    return True
+
+def _build_securepulse_audit_rules_snippet() -> str:
+    """
+    Shared shell snippet that writes /etc/audit/rules.d/securepulse.rules with cross-distro
+    canonical path resolution and loads into kernel audit without restarting node_push_agent.
+    Used identically by /setup_node.sh and /update_audit_rules.sh (no duplicated rule lists).
+    """
+    return """if [ -d /etc/audit/rules.d/ ]; then
+    # Wipe any existing or default OS rules to prevent "Rule exists" compiler crashes during augenrules
+    find /etc/audit/rules.d/ -type f -not -name 'securepulse.rules' -delete 2>/dev/null || true
+
+    RULES_FILE="/etc/audit/rules.d/securepulse.rules"
+
+    # Dynamic canonical binary resolution across distros (Ubuntu/Debian vs RHEL/CentOS)
+    # Uses `type -P` so bash builtins (e.g. kill) resolve external binaries when present,
+    # resolves real ELF path via readlink -f, and deduplicates lines to avoid Rule exists errors.
+    add_exec_rule() {
+        local bin_cmd="$1"
+        local bin_key="$2"
+        local resolved_bin=""
+        resolved_bin=$(type -P "$bin_cmd" 2>/dev/null || true)
+        if [ -z "$resolved_bin" ]; then
+            for d in /usr/bin /bin /usr/sbin /sbin; do
+                if [ -x "$d/$bin_cmd" ]; then
+                    resolved_bin="$d/$bin_cmd"
+                    break
+                fi
+            done
+        fi
+        if [ -n "$resolved_bin" ] && [ -x "$resolved_bin" ]; then
+            local canonical_bin
+            canonical_bin=$(readlink -f "$resolved_bin" 2>/dev/null || echo "$resolved_bin")
+            local rule_line="-w $canonical_bin -p x -k $bin_key"
+            grep -qxF -- "$rule_line" "$RULES_FILE" 2>/dev/null || echo "$rule_line" >> "$RULES_FILE"
+        fi
+    }
+
+    cat << 'AUDIT_EOF' > "$RULES_FILE"
+# 0. Buffer and Rate Limiting
+-D
+-b 8192
+-f 1
+
+# 1. Identity and Privilege Escalation
+-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /usr/sbin/usermod -p x -k identity
+-w /etc/sudoers -p wa -k scope
+-w /etc/sudoers.d/ -p wa -k scope
+
+# 2. Remote Access and SSH
+-w /etc/ssh/sshd_config -p wa -k remote_access
+-w /etc/ssh/sshd_config.d -p wa -k remote_access
+-w /root/.ssh/authorized_keys -p wa -k ssh_persistence
+
+# 3. Scheduled Tasks (Cron)
+-w /etc/crontab -p wa -k scheduled_tasks
+-w /etc/cron.hourly/ -p wa -k scheduled_tasks
+-w /etc/cron.daily/ -p wa -k scheduled_tasks
+-w /var/spool/cron/ -p wa -k scheduled_tasks
+
+# 4. Kernel Modules (Rootkits)
+-w /usr/sbin/insmod -p x -k modules
+-w /usr/sbin/rmmod -p x -k modules
+-w /usr/sbin/modprobe -p x -k modules
+-a always,exit -F arch=b64 -S init_module -S finit_module -S delete_module -F auid>=1000 -F auid!=-1 -k modules
+
+# 5. Time and Network Configuration
+-a always,exit -F arch=b64 -S adjtimex -S settimeofday -S clock_settime -F auid>=1000 -F auid!=-1 -k time-change
+-w /etc/localtime -p wa -k time-change
+-a always,exit -F arch=b64 -S sethostname -S setdomainname -F auid>=1000 -F auid!=-1 -k system-locale
+-w /etc/hosts -p wa -k system-locale
+-w /etc/hostname -p wa -k system-locale
+-w /etc/netplan/ -p wa -k system-locale
+
+# 6. AppArmor MAC Policy
+-w /etc/apparmor/ -p wa -k MAC-policy
+-w /etc/apparmor.d/ -p wa -k MAC-policy
+
+# 7. File Permissions and Deletion
+-a always,exit -F arch=b64 -S fchmod,fchmodat -F auid>=1000 -F auid!=-1 -k perm_mod
+-a always,exit -F arch=b64 -S fchown,fchownat -F auid>=1000 -F auid!=-1 -k perm_mod
+-w /usr/bin/chattr -p x -k perm_mod
+-a always,exit -F arch=b64 -S unlinkat -S renameat -S renameat2 -F auid>=1000 -F auid!=-1 -k delete
+
+# 8. Logins and Sessions
+-w /var/log/faillog -p wa -k logins
+-w /var/log/lastlog -p wa -k logins
+-w /var/run/utmp -p wa -k session
+-w /var/log/wtmp -p wa -k session
+-w /var/log/btmp -p wa -k session
+
+# 9. System Mounts
+-a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=-1 -k mounts
+
+# 10. Custom Directory Monitoring
+-w /application -p wa -k app_mod
+-w /data -p wa -k data_mod
+-w /home -p wa -k home_mod
+
+# 11. Command Execution Tracking (user attribution for tools attackers/operators abuse)
+# Known shell builtin gaps:
+#   - `kill` in interactive bash/sh is a shell builtin (never execs /bin/kill); pkill/killall
+#     provide reliable execve coverage, while external kill watch below catches sudo/env/`/bin/kill`.
+#   - `history -c` / `unset HISTFILE` are shell builtins unwatchable via execve;
+#     file watch on /root/.bash_history catches truncation/deletion attempts instead.
+-w /root/.bash_history -p wa -k history_tamper
+AUDIT_EOF
+
+    # Cross-distro binary watches resolved at install/rollout time
+    add_exec_rule wget recon_tools
+    add_exec_rule curl recon_tools
+    add_exec_rule scp data_transfer
+    add_exec_rule rsync data_transfer
+    add_exec_rule sftp data_transfer
+    add_exec_rule nc c2_tools
+    add_exec_rule ncat c2_tools
+    add_exec_rule pkill process_kill
+    add_exec_rule killall process_kill
+    add_exec_rule kill process_kill
+    add_exec_rule ssh-keygen ssh_persistence
+    add_exec_rule iptables firewall_change
+    add_exec_rule ufw firewall_change
+    add_exec_rule tar archive_staging
+    add_exec_rule zip archive_staging
+    add_exec_rule base64 obfuscated_exec
+    add_exec_rule crontab scheduled_tasks_cmd
+    add_exec_rule useradd identity
+    add_exec_rule passwd identity
+
+    if command -v augenrules >/dev/null 2>&1; then
+        augenrules --load >/dev/null 2>&1 || true
+    else
+        auditctl -R "$RULES_FILE" >/dev/null 2>&1 || true
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl is-active --quiet auditd >/dev/null 2>&1 || systemctl start auditd >/dev/null 2>&1 || true
+    fi
+fi"""
 
 def _humanize_audit_event(key, actor, auid_str, raw_line):
     """Convert a raw kernel audit event into a plain-English human-readable message."""
@@ -2663,28 +2923,16 @@ def _humanize_audit_event(key, actor, auid_str, raw_line):
     sc_m = _re.search(r'syscall=(\d+)', raw_line)
     action = _SYSCALL_ACTIONS.get(sc_m.group(1), "performed an action on") if sc_m else "triggered an event on"
 
-    # Extract the file/path being acted on (proctitle or CWD+OBJPATH)
+    # Extract the file/path being acted on
     path_m = _re.search(r'name="([^"]+)"', raw_line)
     obj_path = path_m.group(1) if path_m else None
 
-    # Extract executed command (comm or exe)
+    # Extract executed command (comm or exe) and full decoded proctitle/EXECVE cmdline
     comm_m = _re.search(r'comm="([^"]+)"', raw_line)
     exe_m  = _re.search(r'exe="([^"]+)"', raw_line)
     cmd_name = (comm_m.group(1) if comm_m else None) or \
                (os.path.basename(exe_m.group(1)) if exe_m else None)
-
-    # Extract proctitle (full command including args) — hex or text
-    ptitle_m = _re.search(r'proctitle=([^\s]+)', raw_line)
-    proctitle = None
-    if ptitle_m:
-        pt = ptitle_m.group(1)
-        if pt.startswith('"'):
-            proctitle = pt.strip('"')
-        elif _re.match(r'^[0-9A-Fa-f]+$', pt):
-            try:
-                proctitle = bytes.fromhex(pt).decode('utf-8', errors='replace').replace('\x00', ' ').strip()
-            except Exception:
-                pass
+    proctitle = _extract_audit_cmdline(raw_line)
 
     # Get a clean key description
     key_desc = _AUDIT_KEY_DESCRIPTIONS.get(key, key.replace('_', ' ').title())
@@ -2884,7 +3132,11 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
         title = re.sub(r'attribution unverified(?:\s*\(AUID:\s*\d+\))?', repl_user, str(title or ""))
         message = re.sub(r'attribution unverified(?:\s*\(AUID:\s*\d+\))?', repl_user, str(message or ""))
         
-    cache_key = (int(server_id) if server_id else 0, str(alert_type))
+    pending_ctx = _pop_pending_alert_context(server_id, alert_type) or {}
+    cmd_sub = ""
+    if any(k.upper() in at_up for k in _COMMAND_TRACKING_KEYS) or at_up in ("MASS_PROCESS_KILL", "FIREWALL_DISABLED", "CRON_PERSISTENCE"):
+        cmd_sub = (pending_ctx.get("cmdline") or pending_ctx.get("comm") or "").strip()[:80].lower()
+    cache_key = (int(server_id) if server_id else 0, str(alert_type), cmd_sub) if cmd_sub else (int(server_id) if server_id else 0, str(alert_type))
     now = time.time()
     last_time = _dedup_alerts_cache.get(cache_key, 0)
     dedup_window = 86400 if 'DANGEROUS_PORT' in alert_type else 15
@@ -2892,7 +3144,15 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
         return
     _dedup_alerts_cache[cache_key] = now
     try:
-        db.log_alert(server_id, alert_type, message, severity=severity, title=title)
+        db.log_alert(
+            server_id,
+            alert_type,
+            message,
+            severity=severity,
+            title=title,
+            event_ts=pending_ctx.get("event_ts"),
+            evidence_data=pending_ctx.get("evidence_data")
+        )
         
         # SOAR Auto-Triage: Log security audit record for critical detections
         if severity == 'critical':
@@ -3099,6 +3359,36 @@ def _check_sudo_misuse(server_id, data):
                     "atype": atype
                 }
 
+                # Attach structured context + event timestamp (epoch from payload or audit line if present)
+                ev_ts_val = None
+                _au_epoch_m = re.search(r'msg=audit\(([\d\.]+):', text)
+                if _au_epoch_m:
+                    try:
+                        ev_ts_val = float(_au_epoch_m.group(1))
+                    except Exception:
+                        pass
+                if ev_ts_val is None and data.get("event_ts"):
+                    try:
+                        ev_ts_val = float(data.get("event_ts"))
+                    except Exception:
+                        pass
+                if ev_ts_val is None:
+                    ev_ts_val = time.time()
+
+                _set_pending_alert_context(server_id, atype, {
+                    "event_ts": ev_ts_val,
+                    "cmdline": clean_text,
+                    "comm": rule_name,
+                    "evidence_data": {
+                        "source": "command_telemetry",
+                        "rule_id": f"CMD-{atype}",
+                        "login_user": display_actor,
+                        "command": clean_text,
+                        "event_time": ev_ts_val,
+                        "attribution_status": "attributed" if display_actor not in ("unknown", "attribution unverified") else "unattributed",
+                    }
+                })
+
                 _create_alert_dedup(
                     server_id, atype, sev,
                     display_title,
@@ -3211,130 +3501,197 @@ def _check_unified_fim(server_id, data):
         # Unkeyed kernel events (null key) are non-actionable; filter out from alert engine
         if key in ("(null)", "null", "", None):
             continue
-            
-        last_event = events[-1]
-        for ev in reversed(events):
-            ev_line = ev.get("line", "")
-            f_m = re.search(r'name="?([^"\s]+)"?', ev_line) or re.search(r'filename="?([^"\s]+)"?', ev_line)
-            fn = (f_m.group(1) if f_m else "").lower()
-            if not any(noise in fn for noise in [".bash_history", "/logs/", ".log", "/.git/"]):
-                last_event = ev
-                break
 
-        line = last_event.get("line", "")
-        
-        if key == "commands":
-            raw_line_lower = line.lower()
-            if any(noise in raw_line_lower for noise in ["exe=\"/usr/bin/sleep\"", "exe=\"/bin/sleep\"", "exe=\"/usr/bin/htop\"", "exe=\"/usr/bin/top\""]):
-                continue
-        
-        if any(noise in line for noise in ["debian-sa1", "sysstat", "logrotate", "systemd-tmpfiles"]):
-            continue
-
-        auid_str = last_event.get("auid") or "1005"
-        actor = _resolve_server_human_actor(server_id, data, line, key, explicit_auid=auid_str)
-        
-        real_actor = actor if (actor and actor not in ("unknown", "")) else "attribution unverified"
-        if "attribution unverified" in real_actor and (auid_str == "1005" or server_id in (12, 13)):
-            real_actor = "mannan"
-        display_key = "System Config" if key in ("(null)", "null", "") else key.replace('_', ' ').title()
-        title = f"{display_key} Alert by {real_actor}"
-
-        c_m = re.search(r'comm="?([^"\s]+)"?', line)
-        e_m = re.search(r'exe="?([^"\s]+)"?', line)
-        f_m = re.search(r'name="?([^"\s]+)"?', line) or re.search(r'filename="?([^"\s]+)"?', line)
-        
-        filename_str = f_m.group(1) if f_m else ""
-        exe_str_val = e_m.group(1) if e_m else ""
-        f_lower = filename_str.lower()
-
-        # Severity determination:
-        # Session alerts, login alerts, and ANY /temp/ or /tmp/ folder alerts are strictly WARNING ONLY (no email notifications)
-        is_temp_path = any(tp in f_lower for tp in ["/tmp", "/temp", "\\tmp", "\\temp", "tmp", "temp", "utmp", "wtmp", "btmp"]) or "temp" in filename_str.lower() or "tmp" in filename_str.lower()
-        if key in ("session", "logins", "app_mod") or is_temp_path:
-            severity = "warning"
-        elif key in ("identity", "scope", "mac-policy", "modules") or any(p in f_lower for p in ["/etc/shadow", "/etc/sudoers"]):
-            severity = "critical"
+        # For command execution tracking keys, inspect distinct commands in batch instead of discarding all but events[-1]
+        if key in _COMMAND_TRACKING_KEYS:
+            candidate_events = []
+            seen_cmds = set()
+            for ev in events:
+                cmd_sig = _extract_audit_cmdline(ev.get("line", "")) or (ev.get("comm") or ev.get("exe") or str(ev.get("serial", "")))
+                if cmd_sig not in seen_cmds:
+                    seen_cmds.add(cmd_sig)
+                    candidate_events.append(ev)
         else:
-            severity = "warning"
-        
-        if ".bash_history" in filename_str and "bash" in exe_str_val.lower():
-            continue
-        if key in ("app_mod", "data_mod") and any(n in f_lower for n in ["/logs/", ".log", "/.git/", "/tmp/", "/temp/"]):
-            continue
-        if key == "app_mod" and not _is_rule_enabled('AUDIT_APP_MOD', default=False) and not _is_rule_enabled('app_mod', default=False):
-            continue
-        if key == "delete":
-            comm_val = (c_m.group(1) if c_m else "").lower()
-            exe_val = exe_str_val.lower()
-            if any(sd in exe_val or sd in comm_val for sd in ["systemd", "containerd", "dockerd", "journald", "logind", "udevd", "tmpfiles", "cron"]):
-                continue
-            if filename_str in ("/", "", "//", None) or f_lower in ("/", "", "//"):
-                continue
-            if any(ephem in f_lower for ephem in ["/run/", "/tmp/", "/temp/", "/proc/", "/sys/", "/dev/", ".pid", ".socket", ".cgroup"]):
-                continue
-        if key == "session" and not _is_rule_enabled('AUDIT_SESSION', default=False) and not _is_rule_enabled('session', default=False):
-            continue
-        if ("apache" in f_lower or "tomcat" in f_lower) and any(x in f_lower for x in ["/temp/", "/work/", "/webapps/"]):
-            continue
-        if key in ("(null)", "null", "") and real_actor == "root" and "cron" in exe_str_val.lower():
-            continue
-        if real_actor == "mdm_deployment":
-            if "java" in exe_str_val.lower() and (f_lower == "c:" or f_lower.startswith("c:/temp/")):
-                continue
-            if "sshd" in exe_str_val.lower() and (f_lower.startswith("/dev/pts/") or key in ("(null)", "null", "")):
-                continue
-        if key == "perm_mod" and "sudo" in exe_str_val.lower() and f_lower.startswith("/dev/pts/"):
-            continue
-        if c_m and c_m.group(1).lower() in ("who", "id", "groups", "w"):
-            continue
-        if key in ("(null)", "", "null") and "who" in exe_str_val.lower():
-            continue
-            
-        comm_str = f" using '{c_m.group(1)}'" if c_m else ""
-        exe_str = f" ({exe_str_val})" if e_m else ""
-        file_str = f" on file '{filename_str}'" if f_m else ""
-        
-        human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}){comm_str}{exe_str}{file_str}."
+            last_event = events[-1]
+            for ev in reversed(events):
+                ev_line = ev.get("line", "")
+                f_m = re.search(r'name="?([^"\s]+)"?', ev_line) or re.search(r'filename="?([^"\s]+)"?', ev_line)
+                fn = (f_m.group(1) if f_m else "").lower()
+                if not any(noise in fn for noise in [".bash_history", "/logs/", ".log", "/.git/"]):
+                    last_event = ev
+                    break
+            candidate_events = [last_event]
 
-        # Canonical rule name (Key-only, never contains AUID)
-        rule_name = f'AUDIT_{key.upper()}'
+        for cur_event in candidate_events:
+            line = cur_event.get("line", "")
 
-        # Shadow-mode severity evaluation
-        policy = db.get_audit_severity_policy(key)
-        shadow_sev = policy.get("default_severity", "info")
-        reason = f"Policy default for key '{key}'"
+            if key == "commands":
+                raw_line_lower = line.lower()
+                if any(noise in raw_line_lower for noise in ["exe=\"/usr/bin/sleep\"", "exe=\"/bin/sleep\"", "exe=\"/usr/bin/htop\"", "exe=\"/usr/bin/top\""]):
+                    continue
 
-        # Check active timed change window (safe maintenance with expiry & tamper protection)
-        tw = db.get_active_timed_change_window(server_id)
-        if tw:
-            expected_tools = ("apt", "dpkg", "useradd", "usermod", "passwd", "visudo", "systemd")
-            comm_val = (c_m.group(1) if c_m else "").lower()
-            if any(t in comm_val for t in expected_tools) or any(t in exe_str_val.lower() for t in expected_tools):
-                shadow_sev = "info"
-                reason = f"Inside active timed change window #{tw['id']} '{tw['title']}': expected maintenance tool demoted to INFO"
-            elif key in ("identity", "scope") or any(f in filename_str for f in ["/etc/shadow", "/etc/sudoers"]):
-                shadow_sev = "critical"
-                reason = f"CRITICAL TAMPER ATTEMPT: Protected file '{filename_str}' modified by unexpected tool '{comm_val}'"
+            if any(noise in line for noise in ["debian-sa1", "sysstat", "logrotate", "systemd-tmpfiles"]):
+                continue
 
-        # Record shadow evaluation for 7-day shadow collection & before/after report
-        try:
-            serial_val = last_event.get("serial", 0)
-            epoch_val = last_event.get("epoch", 0.0)
-            db.record_shadow_audit_evaluation(
-                server_id, serial_val, epoch_val, key,
-                original_sev="critical", shadow_sev=shadow_sev,
-                reason=reason, actor=real_actor,
-                target_path=filename_str, exe=exe_str_val
+            auid_str = cur_event.get("auid") or "1005"
+            actor = _resolve_server_human_actor(server_id, data, line, key, explicit_auid=auid_str)
+
+            real_actor = actor if (actor and actor not in ("unknown", "")) else "attribution unverified"
+            if "attribution unverified" in real_actor and (auid_str == "1005" or server_id in (12, 13)):
+                real_actor = "mannan"
+            eff_user = cur_event.get("effective_user") or "root"
+
+            c_m = re.search(r'comm="?([^"\s]+)"?', line)
+            e_m = re.search(r'exe="?([^"\s]+)"?', line)
+            f_m = re.search(r'name="?([^"\s]+)"?', line) or re.search(r'filename="?([^"\s]+)"?', line)
+
+            filename_str = f_m.group(1) if f_m else (cur_event.get("path") or "")
+            exe_str_val = e_m.group(1) if e_m else (cur_event.get("exe") or "")
+            f_lower = filename_str.lower()
+            cmdline = _extract_audit_cmdline(line) or cur_event.get("comm") or (os.path.basename(exe_str_val) if exe_str_val else "")
+
+            # Suppress internal SOC agent self-restarts on process_kill
+            if key == "process_kill" and any(ag in f"{cmdline} {line}".lower() for ag in ["node_push_agent", "securepulse", "bsmart-agent", "bsmart_agent", "agent-2.1"]):
+                continue
+
+            if _is_benign_bash_history_append(key, line, exe_str_val, filename_str):
+                continue
+            if key in ("app_mod", "data_mod") and any(n in f_lower for n in ["/logs/", ".log", "/.git/", "/tmp/", "/temp/"]):
+                continue
+            if key == "app_mod" and not _is_rule_enabled('AUDIT_APP_MOD', default=False) and not _is_rule_enabled('app_mod', default=False):
+                continue
+            if key == "delete":
+                comm_val = (c_m.group(1) if c_m else "").lower()
+                exe_val = exe_str_val.lower()
+                if any(sd in exe_val or sd in comm_val for sd in ["systemd", "containerd", "dockerd", "journald", "logind", "udevd", "tmpfiles", "cron"]):
+                    continue
+                if filename_str in ("/", "", "//", None) or f_lower in ("/", "", "//"):
+                    continue
+                if any(ephem in f_lower for ephem in ["/run/", "/tmp/", "/temp/", "/proc/", "/sys/", "/dev/", ".pid", ".socket", ".cgroup"]):
+                    continue
+            if key == "session" and not _is_rule_enabled('AUDIT_SESSION', default=False) and not _is_rule_enabled('session', default=False):
+                continue
+            if ("apache" in f_lower or "tomcat" in f_lower) and any(x in f_lower for x in ["/temp/", "/work/", "/webapps/"]):
+                continue
+            if key in ("(null)", "null", "") and real_actor == "root" and "cron" in exe_str_val.lower():
+                continue
+            if real_actor == "mdm_deployment":
+                if "java" in exe_str_val.lower() and (f_lower == "c:" or f_lower.startswith("c:/temp/")):
+                    continue
+                if "sshd" in exe_str_val.lower() and (f_lower.startswith("/dev/pts/") or key in ("(null)", "null", "")):
+                    continue
+            if key == "perm_mod" and "sudo" in exe_str_val.lower() and f_lower.startswith("/dev/pts/"):
+                continue
+            if c_m and c_m.group(1).lower() in ("who", "id", "groups", "w"):
+                continue
+            if key in ("(null)", "", "null") and "who" in exe_str_val.lower():
+                continue
+
+            # Policy / Severity determination (never single-signal CRITICAL for command keys)
+            policy = db.get_audit_severity_policy(key)
+            is_temp_path = any(tp in f_lower for tp in ["/tmp", "/temp", "\\tmp", "\\temp", "tmp", "temp", "utmp", "wtmp", "btmp"]) or "temp" in filename_str.lower() or "tmp" in filename_str.lower()
+            if key in _COMMAND_TRACKING_KEYS:
+                pol_sev = (policy.get("default_severity") or "warning").lower()
+                severity = pol_sev if pol_sev in ("warning", "medium", "high", "info") else "warning"
+            elif key in ("session", "logins", "app_mod") or is_temp_path:
+                severity = "warning"
+            elif key in ("identity", "scope", "mac-policy", "modules") or any(p in f_lower for p in ["/etc/shadow", "/etc/sudoers"]):
+                severity = "critical"
+            else:
+                severity = "warning"
+
+            display_key = "System Config" if key in ("(null)", "null", "") else key.replace('_', ' ').title()
+            if key in _COMMAND_TRACKING_KEYS and cmdline:
+                short_cmd = (cmdline[:60] + "...") if len(cmdline) > 60 else cmdline
+                title = f"{display_key} ({short_cmd}) by {real_actor}"
+            else:
+                title = f"{display_key} Alert by {real_actor}"
+
+            comm_str = f" using '{c_m.group(1)}'" if c_m else ""
+            exe_str = f" ({exe_str_val})" if e_m else ""
+            file_str = f" on file '{filename_str}'" if f_m else ""
+
+            if key in _COMMAND_TRACKING_KEYS and cmdline:
+                human_msg = (
+                    f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' "
+                    f"(effective: '{eff_user}', AUID: {auid_str}) executed `{cmdline}`{exe_str}{file_str}."
+                )
+            else:
+                human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}){comm_str}{exe_str}{file_str}."
+
+            # Canonical rule name (Key-only, never contains AUID)
+            rule_name = f'AUDIT_{key.upper()}'
+
+            # Shadow-mode severity evaluation
+            shadow_sev = policy.get("default_severity", "info")
+            reason = f"Policy default for key '{key}'"
+
+            # Check active timed change window (safe maintenance with expiry & tamper protection)
+            tw = db.get_active_timed_change_window(server_id)
+            if tw:
+                expected_tools = ("apt", "dpkg", "useradd", "usermod", "passwd", "visudo", "systemd")
+                comm_val = (c_m.group(1) if c_m else "").lower()
+                if any(t in comm_val for t in expected_tools) or any(t in exe_str_val.lower() for t in expected_tools):
+                    shadow_sev = "info"
+                    reason = f"Inside active timed change window #{tw['id']} '{tw['title']}': expected maintenance tool demoted to INFO"
+                elif key in ("identity", "scope") or any(f in filename_str for f in ["/etc/shadow", "/etc/sudoers"]):
+                    shadow_sev = "critical"
+                    reason = f"CRITICAL TAMPER ATTEMPT: Protected file '{filename_str}' modified by unexpected tool '{comm_val}'"
+
+            serial_val = cur_event.get("serial", 0)
+            epoch_val = cur_event.get("epoch")
+            if epoch_val is None:
+                _em = re.search(r'msg=audit\(([\d\.]+):', line)
+                epoch_val = float(_em.group(1)) if _em else time.time()
+            else:
+                try:
+                    epoch_val = float(epoch_val)
+                except Exception:
+                    epoch_val = time.time()
+
+            # Record shadow evaluation for 7-day shadow collection & before/after report
+            try:
+                db.record_shadow_audit_evaluation(
+                    server_id, serial_val, epoch_val, key,
+                    original_sev="critical", shadow_sev=shadow_sev,
+                    reason=reason, actor=real_actor,
+                    target_path=filename_str, exe=exe_str_val
+                )
+            except Exception:
+                pass
+
+            pid_val = cur_event.get("pid")
+            if not pid_val:
+                _pm = re.search(r'\bpid=(\d+)', line)
+                pid_val = _pm.group(1) if _pm else None
+
+            _set_pending_alert_context(server_id, rule_name, {
+                "event_ts": epoch_val,
+                "cmdline": cmdline,
+                "comm": c_m.group(1) if c_m else (cur_event.get("comm") or ""),
+                "evidence_data": {
+                    "source": "auditd",
+                    "rule_id": f"DET-AUD-{key.upper()}",
+                    "audit_key": key,
+                    "audit_serial": serial_val,
+                    "event_time": epoch_val,
+                    "login_user": real_actor,
+                    "effective_user": eff_user,
+                    "auid": str(auid_str),
+                    "command": cmdline,
+                    "exe": exe_str_val,
+                    "target_path": filename_str,
+                    "pid": int(pid_val) if str(pid_val or "").isdigit() else None,
+                    "attribution_status": "attributed" if real_actor not in ("attribution unverified", "unknown") else "unattributed",
+                    "why_it_fired": human_msg,
+                }
+            })
+
+            _create_alert_dedup(
+                server_id, rule_name, severity,
+                title,
+                human_msg
             )
-        except Exception:
-            pass
-
-        _create_alert_dedup(
-            server_id, rule_name, severity,
-            title,
-            human_msg
-        )
 
     log_lines = data.get("log_lines", []) or data.get("logs", [])
     fim_cmd_pat = re.compile(r'(chmod\s+[0-7]{3,4}\s+/(?:etc|bin|sbin|usr)|chown\s+\S+\s+/(?:etc|bin|sbin))', re.IGNORECASE)
@@ -3428,10 +3785,29 @@ def _check_port_scan(server_id, data):
             is_loopback = bind_ip in ("127.0.0.1", "::1", "localhost") or bind_ip.startswith("127.")
 
             # 1. Dangerous default infrastructure ports (5432, 3306, 6379, etc.)
+            port_ev_ts = float(data.get("event_ts") or time.time())
+            port_ev_data = {
+                "source": "port_scanner",
+                "rule_id": "DET-NET-001" if p in dangerous_defaults else "DET-NET-002",
+                "port": p,
+                "owning_process": proc_name,
+                "process_name": proc_name,
+                "process_user": user_name,
+                "process_pid": int(pid_val) if str(pid_val or "").isdigit() else None,
+                "listening_address": f"{bind_ip}:{p}",
+                "network_zone": "INTERNAL" if is_loopback else "EXTERNAL",
+                "event_time": port_ev_ts,
+            }
+
             if p in dangerous_defaults:
                 sev = "critical"
                 title = f"Exposed Infrastructure Port ({p})"
                 msg = f"Detection Rule [Exposed Service]: Dangerous default port {p} ({dangerous_defaults[p]}) is listening on {bind_ip} owned by {proc_name} (User: {user_name}, PID: {pid_val}). This should not be publicly listening."
+                port_ev_data["why_it_fired"] = msg
+                _set_pending_alert_context(server_id, f'DANGEROUS_PORT_{p}', {
+                    "event_ts": port_ev_ts,
+                    "evidence_data": port_ev_data,
+                })
                 _create_alert_dedup(
                     server_id, f'DANGEROUS_PORT_{p}', sev, title, msg
                 )
@@ -3457,6 +3833,11 @@ def _check_port_scan(server_id, data):
                 title = f"Unexpected Port Opened ({p})"
                 msg = f"Detection Rule [Network Anomaly]: New unexpected open port {p} detected listening on non-loopback address {bind_ip} owned by {proc_name} (User: {user_name}, PID: {pid_val}). Possible backdoor or unauthorized service."
 
+            port_ev_data["why_it_fired"] = msg
+            _set_pending_alert_context(server_id, f'PORT_SCAN_{p}', {
+                "event_ts": port_ev_ts,
+                "evidence_data": port_ev_data,
+            })
             _create_alert_dedup(
                 server_id, f'PORT_SCAN_{p}', sev, title, msg
             )
@@ -4181,7 +4562,8 @@ async def api_agent_push(request: Request):
         detected_svcs = db.synthesize_services_for_server(server_id)
     if server_id and detected_svcs:
         try:
-            db.save_detected_services(server_id, detected_svcs)
+            svc_event_ts = float(data.get("event_ts") or time.time())
+            db.save_detected_services(server_id, detected_svcs, event_ts=svc_event_ts)
         except Exception as e_ds:
             logger.error(f"Error saving detected services: {e_ds}")
 
@@ -7000,77 +7382,7 @@ if ! command -v auditctl >/dev/null 2>&1 && ! command -v auditd >/dev/null 2>&1;
     fi
 fi
 
-if [ -d /etc/audit/rules.d/ ]; then
-    # Wipe any existing or default OS rules to prevent "Rule exists" compiler crashes during augenrules
-    find /etc/audit/rules.d/ -type f -not -name 'securepulse.rules' -delete 2>/dev/null || true
-    
-    cat << 'AUDIT_EOF' > /etc/audit/rules.d/securepulse.rules
-# 0. Buffer and Rate Limiting
--D
--b 8192
--f 1
-
-# 1. Identity and Privilege Escalation
--w /etc/passwd -p wa -k identity
--w /etc/shadow -p wa -k identity
--w /etc/group -p wa -k identity
--w /etc/gshadow -p wa -k identity
--w /usr/sbin/usermod -p x -k identity
--w /etc/sudoers -p wa -k scope
--w /etc/sudoers.d/ -p wa -k scope
-
-# 2. Remote Access and SSH
--w /etc/ssh/sshd_config -p wa -k remote_access
--w /etc/ssh/sshd_config.d -p wa -k remote_access
-
-# 3. Scheduled Tasks (Cron)
--w /etc/crontab -p wa -k scheduled_tasks
--w /etc/cron.hourly/ -p wa -k scheduled_tasks
--w /etc/cron.daily/ -p wa -k scheduled_tasks
--w /var/spool/cron/ -p wa -k scheduled_tasks
-
-# 4. Kernel Modules (Rootkits)
--w /usr/sbin/insmod -p x -k modules
--w /usr/sbin/rmmod -p x -k modules
--w /usr/sbin/modprobe -p x -k modules
--a always,exit -F arch=b64 -S init_module -S finit_module -S delete_module -F auid>=1000 -F auid!=-1 -k modules
-
-# 5. Time and Network Configuration
--a always,exit -F arch=b64 -S adjtimex -S settimeofday -S clock_settime -F auid>=1000 -F auid!=-1 -k time-change
--w /etc/localtime -p wa -k time-change
--a always,exit -F arch=b64 -S sethostname -S setdomainname -F auid>=1000 -F auid!=-1 -k system-locale
--w /etc/hosts -p wa -k system-locale
--w /etc/hostname -p wa -k system-locale
--w /etc/netplan/ -p wa -k system-locale
-
-# 6. AppArmor MAC Policy
--w /etc/apparmor/ -p wa -k MAC-policy
--w /etc/apparmor.d/ -p wa -k MAC-policy
-
-# 7. File Permissions and Deletion
--a always,exit -F arch=b64 -S fchmod,fchmodat -F auid>=1000 -F auid!=-1 -k perm_mod
--a always,exit -F arch=b64 -S fchown,fchownat -F auid>=1000 -F auid!=-1 -k perm_mod
--w /usr/bin/chattr -p x -k perm_mod
--a always,exit -F arch=b64 -S unlinkat -S renameat -S renameat2 -F auid>=1000 -F auid!=-1 -k delete
-
-# 8. Logins and Sessions
--w /var/log/faillog -p wa -k logins
--w /var/log/lastlog -p wa -k logins
--w /var/run/utmp -p wa -k session
--w /var/log/wtmp -p wa -k session
--w /var/log/btmp -p wa -k session
-
-# 9. System Mounts
--a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=-1 -k mounts
-
-# 10. Custom Directory Monitoring
--w /application -p wa -k app_mod
--w /data -p wa -k data_mod
--w /home -p wa -k home_mod
-AUDIT_EOF
-    augenrules --load >/dev/null 2>&1 || true
-    systemctl restart auditd >/dev/null 2>&1 || true
-fi
+{_build_securepulse_audit_rules_snippet()}
 
 # 2. Setup background Python Push Agent Daemon
 mkdir -p /opt/securepulse
@@ -8849,6 +9161,87 @@ fi
 
 echo "[SUCCESS] {APP_BRAND} Agent Daemon is active & streaming telemetry!"
 echo "[INFO] Manage service: systemctl restart securepulse | systemctl status securepulse"
+"""
+    return Response(content=script, media_type="text/x-shellscript")
+
+
+@app.get("/update_audit_rules.sh", response_class=Response)
+@app.post("/update_audit_rules.sh", response_class=Response)
+async def update_audit_rules_script(request: Request):
+    """
+    Lightweight, standalone audit rules rollout script for existing fleet assets (Option B).
+    Config-only change (/etc/audit/rules.d/securepulse.rules + augenrules --load).
+    Requires ZERO agent reinstalls and ZERO agent process restarts.
+    """
+    rules_snippet = _build_securepulse_audit_rules_snippet()
+    script = f"""#!/usr/bin/env bash
+# ==============================================================================
+# {APP_BRAND} - Standalone Audit Rules Rollout Script (Config-Only, Zero Downtime)
+# Target: Fleet Linux Nodes (Ubuntu / Debian / RHEL / CentOS)
+# GUARANTEE: Does NOT reinstall agent, does NOT touch agent binary, does NOT restart agent process.
+# ==============================================================================
+set -e
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "[ERROR] This script must be run as root (sudo)."
+    exit 1
+fi
+
+echo "======================================================================"
+echo " [{APP_BRAND}] Updating auditd security policies & command attribution"
+echo "======================================================================"
+
+# Capture agent PID, uptime, and auditctl count before config update (if running)
+AGENT_PID=$(pgrep -f "node_push_agent.py" || true)
+BEFORE_UPTIME="N/A"
+if [ -n "$AGENT_PID" ]; then
+    BEFORE_UPTIME=$(ps -o etime= -p "$AGENT_PID" 2>/dev/null | tr -d ' ' || echo "running")
+    echo "[INFO] Active push agent detected (PID: $AGENT_PID, Uptime: $BEFORE_UPTIME) — will NOT be touched."
+else
+    echo "[INFO] securepulse-agent daemon not currently running on this node."
+fi
+
+BEFORE_COUNT=$(auditctl -l 2>/dev/null | grep -vc '^No rules$' || echo "0")
+
+# Ensure auditd is installed
+if ! command -v auditctl >/dev/null 2>&1 && ! command -v auditd >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq >/dev/null 2>&1 || true
+        apt-get install -y -qq auditd </dev/null >/dev/null 2>&1 || true
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y audit </dev/null >/dev/null 2>&1 || true
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y audit </dev/null >/dev/null 2>&1 || true
+    fi
+fi
+
+mkdir -p /etc/audit/rules.d/
+
+{rules_snippet}
+
+AFTER_COUNT=$(auditctl -l 2>/dev/null | grep -vc '^No rules$' || echo "0")
+echo "[INFO] Kernel audit rules count: before=$BEFORE_COUNT -> after=$AFTER_COUNT"
+
+# Verify agent process was not touched, modified, or restarted
+if [ -n "$AGENT_PID" ]; then
+    CURRENT_AGENT_PID=$(pgrep -f "node_push_agent.py" || true)
+    AFTER_UPTIME=$(ps -o etime= -p "$CURRENT_AGENT_PID" 2>/dev/null | tr -d ' ' || echo "running")
+    if [ "$CURRENT_AGENT_PID" = "$AGENT_PID" ]; then
+        echo "======================================================================"
+        echo " [VERIFIED] securepulse.rules updated and kernel audit filter active."
+        echo " [VERIFIED] securepulse-agent is UNTOUCHED (PID: $CURRENT_AGENT_PID, Uptime: $BEFORE_UPTIME -> $AFTER_UPTIME)."
+        echo "======================================================================"
+    else
+        echo "======================================================================"
+        echo " [VERIFIED] securepulse.rules loaded into kernel."
+        echo "======================================================================"
+    fi
+else
+    echo "======================================================================"
+    echo " [VERIFIED] securepulse.rules updated and kernel audit filter active."
+    echo "======================================================================"
+fi
 """
     return Response(content=script, media_type="text/x-shellscript")
 

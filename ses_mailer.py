@@ -772,6 +772,39 @@ def build_alert_html(alert_id: int, alert_title: str, alert_type: str, message: 
     if safe_sev == "CRITICAL" and is_ai_low_risk:
         conflict_banner = '<div style="background:rgba(239, 68, 68, 0.18); border:1px solid #ef4444; border-radius:6px; padding:10px 14px; margin-bottom:14px; font-family:-apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; font-size:12px; font-weight:800; color:#f87171; letter-spacing:0.5px; text-transform:uppercase;">&#9888; [ASSESSMENT CONFLICT: Engine Critical vs AI Low Risk / False Positive]</div>'
 
+    # Attribution extraction for email table
+    attr_row = ""
+    raw_combined = f"{alert_title} {message}"
+    if "no interactive session found" in raw_combined.lower():
+        attr_row = """<tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Attribution Status</td>
+            <td style="padding: 6px 0; color: #fbbf24; font-weight: 700;">
+                <span style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); padding: 2px 7px; border-radius: 4px; font-size: 11.5px;">No interactive session found — possible crash/OOM</span>
+            </td>
+        </tr>"""
+    elif "by user" in raw_combined.lower():
+        import re as _re_em
+        _u = _re_em.search(r"by user '([^']+)'", raw_combined) or _re_em.search(r"by user\s+([a-zA-Z0-9_\-\.]+)", raw_combined)
+        _eff = _re_em.search(r"effective:\s*'([^']+)'", raw_combined)
+        _cmd = (
+            _re_em.search(r"`([^`]+)`", raw_combined)
+            or _re_em.search(r"\bvia\s+([^\n()]+?)(?:\)|$)", raw_combined)
+            or _re_em.search(r"\bexecuted:?\s*([^\n\.]+)", raw_combined)
+        )
+        u_val = _u.group(1).strip() if _u else "operator"
+        eff_val = _eff.group(1).strip() if _eff else ""
+        cmd_val = _cmd.group(1).strip() if _cmd else ""
+        eff_html = f'<span style="color:#94a3b8; font-size:12px; margin-left:6px;">(effective: <code style="color:#cbd5e1">{html.escape(eff_val)}</code>)</span>' if eff_val else ''
+        cmd_html = f'<span style="color:#94a3b8; font-size:12px; margin-left:8px;">(cmd: <code style="color:#f87171">{html.escape(cmd_val)}</code>)</span>' if cmd_val else ''
+        attr_row = f"""<tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Attributed Actor</td>
+            <td style="padding: 6px 0; color: #ffffff; font-weight: 700;">
+                <span style="color: #38bdf8; font-family: 'Consolas', monospace;">{html.escape(u_val)}</span>
+                {eff_html}
+                {cmd_html}
+            </td>
+        </tr>"""
+
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -836,6 +869,7 @@ def build_alert_html(alert_id: int, alert_title: str, alert_type: str, message: 
                                             {safe_type}
                                         </td>
                                     </tr>
+                                    {attr_row}
                                     <tr>
                                         <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Detected Timestamp</td>
                                         <td style="padding: 6px 0; color: #94a3b8; font-family: 'Consolas', monospace;">

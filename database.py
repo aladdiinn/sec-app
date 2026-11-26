@@ -25,6 +25,7 @@ import json
 import subprocess
 import urllib.request
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
@@ -1372,6 +1373,22 @@ def init_db():
                         target_path TEXT,
                         process_exe TEXT,
                         evaluated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );""",
+                    """CREATE TABLE IF NOT EXISTS incident_correlation_log (
+                        id SERIAL PRIMARY KEY,
+                        server_id INT NOT NULL,
+                        pair_type VARCHAR(64) NOT NULL,
+                        primary_incident_id INT,
+                        secondary_alert_id INT,
+                        primary_event_time DOUBLE PRECISION,
+                        secondary_event_time DOUBLE PRECISION,
+                        time_delta_sec DOUBLE PRECISION,
+                        match_reason TEXT,
+                        previous_state JSONB,
+                        merged_state JSONB,
+                        shadow_only BOOLEAN DEFAULT FALSE,
+                        reverted BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );"""
                 ]
                 for stmt in audit_stmts:
@@ -1395,7 +1412,17 @@ def init_db():
                         ('scheduled_tasks', 'warning', 100, 60, TRUE),
                         ('time-change', 'warning', 100, 60, TRUE),
                         ('system-locale', 'warning', 100, 60, TRUE),
-                        ('mounts', 'warning', 100, 60, TRUE)
+                        ('mounts', 'warning', 100, 60, TRUE),
+                        ('process_kill', 'warning', 100, 60, TRUE),
+                        ('recon_tools', 'warning', 100, 60, TRUE),
+                        ('data_transfer', 'warning', 100, 60, TRUE),
+                        ('c2_tools', 'warning', 100, 60, TRUE),
+                        ('ssh_persistence', 'warning', 100, 60, TRUE),
+                        ('firewall_change', 'warning', 100, 60, TRUE),
+                        ('archive_staging', 'warning', 100, 60, TRUE),
+                        ('obfuscated_exec', 'warning', 100, 60, TRUE),
+                        ('scheduled_tasks_cmd', 'warning', 100, 60, TRUE),
+                        ('history_tamper', 'warning', 100, 60, TRUE)
                     ON CONFLICT (audit_key) DO NOTHING;
                 """)
             except Exception as ex_audit_tbl:
@@ -1438,7 +1465,8 @@ def init_db():
                 ("occurrences", "INT DEFAULT 1"),
                 ("first_seen", "TIMESTAMPTZ DEFAULT NOW()"),
                 ("last_seen", "TIMESTAMPTZ DEFAULT NOW()"),
-                ("dedup_key", "VARCHAR(255)")
+                ("dedup_key", "VARCHAR(255)"),
+                ("event_time", "DOUBLE PRECISION")
             ]:
                 try:
                     cur.execute(f"ALTER TABLE alerts ADD COLUMN IF NOT EXISTS {col} {ctype};")
@@ -1461,7 +1489,8 @@ def init_db():
                 ("occurrences", "INT DEFAULT 1"),
                 ("first_seen", "TIMESTAMPTZ DEFAULT NOW()"),
                 ("last_seen", "TIMESTAMPTZ DEFAULT NOW()"),
-                ("dedup_key", "VARCHAR(255)")
+                ("dedup_key", "VARCHAR(255)"),
+                ("event_time", "DOUBLE PRECISION")
             ]:
                 try:
                     cur.execute(f"ALTER TABLE incidents ADD COLUMN IF NOT EXISTS {col} {ctype};")
@@ -2012,8 +2041,490 @@ def categorize_command(cmd_str: str) -> str:
 
     return "GENERAL"
 
-def log_alert(server_id: int, alert_type: str, message: str, severity: str = "warning", title: str = None):
-    """Log alert, auto-resolving valid server_id, and creating both alert and incident."""
+_CORRELATION_WINDOW_SEC = 20.0
+_CORRELATION_SHADOW_CACHE = {"val": None, "ts": 0.0}
+
+def is_correlation_shadow_mode() -> bool:
+    """Return True if incident correlation/merge is running in shadow-only mode."""
+    env_val = os.getenv("CORRELATION_SHADOW_MODE", "").strip().lower()
+    if env_val in ("1", "true", "yes", "on"):
+        return True
+    if env_val in ("0", "false", "no", "off"):
+        return False
+    now_t = time.time()
+    if _CORRELATION_SHADOW_CACHE["val"] is not None and (now_t - _CORRELATION_SHADOW_CACHE["ts"]) < 5.0:
+        return bool(_CORRELATION_SHADOW_CACHE["val"])
+    return False
+
+def set_correlation_shadow_mode(enabled: bool):
+    """Toggle shadow mode for cross-signal incident correlation."""
+    _CORRELATION_SHADOW_CACHE["val"] = bool(enabled)
+    _CORRELATION_SHADOW_CACHE["ts"] = time.time()
+
+def _parse_json_dict(val) -> dict:
+    if isinstance(val, dict):
+        return dict(val)
+    if isinstance(val, str) and val.strip():
+        try:
+            parsed = json.loads(val)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+def _extract_service_match_tokens(service_name: str, unit_name: str = "") -> set:
+    """Build normalized process/service tokens for strict service<->process matching."""
+    tokens = set()
+    for raw in (service_name, unit_name):
+        s = str(raw or "").strip().lower()
+        if not s:
+            continue
+        if s.endswith(".service"):
+            stem = s[:-8]
+            if len(stem) >= 2:
+                tokens.add(stem)
+        tokens.add(s)
+        for part in re.findall(r'[a-z0-9_\-\.]{3,}', s):
+            if part not in ("app", "service", "daemon", "server", "unit"):
+                tokens.add(part)
+    combined = f"{service_name or ''} {unit_name or ''}".lower()
+    if "java" in combined or "tomcat" in combined or "catalina" in combined:
+        tokens.update(["java", "tomcat", "catalina"])
+    if "postgres" in combined or "pgsql" in combined:
+        tokens.update(["postgres", "postgresql", "pgsql", "postmaster"])
+    if "nginx" in combined:
+        tokens.add("nginx")
+    if "apache" in combined or "httpd" in combined:
+        tokens.update(["apache", "apache2", "httpd"])
+    if "mysql" in combined or "mariadb" in combined:
+        tokens.update(["mysql", "mysqld", "mariadb"])
+    if "redis" in combined:
+        tokens.update(["redis", "redis-server"])
+    return tokens
+
+def _extract_pids_from_text(text: str, ev: dict = None) -> set:
+    """Extract numeric process PIDs referenced in command text or evidence_data."""
+    pids = set()
+    ev = ev or {}
+    for k in ("pid", "service_pid", "process_pid", "target_pid"):
+        val = ev.get(k)
+        if str(val or "").isdigit():
+            pids.add(int(val))
+    for pm in re.finditer(r'\bPID[:=\s]+(\d+)\b', text or "", re.I):
+        pids.add(int(pm.group(1)))
+    # Match numeric PID targets in `kill -9 1234` / `kill 1234`
+    for km in re.finditer(r'\bkill\b(?:\s+-[A-Za-z0-9]+)*\s+(\d+)\b', text or "", re.I):
+        pids.add(int(km.group(1)))
+    return pids
+
+def _parse_event_epoch(row: dict) -> float:
+    """Extract true event timestamp epoch (never prefers DB arrival time over event_time)."""
+    if not row:
+        return time.time()
+    et = row.get("event_time")
+    if et is not None:
+        try:
+            return float(et)
+        except Exception:
+            pass
+    ev = _parse_json_dict(row.get("evidence_data"))
+    if ev.get("event_time") is not None:
+        try:
+            return float(ev["event_time"])
+        except Exception:
+            pass
+    for col in ("created_at", "last_seen"):
+        dt_val = row.get(col)
+        if isinstance(dt_val, datetime):
+            return dt_val.timestamp()
+        if isinstance(dt_val, str) and dt_val.strip():
+            try:
+                return datetime.fromisoformat(dt_val.strip().replace("Z", "+00:00")).timestamp()
+            except Exception:
+                pass
+    return time.time()
+
+def _classify_correlation_role(alert_type: str, title: str, message: str) -> Optional[str]:
+    """Return correlation role only for alerts participating in cross-signal dedup/merge."""
+    at_low = (alert_type or "").lower()
+    t_low = (title or "").lower()
+    if "service_stopped" in at_low or "service stopped" in t_low:
+        return "service_stopped"
+    if any(k in at_low for k in ("audit_process_kill", "process_kill", "mass_process_kill")) or "process kill" in t_low or "process termination" in t_low:
+        return "process_kill"
+    if at_low.startswith("port_scan_") or at_low.startswith("dangerous_port_"):
+        return "port_opened"
+    if any(k in at_low for k in ("audit_c2_tools", "audit_recon_tools")):
+        return "net_tool_exec"
+    if "firewall_disabled" in at_low:
+        return "firewall_disabled"
+    if "audit_firewall_change" in at_low:
+        return "firewall_audit"
+    if "cron_persistence" in at_low:
+        return "cron_regex"
+    if "audit_scheduled_tasks_cmd" in at_low:
+        return "cron_audit"
+    if at_low in ("user_created", "passwd_changed"):
+        return "identity_regex"
+    if at_low == "audit_identity" and any(w in f"{t_low} {(message or '').lower()}" for w in ("useradd", "adduser", "passwd")):
+        return "identity_audit"
+    return None
+
+def _extract_actor_and_cmd(title: str, desc: str, ev: dict = None) -> tuple:
+    """Extract clean human user attribution and command string from alert/incident text or evidence."""
+    ev = ev or {}
+    combined_text = f"{desc or ''} {title or ''}"
+    actor = ev.get("login_user")
+    if not actor or actor in ("unknown", "attribution unverified"):
+        for pat in (
+            r"by user '([^']+)'",
+            r"(?:Alert by|\bby)\s+([a-zA-Z0-9_\-\.]+)(?=\s|$|[,\)])",
+            r"\buser '([^']+)'",
+            r"—\s*([a-zA-Z0-9_\-\.]+)",
+        ):
+            u_m = re.search(pat, combined_text)
+            if u_m and u_m.group(1).strip():
+                actor = u_m.group(1).strip()
+                break
+    actor = actor or "operator"
+
+    cmd = ev.get("command")
+    if not cmd:
+        bt_m = re.search(r"`([^`]+)`", combined_text)
+        if bt_m and bt_m.group(1).strip():
+            cmd = bt_m.group(1).strip()
+    if not cmd:
+        c_m = re.search(r"(?:via|executed:?)\s+([^\n\.]+?)(?:\s*\(|\s*\.|$)", combined_text)
+        if c_m and c_m.group(1).strip():
+            cmd = c_m.group(1).strip()
+    if not cmd:
+        p_m = re.search(r'\(([^)]+)\)', title or "")
+        if p_m:
+            cmd = p_m.group(1).strip()
+    return actor, (cmd or "command")
+
+def _evaluate_correlation_pair(
+    server_id: int,
+    inc_role: str,
+    inc_type: str,
+    inc_title: str,
+    inc_desc: str,
+    inc_sev: str,
+    inc_ts: float,
+    inc_ev: dict,
+    cand_row: dict,
+    window_sec: float = _CORRELATION_WINDOW_SEC,
+) -> Optional[dict]:
+    """
+    Pure, inspectable correlation matcher enforcing:
+      1. Exact same server_id
+      2. Real event timestamp delta <= window_sec (NOT arrival time)
+      3. Strict target match (service/process name or PID, listening port, firewall action, or command match)
+    Returns merge plan dict if correlated, else None.
+    """
+    if cand_row.get("server_id") is not None and int(cand_row["server_id"]) != int(server_id):
+        return None
+
+    cand_ts = _parse_event_epoch(cand_row)
+    time_delta = abs(float(inc_ts) - float(cand_ts))
+    if time_delta > float(window_sec):
+        return None
+
+    c_title = cand_row.get("title") or ""
+    c_desc = cand_row.get("description") or ""
+    c_dedup = cand_row.get("dedup_key") or ""
+    c_sev = (cand_row.get("severity") or "warning").lower()
+    c_ev = _parse_json_dict(cand_row.get("evidence_data"))
+    c_role = _classify_correlation_role(
+        c_ev.get("alert_type") or c_dedup.split(":")[1] if ":" in c_dedup else c_dedup,
+        c_title,
+        c_desc
+    )
+    if not c_role:
+        return None
+
+    # Helper to combine merged_events reversibly
+    def _build_merged_events(extra_fields: dict, pair_name: str, reason: str) -> dict:
+        prev_ev_list = list(c_ev.get("merged_events") or [])
+        if not prev_ev_list:
+            prev_ev_list.append({
+                "source": c_ev.get("source") or c_role,
+                "alert_type": c_ev.get("alert_type") or c_dedup,
+                "title": c_title,
+                "description": c_desc,
+                "severity": c_sev,
+                "event_time": cand_ts,
+            })
+        prev_ev_list.append({
+            "source": inc_ev.get("source") or inc_role,
+            "alert_type": inc_type,
+            "title": inc_title,
+            "description": inc_desc,
+            "severity": inc_sev,
+            "event_time": inc_ts,
+        })
+        merged_ev = dict(c_ev)
+        merged_ev.update(inc_ev)
+        merged_ev.update(extra_fields)
+        merged_ev["correlation_type"] = pair_name
+        merged_ev["time_delta_seconds"] = round(time_delta, 3)
+        merged_ev["match_reason"] = reason
+        merged_ev["merged_events"] = prev_ev_list
+        merged_ev["event_time"] = max(float(inc_ts), float(cand_ts))
+        return merged_ev
+
+    # ── Pair 1: service_stopped <-> process_kill (Bidirectional) ──────────────
+    if {inc_role, c_role} == {"service_stopped", "process_kill"}:
+        if inc_role == "service_stopped":
+            svc_title, svc_desc, svc_ev = inc_title, inc_desc, inc_ev
+            kill_title, kill_desc, kill_ev = c_title, c_desc, c_ev
+        else:
+            svc_title, svc_desc, svc_ev = c_title, c_desc, c_ev
+            kill_title, kill_desc, kill_ev = inc_title, inc_desc, inc_ev
+
+        sm = re.search(r"Service '([^']+)'", svc_desc or "") or re.search(r"Service Stopped — ([^(]+)", svc_title or "")
+        display_svc = (svc_ev.get("target_service") or (sm.group(1).strip() if sm else "")).strip()
+        svc_tokens = _extract_service_match_tokens(display_svc, svc_ev.get("unit_name", ""))
+        svc_pids = _extract_pids_from_text(f"{svc_title} {svc_desc}", svc_ev)
+
+        actor, cmd_found = _extract_actor_and_cmd(kill_title, kill_desc, kill_ev)
+        kill_text = f"{cmd_found} {kill_title} {kill_desc}".lower()
+        kill_pids = _extract_pids_from_text(kill_text, kill_ev)
+
+        pid_match = bool(svc_pids and (svc_pids & kill_pids))
+        # Word-aware token check so e.g. 'java' matches 'pkill -9 java', not substrings inside unrelated paths
+        kill_words = set(re.findall(r'[a-z0-9_\-\.]+', kill_text))
+        token_match = bool(svc_tokens) and (bool(svc_tokens & kill_words) or any(tok in kill_text for tok in svc_tokens if len(tok) >= 3))
+
+        if not (pid_match or token_match):
+            return None
+
+        reason = f"Matched service '{display_svc}' (PIDs={sorted(svc_pids)}) with kill `{cmd_found}` (delta={time_delta:.2f}s)"
+        new_title = f"Service Terminated — {display_svc or 'Service'} (by user '{actor}' via {cmd_found})"
+        new_desc = f"Service '{display_svc or 'Service'}' on host terminated after user '{actor}' executed `{cmd_found}`. Confirmed service transitioned from running to stopped."
+        new_ev = _build_merged_events({
+            "attribution_status": "attributed",
+            "attribution_badge": f"Attributed: {actor} ({cmd_found})",
+            "login_user": actor,
+            "effective_user": kill_ev.get("effective_user") or "root",
+            "auid": kill_ev.get("auid"),
+            "command": cmd_found,
+            "target_service": display_svc,
+            "why_it_fired": new_desc,
+        }, "SERVICE_STOPPED_PROCESS_KILL", reason)
+        return {
+            "pair_type": "SERVICE_STOPPED_PROCESS_KILL",
+            "title": new_title,
+            "description": new_desc,
+            "severity": "critical",  # Dual-signal confirmed impact
+            "dedup_key": f"{server_id}:service_terminated:{(display_svc or 'service').lower()}",
+            "evidence_data": new_ev,
+            "time_delta_sec": time_delta,
+            "primary_event_time": cand_ts,
+            "secondary_event_time": inc_ts,
+            "match_reason": reason,
+        }
+
+    # ── Pair 2: PORT_SCAN / DANGEROUS_PORT <-> C2_TOOLS / RECON_TOOLS ────────
+    if {inc_role, c_role} == {"port_opened", "net_tool_exec"}:
+        if inc_role == "port_opened":
+            p_type, p_title, p_desc, p_sev, p_ev = inc_type, inc_title, inc_desc, inc_sev, inc_ev
+            n_title, n_desc, n_ev = c_title, c_desc, c_ev
+        else:
+            p_type, p_title, p_desc, p_sev, p_ev = c_ev.get("alert_type") or c_dedup, c_title, c_desc, c_sev, c_ev
+            n_title, n_desc, n_ev = inc_title, inc_desc, inc_ev
+
+        pm = re.search(r'(?:PORT_SCAN_|DANGEROUS_PORT_|port\s+)(\d+)', f"{p_type} {p_title} {p_desc}", re.I)
+        opened_port = p_ev.get("port") or (int(pm.group(1)) if pm else None)
+        if not opened_port:
+            return None
+
+        actor, cmd_found = _extract_actor_and_cmd(n_title, n_desc, n_ev)
+        cmd_lower = f"{cmd_found} {n_desc}".lower()
+        port_match = bool(re.search(rf'(?:^|[\s:/=]){int(opened_port)}(?:\b|$)', cmd_lower))
+        p_pids = _extract_pids_from_text(f"{p_title} {p_desc}", p_ev)
+        n_pids = _extract_pids_from_text(f"{n_title} {n_desc}", n_ev)
+        pid_match = bool(p_pids and (p_pids & n_pids))
+        if not (port_match or pid_match):
+            return None
+
+        is_dangerous = "dangerous_port" in str(p_type).lower() or p_sev == "critical"
+        merged_sev = "critical" if is_dangerous else "warning"
+        reason = f"Matched port {opened_port} open socket with `{cmd_found}` (delta={time_delta:.2f}s)"
+        new_title = f"Listening Port {opened_port} Opened by {actor} via {cmd_found}"
+        new_desc = f"Port {opened_port} opened on host after user '{actor}' executed `{cmd_found}`. {p_desc}"
+        new_ev = _build_merged_events({
+            "port": int(opened_port),
+            "attribution_status": "attributed",
+            "login_user": actor,
+            "effective_user": n_ev.get("effective_user") or "root",
+            "command": cmd_found,
+            "why_it_fired": new_desc,
+        }, "PORT_OPENED_C2_TOOLS", reason)
+        return {
+            "pair_type": "PORT_OPENED_C2_TOOLS",
+            "title": new_title,
+            "description": new_desc,
+            "severity": merged_sev,
+            "dedup_key": f"{server_id}:PORT_SCAN_{opened_port}:port_{opened_port}",
+            "evidence_data": new_ev,
+            "time_delta_sec": time_delta,
+            "primary_event_time": cand_ts,
+            "secondary_event_time": inc_ts,
+            "match_reason": reason,
+        }
+
+    # ── Pair 3: FIREWALL_DISABLED <-> AUDIT_FIREWALL_CHANGE ──────────────────
+    if {inc_role, c_role} == {"firewall_disabled", "firewall_audit"}:
+        if inc_role == "firewall_audit":
+            a_title, a_desc, a_ev = inc_title, inc_desc, inc_ev
+        else:
+            a_title, a_desc, a_ev = c_title, c_desc, c_ev
+        actor, cmd_found = _extract_actor_and_cmd(a_title, a_desc, a_ev)
+        cmd_low = f"{cmd_found} {a_desc}".lower()
+        if not any(t in cmd_low for t in ("iptables", "ufw")):
+            return None
+        is_destructive = any(fl in cmd_low for fl in ("-f", "--flush", "disable", "reset", "-x"))
+        reason = f"Correlated firewall alert with audit command `{cmd_found}` (delta={time_delta:.2f}s)"
+        new_title = f"Host Firewall Disabled/Modified ({cmd_found}) — by user '{actor}'"
+        new_desc = f"Firewall policy altered by user '{actor}' executing `{cmd_found}`."
+        new_ev = _build_merged_events({
+            "attribution_status": "attributed",
+            "login_user": actor,
+            "effective_user": a_ev.get("effective_user") or "root",
+            "command": cmd_found,
+            "why_it_fired": new_desc,
+        }, "FIREWALL_DISABLED_AUDIT", reason)
+        return {
+            "pair_type": "FIREWALL_DISABLED_AUDIT",
+            "title": new_title,
+            "description": new_desc,
+            "severity": "critical" if is_destructive else "warning",
+            "dedup_key": f"{server_id}:AUDIT_FIREWALL_CHANGE",
+            "evidence_data": new_ev,
+            "time_delta_sec": time_delta,
+            "primary_event_time": cand_ts,
+            "secondary_event_time": inc_ts,
+            "match_reason": reason,
+        }
+
+    # ── Pair 4: Same-Command Regex vs Auditd Dedup (Auditd Primary) ──────────
+    # Eliminates double incidents when both command regex & auditd watch fire for one command
+    if ({inc_role, c_role} == {"process_kill"} or
+        {inc_role, c_role} == {"cron_regex", "cron_audit"} or
+        {inc_role, c_role} == {"identity_regex", "identity_audit"}):
+        is_inc_audit = inc_role in ("cron_audit", "identity_audit") or inc_type.upper().startswith("AUDIT_")
+        if is_inc_audit:
+            aud_title, aud_desc, aud_ev, oth_title, oth_desc = inc_title, inc_desc, inc_ev, c_title, c_desc
+        else:
+            aud_title, aud_desc, aud_ev, oth_title, oth_desc = c_title, c_desc, c_ev, inc_title, inc_desc
+
+        actor, aud_cmd = _extract_actor_and_cmd(aud_title, aud_desc, aud_ev)
+        _, oth_cmd = _extract_actor_and_cmd(oth_title, oth_desc)
+        # Ensure they relate to the same tool (e.g. both pkill/killall, both crontab, both useradd/passwd)
+        tools = ("pkill", "killall", "crontab", "useradd", "adduser", "passwd")
+        inc_tools = {t for t in tools if t in f"{aud_cmd} {aud_desc} {aud_title}".lower()}
+        oth_tools = {t for t in tools if t in f"{oth_cmd} {oth_desc} {oth_title}".lower()}
+        if inc_tools and oth_tools and not (inc_tools & oth_tools):
+            return None
+        # If process_kill on different targets (e.g., `pkill foo` vs `pkill nginx`), do NOT collapse them!
+        if inc_role == "process_kill" and c_role == "process_kill":
+            w1 = set(re.findall(r'[a-z0-9_\-\.]{2,}', aud_cmd.lower())) - {"pkill", "killall", "kill", "sudo", "-9"}
+            w2 = set(re.findall(r'[a-z0-9_\-\.]{2,}', oth_cmd.lower())) - {"pkill", "killall", "kill", "sudo", "-9"}
+            if w1 and w2 and not (w1 & w2):
+                return None
+
+        merged_sev = "critical" if "identity" in inc_role or "identity" in c_role else "warning"
+        reason = f"Merged overlapping detection with kernel auditd event `{aud_cmd}` (delta={time_delta:.2f}s)"
+        new_title = aud_title if is_inc_audit else c_title
+        new_desc = aud_desc if is_inc_audit else c_desc
+        new_ev = _build_merged_events({
+            "attribution_status": "attributed",
+            "login_user": actor,
+            "effective_user": aud_ev.get("effective_user") or "root",
+            "command": aud_cmd,
+            "why_it_fired": new_desc,
+        }, "COMMAND_AUDIT_DEDUP", reason)
+        aud_sub = re.sub(r'[^a-z0-9]+', '_', (aud_cmd or "").lower()).strip('_')[:48]
+        aud_dedup_type = inc_type if is_inc_audit else (c_dedup.split(":")[1] if ":" in c_dedup else c_dedup)
+        merged_dedup = f"{server_id}:{aud_dedup_type}:{aud_sub}" if (aud_sub and aud_sub != "command") else (f"{server_id}:{inc_type}" if is_inc_audit else c_dedup)
+        return {
+            "pair_type": "COMMAND_AUDIT_DEDUP",
+            "title": new_title,
+            "description": new_desc,
+            "severity": merged_sev,
+            "dedup_key": merged_dedup,
+            "evidence_data": new_ev,
+            "time_delta_sec": time_delta,
+            "primary_event_time": cand_ts,
+            "secondary_event_time": inc_ts,
+            "match_reason": reason,
+        }
+
+    return None
+
+def revert_correlated_incident_merge(merge_log_id: int) -> bool:
+    """Revert a merged incident back to its pre-merge state using the recorded audit snapshot."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, server_id, primary_incident_id, previous_state, reverted
+                FROM incident_correlation_log
+                WHERE id = %s LIMIT 1;
+            """, (merge_log_id,))
+            row = cur.fetchone()
+            if not row:
+                return False
+            r = dict(row) if hasattr(row, "keys") else {
+                "id": row[0], "server_id": row[1], "primary_incident_id": row[2],
+                "previous_state": row[3], "reverted": row[4]
+            }
+            if r.get("reverted"):
+                return True
+            prev = _parse_json_dict(r.get("previous_state"))
+            inc_id = r.get("primary_incident_id")
+            if inc_id and prev:
+                cur.execute("""
+                    UPDATE incidents
+                    SET title = %s, description = %s, severity = %s, dedup_key = %s,
+                        evidence_data = %s, occurrences = %s, updated_at = NOW()
+                    WHERE id = %s;
+                """, (
+                    prev.get("title"),
+                    prev.get("description"),
+                    prev.get("severity", "warning"),
+                    prev.get("dedup_key"),
+                    json.dumps(prev.get("evidence_data") or {}),
+                    int(prev.get("occurrences") or 1),
+                    inc_id
+                ))
+            cur.execute("UPDATE incident_correlation_log SET reverted = TRUE WHERE id = %s;", (merge_log_id,))
+            conn.commit()
+            try:
+                log_audit_event(None, "system", "incident_correlation_reverted", f"incidents:{inc_id}",
+                                f"Reverted correlation merge #{merge_log_id} on incident #{inc_id}")
+            except Exception:
+                pass
+            return True
+    except Exception as e:
+        logger.debug(f"revert_correlated_incident_merge error: {e}")
+        return False
+    finally:
+        conn.close()
+
+def log_alert(
+    server_id: int,
+    alert_type: str,
+    message: str,
+    severity: str = "warning",
+    title: str = None,
+    event_ts: float = None,
+    evidence_data: dict = None,
+):
+    """Log alert, auto-resolving valid server_id, and creating or correlating alert and incident."""
     # Suppress false-positive systemd / cgroup delete artifacts on root
     t_low = str(title or "").lower()
     m_low = str(message or "").lower()
@@ -2027,7 +2538,7 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
             return
 
     # Suppress false-positive Mass Process Kill when targeting internal SOC telemetry agent
-    if at_up == "MASS_PROCESS_KILL" or "mass process kill" in t_low or "process kill" in t_low:
+    if at_up in ("MASS_PROCESS_KILL", "AUDIT_PROCESS_KILL") or "mass process kill" in t_low or "process kill" in t_low:
         if any(ag in m_low for ag in ["node_push_agent", "securepulse", "bsmart-agent", "bsmart_agent", "agent-2.1"]):
             return
 
@@ -2037,6 +2548,10 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
         any(tp in (message or "").lower() for tp in ["/tmp", "/temp", "\\tmp", "\\temp", " utmp", "/utmp", "/wtmp", "/btmp", "session"])
     )
     if is_session_or_temp:
+        severity = "warning"
+
+    # Point 4: No single-signal CRITICAL on process termination; escalates only on confirmed service_stopped
+    if at_up in ("MASS_PROCESS_KILL", "AUDIT_PROCESS_KILL") and str(severity).lower() == "critical":
         severity = "warning"
 
     import re as _re_attr
@@ -2050,6 +2565,11 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
             title = _re_attr.sub(r'attribution unverified(?:\s*\(AUID:\s*\d+\))?', repl_user, str(title))
         if message:
             message = _re_attr.sub(r'attribution unverified(?:\s*\(AUID:\s*\d+\))?', repl_user, str(message))
+
+    ev_dict = _parse_json_dict(evidence_data)
+    incoming_ts = float(event_ts) if event_ts is not None else float(ev_dict.get("event_time") or time.time())
+    ev_dict.setdefault("event_time", incoming_ts)
+    ev_dict.setdefault("alert_type", alert_type)
 
     conn = get_db_connection()
     if not conn:
@@ -2089,21 +2609,15 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
 
             final_title = title or f"{alert_type.replace('_', ' ').title()} Alert"
 
-            # Permanent Vulnerability & CVE Alert Suppression Guard:
-            # - Alert ONCE when an asset is onboarded (first time seeing this CVE on this server)
-            # - If this CVE has ALREADY been alerted previously for this server and the package version has not changed:
-            #   NEVER create duplicate alerts or recreate closed incidents on daily scans!
-            # - Only alert again if a NEW package is detected or the package version changes on disk.
+            # Permanent Vulnerability & CVE Alert Suppression Guard
             if at_up == "VULNERABILITY_CRITICAL" or "critical cve detected" in t_low or ("cve-" in t_low and "vulnerab" in (t_low + m_low)):
                 import re as _re_cve
                 _mc = _re_cve.search(r'(CVE-\d+-\d+)', f"{final_title} {message}", _re_cve.I)
                 cve_id = _mc.group(1).upper() if _mc else None
                 if cve_id:
-                    # Extract package version from message, e.g. "Package Apache Tomcat (9.0.98) is vulnerable..." -> "9.0.98"
                     _mv = _re_cve.search(r'\(([^)]+)\)', message or "")
                     incoming_ver = _mv.group(1).strip() if _mv else None
                     try:
-                        # 1. Check if ANY incident (open OR closed) already exists for this server & CVE
                         cur.execute("""
                             SELECT id, status, description, title FROM incidents 
                             WHERE server_id = %s 
@@ -2111,24 +2625,16 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                             ORDER BY id DESC LIMIT 1;
                         """, (valid_server_id, f"%{cve_id}%", f"%{cve_id}%", f"%{cve_id}%"))
                         existing_inc = cur.fetchone()
-                        
                         if existing_inc:
                             inc_id = existing_inc["id"] if isinstance(existing_inc, dict) else existing_inc[0]
                             inc_status = existing_inc.get("status") if isinstance(existing_inc, dict) else existing_inc[1]
                             inc_desc = existing_inc.get("description") if isinstance(existing_inc, dict) else (existing_inc[2] or "")
-                            
-                            # Check if the package version changed
                             _prev_v = _re_cve.search(r'\(([^)]+)\)', inc_desc)
                             prev_ver = _prev_v.group(1).strip() if _prev_v else None
-                            
-                            version_changed = bool(incoming_ver and prev_ver and incoming_ver != prev_ver)
-                            
-                            if not version_changed:
-                                # Package version is unchanged! Suppress recurring daily alert.
+                            if not bool(incoming_ver and prev_ver and incoming_ver != prev_ver):
                                 logger.debug(f"[CVE DEDUP] Suppressed daily recurring CVE alert {cve_id} on server #{valid_server_id} (Incident #{inc_id} status={inc_status}, ver={incoming_ver}).")
                                 return
                         else:
-                            # 2. Check if an alert already exists in alerts table (resolved or unresolved)
                             cur.execute("""
                                 SELECT id, is_resolved, message FROM alerts 
                                 WHERE server_id = %s 
@@ -2141,87 +2647,217 @@ def log_alert(server_id: int, alert_type: str, message: str, severity: str = "wa
                                 al_msg = existing_al.get("message") if isinstance(existing_al, dict) else (existing_al[2] or "")
                                 _al_v = _re_cve.search(r'\(([^)]+)\)', al_msg)
                                 prev_al_ver = _al_v.group(1).strip() if _al_v else None
-                                
-                                version_changed = bool(incoming_ver and prev_al_ver and incoming_ver != prev_al_ver)
-                                if not version_changed:
+                                if not bool(incoming_ver and prev_al_ver and incoming_ver != prev_al_ver):
                                     logger.debug(f"[CVE DEDUP] Suppressed recurring CVE alert {cve_id} on server #{valid_server_id} from alerts table (Alert #{al_id}, ver={incoming_ver}).")
                                     return
                     except Exception as ex_cve_chk:
                         logger.debug(f"CVE dedup check error: {ex_cve_chk}")
 
-            try:
-                cur.execute("""
-                    INSERT INTO alerts (server_id, alert_type, severity, title, message, is_resolved, score, auto_promoted, created_at)
-                    VALUES (%s, %s, %s, %s, %s, FALSE, 0, FALSE, NOW());
-                """, (valid_server_id, alert_type, severity, final_title, message))
-            except Exception as ex_al:
-                logger.error(f"Alert insert error: {ex_al}")
-
             is_new_incident = False
+            escalated_to_critical = False
             try:
                 # Canonical deduplication key for incidents and alerts
                 dedup_sub = ""
-                if "port" in (message or "").lower() or "port" in (alert_type or "").lower():
+                at_norm = (alert_type or "").strip()
+                at_norm_up = at_norm.upper()
+                if "port" in (message or "").lower() or "port" in at_norm.lower():
                     import re as _re
-                    _mp = _re.search(r'port\s+(\d+)', message or "", _re.I) or _re.search(r'PORT_(\d+)', alert_type or "", _re.I)
+                    _mp = _re.search(r'port\s+(\d+)', message or "", _re.I) or _re.search(r'PORT_(\d+)', at_norm, _re.I)
                     if _mp:
                         dedup_sub = f"port_{_mp.group(1)}"
-                elif "cve-" in (message or "").lower() or "cve-" in (final_title or "").lower() or "vulnerability" in (alert_type or "").lower():
+                elif "cve-" in (message or "").lower() or "cve-" in (final_title or "").lower() or "vulnerability" in at_norm.lower():
                     import re as _re
                     _mc = _re.search(r'(CVE-\d+-\d+)', f"{final_title} {message}", _re.I)
                     if _mc:
                         dedup_sub = _mc.group(1).upper()
+                elif "service_stopped" in at_norm.lower():
+                    _svc = ev_dict.get("target_service") or ""
+                    if not _svc:
+                        _ms = re.search(r"Service '([^']+)'", message or "") or re.search(r"Service Stopped — ([^(]+)", final_title or "")
+                        _svc = _ms.group(1).strip() if _ms else ""
+                    if _svc:
+                        dedup_sub = re.sub(r'[^a-z0-9]+', '_', _svc.lower()).strip('_')[:48]
+                elif at_norm_up in (
+                    "AUDIT_RECON_TOOLS", "AUDIT_DATA_TRANSFER", "AUDIT_C2_TOOLS", "AUDIT_PROCESS_KILL",
+                    "AUDIT_SSH_PERSISTENCE", "AUDIT_FIREWALL_CHANGE", "AUDIT_ARCHIVE_STAGING",
+                    "AUDIT_OBFUSCATED_EXEC", "AUDIT_SCHEDULED_TASKS_CMD", "AUDIT_HISTORY_TAMPER",
+                    "AUDIT_IDENTITY", "MASS_PROCESS_KILL", "CRON_PERSISTENCE", "USER_CREATED", "PASSWD_CHANGED",
+                ):
+                    _, _cmd_str = _extract_actor_and_cmd(final_title, message, ev_dict)
+                    if _cmd_str and _cmd_str != "command":
+                        dedup_sub = re.sub(r'[^a-z0-9]+', '_', _cmd_str.lower()).strip('_')[:48]
                 canonical_dedup_key = f"{valid_server_id}:{alert_type}:{dedup_sub}" if dedup_sub else f"{valid_server_id}:{alert_type}"
 
-                # Deduplication: Re-use active OPEN incident for the same server and key instead of creating duplicate rows
-                cur.execute("""
-                    SELECT id, occurrences, first_seen FROM incidents 
-                    WHERE server_id = %s 
-                      AND (dedup_key = %s OR (title = %s AND (description = %s OR description ILIKE %s)))
-                      AND status = 'open'
-                    ORDER BY id DESC LIMIT 1;
-                """, (valid_server_id, canonical_dedup_key, final_title, message, f"%{alert_type}%"))
-                existing_inc = cur.fetchone()
+                # ── Correlation & Merge Evaluation (only for participating correlation roles) ──
+                existing_inc = None
+                corr_plan = None
+                inc_role = _classify_correlation_role(alert_type, final_title, message)
+                if inc_role:
+                    try:
+                        cur.execute("""
+                            SELECT id, server_id, title, description, severity, dedup_key,
+                                   occurrences, first_seen, last_seen, created_at, event_time, evidence_data
+                            FROM incidents
+                            WHERE server_id = %s
+                              AND status = 'open'
+                            ORDER BY id DESC
+                            LIMIT 25;
+                        """, (valid_server_id,))
+                        open_cands = cur.fetchall() or []
+                        for c_row in open_cands:
+                            cand_dict = dict(c_row) if hasattr(c_row, "keys") else {
+                                "id": c_row[0], "server_id": c_row[1], "title": c_row[2],
+                                "description": c_row[3], "severity": c_row[4], "dedup_key": c_row[5],
+                                "occurrences": c_row[6], "first_seen": c_row[7], "last_seen": c_row[8],
+                                "created_at": c_row[9], "event_time": c_row[10], "evidence_data": c_row[11]
+                            }
+                            plan = _evaluate_correlation_pair(
+                                valid_server_id, inc_role, alert_type, final_title, message,
+                                severity, incoming_ts, ev_dict, cand_dict
+                            )
+                            if plan:
+                                is_shadow = is_correlation_shadow_mode()
+                                prev_snapshot = {
+                                    "title": cand_dict.get("title"),
+                                    "description": cand_dict.get("description"),
+                                    "severity": cand_dict.get("severity"),
+                                    "dedup_key": cand_dict.get("dedup_key"),
+                                    "occurrences": cand_dict.get("occurrences") or 1,
+                                    "evidence_data": _parse_json_dict(cand_dict.get("evidence_data")),
+                                }
+                                merged_snapshot = {
+                                    "title": plan["title"],
+                                    "description": plan["description"],
+                                    "severity": plan["severity"],
+                                    "dedup_key": plan["dedup_key"],
+                                }
+                                try:
+                                    cur.execute("""
+                                        INSERT INTO incident_correlation_log (
+                                            server_id, pair_type, primary_incident_id,
+                                            primary_event_time, secondary_event_time, time_delta_sec,
+                                            match_reason, previous_state, merged_state, shadow_only
+                                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                                    """, (
+                                        valid_server_id, plan["pair_type"], cand_dict["id"],
+                                        plan["primary_event_time"], plan["secondary_event_time"], plan["time_delta_sec"],
+                                        plan["match_reason"], json.dumps(prev_snapshot), json.dumps(merged_snapshot),
+                                        bool(is_shadow)
+                                    ))
+                                except Exception as ex_clog:
+                                    logger.debug(f"incident_correlation_log insert note: {ex_clog}")
+
+                                if is_shadow:
+                                    logger.info(
+                                        f"[CORRELATION SHADOW] Would merge '{alert_type}' into incident #{cand_dict['id']} "
+                                        f"on server #{valid_server_id}: {plan['match_reason']}"
+                                    )
+                                else:
+                                    existing_inc = cand_dict
+                                    corr_plan = plan
+                                    prev_sev = str(cand_dict.get("severity") or "warning").lower()
+                                    final_title = plan["title"]
+                                    message = plan["description"]
+                                    severity = plan["severity"]
+                                    canonical_dedup_key = plan["dedup_key"]
+                                    ev_dict = plan["evidence_data"]
+                                    escalated_to_critical = (prev_sev != "critical" and severity.lower() == "critical")
+                                    try:
+                                        log_audit_event(
+                                            None, "system", "incident_correlation_merge",
+                                            f"incidents:{cand_dict['id']}",
+                                            f"Merged [{alert_type}] into incident #{cand_dict['id']} ({plan['pair_type']}): {plan['match_reason']}"
+                                        )
+                                    except Exception:
+                                        pass
+                                break
+                    except Exception as ex_corr:
+                        logger.debug(f"Correlation scan error: {ex_corr}")
+
+                # Record alert row using resolved merged/non-merged attributes
+                try:
+                    cur.execute("""
+                        INSERT INTO alerts (server_id, alert_type, severity, title, message, is_resolved, score, auto_promoted, event_time, evidence_data, created_at)
+                        VALUES (%s, %s, %s, %s, %s, FALSE, 0, FALSE, %s, %s, NOW());
+                    """, (valid_server_id, alert_type, severity, final_title, message, incoming_ts, json.dumps(ev_dict)))
+                except Exception:
+                    try:
+                        cur.execute("""
+                            INSERT INTO alerts (server_id, alert_type, severity, title, message, is_resolved, score, auto_promoted, created_at)
+                            VALUES (%s, %s, %s, %s, %s, FALSE, 0, FALSE, NOW());
+                        """, (valid_server_id, alert_type, severity, final_title, message))
+                    except Exception as ex_al:
+                        logger.error(f"Alert insert error: {ex_al}")
+
+                # Standard deduplication check if not merged via cross-signal correlation above
+                if not existing_inc:
+                    cur.execute("""
+                        SELECT id, occurrences, first_seen, severity FROM incidents 
+                        WHERE server_id = %s 
+                          AND (dedup_key = %s OR (title = %s AND (description = %s OR description ILIKE %s)))
+                          AND status = 'open'
+                        ORDER BY id DESC LIMIT 1;
+                    """, (valid_server_id, canonical_dedup_key, final_title, message, f"%{alert_type}%"))
+                    existing_inc = cur.fetchone()
+
                 if existing_inc:
                     inc_id = existing_inc["id"] if isinstance(existing_inc, dict) else existing_inc[0]
                     curr_occ = existing_inc.get("occurrences") if isinstance(existing_inc, dict) else existing_inc[1]
                     new_occ = (curr_occ or 1) + 1
-                    cur.execute("""
-                        UPDATE incidents 
-                        SET occurrences = %s, last_seen = NOW(), updated_at = NOW(), dedup_key = %s,
-                            title = CASE 
-                                WHEN (title ILIKE '%ΓÇö root%' OR title ILIKE '%ΓÇö Unknown%') AND %s NOT ILIKE '%ΓÇö root%' AND %s NOT ILIKE '%ΓÇö Unknown%' 
-                                THEN %s 
-                                ELSE title 
-                            END,
-                            description = CASE 
-                                WHEN (description ILIKE '%by user ''root''%' OR description ILIKE '%by user ''Unknown''%') AND %s NOT ILIKE '%by user ''root''%' AND %s NOT ILIKE '%by user ''Unknown''%' 
-                                THEN %s 
-                                ELSE description 
-                            END
-                        WHERE id = %s;
-                    """, (new_occ, canonical_dedup_key, final_title, final_title, final_title, message, message, message, inc_id))
-                    logger.info(f"[INCIDENT DEDUP] Aggregated occurrence #{new_occ} into open incident #{inc_id} for server #{valid_server_id} ({final_title}). Suppressed duplicate incident row.")
+                    if corr_plan:
+                        cur.execute("""
+                            UPDATE incidents
+                            SET occurrences = %s, last_seen = NOW(), updated_at = NOW(),
+                                dedup_key = %s, title = %s, description = %s,
+                                severity = %s, evidence_data = %s, event_time = %s
+                            WHERE id = %s;
+                        """, (
+                            new_occ, canonical_dedup_key, final_title, message,
+                            severity, json.dumps(ev_dict), ev_dict.get("event_time", incoming_ts), inc_id
+                        ))
+                        logger.info(f"[CORRELATION MERGE] Merged occurrence #{new_occ} into incident #{inc_id} for server #{valid_server_id} ({final_title}).")
+                    else:
+                        cur.execute("""
+                            UPDATE incidents 
+                            SET occurrences = %s, last_seen = NOW(), updated_at = NOW(), dedup_key = %s,
+                                title = CASE 
+                                    WHEN (title ILIKE '%ΓÇö root%' OR title ILIKE '%ΓÇö Unknown%') AND %s NOT ILIKE '%ΓÇö root%' AND %s NOT ILIKE '%ΓÇö Unknown%' 
+                                    THEN %s 
+                                    ELSE title 
+                                END,
+                                description = CASE 
+                                    WHEN (description ILIKE '%by user ''root''%' OR description ILIKE '%by user ''Unknown''%') AND %s NOT ILIKE '%by user ''root''%' AND %s NOT ILIKE '%by user ''Unknown''%' 
+                                    THEN %s 
+                                    ELSE description 
+                                END
+                            WHERE id = %s;
+                        """, (new_occ, canonical_dedup_key, final_title, final_title, final_title, message, message, message, inc_id))
+                        logger.info(f"[INCIDENT DEDUP] Aggregated occurrence #{new_occ} into open incident #{inc_id} for server #{valid_server_id} ({final_title}). Suppressed duplicate incident row.")
                 else:
-                    cur.execute("""
-                        INSERT INTO incidents (title, severity, description, status, assigned_to, server_id, dedup_key, occurrences, first_seen, last_seen, created_at, updated_at)
-                        VALUES (%s, %s, %s, 'open', 'Unassigned', %s, %s, 1, NOW(), NOW(), NOW(), NOW());
-                    """, (final_title, severity, message, valid_server_id, canonical_dedup_key))
+                    try:
+                        cur.execute("""
+                            INSERT INTO incidents (title, severity, description, status, assigned_to, server_id, dedup_key, occurrences, event_time, evidence_data, first_seen, last_seen, created_at, updated_at)
+                            VALUES (%s, %s, %s, 'open', 'Unassigned', %s, %s, 1, %s, %s, NOW(), NOW(), NOW(), NOW());
+                        """, (final_title, severity, message, valid_server_id, canonical_dedup_key, incoming_ts, json.dumps(ev_dict)))
+                    except Exception:
+                        cur.execute("""
+                            INSERT INTO incidents (title, severity, description, status, assigned_to, server_id, dedup_key, occurrences, first_seen, last_seen, created_at, updated_at)
+                            VALUES (%s, %s, %s, 'open', 'Unassigned', %s, %s, 1, NOW(), NOW(), NOW(), NOW());
+                        """, (final_title, severity, message, valid_server_id, canonical_dedup_key))
                     is_new_incident = True
             except Exception as ex_inc:
                 logger.debug(f"Incident insert error: {ex_inc}")
                 is_new_incident = True
 
             # --- NEW: SES Smart Email Integration ---
-            # Suppress alert email dispatch if an incident for this issue is ALREADY open
-            if not is_new_incident:
+            # Send alert email only on new incident OR when a correlated merge escalates warning -> critical
+            if not (is_new_incident or escalated_to_critical):
                 return
             # Check if emails are globally enabled (cached to prevent DB slowness on every alert)
             email_enabled = True # default
             
             # Simple global cache check to prevent slamming the settings table on every alert
             global _CACHED_EMAIL_SETTING, _CACHED_EMAIL_TIME
-            import time
             if '_CACHED_EMAIL_SETTING' not in globals():
                 _CACHED_EMAIL_SETTING = True
                 _CACHED_EMAIL_TIME = 0
@@ -9773,10 +10409,11 @@ def get_detected_services(server_id: int):
     finally:
         conn.close()
 
-def save_detected_services(server_id: int, services_list: list):
+def save_detected_services(server_id: int, services_list: list, event_ts: float = None):
     """Save auto-detected services list and monitor pinned/managed services for unexpected outages."""
     conn = get_db_connection()
     if not conn: return False
+    svc_ts = float(event_ts) if event_ts is not None else time.time()
     try:
         prev_detected = get_detected_services(server_id)
         prev_map = {s.get("id") or s.get("name") or s.get("unit_name"): s for s in prev_detected}
@@ -9824,25 +10461,32 @@ def save_detected_services(server_id: int, services_list: list):
             if is_pinned and not is_currently_running:
                 stopped_pinned_count += 1
 
-            # Auto-resolve "Service Stopped" incident when the service is confirmed running healthy
+            # Auto-resolve "Service Stopped" / "Service Terminated" incident when the service is confirmed running healthy
             if is_currently_running:
                 try:
+                    svc_display = monitored.get('name') or ''
+                    svc_low = svc_display.strip().lower()
                     with conn.cursor() as cur:
                         cur.execute("""
                             UPDATE incidents
                             SET status = 'closed', updated_at = NOW()
                             WHERE server_id = %s
-                              AND title = %s
-                              AND status = 'open';
-
+                              AND status = 'open'
+                              AND (title = %s OR dedup_key IN (%s, %s));
+                        """, (
+                            server_id,
+                            f"Service Stopped — {svc_display}",
+                            f"{server_id}:service_stopped",
+                            f"{server_id}:service_terminated:{svc_low}",
+                        ))
+                        cur.execute("""
                             UPDATE alerts
                             SET is_resolved = TRUE, resolved_at = NOW()
                             WHERE server_id = %s
                               AND title = %s
                               AND alert_type = 'service_stopped'
                               AND is_resolved IS NOT TRUE;
-                        """, (server_id, f"Service Stopped — {monitored.get('name')}",
-                              server_id, f"Service Stopped — {monitored.get('name')}"))
+                        """, (server_id, f"Service Stopped — {svc_display}"))
                 except Exception:
                     pass
 
@@ -9870,10 +10514,32 @@ def save_detected_services(server_id: int, services_list: list):
                     pass
                 
                 if not intentional_stop:
-                    # Fire alert & incident
-                    title = f"Service Stopped — {monitored.get('name')}"
-                    msg = f"Service '{monitored.get('name')}' on {hostname} transitioned from running to stopped unexpectedly."
-                    log_alert(server_id=server_id, alert_type="service_stopped", message=msg, severity="critical", title=title)
+                    # Fire alert & incident (defaults to warning with anonymous label; escalates to critical if correlated with process_kill)
+                    svc_name_disp = monitored.get('name')
+                    unit_name_val = (curr_match.get("unit_name") or (prev_match.get("unit_name") if prev_match else "") or "")
+                    prev_pid = prev_match.get("pid") if prev_match else None
+                    title = f"Service Stopped — {svc_name_disp}"
+                    msg = f"Service '{svc_name_disp}' on {hostname} transitioned from running to stopped unexpectedly. (No interactive session found — possible crash/OOM)"
+                    ev_payload = {
+                        "source": "service_monitor",
+                        "rule_id": "DET-SVC-001",
+                        "target_service": svc_name_disp,
+                        "unit_name": unit_name_val,
+                        "service_pid": int(prev_pid) if str(prev_pid or "").isdigit() else None,
+                        "event_time": svc_ts,
+                        "attribution_status": "unattributed",
+                        "attribution_badge": "No interactive session found — possible crash/OOM",
+                        "why_it_fired": msg,
+                    }
+                    log_alert(
+                        server_id=server_id,
+                        alert_type="service_stopped",
+                        message=msg,
+                        severity="warning",
+                        title=title,
+                        event_ts=svc_ts,
+                        evidence_data=ev_payload,
+                    )
 
         # ── MERGE incoming agent list with synthesized services ──────────────────
         # The agent may only push a subset of services (e.g. systemd slice only).
@@ -10237,15 +10903,24 @@ def record_audit_event_ingested(server_id: int, audit_serial: any, audit_epoch: 
     finally:
         conn.close()
 
-def record_raw_audit_events(events: list) -> int:
-    """Bulk insert raw audit records for forensic replay and 90-day retention."""
-    if not events: return 0
+def record_raw_audit_events(server_id_or_events, events: list = None) -> int:
+    """Bulk insert raw audit records for forensic replay and 90-day retention.
+    Accepts either record_raw_audit_events(events_list) or record_raw_audit_events(server_id, events_list).
+    """
+    default_sid = None
+    if events is None:
+        events_list = server_id_or_events if isinstance(server_id_or_events, list) else []
+    else:
+        default_sid = server_id_or_events
+        events_list = events or []
+    if not events_list:
+        return 0
     conn = get_db_connection()
     if not conn: return 0
     inserted = 0
     try:
         with conn.cursor() as cur:
-            for ev in events:
+            for ev in events_list:
                 try:
                     cur.execute("""
                         INSERT INTO raw_audit_events (
@@ -10254,7 +10929,7 @@ def record_raw_audit_events(events: list) -> int:
                             raw_payload, created_at
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW());
                     """, (
-                        ev.get("server_id"),
+                        ev.get("server_id") or default_sid,
                         str(ev.get("serial", "")),
                         str(ev.get("epoch", "")),
                         ev.get("key"),

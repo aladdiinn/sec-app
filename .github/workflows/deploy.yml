@@ -110,8 +110,10 @@ jobs:
       - name: Run Auditd Pipeline & Attribution Acceptance Tests
         env:
           TESTING: "1"
+          SECRET_KEY: "test-secret-key-32-chars-long-abc"
+          DB_PASSWORD: "testpassword"
         run: |
-          python -m unittest tests/test_auditd_pipeline.py
+          python -m unittest tests/test_auditd_pipeline.py tests/test_auditd_coverage_and_dedup.py
 
       - name: Run Accuracy Corpus Benchmark Suite
         env:
