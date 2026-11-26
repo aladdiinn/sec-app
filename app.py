@@ -2759,6 +2759,89 @@ def _extract_audit_cmdline(raw_line: str) -> str:
     exe_m = _re.search(r'exe="([^"]+)"', raw_line)
     return (comm_m.group(1) if comm_m else "") or (os.path.basename(exe_m.group(1)) if exe_m else "")
 
+
+def _extract_obj_pid_info(raw_line: str) -> dict:
+    """Extract target PID & process comm from kernel auditd `type=OBJ_PID` record when present."""
+    if not raw_line or "type=OBJ_PID" not in raw_line:
+        return {}
+    import re as _re
+    m_blk = _re.search(r'type=OBJ_PID\b[^\n]*', raw_line)
+    if not m_blk:
+        return {}
+    blk = m_blk.group(0)
+    opid_m = _re.search(r'\bopid=(\d+)', blk)
+    ouid_m = _re.search(r'\bouid=(\d+)', blk)
+    ocomm_m = _re.search(r'\bocomm=("([^"]*)"|([0-9A-Fa-f]+)|([^\s]+))', blk)
+    ocomm_val = ""
+    if ocomm_m:
+        if ocomm_m.group(2) is not None:
+            ocomm_val = ocomm_m.group(2).strip()
+        elif ocomm_m.group(3):
+            hx = ocomm_m.group(3)
+            if len(hx) >= 4 and len(hx) % 2 == 0:
+                try:
+                    decoded = bytes.fromhex(hx).decode('utf-8', errors='replace').replace('\x00', '').strip()
+                    ocomm_val = decoded if decoded and all(32 <= ord(c) < 127 for c in decoded) else hx
+                except Exception:
+                    ocomm_val = hx
+            else:
+                ocomm_val = hx
+        elif ocomm_m.group(4):
+            ocomm_val = ocomm_m.group(4).strip()
+    return {
+        "opid": int(opid_m.group(1)) if opid_m else None,
+        "ocomm": ocomm_val,
+        "ouid": ouid_m.group(1) if ouid_m else None,
+    }
+
+
+def _resolve_kill_event_target(server_id: int, cmdline: str, raw_line: str) -> Optional[dict]:
+    """
+    Resolve which service/process & path was terminated by a `process_kill` command,
+    combining PID history / server_ports / detected_services with kernel auditd `type=OBJ_PID`.
+    """
+    obj_info = _extract_obj_pid_info(raw_line)
+    target_pid = obj_info.get("opid")
+    if not target_pid:
+        km = re.search(r'\bkill\b(?:\s+-[A-Za-z0-9]+)*\s+(\d+)\b', cmdline or "", re.I)
+        if km:
+            try:
+                target_pid = int(km.group(1))
+            except Exception:
+                target_pid = None
+
+    inv = db.resolve_killed_pid_target(server_id, target_pid) if (server_id and target_pid) else None
+    obj_comm = (obj_info.get("ocomm") or "").strip()
+
+    if not inv and not obj_comm:
+        return None
+
+    if inv:
+        svc = inv.get("service") or ""
+        proc = inv.get("proc") or obj_comm or ""
+        path = inv.get("path") or ""
+        ports = inv.get("ports") or []
+        user = inv.get("user") or ""
+        # Use OBJ_PID comm if inventory only had a generic label
+        if obj_comm and (not svc or svc.lower() in ("unknown", "process")):
+            svc, _, _ = db.classify_process_service_and_path(obj_comm, "")
+    else:
+        svc, proc, path = db.classify_process_service_and_path(obj_comm, "")
+        ports = []
+        user = ""
+
+    if not svc and not proc and not path:
+        return None
+
+    return {
+        "target_pid": target_pid,
+        "target_service": svc or proc,
+        "target_instance_path": path,
+        "target_process": proc or svc,
+        "target_ports": ports,
+        "target_user": user,
+    }
+
 def _is_benign_bash_history_append(key: str, raw_line: str, exe_str: str, filename_str: str) -> bool:
     """
     Distinguish normal interactive bash history append on shell exit from history tampering.
@@ -3684,21 +3767,55 @@ def _check_unified_fim(server_id, data):
             else:
                 severity = "warning"
 
+            kill_target = _resolve_kill_event_target(server_id, cmdline, line) if key == "process_kill" else None
+
             display_key = "System Config" if key in ("(null)", "null", "") else key.replace('_', ' ').title()
             if key in _COMMAND_TRACKING_KEYS and cmdline:
                 short_cmd = (cmdline[:60] + "...") if len(cmdline) > 60 else cmdline
-                title = f"{display_key} ({short_cmd}) by {real_actor}"
+                if kill_target:
+                    t_svc = kill_target.get("target_service") or ""
+                    t_path = kill_target.get("target_instance_path") or ""
+                    t_proc = kill_target.get("target_process") or ""
+                    if t_svc and t_path and t_path.lower() != t_svc.lower():
+                        t_disp = f"{t_svc}: {t_path}"
+                    else:
+                        t_disp = t_svc or t_proc
+                    if len(t_disp) > 68:
+                        t_disp = t_disp[:65] + "..."
+                    title = f"{display_key} ({short_cmd} -> {t_disp}) by {real_actor}" if t_disp else f"{display_key} ({short_cmd}) by {real_actor}"
+                else:
+                    title = f"{display_key} ({short_cmd}) by {real_actor}"
             else:
                 title = f"{display_key} Alert by {real_actor}"
 
             comm_str = f" using '{c_m.group(1)}'" if c_m else ""
             exe_str = f" ({exe_str_val})" if e_m else ""
             file_str = f" on file '{filename_str}'" if f_m else ""
+            kill_msg_suffix = ""
+            if kill_target:
+                t_svc = kill_target.get("target_service") or "process"
+                t_path = kill_target.get("target_instance_path") or ""
+                t_proc = kill_target.get("target_process") or ""
+                t_ports = kill_target.get("target_ports") or []
+                t_user = kill_target.get("target_user") or ""
+                t_pid = kill_target.get("target_pid")
+                k_parts = []
+                if t_path:
+                    k_parts.append(f"Path: `{t_path}`")
+                if t_ports:
+                    k_parts.append("Port: " + ", ".join(str(p) for p in t_ports))
+                if t_proc and t_proc.lower() != t_svc.lower():
+                    k_parts.append(f"Process: `{t_proc}`")
+                if t_user:
+                    k_parts.append(f"Owner: `{t_user}`")
+                k_detail = " (" + ", ".join(k_parts) + ")" if k_parts else ""
+                pid_label = f" PID {t_pid}" if t_pid else ""
+                kill_msg_suffix = f" targeting {t_svc}{pid_label}{k_detail}"
 
             if key in _COMMAND_TRACKING_KEYS and cmdline:
                 human_msg = (
                     f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' "
-                    f"(effective: '{eff_user}', AUID: {auid_str}) executed `{cmdline}`{exe_str}{file_str}."
+                    f"(effective: '{eff_user}', AUID: {auid_str}) executed `{cmdline}`{exe_str}{file_str}{kill_msg_suffix}."
                 )
             else:
                 human_msg = f"Detection Rule [Kernel Audit]: {key} event triggered by user '{real_actor}' (AUID: {auid_str}){comm_str}{exe_str}{file_str}."
@@ -3749,26 +3866,33 @@ def _check_unified_fim(server_id, data):
                 _pm = re.search(r'\bpid=(\d+)', line)
                 pid_val = _pm.group(1) if _pm else None
 
+            ev_payload = {
+                "source": "auditd",
+                "rule_id": f"DET-AUD-{key.upper()}",
+                "audit_key": key,
+                "audit_serial": serial_val,
+                "event_time": epoch_val,
+                "login_user": real_actor,
+                "effective_user": eff_user,
+                "auid": str(auid_str),
+                "command": cmdline,
+                "exe": exe_str_val,
+                "target_path": filename_str,
+                "pid": int(pid_val) if str(pid_val or "").isdigit() else None,
+                "attribution_status": "attributed" if real_actor not in ("attribution unverified", "unknown") else "unattributed",
+                "why_it_fired": human_msg,
+            }
+            if kill_target:
+                for kf in ("target_pid", "target_service", "target_instance_path", "target_process", "target_ports", "target_user"):
+                    kv = kill_target.get(kf)
+                    if kv:
+                        ev_payload[kf] = kv
+
             _set_pending_alert_context(server_id, rule_name, {
                 "event_ts": epoch_val,
                 "cmdline": cmdline,
                 "comm": c_m.group(1) if c_m else (cur_event.get("comm") or ""),
-                "evidence_data": {
-                    "source": "auditd",
-                    "rule_id": f"DET-AUD-{key.upper()}",
-                    "audit_key": key,
-                    "audit_serial": serial_val,
-                    "event_time": epoch_val,
-                    "login_user": real_actor,
-                    "effective_user": eff_user,
-                    "auid": str(auid_str),
-                    "command": cmdline,
-                    "exe": exe_str_val,
-                    "target_path": filename_str,
-                    "pid": int(pid_val) if str(pid_val or "").isdigit() else None,
-                    "attribution_status": "attributed" if real_actor not in ("attribution unverified", "unknown") else "unattributed",
-                    "why_it_fired": human_msg,
-                }
+                "evidence_data": ev_payload
             })
 
             _create_alert_dedup(

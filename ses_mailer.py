@@ -791,17 +791,23 @@ def build_alert_html(alert_id: int, alert_title: str, alert_type: str, message: 
             or _re_em.search(r"\bvia\s+([^\n()]+?)(?:\)|$)", raw_combined)
             or _re_em.search(r"\bexecuted:?\s*([^\n\.]+)", raw_combined)
         )
+        _tgt = _re_em.search(r"\btargeting\s+([^\n(]+?)(?:\s*\(([^)]+)\)|\.)", raw_combined)
         u_val = _u.group(1).strip() if _u else "operator"
         eff_val = _eff.group(1).strip() if _eff else ""
         cmd_val = _cmd.group(1).strip() if _cmd else ""
+        tgt_val = _tgt.group(1).strip() if _tgt else ""
+        tgt_meta = _tgt.group(2).strip() if (_tgt and _tgt.group(2)) else ""
         eff_html = f'<span style="color:#94a3b8; font-size:12px; margin-left:6px;">(effective: <code style="color:#cbd5e1">{html.escape(eff_val)}</code>)</span>' if eff_val else ''
         cmd_html = f'<span style="color:#94a3b8; font-size:12px; margin-left:8px;">(cmd: <code style="color:#f87171">{html.escape(cmd_val)}</code>)</span>' if cmd_val else ''
+        tgt_full = f"{tgt_val} ({tgt_meta})" if tgt_meta else tgt_val
+        tgt_html = f'<span style="color:#94a3b8; font-size:12px; margin-left:8px;">&rarr; Target: <code style="color:#fbbf24">{html.escape(tgt_full)}</code></span>' if tgt_val else ''
         attr_row = f"""<tr>
             <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Attributed Actor</td>
             <td style="padding: 6px 0; color: #ffffff; font-weight: 700;">
                 <span style="color: #38bdf8; font-family: 'Consolas', monospace;">{html.escape(u_val)}</span>
                 {eff_html}
                 {cmd_html}
+                {tgt_html}
             </td>
         </tr>"""
 

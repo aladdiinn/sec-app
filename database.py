@@ -43,6 +43,282 @@ DB_USER = os.getenv("POSTGRES_USER", os.getenv("DB_USER", "securepulse"))
 DB_PASS = os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", os.getenv("DB_PASS", "")))
 DATABASE_URL = os.getenv("DATABASE_URL")
 _SERVER_LATEST_PROCESSES = {}
+_SERVER_PID_HISTORY = {}
+_PID_HISTORY_LOCK = threading.Lock()
+_MAX_PIDS_PER_SERVER = 500
+_PID_HISTORY_TTL = 86400.0
+
+
+def _clean_extracted_path(path_val: str) -> str:
+    """Normalize extracted executable/instance paths cleanly (stripping truncation ellipsis or sub-file suffixes)."""
+    if not path_val:
+        return ""
+    p = str(path_val).strip().strip("'\"")
+    if p.endswith("..."):
+        p = p[:-3]
+    p = re.sub(r'/(?:conf|bin|logs|webapps)(?:/.*)?$', '', p, flags=re.IGNORECASE)
+    return p.rstrip("/")
+
+
+def classify_process_service_and_path(proc_name: str = "", cmdline: str = "", working_dir: str = "") -> tuple:
+    """
+    Identify a friendly service/process label and instance path from raw ps/ss cmdline + cwd.
+    Returns (service_label, proc_base, instance_path).
+    """
+    pname = str(proc_name or "").strip()
+    cmd = str(cmdline or "").strip()
+    cwd = str(working_dir or "").strip()
+    first_tok = cmd.split()[0] if cmd else ""
+    proc_base = pname or (os.path.basename(first_tok) if first_tok else "")
+    low = f"{proc_base} {cmd}".lower()
+
+    def _pick_regex(patterns, clean_tomcat=False):
+        for pat in patterns:
+            m = re.search(pat, cmd, flags=re.IGNORECASE)
+            if m and m.group(1):
+                val = m.group(1).strip().strip("'\"")
+                if clean_tomcat:
+                    val = _clean_extracted_path(val)
+                elif val.endswith("..."):
+                    val = val[:-3]
+                if val:
+                    return val
+        return ""
+
+    if "catalina" in low or "tomcat" in low or "bootstrap start" in low:
+        inst_path = _pick_regex([
+            r'-Dcatalina\.base=([^\s\'"]+)',
+            r'-Dcatalina\.home=([^\s\'"]+)',
+            r'-Djava\.util\.logging\.config\.file=([^\s\'"]+)',
+            r'-classpath\s+([^\s:\'"]+)',
+            r'(/(?:application|opt|var|srv|home|root|usr/local)/[^\s:\'"]+)',
+        ], clean_tomcat=True)
+        if not inst_path and cwd:
+            inst_path = _clean_extracted_path(cwd)
+        return ("Tomcat", proc_base or "java", inst_path)
+
+    if "postgres" in low:
+        inst_path = _pick_regex([
+            r'(?:^|\s)-D\s+([^\s\'"]+)',
+            r'config_file=([^\s\'"]+)',
+            r'(/(?:var/lib/postgresql|etc/postgresql|application|opt|data)/[^\s\'"]+)',
+            r'postgres:\s+([0-9]+/[^\s:]+)',
+        ])
+        return ("PostgreSQL", proc_base or "postgres", inst_path or cwd)
+
+    if "mysqld" in low or "mariadb" in low:
+        inst_path = _pick_regex([
+            r'--datadir=([^\s\'"]+)',
+            r'--defaults-file=([^\s\'"]+)',
+            r'(/(?:var/lib/mysql|etc/mysql|application|opt)/[^\s\'"]+)',
+        ])
+        return ("MySQL", proc_base or "mysqld", inst_path or cwd)
+
+    if "redis-server" in low or ("redis" in proc_base.lower()):
+        inst_path = _pick_regex([
+            r'(/(?:etc/redis|var/lib/redis|application|opt)[^\s\'"]*)',
+        ])
+        return ("Redis", proc_base or "redis-server", inst_path or cwd)
+
+    if "nginx" in low:
+        inst_path = _pick_regex([
+            r'(?:^|\s)-c\s+([^\s\'"]+)',
+            r'(/(?:etc/nginx|application|opt)[^\s\'"]*)',
+        ])
+        return ("Nginx", proc_base or "nginx", inst_path or cwd)
+
+    if "haproxy" in low:
+        inst_path = _pick_regex([
+            r'(?:^|\s)-f\s+([^\s\'"]+)',
+            r'(/(?:etc/haproxy|application|opt)[^\s\'"]*)',
+        ])
+        return ("HAProxy", proc_base or "haproxy", inst_path or cwd)
+
+    if "java" in proc_base.lower() or first_tok.endswith("/java") or first_tok == "java":
+        inst_path = _pick_regex([
+            r'-jar\s+([^\s\'"]+)',
+            r'(/(?:application|opt|srv|home|data)/[^\s:\'"]+)',
+            r'-D[a-zA-Z0-9_.-]*(?:home|base|dir)=([^\s\'"]+)',
+        ])
+        return ("Java App", proc_base or "java", inst_path or cwd)
+
+    if any(k in low for k in ("uvicorn", "gunicorn", "manage.py", "app.py", "main.py", "wsgi", "flask")):
+        inst_path = _pick_regex([
+            r'(/(?:application|app|opt|srv|home|var/www)/[^\s\'"]+)',
+            r'([A-Za-z0-9_./-]+\.py)',
+        ])
+        return ("Python App", proc_base or "python", inst_path or cwd)
+
+    if "node" in proc_base.lower() or "pm2" in low or first_tok.endswith("/node"):
+        inst_path = _pick_regex([
+            r'(/(?:application|app|opt|srv|home)/[^\s\'"]+)',
+            r'([^\s\'"]+\.(?:js|mjs|cjs))',
+        ])
+        return ("Node App", proc_base or "node", inst_path or cwd)
+
+    fallback_path = cwd or (first_tok if first_tok.startswith("/") else "")
+    if "apache2" in proc_base.lower() or "httpd" in proc_base.lower():
+        return ("Apache", proc_base, fallback_path)
+    return (proc_base or "process", proc_base or "", fallback_path)
+
+
+def record_server_pid_entries(server_id: int, entries: list) -> None:
+    """Record or enrich recent PID-to-(service, path, ports, user) metadata for fast kill target resolution."""
+    if not server_id or not entries:
+        return
+    try:
+        sid = int(server_id)
+    except Exception:
+        return
+    now_ts = time.time()
+    generic_names = {"", "unknown", "process", "java", "python", "python3", "node"}
+    with _PID_HISTORY_LOCK:
+        srv_map = _SERVER_PID_HISTORY.setdefault(sid, {})
+        # Prune stale TTL entries periodically
+        if len(srv_map) > _MAX_PIDS_PER_SERVER:
+            cutoff = now_ts - _PID_HISTORY_TTL
+            for old_pid in [p for p, rec in srv_map.items() if rec.get("ts", 0) < cutoff]:
+                srv_map.pop(old_pid, None)
+            if len(srv_map) > _MAX_PIDS_PER_SERVER:
+                for old_pid, _ in sorted(srv_map.items(), key=lambda kv: kv[1].get("ts", 0))[:len(srv_map) - _MAX_PIDS_PER_SERVER]:
+                    srv_map.pop(old_pid, None)
+
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            raw_pid = item.get("pid")
+            if not str(raw_pid or "").strip().isdigit():
+                continue
+            pid_int = int(str(raw_pid).strip())
+            if pid_int <= 0:
+                continue
+
+            raw_cmd = str(item.get("cmdline") or item.get("name") or "").strip()
+            raw_proc = str(item.get("proc") or item.get("process_name") or item.get("process") or "").strip()
+            raw_cwd = str(item.get("working_dir") or "").strip()
+            raw_user = str(item.get("user") or item.get("user_name") or "").strip()
+            explicit_svc = str(item.get("service") or "").strip()
+
+            svc_label, proc_base, inst_path = classify_process_service_and_path(raw_proc, raw_cmd, raw_cwd)
+            if explicit_svc and explicit_svc.lower() not in generic_names:
+                svc_label = explicit_svc
+                # Preserve non-generic service labels like "Tomcat" over generic "java"
+
+            ports_in = set()
+            for p_val in (item.get("ports") or []):
+                if str(p_val or "").isdigit():
+                    ports_in.add(int(p_val))
+            if str(item.get("port") or "").isdigit():
+                ports_in.add(int(item["port"]))
+
+            prev = srv_map.get(pid_int)
+            if not prev:
+                srv_map[pid_int] = {
+                    "pid": pid_int,
+                    "service": svc_label,
+                    "proc": proc_base,
+                    "path": inst_path,
+                    "cmdline": raw_cmd,
+                    "ports": sorted(ports_in),
+                    "user": raw_user if raw_user not in ("unknown", "") else "",
+                    "ts": now_ts,
+                }
+            else:
+                merged_ports = sorted(set(prev.get("ports") or []) | ports_in)
+                prev["ports"] = merged_ports
+                if len(raw_cmd) > len(prev.get("cmdline") or ""):
+                    prev["cmdline"] = raw_cmd
+                if len(inst_path) > len(prev.get("path") or ""):
+                    prev["path"] = inst_path
+                if (prev.get("service") or "").lower() in generic_names and svc_label.lower() not in generic_names:
+                    prev["service"] = svc_label
+                elif svc_label == "Tomcat":
+                    prev["service"] = "Tomcat"
+                if not prev.get("proc") and proc_base:
+                    prev["proc"] = proc_base
+                if not prev.get("user") and raw_user and raw_user != "unknown":
+                    prev["user"] = raw_user
+                prev["ts"] = now_ts
+
+
+def resolve_killed_pid_target(server_id: int, target_pid: int) -> Optional[dict]:
+    """
+    Resolve a terminated PID to its friendly service name, instance path, process binary,
+    owning user, and listening ports using in-memory snapshot history + DB port/service tables.
+    """
+    if not server_id or not target_pid:
+        return None
+    try:
+        sid = int(server_id)
+        pid_int = int(target_pid)
+    except Exception:
+        return None
+    if pid_int <= 0:
+        return None
+
+    with _PID_HISTORY_LOCK:
+        cached = dict(_SERVER_PID_HISTORY.get(sid, {}).get(pid_int) or {})
+
+    # Check DB tables so resolution still works across SOC app container restarts
+    db_entries = []
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        "SELECT port, process_name, user_name, cmdline FROM server_ports WHERE server_id = %s AND pid = %s ORDER BY last_seen DESC LIMIT 10;",
+                        (sid, pid_int)
+                    )
+                    for row in (cur.fetchall() or []):
+                        db_entries.append({
+                            "pid": pid_int,
+                            "port": row.get("port"),
+                            "process_name": row.get("process_name"),
+                            "user_name": row.get("user_name"),
+                            "cmdline": row.get("cmdline"),
+                        })
+                except Exception:
+                    pass
+                try:
+                    cur.execute("SELECT detected_services FROM servers WHERE id = %s LIMIT 1;", (sid,))
+                    srow = cur.fetchone()
+                    ds_raw = srow.get("detected_services") if srow else None
+                    if isinstance(ds_raw, str) and ds_raw.strip():
+                        ds_list = json.loads(ds_raw)
+                        for s_item in (ds_list if isinstance(ds_list, list) else []):
+                            if isinstance(s_item, dict) and str(s_item.get("pid") or "").isdigit() and int(s_item["pid"]) == pid_int:
+                                db_entries.append({
+                                    "pid": pid_int,
+                                    "service": s_item.get("type") or s_item.get("name"),
+                                    "proc": os.path.basename((s_item.get("cmdline") or "").split()[0]) if s_item.get("cmdline") else "",
+                                    "cmdline": s_item.get("cmdline") or "",
+                                    "working_dir": s_item.get("working_dir") or "",
+                                    "ports": s_item.get("ports") or [],
+                                    "user": s_item.get("user") or "",
+                                })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+    if db_entries:
+        record_server_pid_entries(sid, db_entries)
+        with _PID_HISTORY_LOCK:
+            cached = dict(_SERVER_PID_HISTORY.get(sid, {}).get(pid_int) or cached)
+
+    if not cached:
+        return None
+    # Clean display path if cmdline grew richer after DB merge
+    if not cached.get("path") and cached.get("cmdline"):
+        svc_l, _, inst_p = classify_process_service_and_path(cached.get("proc", ""), cached.get("cmdline", ""))
+        if inst_p:
+            cached["path"] = inst_p
+        if svc_l and not cached.get("service"):
+            cached["service"] = svc_l
+    return cached
 
 class DictRowWrapper:
     def __init__(self, conn):
@@ -2321,10 +2597,13 @@ def _evaluate_correlation_pair(
         if not (pid_match or token_match):
             return None
 
+        target_inst_path = str(kill_ev.get("target_instance_path") or "").strip()
+        target_ports = kill_ev.get("target_ports") or []
+        svc_with_path = f"{display_svc or 'Service'} ({target_inst_path})" if target_inst_path else (display_svc or "Service")
         reason = f"Matched service '{display_svc}' (PIDs={sorted(svc_pids)}) with kill `{cmd_found}` (delta={time_delta:.2f}s)"
-        new_title = f"Service Terminated — {display_svc or 'Service'} (by user '{actor}' via {cmd_found})"
-        new_desc = f"Service '{display_svc or 'Service'}' on host terminated after user '{actor}' executed `{cmd_found}`. Confirmed service transitioned from running to stopped."
-        new_ev = _build_merged_events({
+        new_title = f"Service Terminated — {svc_with_path} (by user '{actor}' via {cmd_found})"
+        new_desc = f"Service '{svc_with_path}' on host terminated after user '{actor}' executed `{cmd_found}`. Confirmed service transitioned from running to stopped."
+        extra_kill_ev = {
             "attribution_status": "attributed",
             "attribution_badge": f"Attributed: {actor} ({cmd_found})",
             "login_user": actor,
@@ -2333,7 +2612,14 @@ def _evaluate_correlation_pair(
             "command": cmd_found,
             "target_service": display_svc,
             "why_it_fired": new_desc,
-        }, "SERVICE_STOPPED_PROCESS_KILL", reason)
+        }
+        if target_inst_path:
+            extra_kill_ev["target_instance_path"] = target_inst_path
+        if target_ports:
+            extra_kill_ev["target_ports"] = target_ports
+        if kill_ev.get("target_pid"):
+            extra_kill_ev["target_pid"] = kill_ev.get("target_pid")
+        new_ev = _build_merged_events(extra_kill_ev, "SERVICE_STOPPED_PROCESS_KILL", reason)
         return {
             "pair_type": "SERVICE_STOPPED_PROCESS_KILL",
             "title": new_title,
@@ -2683,7 +2969,17 @@ def log_alert(
                 dedup_sub = ""
                 at_norm = (alert_type or "").strip()
                 at_norm_up = at_norm.upper()
-                if "port" in (message or "").lower() or "port" in at_norm.lower():
+                if at_norm_up in (
+                    "AUDIT_RECON_TOOLS", "AUDIT_DATA_TRANSFER", "AUDIT_C2_TOOLS", "AUDIT_PROCESS_KILL",
+                    "AUDIT_SSH_PERSISTENCE", "AUDIT_FIREWALL_CHANGE", "AUDIT_ARCHIVE_STAGING",
+                    "AUDIT_OBFUSCATED_EXEC", "AUDIT_SCHEDULED_TASKS_CMD", "AUDIT_HISTORY_TAMPER",
+                    "AUDIT_IDENTITY", "AUDIT_SERVICE_CONTROL", "MASS_PROCESS_KILL",
+                    "CRON_PERSISTENCE", "USER_CREATED", "PASSWD_CHANGED",
+                ):
+                    _, _cmd_str = _extract_actor_and_cmd(final_title, message, ev_dict)
+                    if _cmd_str and _cmd_str != "command":
+                        dedup_sub = re.sub(r'[^a-z0-9]+', '_', _cmd_str.lower()).strip('_')[:48]
+                elif "port" in at_norm.lower() or "port" in (message or "").lower():
                     import re as _re
                     _mp = _re.search(r'port\s+(\d+)', message or "", _re.I) or _re.search(r'PORT_(\d+)', at_norm, _re.I)
                     if _mp:
@@ -2700,16 +2996,6 @@ def log_alert(
                         _svc = _ms.group(1).strip() if _ms else ""
                     if _svc:
                         dedup_sub = re.sub(r'[^a-z0-9]+', '_', _svc.lower()).strip('_')[:48]
-                elif at_norm_up in (
-                    "AUDIT_RECON_TOOLS", "AUDIT_DATA_TRANSFER", "AUDIT_C2_TOOLS", "AUDIT_PROCESS_KILL",
-                    "AUDIT_SSH_PERSISTENCE", "AUDIT_FIREWALL_CHANGE", "AUDIT_ARCHIVE_STAGING",
-                    "AUDIT_OBFUSCATED_EXEC", "AUDIT_SCHEDULED_TASKS_CMD", "AUDIT_HISTORY_TAMPER",
-                    "AUDIT_IDENTITY", "AUDIT_SERVICE_CONTROL", "MASS_PROCESS_KILL",
-                    "CRON_PERSISTENCE", "USER_CREATED", "PASSWD_CHANGED",
-                ):
-                    _, _cmd_str = _extract_actor_and_cmd(final_title, message, ev_dict)
-                    if _cmd_str and _cmd_str != "command":
-                        dedup_sub = re.sub(r'[^a-z0-9]+', '_', _cmd_str.lower()).strip('_')[:48]
                 canonical_dedup_key = f"{valid_server_id}:{alert_type}:{dedup_sub}" if dedup_sub else f"{valid_server_id}:{alert_type}"
 
                 # ── Correlation & Merge Evaluation (only for participating correlation roles) ──
@@ -2999,15 +3285,33 @@ def save_agent_data(server_id: int, data: dict):
             disk_raw = data.get("disk_percent")
             disk_val = float(disk_raw) if disk_raw is not None else float((data.get("metrics") or {}).get("disk") or 0)
 
+            prev_procs = _SERVER_LATEST_PROCESSES.get(server_id) or []
+            if prev_procs:
+                record_server_pid_entries(server_id, prev_procs)
+
             procs_list = data.get("processes", [])
             if procs_list:
                 _SERVER_LATEST_PROCESSES[server_id] = procs_list
+                record_server_pid_entries(server_id, procs_list)
+
+            if isinstance(data.get("detected_services"), list) and data["detected_services"]:
+                record_server_pid_entries(server_id, data["detected_services"])
 
             procs_json_str = json.dumps(procs_list) if procs_list else None
 
             # Persist open ports if provided
             if data.get("open_ports"):
                 try:
+                    # Snapshot prior port->PID bindings before port reuse overwrites old PIDs
+                    try:
+                        cur.execute("SELECT port, pid, process_name, user_name, cmdline FROM server_ports WHERE server_id = %s AND pid IS NOT NULL;", (server_id,))
+                        prev_port_rows = cur.fetchall() or []
+                        if prev_port_rows:
+                            record_server_pid_entries(server_id, prev_port_rows)
+                    except Exception:
+                        pass
+                    record_server_pid_entries(server_id, [p for p in data.get("open_ports", []) if isinstance(p, dict)])
+
                     # Mark all currently open ports as unseen temporarily to find closed ports
                     cur.execute("UPDATE server_ports SET status = 'checking' WHERE server_id = %s AND status = 'open';", (server_id,))
                     
@@ -10441,6 +10745,10 @@ def save_detected_services(server_id: int, services_list: list, event_ts: float 
     svc_ts = float(event_ts) if event_ts is not None else time.time()
     try:
         prev_detected = get_detected_services(server_id)
+        if prev_detected:
+            record_server_pid_entries(server_id, prev_detected)
+        if services_list:
+            record_server_pid_entries(server_id, services_list)
         prev_map = {s.get("id") or s.get("name") or s.get("unit_name"): s for s in prev_detected}
         curr_map = {s.get("id") or s.get("name") or s.get("unit_name"): s for s in services_list}
 

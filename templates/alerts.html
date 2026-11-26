@@ -787,7 +787,10 @@
                                 ${ev.effective_user ? `<span><b>Effective User:</b> <code style="color:#cbd5e1">${escapeHtml(ev.effective_user)}</code></span>` : ''}
                                 ${ev.auid ? `<span><b>AUID:</b> <code>${escapeHtml(String(ev.auid))}</code></span>` : ''}
                                 ${ev.command ? `<span><b>Command:</b> <code style="color:#f87171">${escapeHtml(ev.command)}</code></span>` : ''}
-                                ${ev.target_service ? `<span><b>Target:</b> <code style="color:#cbd5e1">${escapeHtml(ev.target_service)}</code></span>` : ''}
+                                ${ev.target_service ? `<span><b>Target:</b> <code style="color:#38bdf8">${escapeHtml(ev.target_service)}</code></span>` : ''}
+                                ${ev.target_instance_path ? `<span><b>Path:</b> <code style="color:#fbbf24">${escapeHtml(ev.target_instance_path)}</code></span>` : ''}
+                                ${(ev.target_ports && ev.target_ports.length) ? `<span><b>Port:</b> <code style="color:#38bdf8">${escapeHtml(ev.target_ports.join(', '))}</code></span>` : ''}
+                                ${ev.target_user ? `<span><b>Owner:</b> <code style="color:#cbd5e1">${escapeHtml(ev.target_user)}</code></span>` : ''}
                             `
                         }
                     </div>

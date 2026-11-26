@@ -1105,6 +1105,14 @@ function formatLocal(dateStr) {
                                 <div style="font-weight:700; color:var(--cyan); font-size:11px; margin-bottom:4px">
                                     EVIDENCE & CORROBORATING SIGNALS (Rule ${ev.rule_id || 'DET'})
                                 </div>
+                                ${(ev.login_user || ev.command || ev.target_service || ev.target_instance_path) ? `<div style="margin-bottom:6px; font-size:11.5px; background:rgba(0,0,0,0.3); padding:5px 8px; border-radius:4px; display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+                                    ${ev.login_user ? `<span><b>Login User:</b> <code style="color:#38bdf8">${escapeHtml(ev.login_user)}</code></span>` : ''}
+                                    ${ev.effective_user ? `<span><b>Effective User:</b> <code style="color:#cbd5e1">${escapeHtml(ev.effective_user)}</code></span>` : ''}
+                                    ${ev.command ? `<span><b>Command:</b> <code style="color:#f87171">${escapeHtml(ev.command)}</code></span>` : ''}
+                                    ${ev.target_service ? `<span><b>Target:</b> <code style="color:#38bdf8">${escapeHtml(ev.target_service)}</code></span>` : ''}
+                                    ${ev.target_instance_path ? `<span><b>Path:</b> <code style="color:#fbbf24">${escapeHtml(ev.target_instance_path)}</code></span>` : ''}
+                                    ${(ev.target_ports && ev.target_ports.length) ? `<span><b>Port:</b> <code style="color:#38bdf8">${escapeHtml(ev.target_ports.join(', '))}</code></span>` : ''}
+                                </div>` : ''}
                                 ${(ev.process_name || ev.owning_process) ? `<div style="font-size:11.5px; margin-bottom:4px"><b>Owning Process:</b> <code>${escapeHtml(ev.process_name || ev.owning_process)}</code> ${ev.process_pid ? `(PID: ${ev.process_pid})` : ''} ${ev.listening_address ? `| Address: <code>${escapeHtml(ev.listening_address)}</code>` : ''}</div>` : ''}
                                 <div style="color:var(--text); margin-bottom:3px"><b>Why it fired:</b> ${escapeHtml(ev.why_it_fired || descText || titleText)}</div>
                                 ${ev.matched_value ? `<div style="font-size:11px; color:#38bdf8"><b>Observed:</b> <code>${escapeHtml(ev.matched_value)}</code></div>` : ''}

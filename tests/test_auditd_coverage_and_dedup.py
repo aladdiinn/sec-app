@@ -43,6 +43,8 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
 
         db.init_db()
         db.set_correlation_shadow_mode(False)
+        db._SERVER_PID_HISTORY.clear()
+        db._SERVER_LATEST_PROCESSES.clear()
         app_module._dedup_alerts_cache.clear()
         app_module._last_known_server_user.clear()
         app_module._known_server_ports.clear()
@@ -676,6 +678,139 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         self.assertIn("Service Terminated", incs_15[0]["title"])
         self.assertIn("systemctl stop tomcat", incs_15[0]["title"])
         self.assertIn("govind.b", incs_15[0]["title"])
+
+    def test_killed_pid_resolves_tomcat_postgres_path_and_obj_pid(self):
+        """
+        Verify `kill -9 <pid>` automatically resolves WHICH service & instance path was killed:
+        - Distinguishes multi-instance Tomcats (`/application/vcloud/apache-tomcat-9.0.98` vs `/application/ticket_raising/...`)
+          even if port 8080 reused a new PID in the next push before detection ran.
+        - Resolves PostgreSQL data directory (`/var/lib/postgresql/15/main`) and port (`5432`).
+        - Resolves ephemeral (<15s) processes via kernel `type=OBJ_PID` `ocomm="sleep"`.
+        - Renders target & path in both incident evidence_data and SES email HTML.
+        """
+        ts = time.time() - 3.0
+        bash_hex = "-bash".encode("utf-8").hex()
+
+        # Push N-1: two Tomcats + PostgreSQL live on server 14
+        db.save_agent_data(14, {
+            "cpu_percent": 5.0,
+            "memory_percent": 20.0,
+            "disk_percent": 15.0,
+            "open_ports": [
+                {
+                    "port": 8080, "proto": "tcp", "process": "java", "pid": 1070958, "user": "govind.b",
+                    "cmdline": "/usr/lib/jvm/java-8-openjdk-amd64/bin/java -Djava.util.logging.config.file=/application/vcloud/apache-tomcat-9.0.98/conf/l...",
+                },
+                {
+                    "port": 8081, "proto": "tcp", "process": "java", "pid": 788415, "user": "sateesh.j",
+                    "cmdline": "/usr/lib/jvm/java-8-openjdk-amd64/bin/java -Djava.util.logging.config.file=/application/ticket_raising/apache-tomcat-9.0...",
+                },
+                {
+                    "port": 5432, "proto": "tcp", "process": "postgres", "pid": 2044, "user": "postgres",
+                    "cmdline": "/usr/lib/postgresql/15/bin/postgres -D /var/lib/postgresql/15/main -c config_file=/etc/postgresql/15/main/postgresq...",
+                },
+            ],
+            "processes": [
+                {"pid": "1070958", "user": "govind.b", "cpu": 1.2, "memory": 4.0, "name": "/usr/lib/jvm/java-8-openjdk-amd64/bin/java -Djava.util.logging.config.file=/ap"},
+            ],
+        })
+
+        # Push N: Tomcat restarted quickly on port 8080 -> port 8080 already shows NEW PID 1081234 BEFORE run_detection_engine!
+        db.save_agent_data(14, {
+            "cpu_percent": 4.0,
+            "memory_percent": 20.0,
+            "disk_percent": 15.0,
+            "open_ports": [
+                {
+                    "port": 8080, "proto": "tcp", "process": "java", "pid": 1081234, "user": "govind.b",
+                    "cmdline": "/usr/lib/jvm/java-8-openjdk-amd64/bin/java -Djava.util.logging.config.file=/application/vcloud/apache-tomcat-9.0.98/conf/l...",
+                },
+            ],
+        })
+
+        pid_tomcat_hex = f"{1070958:x}"
+        pid_pg_hex = f"{2044:x}"
+        pid_sleep_hex = f"{998811:x}"
+
+        with patch.object(app_module, "_is_rule_enabled", return_value=True):
+            app_module._check_unified_fim(14, {
+                "audit_events": [
+                    {
+                        "serial": 9501, "epoch": ts, "key": "process_kill", "auid": "1742601308",
+                        "username": "mannan.shariff", "effective_user": "govind.b", "comm": "bash", "exe": "/usr/bin/bash",
+                        "line": (
+                            f'type=SYSCALL msg=audit({ts:.3f}:9501): arch=c000003e syscall=62 success=yes exit=0 '
+                            f'a0={pid_tomcat_hex} a1=9 auid=1742601308 uid=1002 pid=1079600 comm="bash" exe="/usr/bin/bash" '
+                            f'key="process_kill" type=OBJ_PID msg=audit({ts:.3f}:9501): opid=1070958 ouid=1002 ocomm="java" '
+                            f'type=PROCTITLE proctitle={bash_hex}'
+                        ),
+                    },
+                    {
+                        "serial": 9502, "epoch": ts + 1.0, "key": "process_kill", "auid": "1742601308",
+                        "username": "mannan.shariff", "effective_user": "root", "comm": "bash", "exe": "/usr/bin/bash",
+                        "line": (
+                            f'type=SYSCALL msg=audit({ts+1:.3f}:9502): arch=c000003e syscall=62 success=yes exit=0 '
+                            f'a0={pid_pg_hex} a1=9 auid=1742601308 uid=0 pid=1079601 comm="bash" exe="/usr/bin/bash" '
+                            f'key="process_kill" type=PROCTITLE proctitle={bash_hex}'
+                        ),
+                    },
+                    {
+                        "serial": 9503, "epoch": ts + 2.0, "key": "process_kill", "auid": "1742601308",
+                        "username": "mannan.shariff", "effective_user": "govind.b", "comm": "bash", "exe": "/usr/bin/bash",
+                        "line": (
+                            f'type=SYSCALL msg=audit({ts+2:.3f}:9503): arch=c000003e syscall=62 success=yes exit=0 '
+                            f'a0={pid_sleep_hex} a1=9 auid=1742601308 uid=1002 pid=1079602 comm="bash" exe="/usr/bin/bash" '
+                            f'key="process_kill" type=OBJ_PID msg=audit({ts+2:.3f}:9503): opid=998811 ouid=1002 ocomm="sleep" '
+                            f'type=PROCTITLE proctitle={bash_hex}'
+                        ),
+                    },
+                ],
+                "file_changes": [],
+            })
+
+        incs = [i for i in self._fetch_open_incidents(14) if "AUDIT_PROCESS_KILL" in (i.get("dedup_key") or "")]
+        self.assertEqual(len(incs), 3, f"Expected 3 distinct killed-PID incidents, got {incs}")
+
+        by_title = {i["title"]: json.loads(i["evidence_data"] or "{}") for i in incs}
+        tomcat_match = [(t, ev) for t, ev in by_title.items() if "1070958" in t]
+        pg_match = [(t, ev) for t, ev in by_title.items() if "2044" in t]
+        sleep_match = [(t, ev) for t, ev in by_title.items() if "998811" in t]
+
+        self.assertEqual(len(tomcat_match), 1)
+        t_title, t_ev = tomcat_match[0]
+        self.assertIn("Tomcat: /application/vcloud/apache-tomcat-9.0.98", t_title)
+        self.assertEqual(t_ev.get("target_service"), "Tomcat")
+        self.assertEqual(t_ev.get("target_instance_path"), "/application/vcloud/apache-tomcat-9.0.98")
+        self.assertEqual(t_ev.get("target_ports"), [8080])
+        self.assertEqual(t_ev.get("target_user"), "govind.b")
+        self.assertEqual(t_ev.get("target_pid"), 1070958)
+
+        self.assertEqual(len(pg_match), 1)
+        p_title, p_ev = pg_match[0]
+        self.assertIn("PostgreSQL: /var/lib/postgresql/15/main", p_title)
+        self.assertEqual(p_ev.get("target_service"), "PostgreSQL")
+        self.assertEqual(p_ev.get("target_instance_path"), "/var/lib/postgresql/15/main")
+        self.assertEqual(p_ev.get("target_ports"), [5432])
+
+        self.assertEqual(len(sleep_match), 1)
+        s_title, s_ev = sleep_match[0]
+        self.assertIn("kill -9 998811 -> sleep", s_title)
+        self.assertEqual(s_ev.get("target_service"), "sleep")
+        self.assertEqual(s_ev.get("target_pid"), 998811)
+
+        html = ses_mailer.build_alert_html(
+            alert_id=3480,
+            alert_title=t_title,
+            alert_type="AUDIT_PROCESS_KILL",
+            message=t_ev.get("why_it_fired", ""),
+            severity="CRITICAL",
+            timestamp="2026-11-26 16:40:00",
+            server_ip="192.168.150.23",
+            hostname="JVVNL- Vcloudengine -2",
+            llm_data=None,
+        )
+        self.assertIn("Target:", html)
+        self.assertIn("/application/vcloud/apache-tomcat-9.0.98", html)
 
 
 if __name__ == "__main__":
