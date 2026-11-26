@@ -3550,8 +3550,34 @@ def _check_unified_fim(server_id, data):
             f_lower = filename_str.lower()
             cmdline = _extract_audit_cmdline(line) or cur_event.get("comm") or (os.path.basename(exe_str_val) if exe_str_val else "")
 
-            # Suppress internal SOC agent self-restarts on process_kill
-            if key == "process_kill" and any(ag in f"{cmdline} {line}".lower() for ag in ["node_push_agent", "securepulse", "bsmart-agent", "bsmart_agent", "agent-2.1"]):
+            comm_raw_low = (c_m.group(1) if c_m else (cur_event.get("comm") or "")).lower()
+            cmd_check_low = f"{cmdline} {line}".lower()
+
+            # Suppress internal SOC agent self-restarts and read-only pgrep (shares inode with pkill)
+            if key == "process_kill":
+                if any(ag in cmd_check_low for ag in ["node_push_agent", "securepulse", "bsmart-agent", "bsmart_agent", "agent-2.1"]):
+                    continue
+                if comm_raw_low == "pgrep" and not (cmdline or "").strip().lower().startswith("pkill"):
+                    continue
+
+            # Suppress read-only firewall inspection sharing xtables-nft-multi inode (iptables-save, iptables -L/-S, ufw status)
+            if key == "firewall_change":
+                raw_fw_toks = (cmdline or comm_raw_low or "").split()
+                fw_toks_low = [t.lower() for t in raw_fw_toks]
+                if comm_raw_low in ("iptables-save", "ip6tables-save") or (fw_toks_low and os.path.basename(fw_toks_low[0]) in ("iptables-save", "ip6tables-save")):
+                    continue
+                has_write_flag = any(
+                    t in ("-F", "-A", "-I", "-D", "-R", "-P", "-X", "-N", "-E")
+                    or t.lower() in ("--flush", "--append", "--insert", "--delete", "--replace", "--policy", "--new-chain")
+                    for t in raw_fw_toks
+                )
+                has_readonly_flag = any(t in ("-L", "-S") or t.lower() in ("--list", "--list-rules") for t in raw_fw_toks)
+                is_ufw_status = ("ufw" in fw_toks_low and "status" in fw_toks_low and not any(w in fw_toks_low for w in ("disable", "enable", "reset", "allow", "deny", "delete", "reject", "limit")))
+                if is_ufw_status or (has_readonly_flag and not has_write_flag):
+                    continue
+
+            # Suppress benign SOC script fetches (/update_audit_rules.sh, /setup_node.sh) under recon_tools
+            if key == "recon_tools" and any(own in cmd_check_low for own in ["/update_audit_rules.sh", "/setup_node.sh", "/setup_app_log.sh"]):
                 continue
 
             if _is_benign_bash_history_append(key, line, exe_str_val, filename_str):
@@ -9166,6 +9192,7 @@ echo "[INFO] Manage service: systemctl restart securepulse | systemctl status se
 
 
 @app.get("/update_audit_rules.sh", response_class=Response)
+@app.head("/update_audit_rules.sh", response_class=Response)
 @app.post("/update_audit_rules.sh", response_class=Response)
 async def update_audit_rules_script(request: Request):
     """

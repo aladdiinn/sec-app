@@ -458,6 +458,34 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         self.assertIn("No interactive session found — possible crash/OOM", html_anon)
         self.assertNotIn("manoj.kn", html_anon)
 
+    def test_symlink_shared_inode_noise_filters(self):
+        """
+        Verify read-only pgrep, iptables -L/-S/iptables-save, ufw status, and
+        /update_audit_rules.sh fetches do NOT false-positive on shared binary inodes.
+        """
+        ts = time.time()
+        pgrep_hex = "pgrep\x00-f\x00java".encode("utf-8").hex()
+        ipt_list_hex = "iptables\x00-L\x00-n".encode("utf-8").hex()
+        ufw_st_hex = "ufw\x00status".encode("utf-8").hex()
+        self_curl_hex = "curl\x00-fsSL\x00https://soc.bsmartone.com:3443/update_audit_rules.sh".encode("utf-8").hex()
+
+        with patch.object(app_module, "_is_rule_enabled", return_value=True):
+            app_module._check_unified_fim(14, {
+                "audit_events": [
+                    {"serial": 801, "epoch": ts, "key": "process_kill", "auid": "1742601378", "username": "manoj.kn", "comm": "pgrep", "exe": "/usr/bin/pgrep", "line": f'type=SYSCALL msg=audit({ts:.3f}:801): auid=1742601378 comm="pgrep" exe="/usr/bin/pgrep" key="process_kill" proctitle={pgrep_hex}'},
+                    {"serial": 802, "epoch": ts, "key": "firewall_change", "auid": "1742601378", "username": "manoj.kn", "comm": "iptables", "exe": "/usr/sbin/xtables-nft-multi", "line": f'type=SYSCALL msg=audit({ts:.3f}:802): auid=1742601378 comm="iptables" exe="/usr/sbin/xtables-nft-multi" key="firewall_change" proctitle={ipt_list_hex}'},
+                    {"serial": 803, "epoch": ts, "key": "firewall_change", "auid": "1742601378", "username": "manoj.kn", "comm": "ufw", "exe": "/usr/sbin/ufw", "line": f'type=SYSCALL msg=audit({ts:.3f}:803): auid=1742601378 comm="ufw" exe="/usr/sbin/ufw" key="firewall_change" proctitle={ufw_st_hex}'},
+                    {"serial": 804, "epoch": ts, "key": "recon_tools", "auid": "1742601378", "username": "manoj.kn", "comm": "curl", "exe": "/usr/bin/curl", "line": f'type=SYSCALL msg=audit({ts:.3f}:804): auid=1742601378 comm="curl" exe="/usr/bin/curl" key="recon_tools" proctitle={self_curl_hex}'},
+                ],
+                "file_changes": [],
+            })
+
+        self.assertEqual(len(self._fetch_open_incidents(14)), 0, "Benign shared-inode reads and self-rollout curls must produce 0 incidents")
+
+        # HEAD route registered on /update_audit_rules.sh
+        head_routes = [r for r in app_module.app.routes if getattr(r, "path", "") == "/update_audit_rules.sh" and "HEAD" in (getattr(r, "methods", set()) or set())]
+        self.assertTrue(len(head_routes) >= 1, "HEAD /update_audit_rules.sh must be registered so curl -I succeeds")
+
 
 if __name__ == "__main__":
     unittest.main()
