@@ -467,6 +467,7 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         ts = time.time()
         pgrep_hex = "pgrep\x00-f\x00java".encode("utf-8").hex()
         ipt_list_hex = "iptables\x00-L\x00-n".encode("utf-8").hex()
+        ipt_check_hex = "/usr/sbin/iptables\x00--wait\x00-t\x00nat\x00-C\x00POSTROUTING\x00-p\x00tcp\x00-s\x00172.20.0.3\x00-d\x00172.20.0.3\x00--dport\x008001\x00-j\x00MASQUERADE".encode("utf-8").hex()
         ipt_docker_hex = "/usr/sbin/iptables\x00--wait\x00-t\x00nat\x00-I\x00DOCKER_POSTROUTING\x00-s\x00127.0.0.1".encode("utf-8").hex()
         ufw_st_hex = "ufw\x00status".encode("utf-8").hex()
         self_curl_hex = "curl\x00-fsSL\x00https://soc.bsmartone.com:3443/update_audit_rules.sh".encode("utf-8").hex()
@@ -479,9 +480,20 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
                     {"serial": 803, "epoch": ts, "key": "firewall_change", "auid": "1742601378", "username": "manoj.kn", "comm": "ufw", "exe": "/usr/sbin/ufw", "line": f'type=SYSCALL msg=audit({ts:.3f}:803): auid=1742601378 comm="ufw" exe="/usr/sbin/ufw" key="firewall_change" proctitle={ufw_st_hex}'},
                     {"serial": 804, "epoch": ts, "key": "recon_tools", "auid": "1742601378", "username": "manoj.kn", "comm": "curl", "exe": "/usr/bin/curl", "line": f'type=SYSCALL msg=audit({ts:.3f}:804): auid=1742601378 comm="curl" exe="/usr/bin/curl" key="recon_tools" proctitle={self_curl_hex}'},
                     {"serial": 805, "epoch": ts, "key": "firewall_change", "auid": "4294967295", "username": "root", "comm": "iptables", "exe": "/usr/sbin/xtables-nft-multi", "line": f'type=SYSCALL msg=audit({ts:.3f}:805): auid=4294967295 comm="iptables" exe="/usr/sbin/xtables-nft-multi" key="firewall_change" proctitle={ipt_docker_hex}'},
+                    {"serial": 806, "epoch": ts, "key": "firewall_change", "auid": "4294967295", "username": "root", "comm": "iptables", "exe": "/usr/sbin/xtables-nft-multi", "line": f'type=SYSCALL msg=audit({ts:.3f}:806): auid=4294967295 comm="iptables" exe="/usr/sbin/xtables-nft-multi" key="firewall_change" proctitle={ipt_check_hex}'},
                 ],
                 "file_changes": [],
             })
+
+        # Ensure an explicit daemon AUID (4294967295) event is NEVER misattributed to another user in the same batch
+        daemon_actor = app_module._resolve_server_human_actor(
+            14,
+            {"audit_events": [{"auid": "1002", "username": "developer", "line": 'auid=1002 comm="bash"'}, {"auid": "4294967295", "username": "root", "line": 'auid=4294967295 comm="iptables"'}]},
+            'auid=4294967295 comm="iptables"',
+            "firewall_change",
+            explicit_auid="4294967295"
+        )
+        self.assertEqual(daemon_actor, "system daemon")
 
         self.assertEqual(len(self._fetch_open_incidents(14)), 0, "Benign shared-inode reads, Docker bridge rules, and self-rollout curls must produce 0 incidents")
 

@@ -2451,6 +2451,11 @@ def _resolve_server_human_actor(server_id, data, text="", rule_name="", explicit
                 elif ae_u and ae_u not in ("root", "unknown", "", "attribution unverified"):
                     return ae_u
 
+    # If the kernel explicitly tagged this syscall as daemon/background (AUID 4294967295 / -1 / unset),
+    # do NOT misattribute it to another human user from an unrelated event in the same 15s push batch.
+    if str(fallback_auid or "").strip().lower() in ("4294967295", "-1", "unset"):
+        return "system daemon"
+
     # 1. Check kernel audit events in payload
     for ae in data.get("audit_events", []):
         ae_u = ae.get("username", "")
@@ -3572,7 +3577,7 @@ def _check_unified_fim(server_id, data):
                     or t.lower() in ("--flush", "--append", "--insert", "--delete", "--replace", "--policy", "--new-chain")
                     for t in raw_fw_toks
                 )
-                has_readonly_flag = any(t in ("-L", "-S") or t.lower() in ("--list", "--list-rules") for t in raw_fw_toks)
+                has_readonly_flag = any(t in ("-L", "-S", "-C") or t.lower() in ("--list", "--list-rules", "--check") for t in raw_fw_toks)
                 is_ufw_status = ("ufw" in fw_toks_low and "status" in fw_toks_low and not any(w in fw_toks_low for w in ("disable", "enable", "reset", "allow", "deny", "delete", "reject", "limit")))
                 if is_ufw_status or (has_readonly_flag and not has_write_flag):
                     continue
@@ -3580,7 +3585,7 @@ def _check_unified_fim(server_id, data):
                 is_daemon_auid = raw_auid_val in ("", "none", "4294967295", "-1", "unset", "0")
                 is_docker_plumbing = ("--wait" in fw_toks_low) and any(
                     marker in (cmdline or "").upper()
-                    for marker in ("DOCKER", "CNI-", "FLANNEL", "BR-", "-P TCP -D 127.0.0.", "-D 127.0.0.1")
+                    for marker in ("DOCKER", "CNI-", "FLANNEL", "BR-", "-P TCP -D 127.0.0.", "-D 127.0.0.1", "POSTROUTING", "PREROUTING", "MASQUERADE")
                 )
                 if is_daemon_auid and is_docker_plumbing:
                     continue
