@@ -3114,10 +3114,11 @@ def _create_alert_dedup(server_id, alert_type, severity, title, message):
     if _is_suppressed(server_id, alert_type, message):
         return  # Silently suppress based on allowlist rules
 
+    is_cmd_audit_type = at_up in {f"AUDIT_{k.upper()}" for k in _COMMAND_TRACKING_KEYS}
     is_session_or_temp = (
         "session" in str(alert_type).lower() or 
         "session" in str(title or "").lower() or 
-        any(tp in str(message or "").lower() for tp in ["/tmp", "/temp", "\\tmp", "\\temp", " utmp", "/utmp", "/wtmp", "/btmp", "session"])
+        (not is_cmd_audit_type and any(tp in str(message or "").lower() for tp in ["/tmp", "/temp", "\\tmp", "\\temp", " utmp", "/utmp", "/wtmp", "/btmp", "session"]))
     )
     if is_session_or_temp:
         severity = "warning"
@@ -3560,7 +3561,7 @@ def _check_unified_fim(server_id, data):
                 if comm_raw_low == "pgrep" and not (cmdline or "").strip().lower().startswith("pkill"):
                     continue
 
-            # Suppress read-only firewall inspection sharing xtables-nft-multi inode (iptables-save, iptables -L/-S, ufw status)
+            # Suppress read-only firewall inspection and automated Docker bridge/NAT plumbing on shared xtables-nft-multi inode
             if key == "firewall_change":
                 raw_fw_toks = (cmdline or comm_raw_low or "").split()
                 fw_toks_low = [t.lower() for t in raw_fw_toks]
@@ -3574,6 +3575,14 @@ def _check_unified_fim(server_id, data):
                 has_readonly_flag = any(t in ("-L", "-S") or t.lower() in ("--list", "--list-rules") for t in raw_fw_toks)
                 is_ufw_status = ("ufw" in fw_toks_low and "status" in fw_toks_low and not any(w in fw_toks_low for w in ("disable", "enable", "reset", "allow", "deny", "delete", "reject", "limit")))
                 if is_ufw_status or (has_readonly_flag and not has_write_flag):
+                    continue
+                raw_auid_val = str(cur_event.get("auid") or "").strip().lower()
+                is_daemon_auid = raw_auid_val in ("", "none", "4294967295", "-1", "unset", "0")
+                is_docker_plumbing = ("--wait" in fw_toks_low) and any(
+                    marker in (cmdline or "").upper()
+                    for marker in ("DOCKER", "CNI-", "FLANNEL", "BR-", "-P TCP -D 127.0.0.", "-D 127.0.0.1")
+                )
+                if is_daemon_auid and is_docker_plumbing:
                     continue
 
             # Suppress benign SOC script fetches (/update_audit_rules.sh, /setup_node.sh) under recon_tools
@@ -3613,12 +3622,12 @@ def _check_unified_fim(server_id, data):
             if key in ("(null)", "", "null") and "who" in exe_str_val.lower():
                 continue
 
-            # Policy / Severity determination (never single-signal CRITICAL for command keys)
+            # Policy / Severity determination (new command-tracking keys default to CRITICAL for email alerting)
             policy = db.get_audit_severity_policy(key)
             is_temp_path = any(tp in f_lower for tp in ["/tmp", "/temp", "\\tmp", "\\temp", "tmp", "temp", "utmp", "wtmp", "btmp"]) or "temp" in filename_str.lower() or "tmp" in filename_str.lower()
             if key in _COMMAND_TRACKING_KEYS:
-                pol_sev = (policy.get("default_severity") or "warning").lower()
-                severity = pol_sev if pol_sev in ("warning", "medium", "high", "info") else "warning"
+                pol_sev = (policy.get("default_severity") or "critical").lower()
+                severity = pol_sev if pol_sev in ("critical", "warning", "medium", "high", "info") else "critical"
             elif key in ("session", "logins", "app_mod") or is_temp_path:
                 severity = "warning"
             elif key in ("identity", "scope", "mac-policy", "modules") or any(p in f_lower for p in ["/etc/shadow", "/etc/sudoers"]):

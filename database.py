@@ -1413,17 +1413,27 @@ def init_db():
                         ('time-change', 'warning', 100, 60, TRUE),
                         ('system-locale', 'warning', 100, 60, TRUE),
                         ('mounts', 'warning', 100, 60, TRUE),
-                        ('process_kill', 'warning', 100, 60, TRUE),
-                        ('recon_tools', 'warning', 100, 60, TRUE),
-                        ('data_transfer', 'warning', 100, 60, TRUE),
-                        ('c2_tools', 'warning', 100, 60, TRUE),
-                        ('ssh_persistence', 'warning', 100, 60, TRUE),
-                        ('firewall_change', 'warning', 100, 60, TRUE),
-                        ('archive_staging', 'warning', 100, 60, TRUE),
-                        ('obfuscated_exec', 'warning', 100, 60, TRUE),
-                        ('scheduled_tasks_cmd', 'warning', 100, 60, TRUE),
-                        ('history_tamper', 'warning', 100, 60, TRUE)
+                        ('process_kill', 'critical', 100, 60, TRUE),
+                        ('recon_tools', 'critical', 100, 60, TRUE),
+                        ('data_transfer', 'critical', 100, 60, TRUE),
+                        ('c2_tools', 'critical', 100, 60, TRUE),
+                        ('ssh_persistence', 'critical', 100, 60, TRUE),
+                        ('firewall_change', 'critical', 100, 60, TRUE),
+                        ('archive_staging', 'critical', 100, 60, TRUE),
+                        ('obfuscated_exec', 'critical', 100, 60, TRUE),
+                        ('scheduled_tasks_cmd', 'critical', 100, 60, TRUE),
+                        ('history_tamper', 'critical', 100, 60, TRUE)
                     ON CONFLICT (audit_key) DO NOTHING;
+                """)
+                cur.execute("""
+                    UPDATE audit_severity_policies
+                    SET default_severity = 'critical'
+                    WHERE LOWER(audit_key) IN (
+                        'process_kill', 'recon_tools', 'data_transfer', 'c2_tools',
+                        'ssh_persistence', 'firewall_change', 'archive_staging',
+                        'obfuscated_exec', 'scheduled_tasks_cmd', 'history_tamper'
+                    )
+                      AND LOWER(default_severity) <> 'critical';
                 """)
             except Exception as ex_audit_tbl:
                 logger.debug(f'Audit tables initialization note: {ex_audit_tbl}')
@@ -2041,6 +2051,13 @@ def categorize_command(cmd_str: str) -> str:
 
     return "GENERAL"
 
+_COMMAND_TRACKING_AUDIT_KEYS = frozenset({
+    "process_kill", "recon_tools", "data_transfer", "c2_tools",
+    "ssh_persistence", "firewall_change", "archive_staging",
+    "obfuscated_exec", "scheduled_tasks_cmd", "history_tamper",
+})
+_COMMAND_TRACKING_AUDIT_ALERT_TYPES = frozenset(f"AUDIT_{k.upper()}" for k in _COMMAND_TRACKING_AUDIT_KEYS)
+
 _CORRELATION_WINDOW_SEC = 20.0
 _CORRELATION_SHADOW_CACHE = {"val": None, "ts": 0.0}
 
@@ -2348,7 +2365,7 @@ def _evaluate_correlation_pair(
         if not (port_match or pid_match):
             return None
 
-        is_dangerous = "dangerous_port" in str(p_type).lower() or p_sev == "critical"
+        is_dangerous = "dangerous_port" in str(p_type).lower() or p_sev == "critical" or str(inc_sev).lower() == "critical" or str(c_sev).lower() == "critical"
         merged_sev = "critical" if is_dangerous else "warning"
         reason = f"Matched port {opened_port} open socket with `{cmd_found}` (delta={time_delta:.2f}s)"
         new_title = f"Listening Port {opened_port} Opened by {actor} via {cmd_found}"
@@ -2434,7 +2451,7 @@ def _evaluate_correlation_pair(
             if w1 and w2 and not (w1 & w2):
                 return None
 
-        merged_sev = "critical" if "identity" in inc_role or "identity" in c_role else "warning"
+        merged_sev = "critical" if ("critical" in (str(inc_sev).lower(), str(c_sev).lower()) or "identity" in inc_role or "identity" in c_role) else "warning"
         reason = f"Merged overlapping detection with kernel auditd event `{aud_cmd}` (delta={time_delta:.2f}s)"
         new_title = aud_title if is_inc_audit else c_title
         new_desc = aud_desc if is_inc_audit else c_desc
@@ -2542,16 +2559,17 @@ def log_alert(
         if any(ag in m_low for ag in ["node_push_agent", "securepulse", "bsmart-agent", "bsmart_agent", "agent-2.1"]):
             return
 
+    is_cmd_audit_type = at_up in _COMMAND_TRACKING_AUDIT_ALERT_TYPES
     is_session_or_temp = (
         "session" in (alert_type or "").lower() or 
         "session" in (title or "").lower() or 
-        any(tp in (message or "").lower() for tp in ["/tmp", "/temp", "\\tmp", "\\temp", " utmp", "/utmp", "/wtmp", "/btmp", "session"])
+        (not is_cmd_audit_type and any(tp in (message or "").lower() for tp in ["/tmp", "/temp", "\\tmp", "\\temp", " utmp", "/utmp", "/wtmp", "/btmp", "session"]))
     )
     if is_session_or_temp:
         severity = "warning"
 
-    # Point 4: No single-signal CRITICAL on process termination; escalates only on confirmed service_stopped
-    if at_up in ("MASS_PROCESS_KILL", "AUDIT_PROCESS_KILL") and str(severity).lower() == "critical":
+    # Keep regex-only MASS_PROCESS_KILL at warning unless paired; native AUDIT_* command keys keep their configured CRITICAL severity
+    if at_up == "MASS_PROCESS_KILL" and str(severity).lower() == "critical":
         severity = "warning"
 
     import re as _re_attr
@@ -2879,7 +2897,7 @@ def log_alert(
             # Trigger emails for Critical severity, or specific high-interest security alerts (Audit, FIM, Commands)
             # Only Critical alerts trigger immediate email notifications; warnings & info stay in dashboard/asset card
             # Explicit policy: Session alerts and any /temp/ or /tmp/ operations are strictly WARNING only and NEVER send emails
-            if "session" in alert_type.lower() or "session" in final_title.lower() or any(tp in (message or "").lower() for tp in ["/tmp", "/temp", "\tmp", "\temp", "tmp", "temp"]):
+            if "session" in alert_type.lower() or "session" in final_title.lower() or (at_up not in _COMMAND_TRACKING_AUDIT_ALERT_TYPES and any(tp in (message or "").lower() for tp in ["/tmp", "/temp", "\tmp", "\temp", "tmp", "temp"])):
                 email_enabled = False
 
             if email_enabled and severity.lower() == "critical":
@@ -4594,6 +4612,7 @@ def get_incidents(status=None, severity=None, limit=50, offset=0, project_id=Non
                 LEFT JOIN projects p ON s.project_id = p.id
                 WHERE {where_sql}
                 ORDER BY 
+                    CASE WHEN LOWER(i.status) IN ('open', 'investigating', 'active') THEN 0 ELSE 1 END,
                     CASE LOWER(i.severity) WHEN 'critical' THEN 1 WHEN 'warning' THEN 2 WHEN 'high' THEN 2 ELSE 3 END,
                     i.updated_at DESC, i.created_at DESC 
                 LIMIT %s OFFSET %s;
@@ -11076,7 +11095,7 @@ def record_shadow_audit_evaluation(server_id: int, serial: any, epoch: any, key:
 def get_audit_severity_policy(audit_key: str) -> dict:
     """Retrieve severity policy for audit rule key, enforcing tamper rules as CRITICAL."""
     key_clean = (audit_key or "").strip().lower()
-    is_tamper = key_clean in ("identity", "scope", "mac-policy", "modules")
+    is_tamper = key_clean in ("identity", "scope", "mac-policy", "modules") or key_clean in _COMMAND_TRACKING_AUDIT_KEYS
     is_routine = key_clean in ("session", "logins", "app_mod")
     default_policy = {
         "audit_key": key_clean,

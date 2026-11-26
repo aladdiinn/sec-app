@@ -123,10 +123,10 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         with patch.object(app_module, "_is_rule_enabled", return_value=True):
             app_module.run_detection_engine(14, payload)
 
-        # Before service stops: single signal must remain WARNING (no single-signal CRITICAL!)
+        # New command-tracking auditd rules (including process_kill) default to CRITICAL for SES email alerting
         pre_incs = self._fetch_open_incidents(14)
         self.assertEqual(len(pre_incs), 1, f"Overlapping pkill detections must merge into 1 incident, got: {pre_incs}")
-        self.assertEqual(pre_incs[0]["severity"], "warning", "process_kill alone must NOT escalate to CRITICAL")
+        self.assertEqual(pre_incs[0]["severity"], "critical", "AUDIT_PROCESS_KILL should trigger CRITICAL so email fires")
 
         # Now seed running Java service in prev telemetry, then transition to stopped in current push
         with db.get_db_connection() as conn:
@@ -325,12 +325,12 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         self.assertIn("iptables -F", fw_incs[0]["description"])
 
     # -------------------------------------------------------------------------
-    # T3: Command Keys (wget, curl, scp, ssh-keygen, iptables) Default to WARNING
+    # T3: Command Keys (wget, curl, scp, ssh-keygen, iptables) Default to CRITICAL (Email-Enabled)
     # -------------------------------------------------------------------------
     def test_t3_new_command_tracking_policies_and_proctitle_alerts(self):
         """
         T3: All new command keys produce properly keyed events with full decoded cmdline
-        and default to WARNING (no single-signal CRITICAL).
+        and default to CRITICAL so SES email notifications fire immediately (even when args touch /tmp/).
         Also verifies wget + curl in the same push are BOTH recorded (not collapsed into 1 by key).
         """
         ts = time.time()
@@ -346,7 +346,7 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         ]
         for k in keys_expected:
             self.assertIn(k, app_module._AUDIT_KEY_DESCRIPTIONS)
-            self.assertEqual(db.get_audit_severity_policy(k)["default_severity"], "warning")
+            self.assertEqual(db.get_audit_severity_policy(k)["default_severity"], "critical")
 
         with patch.object(app_module, "_is_rule_enabled", return_value=True):
             app_module._check_unified_fim(14, {
@@ -362,7 +362,7 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         incs = self._fetch_open_incidents(14)
         self.assertEqual(len(incs), 4, f"All 4 distinct commands must produce individual attributed incidents, got {len(incs)}")
         for inc in incs:
-            self.assertEqual(inc["severity"], "warning", f"Single-signal command incident must be WARNING, not critical: {inc}")
+            self.assertEqual(inc["severity"], "critical", f"Command-tracking audit incident must be CRITICAL for mail alerting: {inc}")
             self.assertIn("manoj.kn", inc["title"])
 
     # -------------------------------------------------------------------------
@@ -460,12 +460,14 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
 
     def test_symlink_shared_inode_noise_filters(self):
         """
-        Verify read-only pgrep, iptables -L/-S/iptables-save, ufw status, and
-        /update_audit_rules.sh fetches do NOT false-positive on shared binary inodes.
+        Verify read-only pgrep, iptables -L/-S/iptables-save, ufw status,
+        Docker daemon container bridge iptables plumbing, and /update_audit_rules.sh fetches
+        do NOT false-positive on shared binary inodes, and open incidents sort above closed critical rows.
         """
         ts = time.time()
         pgrep_hex = "pgrep\x00-f\x00java".encode("utf-8").hex()
         ipt_list_hex = "iptables\x00-L\x00-n".encode("utf-8").hex()
+        ipt_docker_hex = "/usr/sbin/iptables\x00--wait\x00-t\x00nat\x00-I\x00DOCKER_POSTROUTING\x00-s\x00127.0.0.1".encode("utf-8").hex()
         ufw_st_hex = "ufw\x00status".encode("utf-8").hex()
         self_curl_hex = "curl\x00-fsSL\x00https://soc.bsmartone.com:3443/update_audit_rules.sh".encode("utf-8").hex()
 
@@ -476,15 +478,30 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
                     {"serial": 802, "epoch": ts, "key": "firewall_change", "auid": "1742601378", "username": "manoj.kn", "comm": "iptables", "exe": "/usr/sbin/xtables-nft-multi", "line": f'type=SYSCALL msg=audit({ts:.3f}:802): auid=1742601378 comm="iptables" exe="/usr/sbin/xtables-nft-multi" key="firewall_change" proctitle={ipt_list_hex}'},
                     {"serial": 803, "epoch": ts, "key": "firewall_change", "auid": "1742601378", "username": "manoj.kn", "comm": "ufw", "exe": "/usr/sbin/ufw", "line": f'type=SYSCALL msg=audit({ts:.3f}:803): auid=1742601378 comm="ufw" exe="/usr/sbin/ufw" key="firewall_change" proctitle={ufw_st_hex}'},
                     {"serial": 804, "epoch": ts, "key": "recon_tools", "auid": "1742601378", "username": "manoj.kn", "comm": "curl", "exe": "/usr/bin/curl", "line": f'type=SYSCALL msg=audit({ts:.3f}:804): auid=1742601378 comm="curl" exe="/usr/bin/curl" key="recon_tools" proctitle={self_curl_hex}'},
+                    {"serial": 805, "epoch": ts, "key": "firewall_change", "auid": "4294967295", "username": "root", "comm": "iptables", "exe": "/usr/sbin/xtables-nft-multi", "line": f'type=SYSCALL msg=audit({ts:.3f}:805): auid=4294967295 comm="iptables" exe="/usr/sbin/xtables-nft-multi" key="firewall_change" proctitle={ipt_docker_hex}'},
                 ],
                 "file_changes": [],
             })
 
-        self.assertEqual(len(self._fetch_open_incidents(14)), 0, "Benign shared-inode reads and self-rollout curls must produce 0 incidents")
+        self.assertEqual(len(self._fetch_open_incidents(14)), 0, "Benign shared-inode reads, Docker bridge rules, and self-rollout curls must produce 0 incidents")
 
         # HEAD route registered on /update_audit_rules.sh
         head_routes = [r for r in app_module.app.routes if getattr(r, "path", "") == "/update_audit_rules.sh" and "HEAD" in (getattr(r, "methods", set()) or set())]
         self.assertTrue(len(head_routes) >= 1, "HEAD /update_audit_rules.sh must be registered so curl -I succeeds")
+
+        # Open warning incident must sort ABOVE historical closed critical incident
+        with db.get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO incidents (title, severity, description, status, server_id, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, NOW(), NOW());",
+                    ("Old Closed Critical", "critical", "closed crit", "closed", 14)
+                )
+                cur.execute(
+                    "INSERT INTO incidents (title, severity, description, status, server_id, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, NOW(), NOW());",
+                    ("New Open Warning", "warning", "open warn", "open", 14)
+                )
+        ordered = db.get_incidents(status="all", server_id=14)["items"]
+        self.assertEqual(ordered[0]["title"], "New Open Warning", "Open incidents must appear before historical closed critical rows")
 
 
 if __name__ == "__main__":
