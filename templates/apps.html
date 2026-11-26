@@ -39,7 +39,7 @@
     </div>
 
     <!-- Application Grid -->
-    <div id="apps-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:20px">
+    <div id="apps-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(252px, 1fr)); gap:14px">
         <!-- Injected via JavaScript -->
     </div>
 </div>
@@ -111,80 +111,11 @@ function renderApplicationsGrid() {
     }
 
     grid.innerHTML = filtered.map(a => {
-        const id = a.id;
-        const name = escapeHtml(a.name || 'Unnamed App');
-        const url = escapeHtml(a.primary_url || '');
-        const env = escapeHtml(a.environment || 'Production');
-        const status = a.computed_status || a.status || 'WAITING';
-        const compRatio = a.components_ratio || '0/0';
-        const epm = a.events_per_min || 0;
-        const inc = a.open_incidents || 0;
-        const lastEv = a.last_event_formatted || 'never';
-        const proj = escapeHtml(a.project_name || 'No project');
-
-        let statusBg = 'rgba(148,163,184,0.12)';
-        let statusFg = 'var(--text3)';
-        let statusBorder = 'rgba(148,163,184,0.3)';
-
-        if (status === 'CRITICAL') {
-            statusBg = 'rgba(239,68,68,0.15)'; statusFg = 'var(--red)'; statusBorder = 'rgba(239,68,68,0.4)';
-        } else if (status === 'TROUBLE') {
-            statusBg = 'rgba(245,158,11,0.15)'; statusFg = 'var(--amber)'; statusBorder = 'rgba(245,158,11,0.4)';
-        } else if (status === 'NORMAL' || status === 'UP') {
-            statusBg = 'rgba(16,185,129,0.15)'; statusFg = 'var(--green)'; statusBorder = 'rgba(16,185,129,0.4)';
-        } else if (status === 'MAINT') {
-            statusBg = 'rgba(56,189,248,0.15)'; statusFg = 'var(--cyan)'; statusBorder = 'rgba(56,189,248,0.4)';
-        } else if (status === 'PENDING_APPROVAL' || status === 'WAITING') {
-            statusBg = 'rgba(245,158,11,0.12)'; statusFg = 'var(--amber)'; statusBorder = 'rgba(245,158,11,0.3)';
-        }
-
-        return `
-        <div class="card glass hover-card" onclick="openAppDetailsModal(${id})" 
-             style="cursor:pointer; border-radius:12px; padding:20px; transition:transform 0.15s ease, border-color 0.15s ease; border:1px solid var(--border)">
-            
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
-                <div style="overflow:hidden">
-                    <div style="display:flex; align-items:center; gap:8px">
-                        ${renderAppNodeAwsIcon('#FF9900')}
-                        <h4 style="margin:0; font-size:16px; font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${name}">
-                            ${name}
-                        </h4>
-                    </div>
-                    <div style="font-size:11.5px; color:var(--text3); font-family:var(--font-mono), monospace; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${url}">
-                        ${url}
-                    </div>
-                </div>
-                <div style="display:flex; align-items:center; gap:6px;">
-                    ${(a.is_read === true || a.is_read === 'true') ? '<span class="badge-read-tag">✓ Marked as Read</span>' : ''}
-                    <span class="badge" style="background:${statusBg}; color:${statusFg}; border:1px solid ${statusBorder}; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px">
-                        ${status === 'WAITING' ? 'WAITING DATA' : status}
-                    </span>
-                </div>
-            </div>
-
-            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; background:var(--bg2); padding:10px 12px; border-radius:8px; margin-bottom:14px; font-size:11px; text-align:center; border:1px solid var(--border)">
-                <div>
-                    <span style="color:var(--text3); display:block; font-size:9.5px; text-transform:uppercase; font-weight:700">COMPONENTS</span>
-                    <b style="display:block; font-size:14px; color:var(--text); font-family:var(--font-sans); margin-top:2px">${compRatio}</b>
-                </div>
-                <div>
-                    <span style="color:var(--text3); display:block; font-size:9.5px; text-transform:uppercase; font-weight:700">EVENTS/MIN</span>
-                    <b style="display:block; font-size:14px; color:var(--text); font-family:var(--font-sans); margin-top:2px">${epm}</b>
-                </div>
-                <div>
-                    <span style="color:var(--text3); display:block; font-size:9.5px; text-transform:uppercase; font-weight:700">OPEN INCIDENTS</span>
-                    <b style="display:block; font-size:14px; color:${inc>0?'var(--red)':'var(--text)'}; font-family:var(--font-sans); margin-top:2px">${inc}</b>
-                </div>
-            </div>
-
-            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--text3); border-top:1px solid var(--border); padding-top:10px">
-                <span style="display:flex; align-items:center; gap:4px">
-                    <span>📁</span> <span>${proj}</span>
-                </span>
-                <span>Last event: <b style="color:var(--text2)">${lastEv}</b></span>
-            </div>
-        </div>
-        `;
+        const readBadgeHtml = (a.is_read === true || a.is_read === 'true') ? '<span class="badge-read-tag">✓ Read</span>' : '';
+        return renderCompactWebsiteCard(a, {
+            onClick: `openAppDetailsModal(${a.id})`,
+            readBadgeHtml
+        });
     }).join('');
 }
 

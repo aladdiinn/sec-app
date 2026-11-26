@@ -283,80 +283,18 @@
 .dash-alert-row:hover { background: var(--bg3); transform: translateX(2px); }
 .dash-alert-row.sev-warning { border-left-color: var(--amber); }
 
-/* ============================================================
-   APP NODE CARD DIFFERENTIATED STYLING (Dark & Light Themes)
-   AWS Orange (#FF9900) Branding for Application Nodes
-   ============================================================ */
-
-/* DARK THEME (Black theme) - AWS Orange Theme */
-.service-card.appnode-card {
-    background: linear-gradient(145deg, #1f160e 0%, #121420 100%) !important;
-    border: 1px solid rgba(255, 153, 0, 0.45) !important;
-    box-shadow: 0 4px 20px rgba(255, 153, 0, 0.12) !important;
+/* Subtle Website/App Node List Styling (matches compact restrained theme) */
+.service-card-list.appnode-card .st-appnode {
+    background: rgba(148, 163, 184, 0.12) !important;
+    color: #94a3b8 !important;
+    border: 1px solid rgba(148, 163, 184, 0.22) !important;
+    font-weight: 600;
 }
-.service-card.appnode-card:hover {
-    border-color: #FF9900 !important;
-    box-shadow: 0 10px 30px rgba(255, 153, 0, 0.28) !important;
-    transform: translateY(-2px);
+[data-theme="light"] .service-card-list.appnode-card .appnode-title {
+    color: #0F172A !important;
 }
-.service-card-list.appnode-card {
-    background: linear-gradient(90deg, #1f160e 0%, #121420 100%) !important;
-    border: 1px solid rgba(255, 153, 0, 0.4) !important;
-}
-.appnode-card .appnode-title {
-    color: #fff2e0 !important;
-}
-.appnode-card .appnode-url {
-    color: #FF9900 !important;
-}
-.appnode-card .st-appnode {
-    background: rgba(255, 153, 0, 0.2) !important;
-    color: #FFB84D !important;
-    border: 1px solid rgba(255, 153, 0, 0.5) !important;
-    font-weight: 700;
-}
-.appnode-card .appnode-sec-bar {
-    background: rgba(255, 153, 0, 0.08) !important;
-    border-top: 1px solid rgba(255, 153, 0, 0.25) !important;
-    border-bottom: 1px solid rgba(255, 153, 0, 0.25) !important;
-}
-
-/* LIGHT THEME (White / Light theme) - AWS Orange Theme */
-[data-theme="light"] .service-card.appnode-card {
-    background: linear-gradient(145deg, #fffbeb 0%, #fef3c7 100%) !important;
-    border: 1px solid rgba(245, 158, 11, 0.5) !important;
-    box-shadow: 0 4px 16px rgba(217, 119, 6, 0.10) !important;
-}
-[data-theme="light"] .service-card.appnode-card:hover {
-    border-color: #d97706 !important;
-    box-shadow: 0 8px 24px rgba(245, 158, 11, 0.28) !important;
-    transform: translateY(-2px);
-}
-[data-theme="light"] .service-card-list.appnode-card {
-    background: linear-gradient(90deg, #fffbeb 0%, #fef3c7 100%) !important;
-    border: 1px solid rgba(245, 158, 11, 0.45) !important;
-}
-[data-theme="light"] .appnode-card .appnode-title {
-    color: #78350f !important;
-}
-[data-theme="light"] .appnode-card .appnode-url {
-    color: #b45309 !important;
-}
-[data-theme="light"] .appnode-card .st-appnode {
-    background: #fef3c7 !important;
-    color: #b45309 !important;
-    border: 1px solid #fcd34d !important;
-    font-weight: 700;
-}
-[data-theme="light"] .appnode-card .appnode-sec-bar {
-    background: rgba(245, 158, 11, 0.08) !important;
-    border-top: 1px solid rgba(245, 158, 11, 0.25) !important;
-    border-bottom: 1px solid rgba(245, 158, 11, 0.25) !important;
-}
-[data-theme="light"] .appnode-card .service-alert-box.sab-normal {
-    background: rgba(16, 185, 129, 0.12) !important;
-    color: #047857 !important;
-    border: 1px solid rgba(16, 185, 129, 0.3) !important;
+[data-theme="light"] .service-card-list.appnode-card .appnode-url {
+    color: #475569 !important;
 }
 
 /* AWS LIGHT THEME CONTRAST & VISIBILITY ENHANCEMENTS */
@@ -1515,40 +1453,11 @@ function renderServicesGrid() {
                 </div>
                 `;
             } else {
-                return `
-                <div class="service-card appnode-card fade-in delay-${(index % 5) + 1}" onclick="openAppDetailsFromDash(${aid})" style="${borderColor ? 'border-color:' + borderColor + ' !important;' : ''}">
-                    <div>
-                        <div class="service-header">
-                            <div style="min-width:0; flex:1;">
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                    ${renderAppNodeAwsIcon('#FF9900')}
-                                    <div class="service-name appnode-title" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(name)}</div>
-                                </div>
-                                <div class="service-ip appnode-url" style="text-overflow:ellipsis; overflow:hidden; white-space:nowrap;" title="${escapeHtml(url)}">${escapeHtml(url)}</div>
-                            </div>
-                            <div style="text-align:right; flex-shrink:0;">
-                                <span class="service-type-badge st-appnode">WEBSITE</span>
-                                <div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">${escapeHtml(a.environment || 'Production')}</div>
-                            </div>
-                        </div>
-
-                        <div class="donut-gauges-row">
-                            ${renderDonutGauge(compPct, 'COMPS', compColor)}
-                            ${renderDonutGauge(evMin, 'EV/MIN', '#38bdf8')}
-                            ${renderDonutGauge(incPct, 'THREAT', incColor)}
-                        </div>
-                    </div>
-
-                    <div class="card-security-bar appnode-sec-bar">
-                        <span class="card-sec-label" style="color:#FF9900; font-weight:700;">APP DEFENSE</span>
-                        <div class="sec-badge-wrap">${secBadge}</div>
-                    </div>
-
-                    <div>
-                        ${alertBox}
-                    </div>
-                </div>
-                `;
+                return renderCompactWebsiteCard(a, {
+                    computedStatus: item.computedStatus,
+                    onClick: `openAppDetailsFromDash(${aid})`,
+                    readBadgeHtml: item.isRead ? '<span class="badge-read-tag">✓ Read</span>' : ''
+                });
             }
         }
 
@@ -1556,6 +1465,16 @@ function renderServicesGrid() {
         // B. STANDARD ASSET / SERVER CARD RENDERING
         // ========================================================
         const s = item.raw;
+        if (currentDashboardView !== 'list') {
+            return renderCompactAssetCard(s, {
+                from: 'dashboard',
+                ctx: 'dashboard',
+                computedStatus: item.computedStatus,
+                targetVersion: '{{ latest_agent_version or "2.1.9" }}',
+                manageUrl: `/servers/${s.id}?from=dashboard`,
+                readBadgeHtml: (item.isRead || s.is_read === true || s.is_read === 'true') ? '<span class="badge-read-tag">✓ Read</span>' : ''
+            });
+        }
         const sid = s.id;
         const name = s.hostname || s.name || 'Unknown Node';
         const ip = s.ip_address || s.ip || '0.0.0.0';
@@ -1655,40 +1574,6 @@ function renderServicesGrid() {
                     ${secBadge}
                 </div>
                 <div style="flex: 2;">
-                    ${alertBox}
-                </div>
-            </div>
-            `;
-        } else {
-            return `
-            <div class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="${borderColor ? 'border-color:' + borderColor + ' !important;' : ''}">
-                <div>
-                    <div class="service-header">
-                        <div style="min-width:0; flex:1;">
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                ${nodeIcon}
-                                <div class="service-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(name)}</div>
-                            </div>
-                            <div class="service-ip" style="text-overflow:ellipsis; overflow:hidden; white-space:nowrap; margin-left:26px;" title="${escapeHtml(ip)}">${escapeHtml(ip)}</div>
-                        </div>
-                        <div style="text-align:right; flex-shrink:0;">
-                            ${typeBadge}
-                        </div>
-                    </div>
-
-                    <div class="donut-gauges-row">
-                        ${renderDonutGauge(cpu, 'CPU')}
-                        ${renderDonutGauge(ram, 'RAM')}
-                        ${renderDonutGauge(disk, 'DISK')}
-                    </div>
-                </div>
-
-                <div class="card-security-bar">
-                    <span class="card-sec-label">SECURITY</span>
-                    <div class="sec-badge-wrap">${secBadge}</div>
-                </div>
-
-                <div>
                     ${alertBox}
                 </div>
             </div>

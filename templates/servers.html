@@ -70,7 +70,7 @@
         {% endif %}
     </div>
 
-    <div id="servers-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:20px">
+    <div id="servers-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(252px, 1fr)); gap:14px">
         <!-- Loaded by JS -->
     </div>
 </div>
@@ -675,183 +675,20 @@ function formatLocal(dateStr) {
                 return;
             }
 
-            grid.innerHTML = data.map((s, index) => {
+            const targetV = '{{ latest_agent_version or "2.1.9" }}';
+            grid.innerHTML = data.map((s) => {
                 const id = s.id;
-                const hostname = String(s.hostname || s.name || s.ip || 'server-node').replace(/'/g, "\\'");
-                const ip = s.ip_address || s.ip || '127.0.0.1';
-                const unifiedStatus = typeof getUnifiedAssetStatus === 'function' ? getUnifiedAssetStatus(s) : 'UP';
-                const isDown = unifiedStatus === 'DOWN';
-                const isMaint = unifiedStatus === 'MAINT';
-                const isCrit = unifiedStatus === 'CRITICAL';
-                const isTrouble = unifiedStatus === 'TROUBLE';
-                const cpu = s.cpu_percent || 0;
-                const ram = s.memory_percent || 0;
-                const disk = s.disk_percent || 0;
-                const alertCount = s.alert_count || 0;
-                
-                const isDb = hostname.toLowerCase().includes('db') || (s.os_info||'').toLowerCase().includes('postgres') || (s.os_info||'').toLowerCase().includes('mysql');
-                const isWin = (s.os_info||'').toLowerCase().includes('windows');
-                
-                let rawBadge = '<span class="service-type-badge st-server">LINUX SERVER</span>';
-                let nodeIcon = renderAssetChassisIcon('#0284c7');
-                if (isDb) {
-                    rawBadge = '<span class="service-type-badge st-database">DATABASE</span>';
-                    nodeIcon = renderDatabaseIcon('#a855f7');
-                } else if (isWin) {
-                    rawBadge = '<span class="service-type-badge st-server">WINDOWS SERVER</span>';
-                    nodeIcon = renderAssetChassisIcon('#0284c7');
-                }
+                const manageUrl = `/servers/${id}?from=assets`;
                 const isSrvRead = s.is_read === true || s.is_read === 'true';
-                const readTag = isSrvRead ? '<div class="badge-read-tag" style="margin-top:4px">✓ Marked as Read</div>' : '';
-                let rawAgentV = String(s.agent_version || '1.6.2');
-                if (rawAgentV.includes('{') || rawAgentV.includes('version')) {
-                    rawAgentV = '2.1.7';
-                }
-                const agentV = rawAgentV;
-                const targetV = '{{ latest_agent_version or "2.1.7" }}';
-
-                function parseVerArr(v) {
-                    const m = String(v).match(/\d+/g);
-                    return m ? m.map(Number) : [0];
-                }
-                function isVerAtLeast(curr, target) {
-                    const c = parseVerArr(curr), t = parseVerArr(target);
-                    for (let i = 0; i < Math.max(c.length, t.length); i++) {
-                        const cv = c[i] || 0, tv = t[i] || 0;
-                        if (cv > tv) return true;
-                        if (cv < tv) return false;
-                    }
-                    return true;
-                }
-
-                let upStat = s.update_status || (isVerAtLeast(agentV, targetV) ? 'up_to_date' : 'update_available');
-                if (isVerAtLeast(agentV, targetV)) {
-                    upStat = 'up_to_date';
-                } else if (upStat === 'unsupported' && (String(s.agent_version).includes('{') || String(s.agent_version).includes('version') || s.is_canary)) {
-                    upStat = 'update_available';
-                }
-                let statusPill = '';
-                if (upStat === 'up_to_date') {
-                    statusPill = ' <span style="font-size:8px; border:1px solid rgba(16,185,129,0.4); border-radius:3px; padding:1px 4px; color:var(--green)">Up to date</span>';
-                } else if (upStat === 'update_available') {
-                    statusPill = ' <span style="font-size:8px; border:1px solid rgba(0,212,255,0.4); border-radius:3px; padding:1px 4px; color:var(--cyan)">Update available</span>';
-                } else if (upStat === 'updating') {
-                    statusPill = ' <span style="font-size:8px; border:1px solid rgba(245,158,11,0.5); border-radius:3px; padding:1px 4px; color:var(--amber)">Updating...</span>';
-                } else if (upStat === 'failed') {
-                    statusPill = ` <span style="font-size:8px; border:1px solid rgba(239,68,68,0.5); border-radius:3px; padding:1px 4px; color:var(--red)" title="${s.update_error || 'Update failed'}">Update failed</span>`;
-                } else if (upStat === 'unsupported') {
-                    statusPill = ' <span style="font-size:8px; border:1px solid rgba(239,68,68,0.5); border-radius:3px; padding:1px 4px; color:var(--red)">Unsupported</span>';
-                }
-                const typeBadge = `<div style="text-align:right">${rawBadge}${readTag}<div style="font-family:monospace; font-size:9px; color:var(--text3); margin-top:4px">v${agentV}${statusPill}</div></div>`;
-                
-                let alertBox = '<div class="service-alert-box sab-normal"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>NORMAL</strong> – All checks operational</div>';
-                if (isDown) {
-                    if (upStat === 'failed' || s.update_error || (s.last_update_attempt && (Date.now() - new Date(s.last_update_attempt).getTime() < 1800000))) {
-                        const failReason = s.update_error || 'Agent crash-loop detected after update';
-                        alertBox = `<div class="service-alert-box" style="background:rgba(239, 68, 68, 0.15); color:var(--red); border:1px solid rgba(239, 68, 68, 0.4); display:flex; flex-direction:column; gap:4px; align-items:flex-start;">
-                            <div style="display:flex; align-items:center; gap:6px;">
-                                <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
-                                <strong>UPDATE FAILED / AGENT CRASHED AFTER UPDATE TO v${escapeHtml(agentV)}</strong>
-                            </div>
-                            <div style="font-size:10px; color:rgba(255,255,255,0.7); margin-left:18px;">Reason: ${escapeHtml(failReason)}</div>
-                            <div style="margin-left:18px; margin-top:2px;">
-                                <button type="button" onclick="event.stopPropagation(); viewAgentCrashLogs(${s.id}, '${escapeHtml(s.name || s.hostname)}')" style="background:rgba(239,68,68,0.25); border:1px solid rgba(239,68,68,0.5); color:#fff; border-radius:3px; padding:2px 8px; font-size:9px; cursor:pointer;">View Last 20 Agent Logs</button>
-                            </div>
-                        </div>`;
-                    } else {
-                        alertBox = '<div class="service-alert-box" style="background:rgba(239, 68, 68, 0.1); color:var(--red); border:1px solid rgba(239, 68, 68, 0.3);"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>OFFLINE / DOWN</strong> – Connection Lost</div>';
-                    }
-                } else if (isMaint) {
-                    alertBox = '<div class="service-alert-box sab-trouble"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>MAINTENANCE</strong> – Scheduled Maintenance Window</div>';
-                } else if (isCrit) {
-                    alertBox = `<div class="service-alert-box"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>CRITICAL</strong> – ${s.critical_alert_count || alertCount || 1} Alert(s) • CPU: ${cpu}%</div>`;
-                } else if (isTrouble) {
-                    if (cpu > 85 || ram > 85 || disk > 85) {
-                        alertBox = `<div class="service-alert-box sab-trouble"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>HIGH RESOURCE</strong> – CPU: ${cpu}% / RAM: ${ram}%</div>`;
-                    } else {
-                        alertBox = `<div class="service-alert-box sab-trouble"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg> <strong>TROUBLE</strong> – ${alertCount} Alert(s) • CPU: ${cpu}%</div>`;
-                    }
-                }
-
-                const borderColor = typeof getAssetBorderColor === 'function' ? (getAssetBorderColor(unifiedStatus) || 'rgba(255,255,255,0.08)') : 'rgba(255,255,255,0.08)';
-
-                let vulnBadge = '';
-                const agentVer = s.agent_version || '1.5';
-                const isOldAgent = !agentVer || parseFloat(agentVer) < 1.6;
-                if (isOldAgent) {
-                    vulnBadge = `<span class="sec-pill-update" title="Agent v${agentVer} (update to v1.6+ needed for vulnerability scans)">Agent v${agentVer} (Update)</span>`;
-                } else if (s.vuln_scan_status && s.vuln_scan_status.startsWith('No security data')) {
-                    vulnBadge = `<span class="sec-pill-unsupported" title="No security data for this OS">No OS Data</span>`;
-                } else {
-                    let rebootPart = s.reboot_required ? `<span class="sec-pill-reboot" title="System reboot required to apply security patches">REBOOT</span>` : '';
-                    const crit = s.vuln_critical || 0;
-                    const high = s.vuln_high || 0;
-                    const med = s.vuln_medium || 0;
-                    const low = s.vuln_low || 0;
-                    const total = crit + high + med + low;
-                    if (total > 0) {
-                        vulnBadge = `${rebootPart}<span class="sec-cve-counts"><span class="sec-cve-c">C ${crit}</span><span class="sec-cve-dot">·</span><span class="sec-cve-h">H ${high}</span><span class="sec-cve-dot">·</span><span class="sec-cve-m">M ${med}</span></span>`;
-                    } else if (s.last_vuln_scan) {
-                        vulnBadge = `${rebootPart}<span class="sec-pill-clean">0 Known Vulns</span>`;
-                    } else {
-                        vulnBadge = `${rebootPart}<span class="sec-pill-unscanned">Not scanned</span>`;
-                    }
-                }
-
-                return `
-                <div id="srv-card-${id}" class="service-card fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${id})" style="border-color:${borderColor}; position:relative; cursor:pointer;">
-                    ${window.USER_ROLE !== 'normal' ? `
-                    <div style="position:absolute; top:-10px; right:12px; z-index:2; display:flex; gap:5px; background:var(--bg2); padding:0 4px; border-radius:4px;">
-                        <button onclick="event.stopPropagation(); toggleMaintenance(${id}, ${isMaint}, this)" title="Toggle Maintenance" class="btn btn-glass" style="padding:2px 8px; font-size:9px; border-color:var(--border);">
-                            ${isMaint ? 'UNMAINT' : 'MAINT'}
-                        </button>
-                        <button onclick="event.stopPropagation(); deleteServer(${id})" title="Delete server" class="btn btn-glass" style="background:rgba(255,51,102,0.1); border-color:rgba(255,51,102,0.4); color:var(--red); padding:2px 8px; font-size:9px;">
-                            DEL
-                        </button>
-                    </div>
-                    ` : ''}
-                    <div>
-                        <div class="service-header">
-                            <div>
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                    ${nodeIcon}
-                                    <h4 class="service-title" style="margin:0;">${hostname}</h4>
-                                </div>
-                                <div style="font-family:monospace; font-size:11px; color:var(--cyan); margin-top:2px;">${ip}</div>
-                            </div>
-                            ${typeBadge}
-                        </div>
-                        <div class="service-metrics">
-                            <div class="service-metrics-item">
-                                <span class="sm-label">CPU USAGE</span>
-                                <span class="sm-val" style="color:${cpu>85?'var(--red)':cpu>70?'var(--amber)':'var(--text)'}">${cpu}%</span>
-                            </div>
-                            <div class="service-metrics-item">
-                                <span class="sm-label">RAM USAGE</span>
-                                <span class="sm-val" style="color:${ram>85?'var(--red)':ram>70?'var(--amber)':'var(--text)'}">${ram}%</span>
-                            </div>
-                            <div class="service-metrics-item" style="margin-top:6px">
-                                <span class="sm-label">DISK USAGE</span>
-                                <span class="sm-val">${disk}%</span>
-                            </div>
-                            <div class="service-metrics-item" style="margin-top:6px">
-                                <span class="sm-label">ALERTS</span>
-                                <span class="sm-val" style="color:${alertCount>0?'var(--red)':'var(--green)'}">${alertCount}</span>
-                            </div>
-                        </div>
-                        <div class="card-security-bar">
-                            <span class="card-sec-label">SECURITY</span>
-                            <div class="sec-badge-wrap">${vulnBadge}</div>
-                        </div>
-                        <div style="margin-top:10px; padding-top:8px; border-top:1px solid var(--border-glass, rgba(255,255,255,0.06)); display:flex; justify-content:flex-end;">
-                            <button class="btn btn-primary" style="width:100%; font-size:11px; padding:6px 12px; font-weight:600; display:flex; align-items:center; justify-content:center; gap:6px;" onclick="event.stopPropagation(); window.location.href='/servers/${id}?from=assets'">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
-                                MANAGE ASSET
-                            </button>
-                        </div>
-                    </div>
-                    ${alertBox}
-                </div>`;
+                const readBadgeHtml = isSrvRead ? '<span class="badge-read-tag">✓ Read</span>' : '';
+                return renderCompactAssetCard(s, {
+                    from: 'assets',
+                    ctx: 'assets',
+                    targetVersion: targetV,
+                    manageUrl,
+                    manageLabel: 'MANAGE ASSET',
+                    readBadgeHtml
+                });
             }).join('');
         } catch (e) {
             showToast('Asset load error', 'error');
