@@ -711,8 +711,11 @@ def ensure_app_siem_schema_columns():
                     WHERE step_summary ILIKE '%pageContext.request.contextPath%';
 
                     DELETE FROM app_incidents 
-                    WHERE title ILIKE '%Expression Language%' 
-                       OR title ILIKE '%Template Injection%';
+                    WHERE (title ILIKE '%Expression Language%' 
+                       OR title ILIKE '%Template Injection%')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM app_incident_events e WHERE e.incident_id = app_incidents.id
+                      );
                 """)
                 conn.commit()
             except Exception:
@@ -3495,7 +3498,7 @@ def _check_sudo_misuse(server_id, data):
         (re.compile(r'psql\s+.*-(?:c|command)\s+.*(alter\s+user|alter\s+role|grant\s+all|with\s+superuser)', re.IGNORECASE), 'PostgreSQL CLI Privilege Escalation', 'critical', 'PostgreSQL Privilege Escalation Alert', 'PG_PRIVILEGE_CHANGE'),
         # Account creation / management
         (re.compile(r'\b(useradd|adduser)\b', re.IGNORECASE), 'New User Account Created', 'critical', 'Identity Management Alert', 'USER_CREATED'),
-        (re.compile(r'\bpasswd(?:\[\d+\])?:\s*(?:password\s+(?:updated|changed|for)|pam_unix.*password\s+changed)|\bpassword\s+updated\s+successfully\b', re.IGNORECASE), 'User Password Modified', 'critical', 'Credential Modification Alert', 'PASSWD_CHANGED'),
+        (re.compile(r'\bpasswd(?:\[\d+\])?:\s*(?:password\s+(?:updated|changed|for)|pam_unix.*password\s+changed)\b|\bpassword\s+updated\s+successfully\b', re.IGNORECASE), 'User Password Modified', 'critical', 'Credential Modification Alert', 'PASSWD_CHANGED'),
         # Failed Root Escalation (Replaced successful su/sudo rule)
         (re.compile(r'(FAILED su for root|incorrect password attempt|sudo:.*authentication failure)', re.IGNORECASE), 'Failed Root Escalation Attempt', 'critical', 'Privilege Escalation Alert', 'SUDO_ROOT_ESCALATION'),
         (re.compile(r'(pkill|killall)\s+-9', re.IGNORECASE), 'Mass Process Kill', 'critical', 'Host Anomaly Alert', 'MASS_PROCESS_KILL'),
@@ -13131,10 +13134,11 @@ def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "
     if (method or "").upper() != "GET":
         return False, False
 
-    # 1. Whitelist internal node daemons and private RFC1918 / localhost
+    # 1. Whitelist local loopback and SOC node daemons; skip slow human-browser proxies on 10.*/192.168.* unless automated scraper UA
+    is_automated_tool = bool(AUTOMATED_SCRAPER_UA.search(raw_line or ""))
     if ip.startswith("127.") or ip == "localhost" or ip in ("10.0.0.27", "10.40.60.49"):
         return False, False
-    if ip.startswith("10.") or ip.startswith("192.168."):
+    if not is_automated_tool and (ip.startswith("10.") or ip.startswith("192.168.")):
         return False, False
 
     # 2. Safety filter for known operational pollers / health endpoints
@@ -13147,7 +13151,6 @@ def check_mass_scraping_detection(ip: str, user: str, path: str, method: str = "
         return False, False
 
     val = m.group(1)
-    is_automated_tool = bool(AUTOMATED_SCRAPER_UA.search(raw_line or ""))
     # True automated crawling threshold: 15 for tools, 50 for browsers
     threshold = 15 if is_automated_tool else 50
 
@@ -13384,8 +13387,8 @@ def evaluate_web_security_event(method: str, path: str, status: int, user: str, 
             return "PATH_TRAVERSAL", sev, f"Directory Traversal Probe (HTTP {status})", "T1083 - File and Directory Discovery", make_evidence("W06", "Directory Traversal Probe", conf, why, sig, "Relative CSS/JS path resolution by client browser.", "Safely rejected with error status.")
 
     # 5. Web Shell / Command Injection
-    is_shell_file = re.search(r'(?:cmd\.jsp|shell\.jsp|root\.jsp|chopper\.jsp|b374k(?:\.php)?|c99(?:\.php)?|r57(?:\.php)?|alfa(?:\.php)?)', full_target_lower)
-    is_cmd_inj = bool(re.search(r'(?:\||;|`|&&|\$\()\s*(?:/bin/(?:sh|bash)|whoami|id\s+-\w|uname\s+-a|powershell(?:\.exe)?|curl\s+https?://|wget\s+https?://)', full_target_lower))
+    is_shell_file = bool(re.search(r'(?:^|/)(?:(?:cmd|shell|root|chopper)\.jsp|(?:b374k(?:\.php)?|c99\.php|r57\.php|alfa\.php))(?:$|[?#&/])', full_target_lower))
+    is_cmd_inj = bool(re.search(r'(?:\||;|`|&&|\$\()\s*(?:/bin/(?:sh|bash)\b|whoami\b|id(?:\s+-\w+|(?=$|[;&|`)\s]))|uname\s+-a\b|powershell(?:\.exe)?\b|curl\s+https?://|wget\s+https?://)', full_target_lower))
     if ";jsessionid=" in full_target_lower and not is_shell_file and not is_cmd_inj:
         pass
     elif is_shell_file or is_cmd_inj:
@@ -13895,7 +13898,7 @@ def api_app_events(request: Request, payload: dict = Body(...)):
 
 
             clean_path = raw_path.split("?")[0].lower()
-            if STATIC_EXT_RE.search(clean_path):
+            if STATIC_EXT_RE.search(clean_path) and sev == "info":
                 continue
             if is_path_suppressed(actual_app_id, raw_path):
                 continue

