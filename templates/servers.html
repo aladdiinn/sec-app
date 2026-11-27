@@ -51,14 +51,22 @@
 
 <div class="fade-in">
     <!-- Action Bar -->
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px">
-        <div style="display:flex; gap:16px">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; gap:12px; align-items:center;">
             <select id="filter-status" class="glass" style="padding:10px 20px; border-radius:var(--radius-sm); color:var(--text); border:1px solid var(--border)" onchange="loadServers()">
                 <option value="">All Statuses</option>
                 <option value="online">Online</option>
                 <option value="offline">Offline</option>
                 <option value="maintenance">Maintenance</option>
             </select>
+            <div class="view-toggle">
+                <button id="btn-servers-view-grid" class="active" onclick="setServersView('grid')" title="Grid View">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                </button>
+                <button id="btn-servers-view-list" onclick="setServersView('list')" title="List View">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                </button>
+            </div>
         </div>
         {% if is_admin or session.get('user_role') in ('superuser', 'admin') %}
         <button class="btn btn-primary" onclick="guardAdminAction(showAddServerModal)">
@@ -70,7 +78,7 @@
         {% endif %}
     </div>
 
-    <div id="servers-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap:14px">
+    <div id="servers-grid">
         <!-- Loaded by JS -->
     </div>
 </div>
@@ -2958,7 +2966,15 @@ function updateServerReadUI(isRead) {
     }
 }
 
+    function setServersView(view) {
+        if (typeof spApplyContainerView === 'function') {
+            spApplyContainerView('servers-grid', view, 'btn-servers-view-grid', 'btn-servers-view-list', 'sp_view_servers');
+        }
+    }
+
     window.addEventListener('load', () => {
+        const savedView = typeof spGetSavedView === 'function' ? spGetSavedView('sp_view_servers', 'grid') : 'grid';
+        setServersView(savedView);
         loadServers();
         setInterval(loadServers, 5000);
     });

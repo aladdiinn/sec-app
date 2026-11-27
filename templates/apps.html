@@ -13,7 +13,7 @@
                 Continuous application-layer monitoring for Apache Tomcat and PostgreSQL instances
             </div>
         </div>
-        <div style="display:flex; gap:10px; align-items:center">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
             <input type="text" id="app-search-input" placeholder="Search applications..." 
                    class="glass" 
                    style="padding:8px 14px; border-radius:8px; border:1px solid var(--border); font-size:12px; width:220px; color:var(--text)"
@@ -30,6 +30,15 @@
                 <option value="MAINT">Maintenance</option>
             </select>
 
+            <div class="view-toggle">
+                <button id="btn-apps-view-grid" class="active" onclick="setAppsView('grid')" title="Grid View">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                </button>
+                <button id="btn-apps-view-list" onclick="setAppsView('list')" title="List View">
+                    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                </button>
+            </div>
+
             {% if is_admin %}
             <button class="btn btn-primary" onclick="openAddAppWizard()" style="padding:8px 16px; font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px">
                 <span>+</span> Add Application
@@ -39,7 +48,7 @@
     </div>
 
     <!-- Application Grid -->
-    <div id="apps-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(252px, 1fr)); gap:14px">
+    <div id="apps-grid">
         <!-- Injected via JavaScript -->
     </div>
 </div>
@@ -119,7 +128,15 @@ function renderApplicationsGrid() {
     }).join('');
 }
 
+function setAppsView(view) {
+    if (typeof spApplyContainerView === 'function') {
+        spApplyContainerView('apps-grid', view, 'btn-apps-view-grid', 'btn-apps-view-list', 'sp_view_apps');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+    const savedView = typeof spGetSavedView === 'function' ? spGetSavedView('sp_view_apps', 'grid') : 'grid';
+    setAppsView(savedView);
     await loadApplications();
     setInterval(loadApplications, 5000);
     const urlParams = new URLSearchParams(window.location.search);

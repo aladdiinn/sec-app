@@ -464,10 +464,9 @@ function renderCompactAssetCard(s, opts = {}) {
         </div>
 
         <div class="sp-card-sub">
-            <span title="${ip}">${ip}</span>
+            <span class="sp-sub-ip" title="${ip}">${ip}</span>
             <span class="sp-sep">|</span>
-            <span>v${_spEsc(rawAgentV)}</span>
-            ${upHtml}
+            <span class="sp-sub-ver"><span>v${_spEsc(rawAgentV)}</span>${upHtml}</span>
         </div>
 
         <div class="sp-metric-box sp-metric-2">
@@ -594,4 +593,47 @@ function spResetModalIncidentFilters() {
     if (typeEl) typeEl.value = 'all';
     if (daysEl) daysEl.value = '30';
     return spApplyModalIncidentFilters();
+}
+
+function spGetSavedView(storageKey, fallback = 'grid') {
+    try {
+        const val = localStorage.getItem(storageKey);
+        return (val === 'list' || val === 'grid') ? val : fallback;
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function spApplyContainerView(containerId, view, btnGridId, btnListId, storageKey) {
+    const mode = view === 'list' ? 'list' : 'grid';
+    if (storageKey) {
+        try { localStorage.setItem(storageKey, mode); } catch (_) {}
+    }
+    const btnGrid = btnGridId ? document.getElementById(btnGridId) : null;
+    const btnList = btnListId ? document.getElementById(btnListId) : null;
+    if (btnGrid && btnList) {
+        btnGrid.classList.toggle('active', mode === 'grid');
+        btnList.classList.toggle('active', mode === 'list');
+        btnGrid.style.background = '';
+        btnGrid.style.color = '';
+        btnList.style.background = '';
+        btnList.style.color = '';
+    }
+    const container = document.getElementById(containerId);
+    if (container) {
+        if (mode === 'list') {
+            container.classList.add('view-is-list');
+            container.style.display = 'flex';
+            container.style.flexDirection = 'column';
+            container.style.gap = '8px';
+            container.style.gridTemplateColumns = 'none';
+        } else {
+            container.classList.remove('view-is-list');
+            container.style.display = 'grid';
+            container.style.flexDirection = '';
+            container.style.gap = '';
+            container.style.gridTemplateColumns = '';
+        }
+    }
+    return mode;
 }

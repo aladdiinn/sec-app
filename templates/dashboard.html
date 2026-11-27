@@ -1005,48 +1005,14 @@
 {% block extra_js %}
 <script>
 
-let currentDashboardView = 'grid';
+let currentDashboardView = typeof spGetSavedView === 'function' ? spGetSavedView('sp_view_dashboard', 'grid') : 'grid';
 
 function setDashboardView(view) {
-    currentDashboardView = view;
-    const btnGrid = document.getElementById('btn-view-grid');
-    const btnList = document.getElementById('btn-view-list');
-    
-    if (btnGrid && btnList) {
-        if (view === 'grid') {
-            btnGrid.classList.add('active');
-            btnList.classList.remove('active');
-            btnGrid.style.background = '';
-            btnGrid.style.color = '';
-            btnList.style.background = '';
-            btnList.style.color = '';
-        } else {
-            btnList.classList.add('active');
-            btnGrid.classList.remove('active');
-            btnList.style.background = '';
-            btnList.style.color = '';
-            btnGrid.style.background = '';
-            btnGrid.style.color = '';
-        }
+    if (typeof spApplyContainerView === 'function') {
+        currentDashboardView = spApplyContainerView('services-cards-grid', view, 'btn-view-grid', 'btn-view-list', 'sp_view_dashboard');
+    } else {
+        currentDashboardView = view === 'list' ? 'list' : 'grid';
     }
-    
-    const container = document.getElementById('services-cards-grid');
-    if (container) {
-        if (view === 'list') {
-            container.classList.add('view-is-list');
-            container.style.display = 'flex';
-            container.style.flexDirection = 'column';
-            container.style.gap = '8px';
-            container.style.gridTemplateColumns = 'none';
-        } else {
-            container.classList.remove('view-is-list');
-            container.style.display = 'grid';
-            container.style.flexDirection = '';
-            container.style.gap = '';
-            container.style.gridTemplateColumns = '';
-        }
-    }
-    
     renderServicesGrid();
 }
 
@@ -1398,213 +1364,24 @@ function renderServicesGrid() {
         return;
     }
 
-    container.innerHTML = filtered.map((item, index) => {
-        // ========================================================
-        // A. APPLICATION NODE CARD RENDERING
-        // ========================================================
+    container.innerHTML = filtered.map((item) => {
         if (item._type === 'app') {
             const a = item.raw;
-            const aid = a.id;
-            const name = a.name || 'Unnamed Application';
-            const url = a.primary_url || '';
-            const openInc = Number(a.open_incidents || a.open_security_events || 0);
-            const critInc = Number(a.critical_incidents || 0);
-            const evMin = Number(a.events_per_min || 0);
-            const compRatio = a.components_ratio || '1/1';
-            const [repComp, totComp] = (compRatio.includes('/') ? compRatio.split('/') : ['1','1']).map(Number);
-            const compPct = (totComp && totComp > 0) ? Math.round(((repComp || 0) / totComp) * 100) : 100;
-            const compColor = compPct === 100 ? '#10b981' : (compPct > 0 ? '#f59e0b' : '#ef4444');
-            const incPct = openInc > 0 ? 100 : 0;
-            const incColor = openInc > 0 ? '#ef4444' : '#10b981';
-
-            // Security badge
-            let secBadge = '';
-            if (item.computedStatus === 'CRITICAL') {
-                secBadge = `<span class="sec-pill-reboot" style="background:rgba(239,68,68,0.2); color:#ff5a5f; border:1px solid #ff5a5f; font-weight:700;">CRITICAL THREAT</span> <span class="sec-cve-counts"><span class="sec-cve-c">${openInc} INCIDENT${openInc>1?'S':''}</span></span>`;
-            } else if (item.computedStatus === 'TROUBLE') {
-                secBadge = `<span class="sec-pill-update" style="background:rgba(245,158,11,0.2); color:#f59e0b; border:1px solid #f59e0b; font-weight:700;">SUSPICIOUS ANOMALY</span> <span class="sec-cve-counts"><span class="sec-cve-h">${openInc} THREAT${openInc>1?'S':''}</span></span>`;
-            } else {
-                secBadge = `<span class="sec-pill-clean" style="font-weight:600;">Threat Protected</span>`;
-            }
-
-            // Alert Box
-            let alertBox = '';
-            if (item.computedStatus === 'DOWN') {
-                alertBox = `<div class="service-alert-box" style="background:rgba(239,68,68,0.15); color:var(--red); border:1px solid rgba(239,68,68,0.3);"><strong>OFFLINE / SILENT</strong> Telemetry disconnected</div>`;
-            } else if (item.computedStatus === 'MAINT') {
-                alertBox = `<div class="service-alert-box sab-trouble"><strong>MAINTENANCE</strong> Maintenance Mode Active</div>`;
-            } else if (item.computedStatus === 'CRITICAL') {
-                alertBox = `<div class="service-alert-box" style="background:rgba(239,68,68,0.15); color:var(--red); border:1px solid rgba(239,68,68,0.4);"><strong>CRITICAL</strong> ${openInc} Open Threat(s) | Threat Detected</div>`;
-            } else if (item.computedStatus === 'TROUBLE') {
-                alertBox = `<div class="service-alert-box sab-trouble"><strong>TROUBLE</strong> ${escapeHtml(a.telemetry_banner || `${openInc} Security Threat(s) Detected`)}</div>`;
-            } else {
-                if (!a.last_event_at) {
-                    alertBox = `<div class="service-alert-box" style="background:rgba(148,163,184,0.1); color:var(--text3); border:1px solid var(--border);"><strong>AWAITING FIRST EVENT</strong> Enrolled forwarder awaiting log traffic</div>`;
-                } else {
-                    alertBox = `<div class="service-alert-box sab-normal"><strong>NORMAL</strong> Application Telemetry Active</div>`;
-                }
-            }
-
-            const borderColor = typeof getAssetBorderColor === 'function' ? getAssetBorderColor(item.computedStatus) : '';
-
-            if (currentDashboardView === 'list') {
-                const listBorderColor = borderColor || '#FF9900';
-                return `
-                <div class="service-card-list appnode-card fade-in delay-${(index % 5) + 1}" onclick="openAppDetailsFromDash(${aid})" style="border-left: 4px solid ${listBorderColor} !important;">
-                    <div style="flex: 1.5; min-width: 140px;">
-                        <div style="display:flex; align-items:center; gap:6px;">
-                            ${renderAppNodeAwsIcon('#FF9900')}
-                            <div class="list-srv-name appnode-title" style="font-weight: 700; font-size: 13px;">${escapeHtml(name)}</div>
-                        </div>
-                        <div class="list-srv-ip appnode-url" style="font-size: 11px; font-family: monospace;">${escapeHtml(url)}</div>
-                    </div>
-                    <div style="flex: 1.5; font-size: 11px; transform: scale(0.9); transform-origin: left;">
-                        <div style="text-align:right">
-                            <span class="service-type-badge st-appnode">WEBSITE</span>
-                            ${item.isRead ? '<div class="badge-read-tag" style="margin-top:2px">✓ Read</div>' : ''}
-                            <div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">${escapeHtml(a.environment || 'Production')}</div>
-                        </div>
-                    </div>
-                    <div class="list-donuts" style="flex: 2; display:flex; justify-content:space-around;">
-                        ${renderDonutGauge(compPct, 'COMPS', compColor)}
-                        ${renderDonutGauge(evMin, 'EV/MIN', '#38bdf8')}
-                        ${renderDonutGauge(incPct, 'THREAT', incColor)}
-                    </div>
-                    <div style="flex: 1.2; text-align: center;">
-                        ${secBadge}
-                    </div>
-                    <div style="flex: 2;">
-                        ${alertBox}
-                    </div>
-                </div>
-                `;
-            } else {
-                return renderCompactWebsiteCard(a, {
-                    computedStatus: item.computedStatus,
-                    onClick: `openAppDetailsFromDash(${aid})`,
-                    readBadgeHtml: item.isRead ? '<span class="badge-read-tag">✓ Read</span>' : ''
-                });
-            }
-        }
-
-        // ========================================================
-        // B. STANDARD ASSET / SERVER CARD RENDERING
-        // ========================================================
-        const s = item.raw;
-        if (currentDashboardView !== 'list') {
-            return renderCompactAssetCard(s, {
-                from: 'dashboard',
-                ctx: 'dashboard',
+            return renderCompactWebsiteCard(a, {
                 computedStatus: item.computedStatus,
-                targetVersion: '{{ latest_agent_version or "2.1.9" }}',
-                manageUrl: `/servers/${s.id}?from=dashboard`,
-                readBadgeHtml: (item.isRead || s.is_read === true || s.is_read === 'true') ? '<span class="badge-read-tag">✓ Read</span>' : ''
+                onClick: `openAppDetailsFromDash(${a.id})`,
+                readBadgeHtml: item.isRead ? '<span class="badge-read-tag">✓ Read</span>' : ''
             });
         }
-        const sid = s.id;
-        const name = s.hostname || s.name || 'Unknown Node';
-        const ip = s.ip_address || s.ip || '0.0.0.0';
-        const isDb = name.toLowerCase().includes('db') || (s.os_info||'').toLowerCase().includes('postgres') || (s.os_info||'').toLowerCase().includes('mysql');
-        const isWin = (s.os_info||'').toLowerCase().includes('windows');
-        
-        let rawBadge = '<span class="service-type-badge st-server">LINUX SERVER</span>';
-        let nodeIcon = renderAssetChassisIcon('#0284c7');
-        if (isDb) {
-            rawBadge = '<span class="service-type-badge st-database">DATABASE</span>';
-            nodeIcon = renderDatabaseIcon('#a855f7');
-        } else if (isWin) {
-            rawBadge = '<span class="service-type-badge st-server">WINDOWS SERVER</span>';
-            nodeIcon = renderAssetChassisIcon('#0284c7');
-        }
-        const isSrvRead = item.isRead || s.is_read === true || s.is_read === 'true';
-        const agentV = s.agent_version || '1.6.2';
-        const targetV = '{{ latest_agent_version or "2.1.1" }}';
-        const upStat = s.update_status || (agentV < targetV ? 'update_available' : 'up_to_date');
-        let statusPill = '';
-        if (upStat === 'up_to_date') {
-            statusPill = ' <span style="font-size:7px; border:1px solid rgba(16,185,129,0.4); border-radius:2px; padding:0 3px; color:var(--green)">Up to date</span>';
-        } else if (upStat === 'update_available') {
-            statusPill = ' <span style="font-size:7px; border:1px solid rgba(0,212,255,0.4); border-radius:2px; padding:0 3px; color:var(--cyan)">Update available</span>';
-        } else if (upStat === 'updating') {
-            statusPill = ' <span style="font-size:7px; border:1px solid rgba(245,158,11,0.5); border-radius:2px; padding:0 3px; color:var(--amber)">Updating...</span>';
-        } else if (upStat === 'failed') {
-            statusPill = ` <span style="font-size:7px; border:1px solid rgba(239,68,68,0.5); border-radius:2px; padding:0 3px; color:var(--red)" title="${s.update_error || 'Update failed'}">Failed</span>`;
-        }
-        const typeBadge = `<div style="text-align:right">${rawBadge}${isSrvRead ? '<div class="badge-read-tag" style="margin-top:2px">✓ Read</div>' : ''}<div style="font-family:monospace; font-size:8px; color:var(--text3); margin-top:2px">v${agentV}${statusPill}</div></div>`;
-
-        const cpu = s.cpu_percent || 0;
-        const ram = s.memory_percent || 0;
-        const disk = s.disk_percent || 0;
-        const alertCount = s.alert_count || 0;
-
-        // Alert box content
-        let alertBox = '<div class="service-alert-box sab-normal"> <strong>NORMAL</strong> All checks operational</div>';
-        const degEntries = s.degraded_collectors && typeof s.degraded_collectors === 'object' 
-            ? Object.entries(s.degraded_collectors).filter(([k, v]) => {
-                const kl = k.toLowerCase();
-                if (kl.includes('heartbeat') || kl.includes('telemetry_loop') || kl.includes('network') || kl.includes('socket')) return false;
-                const msg = String((v && v.message) || v || '').toLowerCase();
-                if (msg.includes('connection refused') || msg.includes('errno 111') || msg.includes('timed out') || msg.includes('unreachable')) return false;
-                return true;
-            })
-            : [];
-        if (item.computedStatus === 'DOWN') {
-            alertBox = '<div class="service-alert-box" style="background:rgba(239, 68, 68, 0.1); color:var(--red); border:1px solid rgba(239, 68, 68, 0.3);"> <strong>OFFLINE / DOWN</strong> Connection Lost</div>';
-        } else if (degEntries.length > 0) {
-            const [cName, cInfo] = degEntries[0];
-            const cMsg = (cInfo && cInfo.message) ? cInfo.message : 'Collector error';
-            alertBox = `<div class="service-alert-box sab-trouble" title="${escapeHtml(cMsg)}" style="background:rgba(245,158,11,0.1); color:#f59e0b; border:1px solid rgba(245,158,11,0.3);"> <strong>DEGRADED</strong> Collector ${escapeHtml(cName)} failing</div>`;
-        } else if (item.computedStatus === 'MAINT') {
-            alertBox = '<div class="service-alert-box sab-trouble"> <strong>MAINTENANCE</strong> Scheduled Maintenance Window</div>';
-        } else if (item.computedStatus === 'CRITICAL') {
-            alertBox = `<div class="service-alert-box"> <strong>CRITICAL</strong> ${s.critical_alert_count || alertCount || 1} Alert(s) CPU: ${cpu}%</div>`;
-        } else if (item.computedStatus === 'TROUBLE') {
-            if (cpu > 85 || ram > 85 || disk > 85) {
-                alertBox = `<div class="service-alert-box sab-trouble"> <strong>HIGH RESOURCE</strong> CPU: ${cpu}% / RAM: ${ram}%</div>`;
-            } else {
-                alertBox = `<div class="service-alert-box sab-trouble"> <strong>TROUBLE</strong> ${alertCount} Alert(s) CPU: ${cpu}%</div>`;
-            }
-        }
-
-        const borderColor = typeof getAssetBorderColor === 'function' ? getAssetBorderColor(item.computedStatus) : '';
-
-        // Security badge logic
-        let secBadge = '';
-        if (s.security_status === 'reboot_required') {
-            secBadge = `<span class="sec-pill-reboot">REBOOT</span> <span class="sec-cve-counts"><span class="sec-cve-c">C ${s.vuln_critical||10}</span> <span class="sec-cve-h">H ${s.vuln_high||10}</span> <span class="sec-cve-m">M ${s.vuln_medium||2}</span></span>`;
-        } else if (s.security_status === 'updates_pending') {
-            secBadge = `<span class="sec-pill-update">UPDATES</span> <span class="sec-cve-counts"><span class="sec-cve-c">C ${s.vuln_critical||0}</span> <span class="sec-cve-h">H ${s.vuln_high||4}</span> <span class="sec-cve-m">M ${s.vuln_medium||0}</span></span>`;
-        } else {
-            secBadge = `<span class="sec-cve-counts"><span class="sec-cve-c">C ${s.vuln_critical||0}</span> <span class="sec-cve-h">H ${s.vuln_high||0}</span> <span class="sec-cve-m">M ${s.vuln_medium||0}</span></span>`;
-        }
-
-        if (currentDashboardView === 'list') {
-            return `
-            <div class="service-card-list fade-in delay-${(index % 5) + 1}" onclick="openImage3Modal(${sid})" style="${borderColor ? 'border-left: 4px solid ' + borderColor + ' !important;' : ''}">
-                <div style="flex: 1.5; min-width: 140px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        ${nodeIcon}
-                        <div class="list-srv-name" style="font-weight: 700; font-size: 13px;">${escapeHtml(name)}</div>
-                    </div>
-                    <div class="list-srv-ip" style="font-size: 11px; font-family: monospace; margin-left:26px;">${escapeHtml(ip)}</div>
-                </div>
-                <div style="flex: 1.5; font-size: 11px; transform: scale(0.9); transform-origin: left;">
-                    ${typeBadge}
-                </div>
-                <div class="list-donuts" style="flex: 2; display:flex; justify-content:space-around;">
-                    ${renderDonutGauge(cpu, 'CPU')}
-                    ${renderDonutGauge(ram, 'RAM')}
-                    ${renderDonutGauge(disk, 'DISK')}
-                </div>
-                <div style="flex: 1.2; text-align: center;">
-                    ${secBadge}
-                </div>
-                <div style="flex: 2;">
-                    ${alertBox}
-                </div>
-            </div>
-            `;
-        }
+        const s = item.raw;
+        return renderCompactAssetCard(s, {
+            from: 'dashboard',
+            ctx: 'dashboard',
+            computedStatus: item.computedStatus,
+            targetVersion: '{{ latest_agent_version or "2.1.9" }}',
+            manageUrl: `/servers/${s.id}?from=dashboard`,
+            readBadgeHtml: (item.isRead || s.is_read === true || s.is_read === 'true') ? '<span class="badge-read-tag">✓ Read</span>' : ''
+        });
     }).join('');
 }
 
@@ -3282,6 +3059,7 @@ async function saveServerNetwork(e) {
     }
 
 window.addEventListener('DOMContentLoaded', () => {
+    setDashboardView(currentDashboardView);
     loadDashboardData();
     setInterval(loadDashboardData, 10000);
 });

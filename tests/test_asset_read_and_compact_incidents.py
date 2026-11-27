@@ -446,6 +446,52 @@ class TestAssetAlertsFilterAndCardUI(unittest.TestCase):
         self.assertIn('id="filter-days"', alerts_html)
         self.assertIn("days=${encodeURIComponent(days)}", alerts_html)
 
+    def test_unified_list_view_across_dashboard_servers_and_apps(self):
+        js_path = os.path.join(self.base_dir, "static", "js", "asset_status.js")
+        with open(js_path, "r", encoding="utf-8") as f:
+            js_text = f.read()
+        self.assertIn("function spApplyContainerView", js_text)
+        self.assertIn("function spGetSavedView", js_text)
+        self.assertIn('class="sp-sub-ip"', js_text)
+        self.assertIn('class="sp-sub-ver"', js_text)
+
+        css_path = os.path.join(self.base_dir, "static", "css", "theme.css")
+        with open(css_path, "r", encoding="utf-8") as f:
+            css_text = f.read()
+        for selector in (
+            "#apps-grid:not(.view-is-list)",
+            "#apps-grid.view-is-list",
+            "#servers-grid.view-is-list",
+            "#services-cards-grid.view-is-list",
+            ".view-is-list .sp-asset-card",
+            ".view-is-list .sp-website-card",
+            '[data-theme="light"] .view-is-list .sp-asset-card .sp-sub-ip',
+        ):
+            self.assertIn(selector, css_text)
+
+        # Dashboard uses unified .sp-card renderer in both Grid and List views (no legacy donut rows)
+        with open(os.path.join(self.base_dir, "templates", "dashboard.html"), "r", encoding="utf-8") as f:
+            dash_html = f.read()
+        self.assertIn('id="btn-view-grid"', dash_html)
+        self.assertIn('id="btn-view-list"', dash_html)
+        self.assertIn("spApplyContainerView('services-cards-grid'", dash_html)
+        self.assertNotIn('<div class="service-card-list', dash_html)
+
+        # Total Assets (/servers) and Websites (/apps) expose Grid/List toggles wired to shared view helper
+        with open(os.path.join(self.base_dir, "templates", "servers.html"), "r", encoding="utf-8") as f:
+            srv_html = f.read()
+        self.assertIn('id="btn-servers-view-grid"', srv_html)
+        self.assertIn('id="btn-servers-view-list"', srv_html)
+        self.assertIn("setServersView('list')", srv_html)
+        self.assertIn("spApplyContainerView('servers-grid'", srv_html)
+
+        with open(os.path.join(self.base_dir, "templates", "apps.html"), "r", encoding="utf-8") as f:
+            apps_html = f.read()
+        self.assertIn('id="btn-apps-view-grid"', apps_html)
+        self.assertIn('id="btn-apps-view-list"', apps_html)
+        self.assertIn("setAppsView('list')", apps_html)
+        self.assertIn("spApplyContainerView('apps-grid'", apps_html)
+
     def test_90day_db_and_api_severity_timestamp_filtering(self):
         import shutil
         import sqlite3
