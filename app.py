@@ -2194,6 +2194,38 @@ async def api_get_server_details(server_id: int):
     _server_details_cache[server_id] = (now, details)
     return details
 
+
+@app.get("/api/servers/{server_id}/incidents")
+async def api_get_server_incidents(
+    server_id: int,
+    status: Optional[str] = "all",
+    severity: Optional[str] = None,
+    days: Optional[str] = None,
+    limit: int = 500,
+):
+    from fastapi.concurrency import run_in_threadpool
+    srv = await run_in_threadpool(db.get_server_by_id, server_id)
+    if not srv:
+        raise HTTPException(status_code=404, detail="Server not found")
+    safe_limit = max(1, min(int(limit or 500), 1000))
+    items = await run_in_threadpool(
+        db.get_server_incidents_filtered,
+        server_id,
+        status=status or "all",
+        severity=severity,
+        days=days,
+        limit=safe_limit,
+    )
+    parsed_days = None
+    if days is not None and str(days).strip().isdigit() and int(str(days).strip()) > 0:
+        parsed_days = int(str(days).strip())
+    return {
+        "items": items,
+        "total": len(items),
+        "days": parsed_days,
+        "severity": (severity or "all").lower(),
+    }
+
 @app.post("/api/servers/add")
 async def api_add_server(request: Request):
     if not is_admin_user(request):
@@ -10493,6 +10525,7 @@ async def api_get_incidents(
     server_id: Optional[int] = None,
     project_id: Optional[str] = None,
     q: Optional[str] = None,
+    days: Optional[str] = None,
     limit: int = 50,
     offset: int = 0
 ):
@@ -10518,7 +10551,8 @@ async def api_get_incidents(
         project_id=pid,
         read_status=read,
         server_id=server_id,
-        q=q
+        q=q,
+        days=days,
     )
 
 @app.post("/api/incidents/bulk-action")

@@ -456,11 +456,10 @@ function renderCompactAssetCard(s, opts = {}) {
             <div class="sp-card-title-wrap">
                 ${nodeIcon}
                 <span class="sp-card-title" title="${nameEsc}">${nameEsc}</span>
-                <span class="sp-type-pill">${typeLabel}</span>
             </div>
             <div class="sp-card-head-right">
                 ${readBadgeHtml}
-                ${canAdmin ? `<button type="button" class="sp-del-pill" onclick="event.stopPropagation(); spDeleteServer(${id}, '${ctx}')" title="Delete asset">DEL</button>` : ''}
+                <span class="sp-type-pill">${typeLabel}</span>
             </div>
         </div>
 
@@ -519,4 +518,80 @@ function renderCompactAssetCard(s, opts = {}) {
             </div>
         </div>
     </div>`;
+}
+
+function spUpdateModalFilterSummary(count, sev, days) {
+    const el = document.getElementById('i3-filter-summary');
+    if (!el) return;
+    const typeLabels = { all: 'All Types', critical: 'Critical', warning: 'Warning', info: 'Info' };
+    const tLabel = typeLabels[(sev || 'all').toLowerCase()] || 'All Types';
+    const dNum = parseInt(days || '30', 10);
+    const dLabel = dNum === 1 ? 'Last 24 Hours' : (dNum > 0 ? `Last ${dNum} Days` : 'All Time');
+    el.textContent = `${tLabel} · ${dLabel} · ${count} alert(s)`;
+}
+
+function spFilterAlertsLocally(rawAlerts, sev, days) {
+    const list = Array.isArray(rawAlerts) ? rawAlerts : [];
+    const s = (sev || 'all').toLowerCase();
+    const dNum = parseInt(days || '30', 10);
+    const cutoffMs = dNum > 0 ? (Date.now() - dNum * 24 * 60 * 60 * 1000) : 0;
+    return list.filter((al) => {
+        const alSev = String(al.severity || 'info').toLowerCase();
+        if (s === 'critical' && alSev !== 'critical') return false;
+        if (s === 'warning' && !['warning', 'medium', 'high'].includes(alSev)) return false;
+        if (s === 'info' && !['info', 'low'].includes(alSev)) return false;
+        if (cutoffMs > 0) {
+            const tsVal = al.last_seen || al.updated_at || al.created_at;
+            if (tsVal) {
+                const parsed = Date.parse(tsVal);
+                if (!Number.isNaN(parsed) && parsed < cutoffMs) return false;
+            }
+        }
+        return true;
+    });
+}
+
+async function spApplyModalIncidentFilters(opts = {}) {
+    const sid = window._spActiveModalServerId;
+    if (!sid) return;
+    const typeEl = document.getElementById('i3-filter-type');
+    const daysEl = document.getElementById('i3-filter-days');
+    const applyBtn = document.getElementById('i3-apply-btn');
+    const sev = typeEl ? typeEl.value : 'all';
+    const days = daysEl ? daysEl.value : '30';
+    const srv = window._spActiveModalSrv || { id: sid };
+
+    if (!opts.silent && applyBtn) {
+        applyBtn.disabled = true;
+        applyBtn.dataset.prevText = applyBtn.innerHTML;
+        applyBtn.innerHTML = 'Filtering...';
+    }
+    try {
+        const res = await apiFetch(
+            `/api/servers/${sid}/incidents?status=all&severity=${encodeURIComponent(sev)}&days=${encodeURIComponent(days)}&limit=500`
+        );
+        if (res && res.ok) {
+            const payload = await res.json();
+            const items = Array.isArray(payload.items) ? payload.items : [];
+            if (typeof window.renderModalIncidentsList === 'function') {
+                window.renderModalIncidentsList(items, srv);
+            }
+            spUpdateModalFilterSummary(items.length, sev, days);
+        }
+    } catch (e) {
+        console.warn('Incident filter fetch failed:', e);
+    } finally {
+        if (applyBtn) {
+            applyBtn.disabled = false;
+            if (applyBtn.dataset.prevText) applyBtn.innerHTML = applyBtn.dataset.prevText;
+        }
+    }
+}
+
+function spResetModalIncidentFilters() {
+    const typeEl = document.getElementById('i3-filter-type');
+    const daysEl = document.getElementById('i3-filter-days');
+    if (typeEl) typeEl.value = 'all';
+    if (daysEl) daysEl.value = '30';
+    return spApplyModalIncidentFilters();
 }

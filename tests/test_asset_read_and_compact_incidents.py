@@ -394,5 +394,173 @@ class TestAssetReadAndCompactIncidents(unittest.TestCase):
             # 2. Neither ever attributes to root or Unknown
             self.assertFalse(any("root" in t or "Unknown" in t for t in titles))
 
+
+class TestAssetAlertsFilterAndCardUI(unittest.TestCase):
+    def setUp(self):
+        self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def test_ui_contracts_card_header_and_modal_filters(self):
+        # 1. Asset card header moves type pill right and removes top-right DEL button
+        js_path = os.path.join(self.base_dir, "static", "js", "asset_status.js")
+        with open(js_path, "r", encoding="utf-8") as f:
+            js_text = f.read()
+
+        start_idx = js_text.index("function renderCompactAssetCard")
+        end_idx = js_text.index("function spUpdateModalFilterSummary")
+        asset_card_fn = js_text[start_idx:end_idx]
+
+        self.assertNotIn("sp-del-pill", asset_card_fn)
+        self.assertIn("Delete Asset", asset_card_fn)
+        head_right_idx = asset_card_fn.index('<div class="sp-card-head-right">')
+        head_end_idx = asset_card_fn.index("</div>\n        </div>", head_right_idx)
+        head_right_block = asset_card_fn[head_right_idx:head_end_idx]
+        self.assertIn('<span class="sp-type-pill">${typeLabel}</span>', head_right_block)
+        title_wrap_block = asset_card_fn[asset_card_fn.index('<div class="sp-card-title-wrap">'):head_right_idx]
+        self.assertNotIn("sp-type-pill", title_wrap_block)
+        self.assertEqual(js_text.count("function spApplyModalIncidentFilters"), 1)
+        self.assertEqual(js_text.count("function spResetModalIncidentFilters"), 1)
+
+        # 2. CSS keeps #apps-grid compact and widens asset card grids + light/dark filter styles
+        css_path = os.path.join(self.base_dir, "static", "css", "theme.css")
+        with open(css_path, "r", encoding="utf-8") as f:
+            css_text = f.read()
+        self.assertIn("minmax(252px, 1fr)", css_text)
+        self.assertIn("minmax(290px, 1fr)", css_text)
+        self.assertIn(".sp-inc-filter-bar", css_text)
+        self.assertIn(".sp-filter-apply", css_text)
+        self.assertIn("[data-theme=\"light\"] .sp-filter-select", css_text)
+
+        # 3. Modals and alerts page expose Type & 24h..90d timestamp filters
+        for tpl in ("servers.html", "dashboard.html"):
+            with open(os.path.join(self.base_dir, "templates", tpl), "r", encoding="utf-8") as f:
+                html = f.read()
+            self.assertIn('id="i3-filter-type"', html)
+            self.assertIn('id="i3-filter-days"', html)
+            for days_val in ('"1"', '"3"', '"7"', '"15"', '"30"', '"90"'):
+                self.assertIn(days_val, html)
+            self.assertIn("spApplyModalIncidentFilters()", html)
+            self.assertIn("spResetModalIncidentFilters()", html)
+
+        with open(os.path.join(self.base_dir, "templates", "alerts.html"), "r", encoding="utf-8") as f:
+            alerts_html = f.read()
+        self.assertIn('id="filter-days"', alerts_html)
+        self.assertIn("days=${encodeURIComponent(days)}", alerts_html)
+
+    def test_90day_db_and_api_severity_timestamp_filtering(self):
+        import shutil
+        import sqlite3
+        import tempfile
+        from datetime import datetime, timedelta, timezone
+        from fastapi import HTTPException
+        import database as db
+        import app as app_module
+
+        def _run_coro_sync(coro):
+            try:
+                while True:
+                    coro.send(None)
+            except StopIteration as exc:
+                return exc.value
+
+        async def _sync_threadpool(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        tmp_dir = tempfile.mkdtemp(prefix="sp_alerts_filter_")
+        db_path = os.path.join(tmp_dir, "test_filter.db")
+        orig_connect = sqlite3.connect
+
+        def _get_conn():
+            conn = orig_connect(db_path)
+            conn.row_factory = sqlite3.Row
+            return db.SQLiteConnectionWrapper(conn)
+
+        try:
+            with patch.object(db, "get_db_connection", side_effect=_get_conn):
+                db.init_db()
+                now = datetime.now(timezone.utc)
+                ts = lambda h: (now - timedelta(hours=h)).strftime("%Y-%m-%d %H:%M:%S")
+
+                with db.get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "INSERT INTO servers (id, name, hostname, ip, ip_address, status, is_maintenance) "
+                            "VALUES (77, 'JVVNL- Bijliprabhand-1', 'jvvnl-bijli-1', '192.168.150.12', '192.168.150.12', 'online', 0);"
+                        )
+                        rows = [
+                            ("Alert 12h Crit", "critical", "open", ts(12)),
+                            ("Alert 2d High", "high", "open", ts(48)),
+                            ("Alert 5d Warn", "warning", "open", ts(5 * 24)),
+                            ("Alert 12d Low", "low", "closed", ts(12 * 24)),
+                            ("Alert 60d Info", "info", "closed", ts(60 * 24)),
+                            ("Alert 120d OldCrit", "critical", "open", ts(120 * 24)),
+                        ]
+                        for title, sev, st, tstamp in rows:
+                            cur.execute(
+                                """
+                                INSERT INTO incidents (server_id, title, description, severity, status, occurrences, first_seen, last_seen, created_at, updated_at)
+                                VALUES (%s, %s, %s, %s, %s, 1, %s, %s, %s, %s);
+                                """,
+                                (77, title, title + " desc", sev, st, tstamp, tstamp, tstamp, tstamp),
+                            )
+                        # Raw-only alert at 25 days ago (only in alerts table)
+                        cur.execute(
+                            """
+                            INSERT INTO alerts (server_id, alert_type, severity, title, message, is_resolved, created_at)
+                            VALUES (77, 'TEST_RAW', 'critical', 'Alert 25d RawCrit', 'Raw 25d alert', 0, %s);
+                            """,
+                            (ts(25 * 24),),
+                        )
+
+                titles_24h = [r["title"] for r in db.get_server_incidents_filtered(77, days=1)]
+                self.assertEqual(titles_24h, ["Alert 12h Crit"])
+
+                titles_3d = {r["title"] for r in db.get_server_incidents_filtered(77, days=3)}
+                self.assertEqual(titles_3d, {"Alert 12h Crit", "Alert 2d High"})
+
+                titles_7d_warn = {r["title"] for r in db.get_server_incidents_filtered(77, severity="warning", days=7)}
+                self.assertEqual(titles_7d_warn, {"Alert 2d High", "Alert 5d Warn"})
+
+                titles_15d_info = {r["title"] for r in db.get_server_incidents_filtered(77, severity="info", days=15)}
+                self.assertEqual(titles_15d_info, {"Alert 12d Low"})
+
+                titles_30d_crit = {r["title"] for r in db.get_server_incidents_filtered(77, severity="critical", days=30)}
+                self.assertEqual(titles_30d_crit, {"Alert 12h Crit", "Alert 25d RawCrit"})
+
+                titles_90d = {r["title"] for r in db.get_server_incidents_filtered(77, days=90)}
+                self.assertIn("Alert 60d Info", titles_90d)
+                self.assertNotIn("Alert 120d OldCrit", titles_90d)
+
+                # API endpoints return accurate DB rows & accept empty/all days without 422
+                with patch("fastapi.concurrency.run_in_threadpool", side_effect=_sync_threadpool):
+                    res_api = _run_coro_sync(
+                        app_module.api_get_server_incidents(77, status="all", severity="warning", days="7", limit=500)
+                    )
+                    self.assertEqual(res_api["total"], 2)
+                    self.assertEqual(res_api["days"], 7)
+
+                    res_all = _run_coro_sync(
+                        app_module.api_get_server_incidents(77, status="all", severity="all", days="", limit=500)
+                    )
+                    self.assertEqual(res_all["total"], 7)
+                    self.assertIsNone(res_all["days"])
+
+                    with self.assertRaises(HTTPException) as ctx404:
+                        _run_coro_sync(app_module.api_get_server_incidents(999999))
+                    self.assertEqual(ctx404.exception.status_code, 404)
+
+                req_mock = MagicMock()
+                req_mock.session = {"user_role": "admin"}
+                with patch.object(app_module, "is_admin_user", return_value=True):
+                    res_inc_api = _run_coro_sync(
+                        app_module.api_get_incidents(req_mock, status="all", severity="info", days="90", project_id="all", server_id=77, limit=50)
+                    )
+                self.assertEqual({x["title"] for x in res_inc_api["items"]}, {"Alert 12d Low", "Alert 60d Info"})
+
+                res_inc = db.get_incidents(status="all", severity="info", days=90, server_id=77, limit=50)
+                self.assertEqual({x["title"] for x in res_inc["items"]}, {"Alert 12d Low", "Alert 60d Info"})
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 if __name__ == '__main__':
     unittest.main()

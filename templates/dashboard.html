@@ -129,8 +129,8 @@
 /* Services Cards Grid (Image 2 style) */
 .services-grid {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+    gap: 14px;
     margin-bottom: 24px;
 }
 .service-card {
@@ -622,7 +622,7 @@
         <!-- TAB 2: INCIDENTS / OUTAGES -->
         <div id="i3t-incidents" style="display:none">
             <div class="i3-card">
-                <div class="i3-card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div class="i3-card-title" style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; margin-bottom:6px;">
                     <div style="display:flex; align-items:center; gap:10px;">
                         <span>🚨 Incidents & Alerts For This Asset</span>
                         <div class="density-switch" style="display:flex; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:4px; padding:2px;">
@@ -630,10 +630,36 @@
                             <button id="modal-density-comfortable" onclick="setModalIncidentDensity('comfortable')" style="background:transparent; color:var(--text3); border:none; padding:2px 8px; border-radius:3px; font-size:11px; cursor:pointer">Comfortable</button>
                         </div>
                     </div>
-                    <div style="display:flex; gap:8px;">
-                        <button onclick="resolveAllServerAlerts()" style="background:var(--bg2); border:1px solid var(--bg3); color:var(--text2); padding:4px 10px; border-radius:4px; font-size:12px; cursor:pointer;">Mark All Closed</button>
+                    <div class="sp-inc-filter-bar">
+                        <div class="sp-inc-filter-group">
+                            <label class="sp-inc-filter-label" for="i3-filter-type">Type</label>
+                            <select id="i3-filter-type" class="sp-filter-select">
+                                <option value="all" selected>All Types</option>
+                                <option value="critical">CRITICAL</option>
+                                <option value="warning">WARNING</option>
+                                <option value="info">INFO</option>
+                            </select>
+                        </div>
+                        <div class="sp-inc-filter-group">
+                            <label class="sp-inc-filter-label" for="i3-filter-days">Time Period</label>
+                            <select id="i3-filter-days" class="sp-filter-select">
+                                <option value="1">Last 24 Hours</option>
+                                <option value="3">Last 3 Days</option>
+                                <option value="7">Last 7 Days</option>
+                                <option value="15">Last 15 Days</option>
+                                <option value="30" selected>Last 30 Days</option>
+                                <option value="90">Last 90 Days</option>
+                            </select>
+                        </div>
+                        <button id="i3-apply-btn" type="button" class="sp-filter-apply" onclick="spApplyModalIncidentFilters()">
+                            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+                            Apply
+                        </button>
+                        <button id="i3-reset-btn" type="button" class="sp-filter-reset" onclick="spResetModalIncidentFilters()">↺ Reset</button>
+                        <button onclick="resolveAllServerAlerts()" style="background:var(--bg2); border:1px solid var(--bg3); color:var(--text2); padding:5px 10px; border-radius:6px; font-size:11.5px; cursor:pointer; height:28px;">Mark All Closed</button>
                     </div>
                 </div>
+                <div id="i3-filter-summary" class="sp-inc-filter-summary">All Types · Last 30 Days</div>
                 <div id="i3-incidents-list" class="density-compact" style="display:flex; flex-direction:column; gap:4px; margin-top:10px;">
                     <div style="text-align:center; padding:20px; color:var(--text2)">Loading incidents...</div>
                 </div>
@@ -1736,9 +1762,22 @@ async function openImage3Modal(serverId) {
 
 
         // Incidents tab: Deduplicated Compact Rows matching Alerts page
+        window._spActiveModalServerId = serverId;
+        window._spActiveModalSrv = srv;
+        const typeEl = document.getElementById('i3-filter-type');
+        const daysEl = document.getElementById('i3-filter-days');
+        if (typeEl) typeEl.value = 'all';
+        if (daysEl) daysEl.value = '30';
         const rawAlerts = details.alerts || [];
+        const initialFiltered = typeof spFilterAlertsLocally === 'function' ? spFilterAlertsLocally(rawAlerts, 'all', '30') : rawAlerts;
         updateServerReadUI(srv.is_read === true || srv.is_read === 'true');
-        renderModalIncidentsList(rawAlerts, srv);
+        renderModalIncidentsList(initialFiltered, srv);
+        if (typeof spUpdateModalFilterSummary === 'function') {
+            spUpdateModalFilterSummary(initialFiltered.length, 'all', '30');
+        }
+        if (typeof spApplyModalIncidentFilters === 'function') {
+            spApplyModalIncidentFilters({ silent: true });
+        }
 
         // Phase 4: Network and Ports
         const rx_bytes = srv.network_rx_bytes || 0;

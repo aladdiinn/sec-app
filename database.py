@@ -335,10 +335,10 @@ class DictRowWrapper:
     def rowcount(self):
         return getattr(self.cursor, 'rowcount', 0)
     def execute(self, query, params=None):
-        query_sql = query.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("INTERVAL '45 seconds'", "'-45 seconds'").replace("INTERVAL '30 seconds'", "'-30 seconds'").replace("INTERVAL '15 seconds'", "'-15 seconds'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("TIMESTAMPTZ", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN").replace("ILIKE", "LIKE").replace("JSONB", "TEXT")
-        query_sql = re.sub(r'::[a-zA-Z0-9_]+', '', query_sql)
-        query_sql = re.sub(r"(?:NOW\(\)|CURRENT_TIMESTAMP)\s*-\s*INTERVAL\s*'(\d+)\s*([a-zA-Z]+)'", r"datetime('now', '-\1 \2')", query_sql, flags=re.IGNORECASE)
+        query_sql = re.sub(r"(?:NOW\(\)|CURRENT_TIMESTAMP)\s*-\s*INTERVAL\s*'(\d+)\s*([a-zA-Z]+)'", r"datetime('now', '-\1 \2')", query, flags=re.IGNORECASE)
         query_sql = re.sub(r"(?:NOW\(\)|CURRENT_TIMESTAMP)\s*\+\s*INTERVAL\s*'(\d+)\s*([a-zA-Z]+)'", r"datetime('now', '+\1 \2')", query_sql, flags=re.IGNORECASE)
+        query_sql = query_sql.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP").replace("INTERVAL '60 minutes'", "'-60 minutes'").replace("INTERVAL '24 hours'", "'-24 hours'").replace("INTERVAL '45 seconds'", "'-45 seconds'").replace("INTERVAL '30 seconds'", "'-30 seconds'").replace("INTERVAL '15 seconds'", "'-15 seconds'").replace("TRUE", "1").replace("FALSE", "0").replace("BOOLEAN", "INTEGER").replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT").replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP").replace("TIMESTAMPTZ", "TIMESTAMP").replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN").replace("ILIKE", "LIKE").replace("JSONB", "TEXT")
+        query_sql = re.sub(r'::[a-zA-Z0-9_]+', '', query_sql)
         query_sql = re.sub(r"INTERVAL\s*'(\d+)\s*([a-zA-Z]+)'", r"'\1 \2'", query_sql, flags=re.IGNORECASE)
         if "ADD COLUMN" in query_sql and "DEFAULT CURRENT_TIMESTAMP" in query_sql:
             query_sql = query_sql.replace("DEFAULT CURRENT_TIMESTAMP", "")
@@ -3711,35 +3711,13 @@ def get_server_details(server_id: int):
         try:
             with conn.cursor() as cur:
                 try:
-                    inc_data = get_incidents(status="all", server_id=server_id, limit=150)
-                    inc_items = inc_data.get("items") or []
-
-                    # Also fetch all alerts for this server and its linked IDs from alerts table
-                    cur.execute("""
-                        SELECT id, server_id, alert_type, severity, title, message as description, 
-                               is_resolved, created_at, created_at as first_seen, created_at as last_seen,
-                               1 as occurrences, FALSE as is_read
-                        FROM alerts 
-                        WHERE server_id = ANY(%s) 
-                        ORDER BY created_at DESC LIMIT 100;
-                    """, (linked_ids,))
-                    raw_alerts = [dict(r) for r in cur.fetchall()]
-
-                    seen_sigs = set()
-                    combined_alerts = []
-                    for inc in inc_items:
-                        sig = ((inc.get("title") or "").strip().lower(), (inc.get("description") or "")[:80].strip().lower())
-                        seen_sigs.add(sig)
-                        combined_alerts.append(inc)
-
-                    for al in raw_alerts:
-                        al_sig = ((al.get("title") or al.get("alert_type") or "").strip().lower(), (al.get("description") or "")[:80].strip().lower())
-                        if al_sig not in seen_sigs:
-                            al["status"] = "closed" if al.get("is_resolved") else "open"
-                            combined_alerts.append(al)
-                            seen_sigs.add(al_sig)
-
-                    alerts = combined_alerts
+                    alerts = get_server_incidents_filtered(
+                        server_id,
+                        status="all",
+                        severity=None,
+                        days=None,
+                        limit=150,
+                    )
                 except Exception as ex_a:
                     logger.debug(f"Unified alerts error: {ex_a}")
                     cur.execute("SELECT * FROM alerts WHERE server_id = ANY(%s) ORDER BY created_at DESC LIMIT 50;", (linked_ids,))
@@ -4834,7 +4812,112 @@ def bulk_vulnerability_action(ids: list, action: str, username: str = "admin", r
     finally:
         conn.close()
 
-def get_incidents(status=None, severity=None, limit=50, offset=0, project_id=None, read_status=None, server_id=None, q=None):
+def _normalize_severity_filter_sql(severity, col_expr="i.severity"):
+    """Build SQL clause and params mapping UI filter types to stored DB severities."""
+    sev = (severity or "").lower().strip()
+    if not sev or sev == "all":
+        return "", []
+    if sev == "critical":
+        return f"LOWER(COALESCE({col_expr}, '')) = %s", ["critical"]
+    if sev in ("warning", "warn", "trouble"):
+        return f"LOWER(COALESCE({col_expr}, '')) IN ('warning', 'medium', 'high')", []
+    if sev in ("info", "low", "informational"):
+        return f"LOWER(COALESCE({col_expr}, '')) IN ('info', 'low')", []
+    return f"LOWER(COALESCE({col_expr}, '')) = %s", [sev]
+
+
+def _build_days_filter_sql(days, col_expr="COALESCE(i.last_seen, i.updated_at, i.created_at)"):
+    """Build PostgreSQL/SQLite-compatible timeframe clause for the last N days."""
+    if days is None or str(days).strip() == "" or str(days).lower().strip() == "all":
+        return ""
+    try:
+        int_days = int(days)
+    except (TypeError, ValueError):
+        return ""
+    if int_days <= 0:
+        return ""
+    int_hours = min(int_days, 365) * 24
+    return f"{col_expr} >= NOW() - INTERVAL '{int_hours} hours'"
+
+
+def get_server_incidents_filtered(server_id, status="all", severity=None, days=None, limit=500):
+    """Fetch unified incidents + raw alerts for an asset filtered by type and time window."""
+    inc_limit = max(1, min(int(limit or 500), 1000))
+    inc_data = get_incidents(
+        status=status or "all",
+        severity=severity,
+        limit=inc_limit,
+        server_id=server_id,
+        days=days,
+    )
+    inc_items = inc_data.get("items") or []
+
+    seen_sigs = set()
+    combined_alerts = []
+    for inc in inc_items:
+        sig = ((inc.get("title") or "").strip().lower(), (inc.get("description") or "")[:80].strip().lower())
+        seen_sigs.add(sig)
+        combined_alerts.append(inc)
+
+    conn = get_db_connection()
+    if not conn:
+        return combined_alerts
+
+    try:
+        linked_ids = get_linked_server_ids(server_id) or [server_id]
+        placeholders = ",".join(["%s"] * len(linked_ids))
+        where_clauses = [f"server_id IN ({placeholders})"]
+        params = list(linked_ids)
+
+        st_clean = (status or "all").lower().strip()
+        if st_clean == "open":
+            where_clauses.append("COALESCE(is_resolved, FALSE) = FALSE")
+        elif st_clean == "closed":
+            where_clauses.append("is_resolved = TRUE")
+
+        sev_sql, sev_params = _normalize_severity_filter_sql(severity, "severity")
+        if sev_sql:
+            where_clauses.append(sev_sql)
+            params.extend(sev_params)
+
+        days_sql = _build_days_filter_sql(days, "created_at")
+        if days_sql:
+            where_clauses.append(days_sql)
+
+        raw_limit = min(inc_limit, 500)
+        where_sql = " AND ".join(where_clauses)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT id, server_id, alert_type, severity, title, message as description,
+                       is_resolved, created_at, created_at as first_seen, created_at as last_seen,
+                       1 as occurrences, FALSE as is_read
+                FROM alerts
+                WHERE {where_sql}
+                ORDER BY created_at DESC
+                LIMIT %s;
+                """,
+                tuple(params + [raw_limit]),
+            )
+            raw_alerts = [dict(r) for r in (cur.fetchall() or [])]
+
+        for al in raw_alerts:
+            al_sig = ((al.get("title") or al.get("alert_type") or "").strip().lower(), (al.get("description") or "")[:80].strip().lower())
+            if al_sig not in seen_sigs:
+                al["status"] = "closed" if al.get("is_resolved") else "open"
+                al["created_at_ago"] = format_time_ago(al.get("created_at"))
+                al["last_seen_ago"] = format_time_ago(al.get("last_seen") or al.get("created_at"))
+                combined_alerts.append(al)
+                seen_sigs.add(al_sig)
+    except Exception as ex_srv_inc:
+        logger.debug(f"get_server_incidents_filtered alerts fallback: {ex_srv_inc}")
+    finally:
+        conn.close()
+
+    return combined_alerts[:inc_limit]
+
+
+def get_incidents(status=None, severity=None, limit=50, offset=0, project_id=None, read_status=None, server_id=None, q=None, days=None):
     conn = get_db_connection()
     if not conn: return {"items": [], "total": 0, "unread_count": 0}
     try:
@@ -4870,9 +4953,15 @@ def get_incidents(status=None, severity=None, limit=50, offset=0, project_id=Non
                 where_clauses.append("i.is_read = TRUE")
 
             # Severity filter
-            if severity and severity.lower() != "all":
-                where_clauses.append("i.severity = %s")
-                params.append(severity.lower())
+            sev_sql, sev_params = _normalize_severity_filter_sql(severity, "i.severity")
+            if sev_sql:
+                where_clauses.append(sev_sql)
+                params.extend(sev_params)
+
+            # Timeframe filter (e.g., last 1, 3, 7, 15, 30, 90 days)
+            days_sql = _build_days_filter_sql(days, "COALESCE(i.last_seen, i.updated_at, i.created_at)")
+            if days_sql:
+                where_clauses.append(days_sql)
 
             # Server filter
             if server_id:

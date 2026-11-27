@@ -234,6 +234,17 @@
                         <option value="info">Info</option>
                     </select>
                 </div>
+                <div style="width:140px">
+                    <label class="stat-label" style="display:block; margin-bottom:4px; font-size:11px">Time Period</label>
+                    <select id="filter-days" class="glass" style="width:100%; padding:7px 10px; font-size:12.5px; border-radius:var(--radius-sm); color:var(--text-primary); border:1px solid var(--border-glass)" onchange="resetPageAndLoad()">
+                        <option value="90" selected>Last 90 Days (All)</option>
+                        <option value="1">Last 24 Hours</option>
+                        <option value="3">Last 3 Days</option>
+                        <option value="7">Last 7 Days</option>
+                        <option value="15">Last 15 Days</option>
+                        <option value="30">Last 30 Days</option>
+                    </select>
+                </div>
 
                 <!-- Project Selector -->
                 <div style="min-width:145px; max-width:175px; flex:1">
@@ -594,6 +605,7 @@
         const status = document.getElementById('filter-status').value;
         const read = document.getElementById('filter-read').value;
         const sev = document.getElementById('filter-sev').value;
+        const days = document.getElementById('filter-days')?.value;
         const search = document.getElementById('filter-search').value.trim();
         const proj = document.getElementById('filter-project')?.value;
         const srv = document.getElementById('filter-server')?.value;
@@ -605,6 +617,7 @@
         if (status) url += `status=${encodeURIComponent(status)}&`;
         if (read && read !== 'all') url += `read=${encodeURIComponent(read)}&`;
         if (sev) url += `severity=${encodeURIComponent(sev)}&`;
+        if (days) url += `days=${encodeURIComponent(days)}&`;
         if (search) url += `q=${encodeURIComponent(search)}&`;
         if (proj) {
             url += `project_id=${encodeURIComponent(proj)}&`;
