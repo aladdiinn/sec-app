@@ -2880,6 +2880,80 @@ def _is_benign_bash_history_append(key: str, raw_line: str, exe_str: str, filena
     # Default: bash normal append to history is benign unless truncation/unlink detected
     return True
 
+
+def _is_readonly_crontab_list(cmdline: str) -> bool:
+    """Return True strictly for read-only `crontab -l` / `crontab -u <user> -l` inspections."""
+    toks = [t.strip() for t in (cmdline or "").split() if t.strip()]
+    if not toks or os.path.basename(toks[0].lower()) != "crontab":
+        return False
+    args = toks[1:]
+    if not args:
+        return False
+    has_list = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        arg_low = arg.lower()
+        if arg_low in ("-u", "--user"):
+            if i + 1 >= len(args):
+                return False
+            i += 2
+            continue
+        if arg_low.startswith("-u") and len(arg_low) > 2:
+            i += 1
+            continue
+        if arg_low in ("-l", "--list"):
+            has_list = True
+            i += 1
+            continue
+        # Any write/remove/stdin/file arg (-e, -r, -, file path, combined flags) must still alert
+        return False
+    return has_list
+
+
+def _is_benign_daemon_tar_extract(cmdline: str, raw_auid: str) -> bool:
+    """
+    Return True for background daemon (`AUID: 4294967295` / `-1` / `unset`) `tar` extraction
+    such as Ubuntu `dpkg` / `apt-daily` (`tar -x -f - --warning=no-timestamp`), while keeping
+    archive creation (`tar -c`, `zip`) and all human `tar` invocations active.
+    """
+    if str(raw_auid or "").strip().lower() not in ("4294967295", "-1", "unset"):
+        return False
+    toks = [t.strip() for t in (cmdline or "").split() if t.strip()]
+    if not toks or os.path.basename(toks[0].lower()) != "tar":
+        return False
+
+    is_extract = False
+    is_create = False
+    i = 1
+    while i < len(toks):
+        tok = toks[i]
+        tok_low = tok.lower()
+        if tok_low == "--":
+            break
+        if tok_low.startswith("--"):
+            if tok_low in ("--extract", "--get"):
+                is_extract = True
+            elif tok_low in ("--create", "--append", "--update"):
+                is_create = True
+            elif tok_low in ("--file", "--directory"):
+                i += 1
+            i += 1
+            continue
+        if tok_low.startswith("-") or (i == 1 and not tok_low.startswith(("/", ".")) and "." not in tok_low):
+            flag_chars = tok_low[1:] if tok_low.startswith("-") else tok_low
+            if any(c in flag_chars for c in ("c", "r", "u")):
+                is_create = True
+            if "x" in flag_chars:
+                is_extract = True
+            if flag_chars.endswith("f"):
+                i += 1
+            i += 1
+            continue
+        i += 1
+
+    return bool(is_extract and not is_create)
+
 def _build_securepulse_audit_rules_snippet() -> str:
     """
     Shared shell snippet that writes /etc/audit/rules.d/securepulse.rules with cross-distro
@@ -3724,6 +3798,19 @@ def _check_unified_fim(server_id, data):
             # Suppress benign SOC script fetches (/update_audit_rules.sh, /setup_node.sh) under recon_tools
             if key == "recon_tools" and any(own in cmd_check_low for own in ["/update_audit_rules.sh", "/setup_node.sh", "/setup_app_log.sh"]):
                 continue
+
+            # Suppress read-only `crontab -l` while keeping cron edits/removals/file-writes active
+            if key == "scheduled_tasks_cmd" and _is_readonly_crontab_list(cmdline):
+                continue
+
+            # Suppress Ubuntu dpkg/apt-daily `tar -x` extraction under `system daemon` (4294967295), keeping `tar -c`/`zip` & human tar active
+            if key == "archive_staging":
+                _st_auid = str(cur_event.get("auid") or "").strip().lower()
+                if not _st_auid:
+                    _am_st = re.search(r'\bauid=(\d+|-1)', line or "")
+                    _st_auid = _am_st.group(1).strip().lower() if _am_st else ""
+                if _is_benign_daemon_tar_extract(cmdline, _st_auid):
+                    continue
 
             if _is_benign_bash_history_append(key, line, exe_str_val, filename_str):
                 continue

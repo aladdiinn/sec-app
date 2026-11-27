@@ -873,6 +873,50 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         self.assertTrue(any("Application Fatal Error Alert" in t for t in titles))
         self.assertTrue(all(i["severity"] == "critical" for i in incs_15))
 
+    def test_readonly_crontab_list_and_daemon_tar_extract_filters(self):
+        """
+        Verify:
+        - Read-only `crontab -l` / `crontab -u root -l` produces 0 incidents (daemon or human),
+          while `crontab -e` and `crontab /tmp/backdoor.cron` still fire CRITICAL.
+        - Background daemon (`AUID: 4294967295`) `tar -x -f - --warning=no-timestamp` (dpkg) and `tar -xzf`
+          produce 0 incidents, while `tar -czf` (creation/exfil) and human `tar` still fire CRITICAL.
+        """
+        ts = time.time() - 3.0
+        cron_l_hex = "crontab\x00-l".encode("utf-8").hex()
+        cron_ul_hex = "crontab\x00-u\x00root\x00-l".encode("utf-8").hex()
+        tar_dpkg_hex = "tar\x00-x\x00-f\x00-\x00--warning=no-timestamp".encode("utf-8").hex()
+        tar_xzf_hex = "tar\x00-xzf\x00/tmp/pkg.tar.gz".encode("utf-8").hex()
+
+        cron_e_hex = "crontab\x00-e".encode("utf-8").hex()
+        cron_file_hex = "crontab\x00/tmp/backdoor.cron".encode("utf-8").hex()
+        tar_create_hex = "tar\x00-czf\x00/tmp/exfil.tar.gz\x00/etc".encode("utf-8").hex()
+
+        with patch.object(app_module, "_is_rule_enabled", return_value=True):
+            app_module._check_unified_fim(14, {
+                "audit_events": [
+                    {"serial": 9701, "epoch": ts, "key": "scheduled_tasks_cmd", "auid": "4294967295", "username": "root", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts:.3f}:9701): auid=4294967295 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_l_hex}'},
+                    {"serial": 9702, "epoch": ts + 1, "key": "scheduled_tasks_cmd", "auid": "1742601308", "username": "mannan.shariff", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts+1:.3f}:9702): auid=1742601308 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_ul_hex}'},
+                    {"serial": 9703, "epoch": ts + 2, "key": "archive_staging", "auid": "4294967295", "username": "root", "comm": "tar", "exe": "/usr/bin/tar", "line": f'type=SYSCALL msg=audit({ts+2:.3f}:9703): auid=4294967295 comm="tar" exe="/usr/bin/tar" key="archive_staging" proctitle={tar_dpkg_hex}'},
+                    {"serial": 9704, "epoch": ts + 3, "key": "archive_staging", "auid": "4294967295", "username": "root", "comm": "tar", "exe": "/usr/bin/tar", "line": f'type=SYSCALL msg=audit({ts+3:.3f}:9704): auid=4294967295 comm="tar" exe="/usr/bin/tar" key="archive_staging" proctitle={tar_xzf_hex}'},
+                ],
+                "file_changes": [],
+            })
+            self.assertEqual(len(self._fetch_open_incidents(14)), 0, f"Expected 0 incidents for benign crontab -l / dpkg tar -x, got {self._fetch_open_incidents(14)}")
+
+            app_module._check_unified_fim(15, {
+                "audit_events": [
+                    {"serial": 9711, "epoch": ts, "key": "scheduled_tasks_cmd", "auid": "1742601308", "username": "mannan.shariff", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts:.3f}:9711): auid=1742601308 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_e_hex}'},
+                    {"serial": 9712, "epoch": ts + 1, "key": "scheduled_tasks_cmd", "auid": "4294967295", "username": "root", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts+1:.3f}:9712): auid=4294967295 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_file_hex}'},
+                    {"serial": 9713, "epoch": ts + 2, "key": "archive_staging", "auid": "4294967295", "username": "root", "comm": "tar", "exe": "/usr/bin/tar", "line": f'type=SYSCALL msg=audit({ts+2:.3f}:9713): auid=4294967295 comm="tar" exe="/usr/bin/tar" key="archive_staging" proctitle={tar_create_hex}'},
+                    {"serial": 9714, "epoch": ts + 3, "key": "archive_staging", "auid": "1742601308", "username": "mannan.shariff", "comm": "tar", "exe": "/usr/bin/tar", "line": f'type=SYSCALL msg=audit({ts+3:.3f}:9714): auid=1742601308 comm="tar" exe="/usr/bin/tar" key="archive_staging" proctitle={tar_dpkg_hex}'},
+                ],
+                "file_changes": [],
+            })
+
+        incs_15 = self._fetch_open_incidents(15)
+        self.assertEqual(len(incs_15), 4, f"Expected all 4 genuine cron edit / tar create / human tar incidents, got {incs_15}")
+        self.assertTrue(all(i["severity"] == "critical" for i in incs_15))
+
 
 if __name__ == "__main__":
     unittest.main()
