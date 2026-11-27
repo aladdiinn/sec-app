@@ -2954,6 +2954,23 @@ def _is_benign_daemon_tar_extract(cmdline: str, raw_auid: str) -> bool:
 
     return bool(is_extract and not is_create)
 
+
+def _is_allowed_system_daemon_audit_event(key: str, filename_str: str) -> bool:
+    """
+    Option 2 filter for `system daemon` (AUID 4294967295 / -1 / unset):
+    Keep ONLY high-signal RCE/backdoor indicators (`nc`/`ncat` under `c2_tools`,
+    `/root/.ssh/authorized_keys`, `/etc/shadow`, `/etc/gshadow`, `/etc/sudoers`)
+    while muting all routine background OS daemon activity.
+    """
+    if key == "c2_tools":
+        return True
+    f_low = (filename_str or "").strip().lower()
+    if f_low.endswith("/.ssh/authorized_keys") or f_low == "/root/.ssh/authorized_keys":
+        return True
+    if f_low in ("/etc/shadow", "/etc/gshadow", "/etc/sudoers") or f_low.startswith("/etc/sudoers.d/"):
+        return True
+    return False
+
 def _build_securepulse_audit_rules_snippet() -> str:
     """
     Shared shell snippet that writes /etc/audit/rules.d/securepulse.rules with cross-distro
@@ -3490,6 +3507,12 @@ def _check_sudo_misuse(server_id, data):
     # Also inspect audit_events using decoded command line ONLY (never match raw SYSCALL=fchown / UID="root" metadata)
     for ae in data.get("audit_events", []):
         raw_line = ae.get("line", "")
+        ae_auid = str(ae.get("auid") or "").strip().lower()
+        if not ae_auid:
+            _m_au = re.search(r'\bauid=(\d+|-1)', raw_line or "")
+            ae_auid = _m_au.group(1).strip().lower() if _m_au else ""
+        if ae_auid in ("4294967295", "-1", "unset"):
+            continue
         ae_cmd = (_extract_audit_cmdline(raw_line) or ae.get("comm") or "").strip()
         if ae_cmd and any(cmd in ae_cmd.lower() for cmd in ["userdel", "passwd", "usermod", "useradd", "chmod", "chown", "dropdb", "pkill", "killall"]):
             candidates.append((ae_cmd, ae.get("username", ""), raw_line))
@@ -3754,6 +3777,14 @@ def _check_unified_fim(server_id, data):
 
             comm_raw_low = (c_m.group(1) if c_m else (cur_event.get("comm") or "")).lower()
             cmd_check_low = f"{cmdline} {line}".lower()
+
+            # Option 2: Mute routine `system daemon` (AUID 4294967295 / -1 / unset) activity except critical RCE/backdoor indicators
+            _raw_ev_auid = str(cur_event.get("auid") or "").strip().lower()
+            if not _raw_ev_auid:
+                _am_ev = re.search(r'\bauid=(\d+|-1)', line or "")
+                _raw_ev_auid = _am_ev.group(1).strip().lower() if _am_ev else ""
+            if _raw_ev_auid in ("4294967295", "-1", "unset") and not _is_allowed_system_daemon_audit_event(key, filename_str):
+                continue
 
             # Suppress internal SOC agent self-restarts, read-only pgrep, and redundant syscall=62 from pkill/killall
             if key == "process_kill":

